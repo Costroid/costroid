@@ -30,10 +30,12 @@ const (
 	envPseudonym  = "COSTROID_PSEUDONYM_KEY"
 	envEgress     = "COSTROID_EGRESS_ALLOW"
 	envGatewayEnv = "COSTROID_GATEWAY_ENVIRONMENT"
+	envWebhook    = "COSTROID_GITHUB_WEBHOOK_SECRET"
 
 	defaultGatewayEnvironment = "costroid-gateway"
 
 	minPseudonymKeyBytes = 32
+	minWebhookSecretLen  = 32
 	keySetTimeout        = 10 * time.Second
 	egressFlushInterval  = 5 * time.Second
 	shutdownTimeout      = 20 * time.Second
@@ -62,6 +64,10 @@ Environment:
   COSTROID_GATEWAY_ENVIRONMENT     the GitHub environment whose jobs may attest
                                    a minted gateway key, costroid-gateway by
                                    default
+  COSTROID_GITHUB_WEBHOOK_SECRET   at least 32 bytes, the secret the
+                                   GitHub App signs its webhook deliveries
+                                   with; unset, POST /webhooks/github is not
+                                   served
 
 --gitlab-host trusts the CI tokens of one more GitLab instance. GitHub Actions
 and gitlab.com are trusted by default.
@@ -176,8 +182,36 @@ func pseudonymKey() ([]byte, error) {
 	return key, nil
 }
 
+// webhookSecret reads the GitHub App's webhook secret. Unset, the route is
+// not served and the secret is nil.
+func webhookSecret() ([]byte, error) {
+	secret := os.Getenv(envWebhook)
+	if secret == "" {
+		return nil, nil
+	}
+	if len(secret) < minWebhookSecretLen {
+		return nil, fmt.Errorf("%s holds %d bytes, under %d", envWebhook, len(secret), minWebhookSecretLen)
+	}
+	return []byte(secret), nil
+}
+
+// githubApp configures the webhook route, or answers nil when no secret is
+// set. The service holds no App key, so an approve press posts nothing.
+func githubApp(secret []byte, installations Installations, logger *slog.Logger) *GitHubApp {
+	if secret == nil {
+		logger.Info("webhook route not served", "path", webhookPath, "reason", envWebhook+" is not set")
+		return nil
+	}
+	logger.Info("webhook route served", "path", webhookPath)
+	return &GitHubApp{Secret: secret, Installations: installations}
+}
+
 func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	databaseURL, err := required(envDatabase)
+	if err != nil {
+		return err
+	}
+	secret, err := webhookSecret()
 	if err != nil {
 		return err
 	}
@@ -222,18 +256,24 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 		PseudonymKey:       key,
 		GatewayEnvironment: cmp.Or(os.Getenv(envGatewayEnv), defaultGatewayEnvironment),
 		Spend:              ledger,
+		App:                githubApp(secret, ledger, logger),
 		Logger:             logger,
 	}
 	service := New(config)
 	background, stop := context.WithCancel(ctx)
-	flushed := make(chan struct{})
+	flushed, processed := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(flushed)
 		counters.Run(background, egressFlushInterval)
 	}()
+	go func() {
+		defer close(processed)
+		service.ProcessWebhooks(background)
+	}()
 	err = listen(ctx, options.addr, service.Handler(), logger)
 	stop()
 	<-flushed
+	<-processed
 	return err
 }
 

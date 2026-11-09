@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,15 @@ func sign(body string) string {
 func pullRequestBody(updated time.Time) string {
 	return fmt.Sprintf(`{"action":"synchronize","installation":{"id":58},"repository":{"full_name":"example/widgets"},"sender":{"login":"octocat"},"pull_request":{"number":7,"updated_at":%q,"head":{"sha":%q}}}`,
 		updated.Format(time.RFC3339), sampleSHA)
+}
+
+func installationBody(action string) string {
+	return fmt.Sprintf(`{"action":%q,"installation":{"id":58,"account":{"login":"example"}},"repositories":[{"id":101,"full_name":"example/widgets"}],"sender":{"login":"octocat"}}`, action)
+}
+
+func repositoriesBody(action string) string {
+	return fmt.Sprintf(`{"action":%q,"installation":{"id":58,"account":{"login":"example"}},"repositories_added":[{"id":102,"full_name":"example/gadgets"}],`+
+		`"repositories_removed":[{"id":101,"full_name":"example/widgets"}],"sender":{"login":"octocat"}}`, action)
 }
 
 func approveBody() string {
@@ -345,15 +355,25 @@ func FuzzParseEvent(f *testing.F) {
 	f.Add("ping", []byte(`{}`))
 	f.Add(scm.EventPullRequest, []byte(`{"pull_request":null}`))
 	f.Add(scm.EventCheckRun, []byte(`{"check_run":{"pull_requests":[{"number":-1}]}}`))
+	f.Add(scm.EventInstallation, []byte(installationBody("created")))
+	f.Add(scm.EventInstallationRepositories, []byte(repositoriesBody("removed")))
 	f.Fuzz(func(t *testing.T, name string, body []byte) {
 		event, err := scm.ParseEvent(name, body)
 		if err != nil {
 			return
 		}
-		if event.Name != name || event.Installation <= 0 || event.PullRequest < 0 || event.HeadSHA == "" {
+		installation := name == scm.EventInstallation || name == scm.EventInstallationRepositories
+		if event.Name != name || event.Installation <= 0 || event.PullRequest < 0 || (event.HeadSHA == "") != installation || (event.Account != "") != installation {
 			t.Errorf("parsed an invalid event: %+v", event)
 		}
-		for _, text := range []string{event.Action, event.Repository, event.Sender, event.HeadSHA, event.RequestedAction} {
+		texts := []string{event.Action, event.Repository, event.Sender, event.HeadSHA, event.RequestedAction, event.BaseBranch, event.Account}
+		for _, repository := range append(slices.Clone(event.Added), event.Removed...) {
+			if repository.ID <= 0 {
+				t.Errorf("parsed repository id %d", repository.ID)
+			}
+			texts = append(texts, repository.FullName)
+		}
+		for _, text := range texts {
 			if strings.ContainsAny(text, "<>`@\n\r ") {
 				t.Errorf("unsafe text %q in %+v", text, event)
 			}
@@ -375,4 +395,60 @@ func FuzzWebhookNeverPanicsOrFailsOnASignedBody(f *testing.F) {
 			t.Errorf("status = %d", status)
 		}
 	})
+}
+
+func TestInstallationEventsAreQueuedWithTheirRepositories(t *testing.T) {
+	widgets := scm.InstalledRepository{ID: 101, FullName: "example/widgets"}
+	gadgets := scm.InstalledRepository{ID: 102, FullName: "example/gadgets"}
+	for _, tc := range []struct {
+		name, action   string
+		body           string
+		added, removed []scm.InstalledRepository
+	}{
+		{scm.EventInstallation, scm.InstallationCreated, installationBody(scm.InstallationCreated), []scm.InstalledRepository{widgets}, nil},
+		{scm.EventInstallation, scm.InstallationDeleted, installationBody(scm.InstallationDeleted), []scm.InstalledRepository{widgets}, nil},
+		{scm.EventInstallation, scm.InstallationSuspended, installationBody(scm.InstallationSuspended), []scm.InstalledRepository{widgets}, nil},
+		{scm.EventInstallation, scm.InstallationUnsuspended, installationBody(scm.InstallationUnsuspended), []scm.InstalledRepository{widgets}, nil},
+		{scm.EventInstallationRepositories, scm.RepositoriesAdded, repositoriesBody(scm.RepositoriesAdded), []scm.InstalledRepository{gadgets}, []scm.InstalledRepository{widgets}},
+		{scm.EventInstallationRepositories, scm.RepositoriesRemoved, repositoriesBody(scm.RepositoriesRemoved), []scm.InstalledRepository{gadgets}, []scm.InstalledRepository{widgets}},
+	} {
+		event, err := scm.ParseEvent(tc.name, []byte(tc.body))
+		if err != nil {
+			t.Fatalf("%s %s: %v", tc.name, tc.action, err)
+		}
+		if event.Action != tc.action || event.Installation != 58 || event.Account != "example" || !slices.Equal(event.Added, tc.added) || !slices.Equal(event.Removed, tc.removed) {
+			t.Errorf("%s %s: %+v", tc.name, tc.action, event)
+		}
+	}
+	if _, err := scm.ParseEvent(scm.EventInstallation, []byte(installationBody("new_permissions_accepted"))); !errors.Is(err, scm.ErrIgnoredEvent) {
+		t.Errorf("new_permissions_accepted: %v", err)
+	}
+	good := installationBody(scm.InstallationCreated)
+	for name, body := range map[string]string{
+		"account":         strings.Replace(good, `"login":"example"`, `"login":"<script>"`, 1),
+		"no account":      strings.Replace(good, `"account":{"login":"example"}`, `"account":null`, 1),
+		"an App account":  strings.Replace(good, `"login":"example"`, `"login":"example[bot]"`, 1),
+		"repository name": strings.Replace(good, `example/widgets`, `example/wid gets`, 1),
+		"repository id":   strings.Replace(good, `"id":101`, `"id":0`, 1),
+		"installation":    strings.Replace(good, `"id":58`, `"id":-58`, 1),
+		"action":          strings.Replace(good, `"created"`, `"Created It"`, 1),
+	} {
+		if _, err := scm.ParseEvent(scm.EventInstallation, []byte(body)); err == nil || errors.Is(err, scm.ErrIgnoredEvent) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestACheckRunStatesItsBaseBranchInItsFormOnly(t *testing.T) {
+	with := strings.Replace(approveBody(), `{"number":7}`, `{"number":7,"base":{"ref":"release/2026-11"}}`, 1)
+	event, err := scm.ParseEvent(scm.EventCheckRun, []byte(with))
+	if err != nil || event.BaseBranch != "release/2026-11" {
+		t.Fatalf("%+v, %v", event, err)
+	}
+	for _, ref := range []string{"../main", "-main", "main branch", ""} {
+		body := strings.Replace(with, "release/2026-11", ref, 1)
+		if event, err := scm.ParseEvent(scm.EventCheckRun, []byte(body)); err != nil || event.BaseBranch != "" {
+			t.Errorf("%q: %+v, %v", ref, event, err)
+		}
+	}
 }

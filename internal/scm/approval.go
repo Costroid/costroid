@@ -106,8 +106,8 @@ func Approve(ctx context.Context, host Host, request ApprovalRequest, now time.T
 	if pull.HeadSHA != request.HeadSHA {
 		return Approval{}, ErrStaleHead
 	}
-	if !request.AllowAuthor && strings.EqualFold(pull.Author, request.Approver) {
-		return Approval{}, ErrAuthorApproval
+	if err := refuseApprover(request.Approver, pull.Author, request.AllowAuthor); err != nil {
+		return Approval{}, err
 	}
 	allowed, err := host.CanWrite(ctx, request.Approver)
 	if err != nil {
@@ -119,19 +119,32 @@ func Approve(ctx context.Context, host Host, request ApprovalRequest, now time.T
 	return Approval{PullRequest: pull.Number, Approver: request.Approver, HeadSHA: pull.HeadSHA, At: now}, nil
 }
 
+// refuseApprover holds an approver's account to the rules a review and the
+// approve button share: a signed-in person, not an App, and not the pull
+// request's author unless the repository allows it.
+func refuseApprover(approver, author string, allowAuthor bool) error {
+	switch {
+	case !loginPattern.MatchString(approver):
+		return ErrNoApprover
+	case strings.HasSuffix(strings.ToLower(approver), botSuffix):
+		return ErrBotApproval
+	case !allowAuthor && strings.EqualFold(author, approver):
+		return ErrAuthorApproval
+	}
+	return nil
+}
+
 // CountReview holds one review to every rule. pull is the pull request as the
 // host answers now, so a review of a commit the head has since left never
 // counts. The write role is asked last, because it costs a request.
 func CountReview(ctx context.Context, roles Roles, rules ApprovalRules, pull PullRequest, review Review, now time.Time) (Approval, error) {
-	switch {
-	case !strings.EqualFold(review.State, ReviewApproved):
+	if !strings.EqualFold(review.State, ReviewApproved) {
 		return Approval{}, ErrNotApproved
-	case !loginPattern.MatchString(review.Reviewer):
-		return Approval{}, ErrNoApprover
-	case strings.HasSuffix(strings.ToLower(review.Reviewer), botSuffix):
-		return Approval{}, ErrBotApproval
-	case !rules.AllowAuthor && strings.EqualFold(pull.Author, review.Reviewer):
-		return Approval{}, ErrAuthorApproval
+	}
+	if err := refuseApprover(review.Reviewer, pull.Author, rules.AllowAuthor); err != nil {
+		return Approval{}, err
+	}
+	switch {
 	case !vcs.IsCommit(pull.HeadSHA) || review.CommitID != pull.HeadSHA:
 		return Approval{}, ErrOffHead
 	case review.SubmittedAt.IsZero() || now.Sub(review.SubmittedAt) >= rules.Lasts:

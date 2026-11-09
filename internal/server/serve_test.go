@@ -63,11 +63,12 @@ func freeAddress(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-// serveOnce starts serve on addr, waits until it is healthy, and stops it. It
-// returns false, having started nothing, when another process on the machine
-// took addr after freeAddress let it go: serve then exits on the bind, and
-// anything that answered on addr was not serve. Every other failure is fatal.
-func serveOnce(t *testing.T, addr string) bool {
+// serveOnce starts serve on addr, waits until it is healthy, stops it, and
+// returns its log. It returns false, having started nothing, when another
+// process on the machine took addr after freeAddress let it go: serve then
+// exits on the bind, and anything that answered on addr was not serve. Every
+// other failure is fatal.
+func serveOnce(t *testing.T, addr string) (string, bool) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -88,7 +89,7 @@ func serveOnce(t *testing.T, addr string) bool {
 			select {
 			case code := <-exit:
 				if taken(code) {
-					return false
+					return "", false
 				}
 				t.Fatalf("health status %d, and serve exited %d: %s", response.StatusCode, code, stderr.String())
 			case <-time.After(5 * time.Second):
@@ -98,7 +99,7 @@ func serveOnce(t *testing.T, addr string) bool {
 		select {
 		case code := <-exit:
 			if taken(code) {
-				return false
+				return "", false
 			}
 			t.Fatalf("exited %d: %s", code, stderr.String())
 		default:
@@ -112,7 +113,7 @@ func serveOnce(t *testing.T, addr string) bool {
 	if code := <-exit; code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	return true
+	return stderr.String(), true
 }
 
 func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
@@ -121,19 +122,24 @@ func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
 	t.Setenv(envMigration, db.OwnerURL)
 	t.Setenv(envAudience, audience)
 	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
+	t.Setenv(envWebhook, "")
 	// Serve twice on one address: the second start finds the schema migrated
 	// and the bind in place. Another process can take the address between
 	// freeAddress and either start, so a taken address is tried again anew.
 	served := false
+	var log string
 	for attempt := 0; attempt < 3 && !served; attempt++ {
 		addr := freeAddress(t)
-		if !serveOnce(t, addr) {
+		if _, first := serveOnce(t, addr); !first {
 			continue
 		}
-		served = serveOnce(t, addr)
+		log, served = serveOnce(t, addr)
 	}
 	if !served {
 		t.Fatal("another process took the address three times")
+	}
+	if count := strings.Count(log, `"msg":"webhook route not served"`); count != 1 {
+		t.Errorf("serve said %d times that the webhook route is not served:\n%s", count, log)
 	}
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, db.SuperURL)
@@ -162,7 +168,7 @@ func TestServeOnceGivesUpATakenAddress(t *testing.T) {
 	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
 	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer foreign.Close()
-	if serveOnce(t, foreign.Listener.Addr().String()) {
+	if _, served := serveOnce(t, foreign.Listener.Addr().String()); served {
 		t.Fatal("serveOnce took an address another server holds")
 	}
 }

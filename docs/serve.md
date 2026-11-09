@@ -39,10 +39,11 @@ Migrations run forward only. The service refuses a migration edited after it was
 | `GET /v1/pulls/{pr}`     | One pull request's lines and budget spend, with `?repo=host/owner/name` |
 | `POST /v1/pulls/{pr}/verdict` | The policy's verdict on that pull request's rows, with `?repo=host/owner/name` |
 | `GET /healthz`           | 204                                                                   |
+| `POST /webhooks/github`  | The GitHub App's deliveries, when `COSTROID_GITHUB_WEBHOOK_SECRET` is set. [The GitHub App's webhook](#the-github-apps-webhook) |
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to `https://<host>/otlp`.
 
-Every path but `/healthz` takes a bearer: a CI OIDC ID token, or a tenant ingest key that starts `costroid_ik_`. An absent or invalid bearer answers one `AUTH_TOKEN_INVALID`, and the answer does not say which. A token whose issuer's host is off the egress allowlist cannot be checked, so it answers `503` with `EGRESS_REFUSED`.
+Every path but `/healthz` and `/webhooks/github` takes a bearer: a CI OIDC ID token, or a tenant ingest key that starts `costroid_ik_`. An absent or invalid bearer answers one `AUTH_TOKEN_INVALID`, and the answer does not say which. A token whose issuer's host is off the egress allowlist cannot be checked, so it answers `503` with `EGRESS_REFUSED`.
 
 ## Ingest keys
 
@@ -271,6 +272,58 @@ Telemetry does not say how a run is billed, so an OTLP row is `list_equivalent` 
 Every table carries row level security with `FORCE`. The service names a tenant with `SET LOCAL` in each transaction, and no statement carries a tenant predicate of its own. The application role can insert rows and read them. It cannot update or delete them. In `gateway_spend` it can also update a key's figure and the time it was attested, and nothing else, so a key's larger figure replaces its smaller one.
 
 `egress_counters` is the deployment's own table and has no tenant column. Its policy admits every role, and the application role reads, inserts and updates it. It cannot delete from it.
+
+`app_installations` and `app_installation_repositories` are the deployment's own tables too, because the GitHub App is the deployment's. Their policy admits every role. The application role reads, inserts and deletes their rows, and updates a name or the suspension, never an id.
+
+## The GitHub App's webhook
+
+`POST /webhooks/github` receives the GitHub App's deliveries. It is served only when `COSTROID_GITHUB_WEBHOOK_SECRET` holds the secret the App's webhook settings hold, at least 32 bytes. When it is unset, the path answers 404, and `serve` logs `webhook route not served` once at start.
+
+```sh
+export COSTROID_GITHUB_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+```
+
+The service answers each delivery within two seconds and applies it afterwards. It checks a delivery in this order, and the first check that fails gives the answer:
+
+| Check | Answer when it fails |
+| --- | --- |
+| The method is `POST` | 405 |
+| The body is at most 25 MiB and arrives within 1.5 seconds | 400 |
+| `X-Hub-Signature-256` is `sha256=` and the hex HMAC-SHA256 of the body under the secret, compared in constant time | 401, before the body is parsed |
+| `X-GitHub-Delivery` is 1 to 64 letters, digits and hyphens | 400 |
+| `X-GitHub-Event` is `installation`, `installation_repositories`, `check_run` or `pull_request` | 202, and the delivery is dropped |
+| The body is JSON and every field the service reads holds its form | 400 |
+| A `pull_request` event's `updated_at` is within 10 minutes of now | 403 |
+| The delivery id was not taken in the last 72 hours | 200, and nothing is done again |
+| Fewer than 256 deliveries wait | 503, and the id is released, so a redelivery is processed |
+
+A verified delivery takes its id before it waits. A delivery that fails for a reason a redelivery can change, such as GitHub or Postgres not answering, gives its id back, so a redelivery from the App's settings is processed. A delivery refused by a rule keeps its id.
+
+The ids are held in the service's memory. A restart forgets them, and two instances do not share them. A press of the approve button replayed after a restart is held to the same rules again, against the pull request as it is then.
+
+What GitHub documents, read on 2026-11-09:
+
+- [Webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads): `X-GitHub-Delivery` is "A globally unique identifier (GUID) to identify the event." `X-GitHub-Event` is "The name of the event that triggered the delivery." `X-Hub-Signature-256` "is the HMAC hex digest of the request body, and is generated using the SHA-256 hash function". "Payloads are capped at 25 MB."
+- [Validating webhook deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries): "The hash signature always starts with `sha256=`." "The hash signature is generated using your webhook's secret token and the payload contents." "Never use a plain `==` operator."
+- [Best practices for using webhooks](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks): "To protect against replay attacks, you can use the `X-GitHub-Delivery` header". "If you request a redelivery, the `X-GitHub-Delivery` header will be the same as in the original delivery." "Your server should respond with a 2XX response within 10 seconds of receiving a webhook delivery."
+
+### Installations
+
+Six actions keep the installations tables: `installation` with `created`, `deleted`, `suspend` and `unsuspend`, and `installation_repositories` with `added` and `removed`. A table row holds the installation's id, its account's login and whether it is suspended, or one repository's id and owner/name. No table holds a token: an installation token is minted when it is needed. Any other action, such as `new_permissions_accepted`, is acknowledged and dropped.
+
+A repositories event keeps its installation too, so an installation whose `created` delivery the service missed is held from its next event.
+
+### The approve button
+
+A press of the check's `approve` button arrives as a `check_run` event with the action `requested_action`. [`docs/approval.md`](approval.md#the-approve-button) says which presses count. The service posts the check again as the App's installation. This release holds no App key, so a press that counts logs `this service holds no GitHub App key to post a check with` and posts nothing.
+
+### Not yet observed
+
+No App delivered to this route: the App is not created yet. These fields were read from GitHub's documentation on 2026-11-09 or from its REST schema, and the tests stand in for GitHub with payloads written to that form:
+
+- `installation.account.login`. The REST schema allows an enterprise as the account, which has no login. Such a delivery answers 400.
+- `repositories` on `created`, and `repositories_added` and `repositories_removed`, each item with `id` and `full_name`. GitHub's page says of `repositories_removed`: "When repository_selection changes from all to selected, this array is empty." The table then keeps repositories the installation no longer reaches.
+- `check_run.pull_requests[0].base.ref`, the base branch whose head holds `costroid.yml`. The page does not describe the items of `pull_requests`.
 
 ## Checks
 
