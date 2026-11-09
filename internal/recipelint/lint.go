@@ -51,6 +51,7 @@ const (
 	claudeCodeAgent        = "claude-code"
 	claudeSDKAgent         = "claude-code-sdk"
 	codexSDKAgent          = "codex-sdk"
+	openCodeAgent          = "opencode"
 	codexContentFlag       = "otel.log_user_prompt=false"
 	codexSDKContentFlag    = "log_user_prompt = false under [otel] in CODEX_HOME/config.toml"
 	minimumVersionInput    = "minimum-agent-version"
@@ -71,6 +72,8 @@ var claudeContentFlags = []string{
 var (
 	claudeRelease = regexp.MustCompile(`@anthropic-ai/claude-code@[0-9]+\.[0-9]+\.[0-9]+`)
 	codexRelease  = regexp.MustCompile(`@openai/codex@[0-9]+\.[0-9]+\.[0-9]+`)
+	// openCodeRelease is OpenCode's npm package at an exact version.
+	openCodeRelease = regexp.MustCompile(`\bopencode-ai@[0-9]+\.[0-9]+\.[0-9]+`)
 	// lockInstall installs a program's packages at the versions its lock file
 	// pins, the agent's among them, and fails when the lock file disagrees.
 	lockInstall = regexp.MustCompile(`\bnpm\s+ci\b`)
@@ -101,13 +104,14 @@ var agentKinds = map[string]agentKind{
 	claudeSDKAgent:  {provider: claudeAgent, install: lockInstall},
 	codexAgent:      {provider: codexAgent, install: codexRelease, minimum: true},
 	codexSDKAgent:   {provider: codexAgent, install: lockInstall},
+	openCodeAgent:   {provider: openCodeAgent, install: openCodeRelease, minimum: true},
 }
 
 // actionAgents are the values the action's agent input takes, and runAgents
 // the values costroid run --agent takes.
 var (
 	actionAgents = []string{claudeAgent, codexAgent}
-	runAgents    = []string{claudeCodeAgent, claudeSDKAgent, codexAgent, codexSDKAgent}
+	runAgents    = []string{claudeCodeAgent, claudeSDKAgent, codexAgent, codexSDKAgent, openCodeAgent}
 )
 
 // Finding is one line of a file and the rule it breaks. A note uses the same
@@ -363,6 +367,9 @@ func contentFlagsOff(run agentRun, kind agentKind) []string {
 				missing = append(missing, name+" must be set to 0 on the agent")
 			}
 		}
+	case run.agent == openCodeAgent:
+		// OpenCode 1.19.4 exports logs and traces only to an endpoint
+		// OTEL_EXPORTER_OTLP_ENDPOINT names, so it has no flag to turn off.
 	case run.agent == codexSDKAgent:
 		if !codexConfigFlag.MatchString(run.text) {
 			missing = append(missing, codexSDKAgent+" needs "+codexSDKContentFlag)
