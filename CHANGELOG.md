@@ -2,6 +2,19 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.17 (2026-11-09)
+
+### What you can now do
+
+- Receive a GitHub App's webhook in `costroid serve`: set `COSTROID_GITHUB_WEBHOOK_SECRET` and `POST /webhooks/github` checks each delivery's signature before it reads the body, refuses a delivery it has already taken (for 72 hours, GitHub's redelivery window, across instances and restarts), and keeps the App's installations and their repositories. The migration `0008` adds three tables that hold ids and names, never a token. The approve button on a check re-concludes it as `costroid approve` does; it posts only once the App's key is configured. [`docs/serve.md`](docs/serve.md#the-github-apps-webhook) has the details.
+- `costroid doctor` lists the secrets of the environment a job names, so a key stored as an environment secret reads as found.
+- The GitLab template ran end to end on a self-managed GitLab CE 19.5.1 with GitLab Runner 19.5.1: over budget the merge is refused, a second push edits the one note, under budget the merge goes through. It has not run on gitlab.com. `go test -tags gitlab ./e2e/gitlab` runs it again. [`docs/gitlab.md`](docs/gitlab.md) says what it proved.
+
+### Fixes
+
+- With a LiteLLM gateway, `costroid run` and `costroid gateway close` read the key's spend only after it settles. LiteLLM writes spend every 10 to 15 seconds, and the run stopped waiting after 12, so it could warn that the gateway counted USD 0 when the rows did not, and close could attest that USD 0. A figure settles when it changes and then holds, or holds for 30 seconds; one that never settles carries a warning.
+- On GitLab, the report says it commented on a merge request.
+
 ## 1.0.0-alpha.16 (2026-11-08)
 
 ### What you can now do
