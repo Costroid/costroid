@@ -277,15 +277,16 @@ var startPage = template.Must(template.New("start").Parse(`<!doctype html>
 // manifestCode serves the start page on a loopback address until GitHub
 // sends the browser back with the code for this run's state.
 func manifestCode(ctx context.Context, flags appFlags, world appWorld, stdout io.Writer) (string, error) {
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", world.listen)
-	if err != nil {
-		return "", fmt.Errorf("listen for GitHub's answer: %w", err)
-	}
-	origin := "http://" + listener.Addr().String()
 	state, err := randomState()
 	if err != nil {
 		return "", err
 	}
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", world.listen)
+	if err != nil {
+		return "", fmt.Errorf("listen for GitHub's answer: %w", err)
+	}
+	defer listener.Close()
+	origin := "http://" + listener.Addr().String()
 	manifest, err := appManifestJSON(flags, origin+callbackPath)
 	if err != nil {
 		return "", err
@@ -295,10 +296,8 @@ func manifestCode(ctx context.Context, flags appFlags, world appWorld, stdout io
 		action = world.web + "/organizations/" + flags.org + "/settings/apps/new?state=" + state
 	}
 	codes := make(chan string, 1)
-	server := &http.Server{
-		Handler:           flowHandler(listener.Addr().String(), world.web, state, action, flags.name, string(manifest), codes),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	flow := &manifestFlow{host: listener.Addr().String(), web: world.web, state: state, action: action, name: flags.name, manifest: string(manifest), codes: codes}
+	server := &http.Server{Handler: flow, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = server.Serve(listener) }()
 	defer server.Close()
 	fmt.Fprintf(stdout, "costroid: open %s/ in a browser signed in to GitHub, and create the App there\n", origin)
@@ -320,36 +319,44 @@ func randomState() (string, error) {
 	return hex.EncodeToString(state), nil
 }
 
-// flowHandler serves the start page and takes the code for state. It answers
-// only requests addressed to host, so a page that rebinds a name of its own
-// to this address reads nothing.
-func flowHandler(host, web, state, action, name, manifest string, codes chan<- string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != host || r.Method != http.MethodGet {
-			http.Error(w, "Not here.", http.StatusMisdirectedRequest)
-			return
-		}
-		switch r.URL.Path {
-		case "/":
-			w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action "+web)
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_ = startPage.Execute(w, map[string]string{"Name": name, "Action": action, "Manifest": manifest})
-		case callbackPath:
-			query := r.URL.Query()
-			code := query.Get("code")
-			if subtle.ConstantTimeCompare([]byte(query.Get("state")), []byte(state)) != 1 || !codePattern.MatchString(code) {
-				http.Error(w, "This answer is not for this run of costroid app create.", http.StatusBadRequest)
-				return
-			}
-			select {
-			case codes <- code:
-			default:
-			}
-			fmt.Fprintln(w, "GitHub created the App. costroid app create goes on in the terminal.")
-		default:
-			http.NotFound(w, r)
-		}
-	})
+// manifestFlow serves the start page and takes the code for its state. It
+// answers only requests addressed to host, so a page that rebinds a name of
+// its own to this address reads nothing.
+type manifestFlow struct {
+	host, web, state, action, name, manifest string
+	codes                                    chan<- string
+}
+
+func (f *manifestFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Host != f.host || r.Method != http.MethodGet {
+		http.Error(w, "Not here.", http.StatusMisdirectedRequest)
+		return
+	}
+	switch r.URL.Path {
+	case "/":
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action "+f.web)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = startPage.Execute(w, map[string]string{"Name": f.name, "Action": f.action, "Manifest": f.manifest})
+	case callbackPath:
+		f.callback(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// callback takes GitHub's code when the state is this run's.
+func (f *manifestFlow) callback(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	code := query.Get("code")
+	if subtle.ConstantTimeCompare([]byte(query.Get("state")), []byte(f.state)) != 1 || !codePattern.MatchString(code) {
+		http.Error(w, "This answer is not for this run of costroid app create.", http.StatusBadRequest)
+		return
+	}
+	select {
+	case f.codes <- code:
+	default:
+	}
+	fmt.Fprintln(w, "GitHub created the App. costroid app create goes on in the terminal.")
 }
 
 // convertManifest exchanges the code for the App. The answer is read into one
