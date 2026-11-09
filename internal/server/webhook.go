@@ -235,42 +235,18 @@ func allowAuthor(ctx context.Context, host ApprovalHost, branch string) (bool, e
 // own result object. It posts nothing when the newest check already concludes
 // so.
 func (s *Server) reconclude(ctx context.Context, host ApprovalHost, approval scm.Approval, logger *slog.Logger) (int64, string, error) {
-	newest, err := history.Newest(ctx, host, approval.HeadSHA)
-	if errors.Is(err, history.ErrNoCheck) {
-		return 0, "", errNoCheckYet
-	}
-	if err != nil {
-		return 0, "", err
-	}
 	approved := &comment.Approval{Approver: approval.Approver, HeadSHA: approval.HeadSHA, At: approval.At}
-	block := newest.Block
-	conclusion := block.ApprovedConclusion(approved)
-	if block.Conclusion != nil && *block.Conclusion == conclusion {
-		return 0, "", fmt.Errorf("%w: check run %d concludes %s", errConcluded, newest.CheckRun, conclusion)
-	}
-	render := func(id *int64) (comment.CheckOutput, error) {
-		named := block
-		if id != nil {
-			named.CheckRunID = id
-		}
-		return comment.Reconclude(named, approved, newest.CheckRun)
-	}
-	output, err := render(nil)
-	if err != nil {
+	done, err := history.Reconclude(ctx, host, approval.HeadSHA, approved, s.Now)
+	switch {
+	case errors.Is(err, history.ErrNoCheck):
+		return 0, "", errNoCheckYet
+	case errors.Is(err, history.ErrConcluded):
+		return 0, "", fmt.Errorf("%w: check run %d concludes %s", errConcluded, done.Previous, done.Conclusion)
+	case err != nil:
 		return 0, "", err
 	}
-	id, err := host.PostCheck(ctx, scm.CheckRun{
-		Name: comment.CheckName, HeadSHA: approval.HeadSHA, Conclusion: conclusion,
-		Title: output.Title, Summary: output.Summary, Text: output.Text, Completed: s.Now(),
-	})
-	if err != nil {
-		return 0, "", err
+	if done.Unnamed != nil {
+		logger.Warn("check run does not name itself", "check_run", done.CheckRun, "error", done.Unnamed)
 	}
-	if output, err = render(&id); err == nil {
-		err = host.UpdateCheck(ctx, id, scm.CheckRun{Title: output.Title, Summary: output.Summary, Text: output.Text})
-	}
-	if err != nil {
-		logger.Warn("check run does not name itself", "check_run", id, "error", err)
-	}
-	return id, conclusion, nil
+	return done.CheckRun, done.Conclusion, nil
 }
