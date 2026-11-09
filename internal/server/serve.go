@@ -69,6 +69,14 @@ Environment:
                                    GitHub App signs its webhook deliveries
                                    with; unset, POST /webhooks/github is not
                                    served
+  COSTROID_GITHUB_APP_ID           the GitHub App's id
+  COSTROID_GITHUB_APP_KMS_KEY      the AWS KMS key that holds the App's
+                                   private key; set with the App's id, the
+                                   approve button posts as the App, and unset,
+                                   a press posts nothing
+  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION
+                                   the credentials and region KMS is called
+                                   with; a key ARN names its own region
 
 --gitlab-host trusts the CI tokens of one more GitLab instance. GitHub Actions
 and gitlab.com are trusted by default.
@@ -197,14 +205,19 @@ func webhookSecret() ([]byte, error) {
 }
 
 // githubApp configures the webhook route, or answers nil when no secret is
-// set. The service holds no App key, so an approve press posts nothing.
-func githubApp(secret []byte, ledger *store.Store, logger *slog.Logger) *GitHubApp {
+// set. Without hosts the service holds no App key, so an approve press posts
+// nothing.
+func githubApp(secret []byte, hosts RepositoryHosts, ledger *store.Store, logger *slog.Logger) *GitHubApp {
 	if secret == nil {
 		logger.Info("webhook route not served", "path", webhookPath, "reason", envWebhook+" is not set")
 		return nil
 	}
-	logger.Info("webhook route served", "path", webhookPath)
-	return &GitHubApp{Secret: secret, Installations: ledger, Deliveries: ledger.Deliveries(scm.DeliveryRetention)}
+	if hosts == nil {
+		logger.Info("webhook route served", "path", webhookPath)
+	} else {
+		logger.Info("webhook route served", "path", webhookPath, "approve_button", "posts as the GitHub App, signed by its KMS key")
+	}
+	return &GitHubApp{Secret: secret, Installations: ledger, Deliveries: ledger.Deliveries(scm.DeliveryRetention), Hosts: hosts}
 }
 
 func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
@@ -250,6 +263,10 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	gate := egress.New(options.egressAllow, counters)
 	issuers := issuersOf(options)
 	logAllowlist(logger, gate, issuers)
+	hosts, err := appKeyHosts(os.Getenv, scm.DefaultAPI, gate, logger)
+	if err != nil {
+		return err
+	}
 	config := Config{
 		Ledger:             ledger,
 		Verifier:           oidc.NewVerifier(audience, gate.Client(keySetTimeout), nil, issuers...),
@@ -257,7 +274,7 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 		PseudonymKey:       key,
 		GatewayEnvironment: cmp.Or(os.Getenv(envGatewayEnv), defaultGatewayEnvironment),
 		Spend:              ledger,
-		App:                githubApp(secret, ledger, logger),
+		App:                githubApp(secret, hosts, ledger, logger),
 		Logger:             logger,
 	}
 	service := New(config)

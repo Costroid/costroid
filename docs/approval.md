@@ -71,7 +71,7 @@ The press is the approval, so `approval.expires_days` does not apply to it. The 
 
 When a press counts, the service posts the newest `costroid` check on the head again with the conclusion `costroid approve` gives it: an approved failure concludes `neutral`, and the summary names the presser, the commit and the time. When the newest check already concludes so, it posts nothing. A press that does not count changes nothing, and the service's log says why.
 
-This release holds no App key, so the service posts nothing yet, and the check the report posts carries no button.
+The service posts only when it holds the App's key in a KMS, as [`docs/github-app.md`](github-app.md) sets up; without it, it posts nothing. The check the report posts carries no button yet.
 
 ## A fork's pull request
 

@@ -39,7 +39,7 @@ var computedFlags = map[string]func() []string{
 }
 
 // subcommandHelp are the commands that also answer help as a subcommand.
-var subcommandHelp = []string{"gateway", "keys", "egress"}
+var subcommandHelp = []string{"gateway", "keys", "egress", "app"}
 
 // helpAfterFlags gives each command whose flag set lives in this package a
 // command line that sets one flag before help is asked for.
@@ -67,6 +67,7 @@ var helpAfterFlags = map[string][][]string{
 	"result":    {{"result", "--pr", "1"}},
 	"mcp":       {{"mcp", "--repo", "owner/name"}},
 	"emit-otlp": {{"emit-otlp", "--rows", "rows.jsonl"}},
+	"app":       {{"app", "manifest", "--name", "Costroid"}, {"app", "create", "--name", "Costroid"}},
 }
 
 // serverFlagSets are the commands whose flag sets live in internal/server.

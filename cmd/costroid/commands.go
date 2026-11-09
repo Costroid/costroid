@@ -61,6 +61,7 @@ var commands = []command{
 	{name: "result", help: resultHelp, run: withOutputs(resultCommand)},
 	{name: "mcp", help: mcpHelp, run: mcpCommand},
 	{name: "emit-otlp", help: emitOTLPHelp, run: emitOTLPCommand},
+	{name: "app", help: appHelp, run: appCommand},
 }
 
 func withOutputs(fn func(ctx context.Context, args []string, stdout, stderr io.Writer) int) runner {

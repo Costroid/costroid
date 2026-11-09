@@ -7,7 +7,4 @@
 # deadcode does not judge. Only tests read them until the binary verifies the
 # catalog against Sigstore's trusted root.
 
-2026-11-08 internal/scm.AppJWT the GitHub App's key signer and app create
-2026-11-08 internal/scm.AppTokens.Token the GitHub App's key signer and app create
 2026-11-08 internal/scm.Approval.Holds the GitHub App's webhook route, on the approve button
-2026-11-08 internal/scm.NewLimiter the GitHub App's webhook route
