@@ -18,7 +18,7 @@ const (
 // who can start a paid run, so the customer profile never names one.
 var recipeOnlyRules = []string{
 	RuleUnrecordedPin, RuleIDTokenScope, RulePermissions, RuleAgentPermissions,
-	RuleAgentGuard, RuleAgentVersion, RuleAgentContentFlags, RuleAgentNoteToken,
+	RuleAgentGuard, RuleAgentVersion, RuleAgentContentFlags, RuleAgentProvider, RuleAgentTools, RuleAgentNoteToken,
 	RuleReportJob, RuleFollowUpCode, RuleFollowUpArtifact,
 }
 

@@ -177,7 +177,7 @@ What the runs showed:
 
 ## Copilot CLI
 
-Copilot CLI's stream carries no token counts. The `result` line of `copilot -p --output-format json` names the session, and the session's file, `<COPILOT_HOME>/session-state/<session>/events.jsonl`, holds one `session.usage_record` per model request and one `session.shutdown` with each model's totals. `COPILOT_HOME` defaults to `~/.copilot`. Rows come from the usage records, one per request, with `costroid/cost_source` `agent_session_file`. The reader is pinned to the recorded release, 1.0.103, and a warning names any other. `costroid run` picks it by the command's name, `copilot`; `--agent` does not take it. `costroid ingest-run` does not read it.
+Copilot CLI's stream carries no token counts. The `result` line of `copilot -p --output-format json` names the session, and the session's file, `<COPILOT_HOME>/session-state/<session>/events.jsonl`, holds one `session.usage_record` per model request and one `session.shutdown` with each model's totals. `COPILOT_HOME` defaults to `~/.copilot`. Rows come from the usage records, one per request, with `costroid/cost_source` `agent_session_file`. The reader is pinned to the recorded release, 1.0.103, and a warning names any other. `costroid run` picks it by the command's name, `copilot`, or by `--agent copilot`. `costroid ingest-run` does not read it.
 
 | Canonical class         | `session.usage_record` field                                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
