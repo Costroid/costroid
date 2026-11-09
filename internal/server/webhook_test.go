@@ -285,13 +285,22 @@ func (h *hook) installation(t testing.TB) (store.Installation, bool) {
 	return held, true
 }
 
-// installed is a hook whose installation 58 is held, reaching stub.
+// installed is a hook whose installation 58 is held, reaching stub as serve
+// does with the App's id and KMS key set.
 func installed(t testing.TB, stub *scmtest.Stub) *hook {
 	t.Helper()
-	h := newHook(t, newMemoryInstallations(), stubHosts{stub})
+	h, _ := installedAsTheApp(t, stub)
+	return h
+}
+
+// installedAsTheApp is installed, and the GitHub that mints the App's tokens.
+func installedAsTheApp(t testing.TB, stub *scmtest.Stub) (*hook, *appFront) {
+	t.Helper()
+	front := newAppFront(t, stub)
+	h := newHook(t, newMemoryInstallations(), front.hosts(t))
 	h.send(t, scm.EventInstallation, "install", installationBody(scm.InstallationCreated, widgets), http.StatusAccepted)
 	h.settle(t)
-	return h
+	return h, front
 }
 
 func TestWebhookRouteRefusesGet(t *testing.T) {
@@ -328,14 +337,14 @@ func TestWebhookRouteRefusesGet(t *testing.T) {
 func TestServeSaysOnceWhetherTheWebhookRouteIsServed(t *testing.T) {
 	var logged bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logged, nil))
-	if app := githubApp(nil, nil, logger); app != nil {
+	if app := githubApp(nil, nil, nil, logger); app != nil {
 		t.Fatalf("no secret configured %+v", app)
 	}
 	if lines := strings.Count(logged.String(), "\n"); lines != 1 || !strings.Contains(logged.String(), `"msg":"webhook route not served","path":"/webhooks/github","reason":"COSTROID_GITHUB_WEBHOOK_SECRET is not set"`) {
 		t.Fatalf("%d lines: %s", lines, logged.String())
 	}
 	logged.Reset()
-	if app := githubApp([]byte(webhookSecretText), nil, logger); app == nil || string(app.Secret) != webhookSecretText {
+	if app := githubApp([]byte(webhookSecretText), nil, nil, logger); app == nil || string(app.Secret) != webhookSecretText {
 		t.Fatal("a secret served no route")
 	}
 	if strings.Contains(logged.String(), webhookSecretText) || !strings.Contains(logged.String(), `"msg":"webhook route served"`) {
@@ -471,7 +480,7 @@ func posted(stub *scmtest.Stub) []scmtest.Check {
 
 func TestApproveButtonReconcludes(t *testing.T) {
 	stub := approvalStub(t)
-	h := installed(t, stub)
+	h, front := installedAsTheApp(t, stub)
 	h.send(t, scm.EventCheckRun, "press-1", pressBody(approverLogin, acmeSHA, scm.ApproveAction), http.StatusAccepted)
 	h.settle(t)
 	checks := posted(stub)
@@ -501,6 +510,15 @@ func TestApproveButtonReconcludes(t *testing.T) {
 	h.settle(t)
 	if len(posted(stub)) != 1 || !strings.Contains(h.log.String(), "the newest costroid check already concludes so") {
 		t.Errorf("a second press posted again:\n%s", h.log.String())
+	}
+	signs := 0
+	for _, call := range front.kms.Calls() {
+		if call.Action == "Sign" {
+			signs++
+		}
+	}
+	if front.minted.Load() != 1 || signs != 1 {
+		t.Errorf("%d installation tokens minted, %d KMS signatures: the token is not held for its hour", front.minted.Load(), signs)
 	}
 }
 
