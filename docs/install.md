@@ -7,34 +7,34 @@
 The release carries `costroid-install.sh`. It checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`. Read it first:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.17/costroid-install.sh
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.18/costroid-install.sh
 less costroid-install.sh
 sh costroid-install.sh
 ```
 
 ## The binary
 
-The commands below install `1.0.0-alpha.17`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.17), check it against `SHA256SUMS`, and put it on your `PATH`:
+The commands below install `1.0.0-alpha.18`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.18), check it against `SHA256SUMS`, and put it on your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.17/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.17/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.18/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.18/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 chmod +x costroid-linux-amd64
 sudo mv costroid-linux-amd64 /usr/local/bin/costroid
 costroid version
 ```
 
-The last line prints `costroid 1.0.0-alpha.17, catalog 0.3.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
+The last line prints `costroid 1.0.0-alpha.18, catalog 0.3.0`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
 
 ## The signature
 
 Each file is signed with cosign, keyless, by this repository's release workflow. To check the binary's signature, with cosign 3 or later:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.17/costroid-linux-amd64.sigstore.json
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.18/costroid-linux-amd64.sigstore.json
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.17 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.18 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com /usr/local/bin/costroid
 ```
 
@@ -45,10 +45,10 @@ The identity is the release workflow at the release's tag, so a file signed by a
 With Go 1.27 or later:
 
 ```sh
-go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.17
+go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.18
 ```
 
-`go install` records the release's version, so `costroid version` prints it. The build records no commit, so `init` reads the commit the release's tag names from github.com with `git ls-remote`, pins it and says so. Where github.com is unreachable, pass the commit of `v1.0.0-alpha.17` with `--action-ref 15787e4283f5b3be52b3c8fb714ca18075d7a6e2`.
+`go install` records the release's version, so `costroid version` prints it. The build records no commit, so `init` reads the commit the release's tag names from github.com with `git ls-remote`, pins it and says so. Where github.com is unreachable, pass the commit of `v1.0.0-alpha.18` with `--action-ref 7b091a81c4f73c150aa36977909ec21a456a7e40`.
 
 To build from a checkout instead, run `make build`. That build belongs to no release either.
 
