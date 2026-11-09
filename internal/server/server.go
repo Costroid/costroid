@@ -13,6 +13,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/oidc"
+	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/store"
 )
 
@@ -67,7 +68,9 @@ type Config struct {
 	GatewayEnvironment string
 	// Spend keeps the gateway's attested spend. Nil, the service refuses a
 	// spend attestation and treats every token-verified spend as agent counts.
-	Spend  SpendLedger
+	Spend SpendLedger
+	// App serves POST /webhooks/github. Nil, the route is not served.
+	App    *GitHubApp
 	Now    func() time.Time
 	Logger *slog.Logger
 }
@@ -75,6 +78,8 @@ type Config struct {
 // Server handles ingest and the view.
 type Server struct {
 	Config
+	webhook *scm.Webhook
+	queue   *scm.Queue
 }
 
 // New returns the service. Now and Logger default to the real clock and the
@@ -86,7 +91,11 @@ func New(config Config) *Server {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
-	return &Server{Config: config}
+	server := &Server{Config: config}
+	if config.App != nil {
+		server.webhook, server.queue = newWebhook(config)
+	}
+	return server
 }
 
 // Handler returns the service's routes.
@@ -101,6 +110,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /otlp/v1/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /v1/pulls/{pr}", s.handlePullRequest)
 	mux.HandleFunc("POST /v1/pulls/{pr}/verdict", s.handleVerdict)
+	if s.webhook != nil {
+		mux.Handle("POST "+webhookPath, s.webhook)
+	}
 	return mux
 }
 

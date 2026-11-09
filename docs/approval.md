@@ -55,6 +55,24 @@ When an approval is dismissed, or no longer counts, `costroid approve` posts the
 
 The result object names no approver. The check's summary is where the approval is recorded.
 
+## The approve button
+
+`costroid serve` takes a press of the check's `approve` button as the GitHub App's `check_run` event with the action `requested_action`, on `POST /webhooks/github`. [`docs/serve.md`](serve.md#the-github-apps-webhook) has the route.
+
+A press counts under the rules a review counts under in `costroid approve`, for the same account, pull request and settings:
+
+- The check's commit is the pull request's head as the API answers it now.
+- The account is signed in, and its login does not end in `[bot]`.
+- The account is not the pull request's author, unless `approval.allow_author` is `true`.
+- The account can write to the repository: the collaborator permission reads `write` or `admin`.
+- `costroid.yml` is read at the head of the base branch the event names, and a key or value it does not take means no press counts.
+
+The press is the approval, so `approval.expires_days` does not apply to it. The App's installation must be held in the installations table and not suspended.
+
+When a press counts, the service posts the newest `costroid` check on the head again with the conclusion `costroid approve` gives it: an approved failure concludes `neutral`, and the summary names the presser, the commit and the time. When the newest check already concludes so, it posts nothing. A press that does not count changes nothing, and the service's log says why.
+
+This release holds no App key, so the service posts nothing yet, and the check the report posts carries no button.
+
 ## A fork's pull request
 
 A review on a fork's pull request runs with a read-only token, so `costroid approve` posts nothing and its log says why. A fork's pull request needs no approval to merge: the follow-up concludes `neutral` at most. [`docs/required-check.md`](required-check.md#a-forks-pull-request) has the table.

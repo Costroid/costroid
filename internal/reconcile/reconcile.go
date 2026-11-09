@@ -19,6 +19,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/reconcile/state"
 )
 
 // The sources this package reconciles against.
@@ -39,21 +40,16 @@ const (
 // Providers restate for seven, and the job runs one day past that.
 const RerunDays = 8
 
-// State is a row's verdict on its tokens.
-type State string
+// State is a row's verdict on its tokens. It lives in a package of its own,
+// so the comment renders it without reaching this package's client.
+type State = state.State
 
 // The states of a Row.
 const (
-	// Matched means every class landed within tolerance.
-	Matched State = "matched"
-	// TokensMiss means a class missed the tolerance. It is a defect.
-	TokensMiss State = "tokens_miss"
-	// PriceMiss means every class matched and a price missed the catalog.
-	// It is a defect.
-	PriceMiss State = "price_miss"
-	// Pending means the provider has not finished reporting the day. A
-	// pending row carries no figure, because a partial report is not a miss.
-	Pending State = "pending"
+	Matched    = state.Matched
+	TokensMiss = state.TokensMiss
+	PriceMiss  = state.PriceMiss
+	Pending    = state.Pending
 )
 
 // DollarVerdict is a row's verdict on its cost.

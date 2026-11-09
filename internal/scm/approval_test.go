@@ -64,6 +64,17 @@ func TestTheAuthorIsRefusedByDefaultInAnyCase(t *testing.T) {
 	}
 }
 
+func TestAnAppsAccountOrNoAccountCannotApprove(t *testing.T) {
+	_, host := approvalStub(t)
+	for approver, refusal := range map[string]error{"helper[bot]": scm.ErrBotApproval, "": scm.ErrNoApprover, "<script>": scm.ErrNoApprover} {
+		ask := request()
+		ask.Approver = approver
+		if _, err := scm.Approve(context.Background(), host, ask, newClock().now()); !errors.Is(err, refusal) {
+			t.Errorf("%q: err = %v", approver, err)
+		}
+	}
+}
+
 func TestTheAuthorPassesOnlyWhenAllowed(t *testing.T) {
 	_, host := approvalStub(t)
 	ask := request()

@@ -7,7 +7,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
-	"github.com/Costroid/costroid/internal/reconcile"
+	"github.com/Costroid/costroid/internal/reconcile/state"
 )
 
 // capCheck sets the run's cap beside the figures in its currency. A cap is
@@ -150,15 +150,15 @@ type Reconciliation struct {
 	Credential Data
 	// Day is the UTC day reconciled, as YYYY-MM-DD.
 	Day   string
-	State reconcile.State
+	State state.State
 }
 
 var dayPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 
-var reconciliationNotes = map[reconcile.State]string{
-	reconcile.Matched:    "tokens matched the provider's report within 1%",
-	reconcile.TokensMiss: "a token class missed the provider's report by more than 1%",
-	reconcile.Pending:    "the provider had not finished reporting the day",
+var reconciliationNotes = map[state.State]string{
+	state.Matched:    "tokens matched the provider's report within 1%",
+	state.TokensMiss: "a token class missed the provider's report by more than 1%",
+	state.Pending:    "the provider had not finished reporting the day",
 }
 
 // reconciliationLines states each reconciliation in a closed sentence. One
