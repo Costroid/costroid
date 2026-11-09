@@ -38,8 +38,9 @@ const (
 
 	watchedNote = "wrapper-watchdog: priced from each step OpenCode reports, with a stop at the cap that a step in flight can pass"
 
-	// statedUnit is the unit of OpenCode's own price for a step.
-	statedUnit = "USD"
+	// StatedUnit is the unit of OpenCode's own price for a step, and of its
+	// figure for the run, AgentStated.
+	StatedUnit = "USD"
 
 	// taskTool is the tool that starts an OpenCode subagent in a session of
 	// its own.
@@ -503,7 +504,7 @@ func (s *Session) Finish() (adapter.Report, error) {
 		AgentError:   s.agentError,
 	}
 	if s.unstated == 0 && len(s.steps) > 0 {
-		report.AgentStated = &adapter.Stated{Unit: statedUnit, Quantity: s.stated.String(), Source: Name}
+		report.AgentStated = &adapter.Stated{Unit: StatedUnit, Quantity: s.stated.String(), Source: Name}
 	}
 	s.reportUnrecorded(&report)
 	report.Warnings = append(report.Warnings, s.notes()...)

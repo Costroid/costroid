@@ -35,6 +35,8 @@ const (
 	RuleAgentVersion       = "agent-version"
 	RuleUnknownAgent       = "unknown-agent"
 	RuleAgentContentFlags  = "agent-content-flags"
+	RuleAgentProvider      = "agent-provider"
+	RuleAgentTools         = "agent-tools"
 	RuleAgentPromptInput   = "agent-prompt-input"
 	RuleAgentNoteToken     = "agent-note-token"
 	RuleReportJob          = "report-job"
@@ -52,6 +54,7 @@ const (
 	claudeSDKAgent         = "claude-code-sdk"
 	codexSDKAgent          = "codex-sdk"
 	openCodeAgent          = "opencode"
+	copilotAgent           = "copilot"
 	codexContentFlag       = "otel.log_user_prompt=false"
 	codexSDKContentFlag    = "log_user_prompt = false under [otel] in CODEX_HOME/config.toml"
 	minimumVersionInput    = "minimum-agent-version"
@@ -74,6 +77,15 @@ var (
 	codexRelease  = regexp.MustCompile(`@openai/codex@[0-9]+\.[0-9]+\.[0-9]+`)
 	// openCodeRelease is OpenCode's npm package at an exact version.
 	openCodeRelease = regexp.MustCompile(`\bopencode-ai@[0-9]+\.[0-9]+\.[0-9]+`)
+	// copilotRelease is Copilot CLI's npm package at an exact version.
+	copilotRelease = regexp.MustCompile(`@github/copilot@[0-9]+\.[0-9]+\.[0-9]+`)
+	// copilotDeniesShell is the option that keeps Copilot CLI from running a
+	// command: its rule shell, whole, not one command of it such as
+	// shell(git push).
+	copilotDeniesShell = regexp.MustCompile(`--deny-tool[= ]+['"]?shell['"]?(?:\s|$)`)
+	// oneSecret is a value read from one secret and nothing else: a GitHub
+	// secret, or a GitLab variable.
+	oneSecret = regexp.MustCompile(`^(?:\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})$`)
 	// lockInstall installs a program's packages at the versions its lock file
 	// pins, the agent's among them, and fails when the lock file disagrees.
 	lockInstall = regexp.MustCompile(`\bnpm\s+ci\b`)
@@ -105,13 +117,14 @@ var agentKinds = map[string]agentKind{
 	codexAgent:      {provider: codexAgent, install: codexRelease, minimum: true},
 	codexSDKAgent:   {provider: codexAgent, install: lockInstall},
 	openCodeAgent:   {provider: openCodeAgent, install: openCodeRelease, minimum: true},
+	copilotAgent:    {provider: copilotAgent, install: copilotRelease, minimum: true},
 }
 
 // actionAgents are the values the action's agent input takes, and runAgents
 // the values costroid run --agent takes.
 var (
 	actionAgents = []string{claudeAgent, codexAgent}
-	runAgents    = []string{claudeCodeAgent, claudeSDKAgent, codexAgent, codexSDKAgent, openCodeAgent}
+	runAgents    = []string{claudeCodeAgent, claudeSDKAgent, codexAgent, codexSDKAgent, copilotAgent, openCodeAgent}
 )
 
 // Finding is one line of a file and the rule it breaks. A note uses the same
@@ -356,6 +369,41 @@ func (l *linter) checkAgent(run agentRun, forbidden *regexp.Regexp) {
 	for _, flag := range contentFlagsOff(run, kind) {
 		l.add(run.node, RuleAgentContentFlags, "%s", flag)
 	}
+	if run.agent == copilotAgent {
+		l.copilotRules(run)
+	}
+}
+
+// The variables that run Copilot CLI on the user's own provider key, as
+// copilot help providers lists them on 1.0.103. The key is either of the last
+// two.
+const (
+	copilotBaseURL     = "COPILOT_PROVIDER_BASE_URL"
+	copilotType        = "COPILOT_PROVIDER_TYPE"
+	copilotKey         = "COPILOT_PROVIDER_API_KEY"
+	copilotBearerToken = "COPILOT_PROVIDER_BEARER_TOKEN"
+)
+
+// copilotRules holds a Copilot CLI job to its provider and its tools. Without
+// a provider Copilot CLI runs on its own routing, which a list price only
+// estimates; a key written into the file is anyone's who reads it; and the
+// shell tool would run commands beside the key in the job's environment.
+func (l *linter) copilotRules(run agentRun) {
+	if strings.TrimSpace(run.env[copilotBaseURL]) == "" {
+		l.add(run.node, RuleAgentProvider, "%s must be set on the agent, so Copilot CLI runs on your provider's key, not on its own routing", copilotBaseURL)
+	}
+	if strings.TrimSpace(run.env[copilotType]) == "" {
+		l.add(run.node, RuleAgentProvider, "%s must be set on the agent, to name the provider %s serves", copilotType, copilotBaseURL)
+	}
+	keyed := slices.ContainsFunc([]string{copilotKey, copilotBearerToken}, func(name string) bool {
+		return oneSecret.MatchString(strings.TrimSpace(run.env[name]))
+	})
+	if !keyed {
+		l.add(run.node, RuleAgentProvider, "%s or %s must be read from one secret", copilotKey, copilotBearerToken)
+	}
+	if !copilotDeniesShell.MatchString(run.text) {
+		l.add(run.node, RuleAgentTools, "copilot needs --deny-tool='shell', so the agent runs no command beside the key")
+	}
 }
 
 func contentFlagsOff(run agentRun, kind agentKind) []string {
@@ -370,6 +418,9 @@ func contentFlagsOff(run agentRun, kind agentKind) []string {
 	case run.agent == openCodeAgent:
 		// OpenCode 1.19.4 exports logs and traces only to an endpoint
 		// OTEL_EXPORTER_OTLP_ENDPOINT names, so it has no flag to turn off.
+	case run.agent == copilotAgent:
+		// Costroid knows no telemetry flag of Copilot CLI's. Its job is held
+		// to its provider and its tools by copilotRules.
 	case run.agent == codexSDKAgent:
 		if !codexConfigFlag.MatchString(run.text) {
 			missing = append(missing, codexSDKAgent+" needs "+codexSDKContentFlag)

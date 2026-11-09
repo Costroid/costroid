@@ -130,7 +130,27 @@ func manyFigures(t *testing.T) Input {
 // run object states. gh-aw's workflow sets no budget for the report.
 func ghAwInput(t *testing.T) Input {
 	t.Helper()
-	file, err := os.Open(filepath.Join("testdata", "gh-aw-rows.jsonl"))
+	return statedRunInput(t, "gh-aw-rows.jsonl", adapter.Stated{Unit: adapter.UnitAICredits, Quantity: "7.47", Source: "gh-aw"})
+}
+
+// The rows costroid run wrote for the recordings of OpenCode 1.19.4 and
+// Copilot CLI 1.0.103 replayed, with the figure each agent stated in its run
+// object. The run's budget is not the report's.
+func openCodeInput(t *testing.T) Input {
+	t.Helper()
+	return statedRunInput(t, "opencode-rows.jsonl", adapter.Stated{Unit: "USD", Quantity: "0.00153317", Source: "opencode"})
+}
+
+func copilotInput(t *testing.T) Input {
+	t.Helper()
+	return statedRunInput(t, "copilot-rows.jsonl", adapter.Stated{Unit: "nano-AIU", Quantity: "0", Source: "copilot"})
+}
+
+// statedRunInput is the report on a rows file under testdata, beside the
+// figure its agent stated, with no budget.
+func statedRunInput(t *testing.T, rows string, stated adapter.Stated) Input {
+	t.Helper()
+	file, err := os.Open(filepath.Join("testdata", rows))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +161,7 @@ func ghAwInput(t *testing.T) Input {
 	}
 	input := realInput(t)
 	input.Ledger, input.Budget = ledger, nil
-	input.AgentStated = &adapter.Stated{Unit: adapter.UnitAICredits, Quantity: "7.47", Source: "gh-aw"}
+	input.AgentStated = &stated
 	return input
 }
 
@@ -270,6 +290,12 @@ func goldenStates(t *testing.T) map[string]Input {
 	credits := ghAwInput(t)
 	states["gh-aw-stated-credits"] = credits
 	states["gh-aw-stated-credits-withheld"] = withheld(credits)
+	openCode := openCodeInput(t)
+	states["opencode-stated-usd"] = openCode
+	states["opencode-stated-usd-withheld"] = withheld(openCode)
+	copilot := copilotInput(t)
+	states["copilot-stated-nano-aiu"] = copilot
+	states["copilot-stated-nano-aiu-withheld"] = withheld(copilot)
 
 	states[policyBudgetNoCap] = policyBudgetWithoutCap(t)
 

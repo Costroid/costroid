@@ -14,7 +14,7 @@ Line 3 of the rows file is not a valid row, so this report shows no figures. A p
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "rows_unreadable",

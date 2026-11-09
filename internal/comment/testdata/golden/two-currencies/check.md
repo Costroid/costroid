@@ -43,7 +43,7 @@ Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`.
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "reported",
   "agent_error": null,

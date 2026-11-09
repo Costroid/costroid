@@ -143,7 +143,7 @@ type windowedSession interface {
 
 // Agents are the names --agent takes: each agent, and a program that runs
 // Claude Code or Codex through its SDK.
-var Agents = []string{claudecode.Name, claudecode.SDKName, codex.Agent{}.Name(), codex.SDKName, opencode.Name}
+var Agents = []string{claudecode.Name, claudecode.SDKName, codex.Agent{}.Name(), codex.SDKName, opencode.Name, copilot.Name}
 
 // AgentNamed picks the adapter by its name, whatever the command is.
 func AgentNamed(name string) (adapter.Agent, error) {
@@ -158,6 +158,8 @@ func AgentNamed(name string) (adapter.Agent, error) {
 		return codex.SDKAgent{}, nil
 	case opencode.Name:
 		return opencode.Agent{}, nil
+	case copilot.Name:
+		return copilot.Agent{}, nil
 	}
 	return nil, fmt.Errorf("run: no agent named %q: --agent takes %s", name, strings.Join(Agents, ", "))
 }
@@ -189,7 +191,13 @@ func AgentFor(argv []string) (adapter.Agent, error) {
 	case "opencode":
 		return opencode.Agent{}, nil
 	}
-	return nil, fmt.Errorf("run: no adapter for %q: costroid runs claude and codex", filepath.Base(argv[0]))
+	return nil, fmt.Errorf("run: no adapter for %q: costroid runs %s; --agent names the one the command starts", filepath.Base(argv[0]), agentList())
+}
+
+// agentList names every agent in Agents as a sentence does: a, b and c.
+func agentList() string {
+	last := len(Agents) - 1
+	return strings.Join(Agents[:last], ", ") + " and " + Agents[last]
 }
 
 // launcher is a command that starts an agent's package or script.

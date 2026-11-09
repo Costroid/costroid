@@ -3,6 +3,7 @@ package copilot_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/adapter/copilot"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
@@ -44,9 +46,23 @@ sed "s/` + recordedSession + `/$session/g" "$FAKE_STREAM"
 // record written pause after the last.
 func runFake(t *testing.T, budget, pause string) (run.Result, []row) {
 	t.Helper()
+	result, rows, err := runFakeAs(t, "copilot", "", budget, pause)
+	if err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if result.Agent != "copilot" {
+		t.Fatalf("costroid run read the command as %s", result.Agent)
+	}
+	return result, rows
+}
+
+// runFakeAs runs the fake under the file name given, with --agent set to
+// agent unless it is empty.
+func runFakeAs(t *testing.T, name, agent, budget, pause string) (run.Result, []row, error) {
+	t.Helper()
 	dir := t.TempDir()
-	agent := filepath.Join(dir, "copilot")
-	if err := os.WriteFile(agent, []byte(fakeCopilot), 0o755); err != nil {
+	command := filepath.Join(dir, name)
+	if err := os.WriteFile(command, []byte(fakeCopilot), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for name, value := range map[string]string{
@@ -68,7 +84,8 @@ func runFake(t *testing.T, budget, pause string) (run.Result, []row) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	result, err := run.Run(ctx, run.Options{
-		Argv:    []string{agent, "-p", "a prompt"},
+		Agent:   agent,
+		Argv:    []string{command, "-p", "a prompt"},
 		Budget:  decimal.MustParse(budget),
 		Rows:    &rows,
 		Stdout:  &stdout,
@@ -77,12 +94,9 @@ func runFake(t *testing.T, budget, pause string) (run.Result, []row) {
 		Grace:   time.Second,
 	})
 	if err != nil {
-		t.Fatalf("the run failed: %v\n%s", err, stderr.String())
+		return result, nil, fmt.Errorf("%w\n%s", err, stderr.String())
 	}
-	if result.Agent != "copilot" {
-		t.Fatalf("costroid run read the command as %s", result.Agent)
-	}
-	return result, rowsOf(t, rows.Bytes())
+	return result, rowsOf(t, rows.Bytes()), nil
 }
 
 func absolute(t *testing.T, path string) string {
@@ -125,5 +139,38 @@ func TestCopilotRunHoldsTheBudget(t *testing.T) {
 		if r.Tags[focus.TagEnforcementGrade] != adapter.GradeWrapperWatchdog {
 			t.Errorf("a row reads the grade %q", r.Tags[focus.TagEnforcementGrade])
 		}
+	}
+}
+
+// TestAgentCopilotReachesTheAdapter runs the stand-in under a name that is
+// not copilot, as a wrapper script or a launcher would start Copilot CLI.
+// With --agent copilot the run reads it as Copilot CLI: the watch on the
+// named session, all three recorded requests at USD 0.00329423, and
+// Copilot's own figure, 0 nano-AI units. Without --agent the command's name
+// picks no adapter, and the error names copilot among the agents --agent
+// takes.
+func TestAgentCopilotReachesTheAdapter(t *testing.T) {
+	result, rows, err := runFakeAs(t, "copilot-wrapper", copilot.Name, "1", "0.05")
+	if err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if result.Agent != copilot.Name || result.Enforcement.Grade != adapter.GradeWrapperWatchdog {
+		t.Errorf("--agent copilot read the command as %q at %s", result.Agent, result.Enforcement.Grade)
+	}
+	if len(result.Report.Requests) != 3 || listTotal(t, rows).Cmp(decimal.MustParse("0.00329423")) != 0 {
+		t.Errorf("--agent copilot wrote %d requests at USD %s", len(result.Report.Requests), listTotal(t, rows))
+	}
+	if stated := result.Report.AgentStated; stated == nil || *stated != (adapter.Stated{Unit: copilot.UnitNanoAIU, Quantity: "0", Source: copilot.Name}) {
+		t.Errorf("--agent copilot states %+v", stated)
+	}
+	for _, r := range rows {
+		if r.Tags[focus.TagAgent] != copilot.Name {
+			t.Errorf("a row names the agent %q", r.Tags[focus.TagAgent])
+		}
+	}
+
+	_, _, err = runFakeAs(t, "copilot-wrapper", "", "1", "0.05")
+	if err == nil || !strings.Contains(err.Error(), `no adapter for "copilot-wrapper"`) || !strings.Contains(err.Error(), "opencode and copilot") {
+		t.Errorf("without --agent the run reads %v", err)
 	}
 }

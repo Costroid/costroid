@@ -14,7 +14,7 @@ This report shows no figures. Reason `reader_refused`: the reader refused the ag
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",

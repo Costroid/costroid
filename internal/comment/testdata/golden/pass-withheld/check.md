@@ -35,7 +35,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "success",
   "state": "reported",
   "agent_error": null,

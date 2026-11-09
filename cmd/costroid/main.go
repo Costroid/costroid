@@ -307,7 +307,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)
 	}
-	record.reason, record.agentError = result.Reason, result.AgentError
+	record.reason, record.agentError, record.agentStated = result.Reason, result.AgentError, result.Report.AgentStated
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		recordRunResult(stdout, stderr, record.failed(err))

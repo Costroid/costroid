@@ -33,9 +33,9 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.8 in
+	// schema names the result object's contract, result/v0.9 in
 	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.8"
+	schema = "costroid.result/0.9"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.

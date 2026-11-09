@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/adapter/copilot"
+	"github.com/Costroid/costroid/internal/adapter/ghaw"
+	"github.com/Costroid/costroid/internal/adapter/opencode"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 )
@@ -269,18 +272,20 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 
 // The versions before the one this release writes. A pull request whose
 // newest check a release that wrote one of them posted can still be approved,
-// so ParseResult reads them. 0.7 holds every field of the current version but
-// recorded, 0.6 holds no agent_stated either, and 0.5 holds none of
-// rows_sha256, rows_file_sha256 and lifetime as well.
+// so ParseResult reads them. 0.8 holds every field of the current version, and
+// an agent_stated from gh-aw alone. 0.7 holds no recorded either, 0.6 holds no
+// agent_stated, and 0.5 holds none of rows_sha256, rows_file_sha256 and
+// lifetime as well.
 const (
 	schemaV05 = "costroid.result/0.5"
 	schemaV06 = "costroid.result/0.6"
 	schemaV07 = "costroid.result/0.7"
 	schemaV08 = "costroid.result/0.8"
+	schemaV09 = "costroid.result/0.9"
 )
 
 // readSchemas are the versions ParseResult reads.
-var readSchemas = []string{schemaV05, schemaV06, schemaV07, schema}
+var readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schema}
 
 // blockV07 is a Block as costroid.result/0.7 holds it. Its field hides the
 // Block's field of the same name, which 0.7 does not hold, and stays nil, so
@@ -325,23 +330,48 @@ func (b Block) encode() (string, error) {
 	return string(encoded), nil
 }
 
-// statedUnits and statedSources are the closed lists of result/v0.7: the
-// units an agent's own figure is stated in and the agents that state one.
+// statedFigure is one entry of result/v0.9's closed list of the figures an
+// agent states about its own run: the agent, the one unit it states them in,
+// and the sentence the check and the comment state them in, apart from every
+// amount. The sentence names the agent and its unit, and never calls the
+// figure the run's cost.
+type statedFigure struct {
+	source, unit, sentence string
+}
+
 var (
-	statedUnits   = []string{adapter.UnitAICredits}
-	statedSources = []string{"gh-aw"}
-	// statedQuantity is result/v0.7's statedQuantity: every digit the agent
+	statedFigures = []statedFigure{
+		{ghaw.Name, adapter.UnitAICredits, "gh-aw stated %s AI credits for this run. Costroid does not convert credits."},
+		{opencode.Name, opencode.StatedUnit, "OpenCode stated USD %s for this run by its own prices, which Costroid never adds to its own figures."},
+		{copilot.Name, copilot.UnitNanoAIU, "Copilot CLI stated %s nano-AI units for this run, which Costroid never converts to dollars."},
+	}
+	// statedAddedIn09 are the agents whose figures result/v0.9 added.
+	statedAddedIn09 = []string{opencode.Name, copilot.Name}
+	// statedQuantity is result/v0.9's statedQuantity: every digit the agent
 	// wrote, as a decimal string.
 	statedQuantity = regexp.MustCompile(`^[0-9]{1,26}(\.[0-9]{1,32})?$`)
 )
 
-// KnownStated reports a figure whose unit, source and quantity result/v0.7
-// holds. Any other is dropped, so the object never states it.
-func KnownStated(stated adapter.Stated) bool {
-	return slices.Contains(statedUnits, stated.Unit) && slices.Contains(statedSources, stated.Source) && statedQuantity.MatchString(stated.Quantity)
+// statedEntry is the entry of statedFigures that holds the figure's agent and
+// unit together.
+func statedEntry(stated adapter.Stated) (statedFigure, bool) {
+	index := slices.IndexFunc(statedFigures, func(known statedFigure) bool {
+		return known.source == stated.Source && known.unit == stated.Unit
+	})
+	if index < 0 {
+		return statedFigure{}, false
+	}
+	return statedFigures[index], true
 }
 
-// agentStated is the agent's own figure when result/v0.7 holds it, nil
+// KnownStated reports a figure whose agent, unit and quantity result/v0.9
+// holds together. Any other is dropped, so the object never states it.
+func KnownStated(stated adapter.Stated) bool {
+	_, known := statedEntry(stated)
+	return known && statedQuantity.MatchString(stated.Quantity)
+}
+
+// agentStated is the agent's own figure when result/v0.9 holds it, nil
 // otherwise.
 func (i Input) agentStated() *adapter.Stated {
 	if i.AgentStated == nil || !KnownStated(*i.AgentStated) {
@@ -357,7 +387,8 @@ func (i Input) agentStatedLine(shown bool) string {
 	if stated == nil || !shown {
 		return ""
 	}
-	return fmt.Sprintf("%s stated %s AI credits for this run. Costroid does not convert credits.", stated.Source, stated.Quantity)
+	entry, _ := statedEntry(*stated)
+	return fmt.Sprintf(entry.sentence, stated.Quantity)
 }
 
 // ParseResult reads the fenced result object a check run's text carries. It
@@ -435,8 +466,8 @@ func newerValue(object string, block Block) (addedValue, bool) {
 }
 
 // addedValues lists the values the object holds that a version after 0.5
-// added: a top-level field, the run reason artifact_refused, and a rule, a
-// reason or a field of policy.results.
+// added: a top-level field, the run reason artifact_refused, an agent_stated
+// source, and a rule, a reason or a field of policy.results.
 func addedValues(object string, block Block) []addedValue {
 	var found []addedValue
 	var fields map[string]json.RawMessage
@@ -449,6 +480,9 @@ func addedValues(object string, block Block) []addedValue {
 	}
 	if block.RunReason == ArtifactRefused {
 		found = append(found, addedValue{"the run reason " + string(ArtifactRefused), schemaV06})
+	}
+	if block.AgentStated != nil && slices.Contains(statedAddedIn09, block.AgentStated.Source) {
+		found = append(found, addedValue{"the agent_stated source " + string(Clean(block.AgentStated.Source)), schemaV09})
 	}
 	if block.Policy == nil {
 		return found

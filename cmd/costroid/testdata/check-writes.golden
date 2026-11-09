@@ -43,7 +43,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -180,7 +180,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
@@ -327,7 +327,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "failure",
   "state": "reported",
   "agent_error": null,
@@ -463,7 +463,7 @@ This pull request comes from a fork, and the fork's own run wrote these rows. It
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
@@ -561,7 +561,7 @@ Reason: `fork_no_rows`. This pull request comes from a fork, and its workflow ru
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "rows_unreadable",
@@ -663,7 +663,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -764,7 +764,7 @@ Check run 1001 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1003,
   "conclusion": "neutral",
   "state": "reported",
@@ -900,7 +900,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -1001,7 +1001,7 @@ Check run 1001 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1003,
   "conclusion": "neutral",
   "state": "reported",
@@ -1102,7 +1102,7 @@ Check run 1003 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1004,
   "conclusion": "failure",
   "state": "reported",
@@ -1238,7 +1238,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",
@@ -1339,7 +1339,7 @@ Check run 1001 carries this report in full.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "neutral",
   "state": "reported",
@@ -1473,7 +1473,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
 -- text
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "check_run_id": 1001,
   "conclusion": "failure",
   "state": "reported",

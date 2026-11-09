@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.8/result.schema.json",
-  "title": "Costroid result object, version 0.8",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.9/result.schema.json",
+  "title": "Costroid result object, version 0.9",
   "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, the recorded run a report shows in place of the pull request's own, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.result/0.8"
+      "const": "costroid.result/0.9"
     },
     "check_run_id": {
       "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
@@ -1074,22 +1074,26 @@
       }
     },
     "agentStated": {
-      "description": "A figure the agent stated about its own run. gh-aw states its AI credits: the last ai_credits_total of the agent job's records and of the threat detection job's, added up in gh-aw's own unit.",
+      "description": "A figure the agent stated about its own run, in the one unit that agent states it in. gh-aw states its AI credits: the last ai_credits_total of the agent job's records and of the threat detection job's, added up in gh-aw's own unit. OpenCode states its own price for each step, part.cost, from its own price list, added up in USD. Copilot CLI states totalNanoAiu, in nano-AI units, as it wrote it, 0 included.",
       "type": "object",
       "properties": {
         "unit": {
-          "description": "The agent's own unit. AIC is gh-aw's AI credits.",
+          "description": "The agent's own unit. AIC is gh-aw's AI credits, USD is OpenCode's own price, and nano-AIU is Copilot CLI's nano-AI units.",
           "enum": [
-            "AIC"
+            "AIC",
+            "USD",
+            "nano-AIU"
           ]
         },
         "quantity": {
           "$ref": "#/$defs/statedQuantity"
         },
         "source": {
-          "description": "The agent that stated the figure.",
+          "description": "The agent that stated the figure. Each agent states it in one unit.",
           "enum": [
-            "gh-aw"
+            "gh-aw",
+            "opencode",
+            "copilot"
           ]
         }
       },
@@ -1098,7 +1102,42 @@
         "quantity",
         "source"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "gh-aw"
+            },
+            "unit": {
+              "const": "AIC"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "opencode"
+            },
+            "unit": {
+              "const": "USD"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "copilot"
+            },
+            "unit": {
+              "const": "nano-AIU"
+            }
+          }
+        }
+      ]
     },
     "statedQuantity": {
       "description": "A non-negative decimal string, every digit the agent wrote kept. Never a JSON number and never scientific notation.",

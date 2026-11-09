@@ -322,7 +322,7 @@ func TestForkFollowUpRefusesOutsideGitHubActions(t *testing.T) {
 
 // TestForkWithNoRowsYieldsForkNoRowsInTheMachineBlock reads the reason from the
 // check run's machine block, where an agent reads it, and holds the block to
-// result/v0.8.
+// result/v0.9.
 func TestForkWithNoRowsYieldsForkNoRowsInTheMachineBlock(t *testing.T) {
 	stub := followUpEnvironment(t, "stranger/widgets")
 	outputs, _ := stepFiles(t)

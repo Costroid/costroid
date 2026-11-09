@@ -14,7 +14,7 @@ No rows file reached this report, so it shows no figures. The agent's job log sa
 
 ```json
 {
-  "schema": "costroid.result/0.8",
+  "schema": "costroid.result/0.9",
   "conclusion": "neutral",
   "state": "rows_unreadable",
   "reason": "no_rows_file",
