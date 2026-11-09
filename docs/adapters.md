@@ -13,6 +13,7 @@ What each agent's stream carries, as recorded on November 1, 2026. The fixtures 
 | Codex       | `none`             | The rollout file could not be read: `--ephemeral`, a file whose shape the reader does not know, or a file that contradicts the stream. Nothing stops the run.  |
 | Copilot CLI | `wrapper-watchdog` | Costroid names a new session with `--session-id`, reads that session's file during the run, prices each request as its usage record lands and stops the process at the cap. Requests in flight can pass it. |
 | Copilot CLI | `none`             | The session file did not appear during the run, a line of it could not be read, or Copilot CLI ran another session than the one named. Nothing stops the run. |
+| OpenCode    | `wrapper-watchdog` | Costroid reads each `step_finish` line OpenCode prints, prices the run after each step and stops the process at the cap. A step in flight can pass it. [OpenCode](#opencode) says when the grade reads `none`. |
 
 A recorded run with a 0.001 USD cap stopped mid-turn at 0.0283136 USD, 65 milliseconds after its first request settled. The tool the agent had started kept running, because Codex gives tools their own process group. A `none` run says why on every row. The recorded runs behind this table are below.
 
@@ -210,6 +211,32 @@ What the recorded run showed, `testdata/1.0.103/byok/` (GitHub Actions run 42629
 - `--deny-tool='shell'` held. The model asked for Copilot CLI's `bash` tool once, and Copilot CLI refused it: the tool's `tool.execution_complete` reads `success` false, with the error code `denied` and the message "Permission to run this tool was denied due to the following rules: `shell`". The request that asked for the tool was still made and still counted. `shell` is the rule's name, as in `copilot --help`'s example `--deny-tool='shell(git push)'`; `bash` is the tool's. The raw run shows this; the fixture keeps no tool event's data.
 - The rows come to 0.00329423 USD at list, `measured`.
 
+## OpenCode
+
+`costroid run --agent opencode -- opencode run ...` reads the stream OpenCode prints under `--format json`, which Costroid adds when the command does not. Each step is one model request, and OpenCode prints its `step_finish` line when the request ends, with the step's tokens and its own price for them (`packages/opencode/src/session/processor.ts` at [v1.19.4](https://github.com/anomalyco/opencode/tree/v1.19.4), read 2026-11-09).
+
+| Canonical class         | `step_finish` field                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `input_uncached`        | `part.tokens.input`                                                                                    |
+| `cache_read`            | `part.tokens.cache.read`                                                                               |
+| `cache_write_5m`        | `part.tokens.cache.write` on Anthropic, with the tag `costroid/assumed_ttl`; `cache_write_30m` on OpenAI |
+| `output`                | `part.tokens.output` + `part.tokens.reasoning`                                                         |
+| `reasoning_output`      | `part.tokens.reasoning`                                                                                |
+
+OpenCode takes the cache reads and writes out of the provider's input, and the reasoning out of its output: "Always subtract cache tokens to get the non-cached input count" (`getUsage` in `packages/opencode/src/session/session.ts` at v1.19.4). It marks Anthropic's cache `{ type: "ephemeral" }` with no lifetime (`packages/opencode/src/provider/transform.ts`), which Anthropic writes for five minutes. A row's id is `<session>:<part id>`, and its context tier comes from the step's input, cache reads and cache writes together.
+
+The stream names no model. The model comes from `--model provider/model`, then from the `model` key of OpenCode's config, read in OpenCode's own order: the global directory, `OPENCODE_CONFIG`, each `opencode.json` and `opencode.jsonc` from the repository's root down, each `.opencode` directory, `OPENCODE_CONFIG_DIR`, then `OPENCODE_CONFIG_CONTENT`. An agent's own model in that config would replace it, so a run whose model came from the config says so. A run with no model, or a model on a provider the catalog does not price, is refused before OpenCode starts. Costroid prices `anthropic` and `openai`.
+
+Rows read `measured` when the provider's key variable is set, `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and `list_equivalent` otherwise. A sign-in stored by `opencode auth login` is not read. Costroid does not run `opencode --version`, so the rows carry no `costroid/agent_version`.
+
+OpenCode's `part.cost` is its own price for a step, from its own price list. Costroid adds the steps' costs as the agent's own figure for the run, in USD, and never puts it in a row. A run of OpenCode 1.19.4 on 2026-11-09, workflow run 42629412567, made two steps on `claude-haiku-5-5` with one read tool call. OpenCode stated USD 0.0013544 and 0.00017877, and the rows come to USD 0.00153317 at catalog 0.3.0's prices. `TestOpenCodeRecordedRunCostsWhatItStated` holds both figures.
+
+`costroid run` refuses `--continue`, `-c`, `--session` and `-s`, because a run counts only a session it starts. What the stream does not show:
+
+- A title. On a new session with no `--title`, OpenCode asks a model for the session's title in a request of its own (`ensureTitle` in `packages/opencode/src/session/prompt.ts`). The recorded run's log shows it, on `claude-haiku-5-5`. Its tokens reach no row, and the run says so. `--title` skips it, and the recipe passes one.
+- A subagent. The stream prints the parts of the run's own session alone (`packages/opencode/src/cli/cmd/run.ts`), and the `task` tool runs a subagent in a session of its own. Its steps reach no row and the watchdog cannot see them, so a run that called `task` reads `none` and counts the calls. The recipe denies `task`.
+- A step in flight. A run stopped inside a step loses that step's tokens, because OpenCode reports them when the step ends.
+
 ## claude-code-action
 
 `costroid ingest-run --execution-file F` reads the file the action names in its `execution_file` output: a JSON array of every SDK message, pretty-printed, at `$RUNNER_TEMP/claude-execution-output.json` ([`execution-file.ts`](https://github.com/anthropics/claude-code-action/blob/d535f5172dec02b204866b393d6b20b9b2aaf98d/base-action/src/execution-file.ts), read 2026-11-01). The messages are the ones `claude -p` streams, so one session reads both, and the last result's `modelUsage` is the run.
@@ -249,7 +276,7 @@ Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with
 2. Does `codex exec resume` repeat earlier spend on `turn.completed`? Yes. Does `OTEL_RESOURCE_ATTRIBUTES` reach Codex spans and metrics? Yes: `vcs.change.id` and `cicd.pipeline.run.id` appeared as resource attributes on traces, logs and metrics.
 3. Copilot's `inputTokens` overlap and `copilot --output-format json`: settled on 1.0.103. `inputTokens` holds the cache reads and writes, and the json stream carries no counts. [Copilot CLI](#copilot-cli) has the reading.
 4. Cursor's usage event grain and `cloudAgentId`: not settled. No Cursor run was in scope.
-5. OpenCode's `step_finish` on 1.19.5 and 2.2.5: not settled. No OpenCode run was in scope.
+5. OpenCode's `step_finish` on 1.19.4: settled, in [OpenCode](#opencode). No 2.x run was recorded.
 
 ## Price ids
 

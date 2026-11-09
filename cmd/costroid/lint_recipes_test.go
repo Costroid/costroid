@@ -25,7 +25,7 @@ func TestLintRecipesPassesTheShippedRecipes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "costroid: 13 files, 0 rejected lines") {
+	if !strings.Contains(stdout, "costroid: 14 files, 0 rejected lines") {
 		t.Fatalf("stdout: %s", stdout)
 	}
 }
@@ -114,7 +114,7 @@ func TestLintRecipesChecksTheMarketplace(t *testing.T) {
 	t.Run("this repository, as CI runs it", func(t *testing.T) {
 		t.Chdir(repositoryRoot)
 		code, stdout, stderr := execute(t, "lint-recipes", "recipes", "action/action.yml")
-		if code != 0 || !strings.Contains(stdout, "costroid: 14 files, 0 rejected lines") {
+		if code != 0 || !strings.Contains(stdout, "costroid: 15 files, 0 rejected lines") {
 			t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 	})
