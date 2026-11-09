@@ -172,6 +172,39 @@ What the runs showed:
 - The stream names no model and no request id. Without a rollout file, the model comes from `-m`, `--model`, `-c model=` or the top-level `model` key of `config.toml`, and otherwise reads `unknown` and prices at the fallback tier.
 - A `codex.sse_event` reported a `response.completed` of 2 input tokens before the first turn, from startup. It is in neither the turn total nor the rollout file.
 
+## Copilot CLI
+
+Copilot CLI's stream carries no token counts. The `result` line of `copilot -p --output-format json` names the session, and the session's file, `<COPILOT_HOME>/session-state/<session>/events.jsonl`, holds one `session.usage_record` per model request and one `session.shutdown` with each model's totals. `COPILOT_HOME` defaults to `~/.copilot`. Rows come from the usage records, one per request, with `costroid/cost_source` `agent_session_file`. The reader is pinned to the recorded release, 1.0.103, and a warning names any other. Neither `costroid run` nor `costroid ingest-run` reads Copilot CLI in this release.
+
+| Canonical class         | `session.usage_record` field                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `input_uncached`        | `inputTokens` − `cacheReadTokens` − `cacheWriteTokens`                                                              |
+| `cache_read`            | `cacheReadTokens`                                                                                                   |
+| `cache_write_5m`        | `cacheWriteTokens` on Anthropic, with `costroid/assumed_ttl`; `cache_write_1h` when `cachePolicyTtlSeconds` is 3600 |
+| `cache_write_30m`       | `cacheWriteTokens` on OpenAI, with `costroid/assumed_ttl`                                                           |
+| `output`                | `outputTokens`                                                                                                      |
+| `reasoning_output`      | `reasoningTokens`                                                                                                   |
+| `cached_input_reported` | `cacheReadTokens`                                                                                                   |
+
+The fields' meanings come from the session event types Copilot ships in `@github/copilot-sdk` 1.0.26, the release whose `copilotCliVersion` is 1.0.103, in `dist/generated/session-events.d.ts` (read 2026-11-09). They declare `session.shutdown` and the `assistant.usage` event, whose fields a usage record carries under `usage`. They declare neither `session.usage_record` itself nor `cachePolicyTtlSeconds`, and they do not say whether `inputTokens` holds the cache. The recording below does.
+
+The usage records' sums for each model must equal that model's `modelMetrics` in `session.shutdown`, field by field, and their number its `requests.count`. Any difference refuses the run with the model and the field, and writes no row. A session file with more than one `session.shutdown` was resumed, and is refused. The plan refuses `--resume`, `--continue`, `--session-id` and `--connect`, and a command without `-p`.
+
+Rows read `measured` when every usage record states `isByok` on a provider off the device: `byokKind` is not `local_managed` or `local_user`. A record that does not state `isByok` follows the provider variables: `COPILOT_PROVIDER_BASE_URL` with `COPILOT_PROVIDER_API_KEY`, `COPILOT_PROVIDER_API_KEY_COMMAND` or `COPILOT_PROVIDER_BEARER_TOKEN`. A request Copilot served on its own routing is priced at the list rate of the model's own provider, reads `list_equivalent`, and its row says so. A run with both reads `list_equivalent` with a warning. A request to a provider the catalog holds no sheet for writes no row, and a warning counts it.
+
+Copilot states two figures of its own: `totalNanoAiu`, in nano-AI units, and each model's `requests.cost`, which its types call a cost multiplier. Costroid states both as written on a warning line, and `totalNanoAiu` as the run's own figure in nano-AI units. It never converts them to dollars and never puts them in a row. On the user's own key both read 0, and every usage record's `aiCreditsStatus` reads `unavailable`, which Copilot's types define as "No AI-credit amount was reported for the observed calls. Numeric zero is not a zero-cost claim." The warning states the 0 and that definition.
+
+`codeChanges.filesModified`, in `session.shutdown` and on the `result` line, lists file paths. The reader never reads it, and the scrub drops it.
+
+The grade is `none`. Copilot CLI has no cap in tokens or dollars. Its `--max-ai-credits` caps its own credits, which read 0 on the recorded run on the user's own key.
+
+What the recorded run showed, `testdata/1.0.103/byok/` (GitHub Actions run 42629874786, 2026-11-09, `claude-haiku-5-5` on an Anthropic key, no GitHub sign-in):
+
+- `inputTokens` holds the request's cache reads and writes. The three requests read 21660 = 4 + 0 + 21656, 21764 = 2 + 21656 + 106 and 21960 = 2 + 21762 + 196, uncached plus read plus written. The session's 65384 input tokens are 8 uncached, 43418 read and 21958 written.
+- `--output-format json` printed no `assistant.usage` line. Its `model.call_finished` lines carry no counts, and Copilot's types say one stands for a logical dispatch, not an HTTP request.
+- The `result` line was printed 14 milliseconds before `session.shutdown` was written.
+- The rows come to 0.00329423 USD at list, `measured`.
+
 ## claude-code-action
 
 `costroid ingest-run --execution-file F` reads the file the action names in its `execution_file` output: a JSON array of every SDK message, pretty-printed, at `$RUNNER_TEMP/claude-execution-output.json` ([`execution-file.ts`](https://github.com/anthropics/claude-code-action/blob/d535f5172dec02b204866b393d6b20b9b2aaf98d/base-action/src/execution-file.ts), read 2026-11-01). The messages are the ones `claude -p` streams, so one session reads both, and the last result's `modelUsage` is the run.
@@ -209,7 +242,7 @@ Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with
 
 1. Does Claude Code's result `usage` carry `cache_creation`? Yes, for that result's last turn. Does `claude_code.api_request.output_tokens` equal the final `message_delta` count? Yes: 84, 60 and 124 on the three main-thread requests. The subagent's request has no `message_delta` on the stream, and its event equals the session file at 4.
 2. Does `codex exec resume` repeat earlier spend on `turn.completed`? Yes. Does `OTEL_RESOURCE_ATTRIBUTES` reach Codex spans and metrics? Yes: `vcs.change.id` and `cicd.pipeline.run.id` appeared as resource attributes on traces, logs and metrics.
-3. Copilot's `inputTokens` overlap and `copilot --output-format json`: not settled. No Copilot run was in scope.
+3. Copilot's `inputTokens` overlap and `copilot --output-format json`: settled on 1.0.103. `inputTokens` holds the cache reads and writes, and the json stream carries no counts. [Copilot CLI](#copilot-cli) has the reading.
 4. Cursor's usage event grain and `cloudAgentId`: not settled. No Cursor run was in scope.
 5. OpenCode's `step_finish` on 1.19.5 and 2.2.5: not settled. No OpenCode run was in scope.
 

@@ -115,6 +115,23 @@ var agents = []*agentEntry{
 		version:       agentVersion,
 		total:         codexTotal,
 	},
+
+	{
+		name:          agentCopilot,
+		title:         "Copilot CLI",
+		adapter:       "copilot",
+		stream:        "copilot -p with --output-format json",
+		homeVariable:  "COPILOT_HOME",
+		homeDefault:   ".copilot",
+		collect:       collectCopilot,
+		allowlist:     copilotAllowlist,
+		allowlistFile: "allowlist_copilot.go",
+		recognizes: func(line *value) bool {
+			return line.fieldText("type") == "session.start" && line.field("data").fieldText("producer") == "copilot-agent"
+		},
+		version: copilotVersion,
+		total:   copilotTotal,
+	},
 }
 
 // agentFor is the entry named name.
