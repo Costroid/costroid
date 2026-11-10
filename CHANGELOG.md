@@ -2,6 +2,13 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.20 (2026-11-10)
+
+### What you can now do
+
+- Know whether a run's repository is public: rows from `costroid run` and `ingest-run` carry `costroid/repo_visibility`, `public`, `private` or `internal`, read from the GitHub event's `repository.visibility` (else `repository.private`) or GitLab's `CI_PROJECT_VISIBILITY`. No network call is made for it, and when the CI system does not say, the tag is left out. `costroid serve` stores it. The row contracts `tags/v0.4` and `focus-row/v0.5` are published in [Costroid/costroid-schemas](https://github.com/Costroid/costroid-schemas).
+- `costroid lint` knows Copilot CLI and OpenCode by their command: a `costroid run -- copilot -p ...` or `costroid run -- opencode run ...` step with no `--agent` is checked as that agent, with the same rule `costroid run` uses to pick it.
+
 ## 1.0.0-alpha.19 (2026-11-09)
 
 ### Breaking changes
