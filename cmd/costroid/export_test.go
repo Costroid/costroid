@@ -53,12 +53,20 @@ type platformStub struct {
 	// verdicts answer GET /exports/{batch_id} in turn, each a status and a
 	// body. Once they run out, the batch has ingested.
 	verdicts []turn
+	// states holds, by version path, the contract GET /identity states
+	// there. A path it does not hold is not served.
+	states map[string]contract
+	// identityRefused, when set, answers every GET /identity in its place,
+	// and identityDrops closes the connection instead.
+	identityRefused *turn
+	identityDrops   bool
 
 	mu       sync.Mutex
 	exports  []*http.Request
 	bodies   [][]byte
 	audience []string
 	identity []string
+	verdict  []string
 	asked    int
 }
 
@@ -91,17 +99,39 @@ func quote(text string) string {
 	return string(data)
 }
 
+// speaksEvery states each version export sends by, under its own path, as
+// a platform that speaks them all does.
+func speaksEvery() map[string]contract {
+	states := map[string]contract{}
+	for _, version := range exportContracts {
+		states[version.path()] = version
+	}
+	return states
+}
+
 func newPlatformStub(t *testing.T, status int, body string) *platformStub {
 	t.Helper()
-	stub := &platformStub{status: status, body: body, header: http.Header{}}
+	stub := &platformStub{status: status, body: body, header: http.Header{}, states: speaksEvery()}
 	stub.server = httptest.NewTLSServer(http.HandlerFunc(stub.serve))
 	t.Cleanup(stub.server.Close)
 	return stub
 }
 
+// served splits a path under a version the stub serves into that version's
+// path and the rest.
+func (s *platformStub) served(path string) (string, string, bool) {
+	for prefix := range s.states {
+		if rest, found := strings.CutPrefix(path, prefix+"/"); found {
+			return prefix, "/" + rest, true
+		}
+	}
+	return "", "", false
+}
+
 func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	prefix, rest, served := s.served(r.URL.Path)
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/oidc":
 		if r.Header.Get("Authorization") != "Bearer "+testRequestToken {
@@ -110,10 +140,19 @@ func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.audience = append(s.audience, r.URL.Query().Get("audience"))
 		w.Write([]byte(`{"value":"` + testRunToken + `"}`))
-	case r.Method == http.MethodGet && r.URL.Path == integrationPath+"/identity":
+	case !served:
+		http.Error(w, "", http.StatusNotFound)
+	case r.Method == http.MethodGet && rest == "/identity" && s.identityDrops:
+		panic(http.ErrAbortHandler)
+	case r.Method == http.MethodGet && rest == "/identity" && s.identityRefused != nil:
+		s.identity = append(s.identity, r.URL.Path)
+		w.WriteHeader(s.identityRefused.status)
+		w.Write([]byte(s.identityRefused.body))
+	case r.Method == http.MethodGet && rest == "/identity":
 		s.identity = append(s.identity, r.Header.Get("Authorization"))
-		w.Write([]byte(`{"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"}}`))
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, integrationPath+"/exports/"):
+		stated, _ := json.Marshal(s.states[prefix])
+		w.Write([]byte(`{"contract":` + string(stated) + `,"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"}}`))
+	case r.Method == http.MethodPut && strings.HasPrefix(rest, "/exports/"):
 		body := new(bytes.Buffer)
 		body.ReadFrom(r.Body)
 		s.exports = append(s.exports, r)
@@ -123,7 +162,8 @@ func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(s.status)
 		w.Write([]byte(s.body))
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, integrationPath+"/exports/"):
+	case r.Method == http.MethodGet && strings.HasPrefix(rest, "/exports/"):
+		s.verdict = append(s.verdict, r.URL.Path)
 		answer := ingested(11, 0)
 		if s.asked < len(s.verdicts) {
 			answer = s.verdicts[s.asked]
@@ -159,6 +199,9 @@ func (s *platformStub) githubEnv() map[string]string {
 	}
 }
 
+// export runs export against the stub. stderr comes back without its first
+// line when that line names the contract version the batch went by, which
+// TestExportSendsTheContractThePlatformStates holds.
 func (s *platformStub) export(t *testing.T, env map[string]string, extra ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -169,7 +212,22 @@ func (s *platformStub) export(t *testing.T, env map[string]string, extra ...stri
 			t.Fatalf("the output holds a token: %s%s", stdout.String(), stderr.String())
 		}
 	}
-	return code, stdout.String(), stderr.String()
+	return code, stdout.String(), withoutVersionLine(stderr.String())
+}
+
+// withoutVersionLine removes the line export prints once it has read the
+// contract version the platform states.
+func withoutVersionLine(stderr string) string {
+	for _, version := range exportContracts {
+		if rest, found := strings.CutPrefix(stderr, versionLine(version)); found {
+			return rest
+		}
+	}
+	return stderr
+}
+
+func versionLine(version contract) string {
+	return "costroid: Costroid Platform states integration/v" + version.Version + ", so export sends the batch by it\n"
 }
 
 func TestExportSendsTheContractHeaders(t *testing.T) {
@@ -211,6 +269,120 @@ func TestExportSendsTheContractHeaders(t *testing.T) {
 	}
 }
 
+// Export reads GET /identity under each version it sends by, newest first,
+// and sends the batch and asks for its verdict under the first version whose
+// answer states it, naming that version on stderr. A platform that states
+// neither gets nothing.
+func TestExportSendsTheContractThePlatformStates(t *testing.T) {
+	v03, v02 := exportContracts[0], exportContracts[1]
+	if v03.Version != "0.3" || v02.Version != "0.2" {
+		t.Fatalf("export sends by %v", exportContracts)
+	}
+	for name, check := range map[string]struct {
+		states map[string]contract
+		want   contract
+		asked  int
+	}{
+		"a platform that states v0.3":                       {speaksEvery(), v03, 1},
+		"a platform that states only v0.2":                  {map[string]contract{v02.path(): v02}, v02, 1},
+		"a platform whose v0.3 path states another version": {map[string]contract{v03.path(): v02, v02.path(): v02}, v02, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newPlatformStub(t, http.StatusAccepted, `{"batch_id":"903114-16873409921-1","status":"accepted"}`)
+			stub.states = check.states
+			var stdout, stderr bytes.Buffer
+			env := stub.githubEnv()
+			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+			if code != 0 || len(stub.exports) != 1 {
+				t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr.String())
+			}
+			if stderr.String() != versionLine(check.want) {
+				t.Errorf("stderr %q, want %q", stderr.String(), versionLine(check.want))
+			}
+			batch := check.want.path() + "/exports/903114-16873409921-1"
+			if path := stub.exports[0].URL.Path; path != batch {
+				t.Errorf("the batch went to %s, want %s", path, batch)
+			}
+			if len(stub.verdict) != 1 || stub.verdict[0] != batch {
+				t.Errorf("the verdict was asked at %q, want %s", stub.verdict, batch)
+			}
+			if len(stub.identity) != check.asked {
+				t.Errorf("GET /identity answered %d times, want %d", len(stub.identity), check.asked)
+			}
+			if len(stub.audience) != 1 || stub.audience[0] != rowsAudience+testTenant+"/rows" {
+				t.Errorf("the run token's audience: %q", stub.audience)
+			}
+		})
+	}
+
+	stub := newPlatformStub(t, http.StatusAccepted, `{}`)
+	stub.states = map[string]contract{v02.path(): {Version: "0.1", TagSet: "tags/v0.1", FocusRow: "focus-row/v0.1"}}
+	code, _, stderr := stub.export(t, stub.githubEnv())
+	if code != exitFailure || len(stub.exports) != 0 || stderr != "costroid: the identity answer of Costroid Platform under /api/integration/v0.2 does not state integration/v0.2\n" {
+		t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
+	}
+}
+
+// Outside GitHub Actions a token without identity:read sent rows before
+// export read the contract. A 401 or 403 on GET /identity sends by v0.2 as
+// then, with one warning, and never fails the export. On GitHub Actions the
+// run token needs the tenant, so the refusal still fails it, and a network
+// failure fails it anywhere.
+func TestExportFallsBackToV02WhenIdentityIsRefused(t *testing.T) {
+	outside := map[string]string{platformTokenVariable: testIntegrationToken}
+	for name, refused := range map[string]turn{
+		"403 AUTH_TOKEN_SCOPE":   {http.StatusForbidden, `{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`},
+		"401 AUTH_TOKEN_INVALID": {http.StatusUnauthorized, `{"error":{"code":"AUTH_TOKEN_INVALID","message":"x"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newPlatformStub(t, http.StatusAccepted, `{"batch_id":"nightly-2026-11-07","status":"accepted"}`)
+			stub.identityRefused = &refused
+			var stdout, stderr bytes.Buffer
+			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation, "--batch-id", "nightly-2026-11-07"}
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return outside[name] }, testPace, &stdout, &stderr)
+			if code != 0 || len(stub.exports) != 1 {
+				t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr.String())
+			}
+			batch := contractV02.path() + "/exports/nightly-2026-11-07"
+			if path := stub.exports[0].URL.Path; path != batch {
+				t.Errorf("the batch went to %s, want %s", path, batch)
+			}
+			if len(stub.verdict) != 1 || stub.verdict[0] != batch {
+				t.Errorf("the verdict was asked at %q, want %s", stub.verdict, batch)
+			}
+			if want := []string{contractV03.path() + "/identity", contractV02.path() + "/identity"}; !slices.Equal(stub.identity, want) {
+				t.Errorf("GET /identity was asked at %q, want %q", stub.identity, want)
+			}
+			want := "costroid: warning: Costroid Platform refused the identity request: " + name + ", so export could not read the platform's contract and sends the batch by integration/v0.2, as it did before. Give the token identity:read to send by the newest version\n"
+			if stderr.String() != want {
+				t.Errorf("stderr %q, want %q", stderr.String(), want)
+			}
+			if !strings.Contains(stdout.String(), "costroid: batch nightly-2026-11-07 ingested, 11 rows\n") {
+				t.Errorf("stdout %q", stdout.String())
+			}
+		})
+	}
+
+	t.Run("on GitHub Actions the refusal fails the export", func(t *testing.T) {
+		stub := newPlatformStub(t, http.StatusAccepted, `{}`)
+		stub.identityRefused = &turn{http.StatusForbidden, `{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`}
+		code, _, stderr := stub.export(t, stub.githubEnv())
+		if code != exitRejected || len(stub.exports) != 0 || stderr != "costroid: Costroid Platform refused the identity request: 403 AUTH_TOKEN_SCOPE\n" {
+			t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
+		}
+	})
+
+	t.Run("a network failure is no refusal and fails the export", func(t *testing.T) {
+		stub := newPlatformStub(t, http.StatusAccepted, `{}`)
+		stub.identityDrops = true
+		code, _, stderr := stub.export(t, outside, "--batch-id", "nightly-2026-11-07")
+		if code != exitFailure || len(stub.exports) != 0 || !strings.HasPrefix(stderr, "costroid: send the identity request to Costroid Platform: ") {
+			t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
+		}
+	})
+}
+
 // exampleWithWindowedUnverified is the schemas' CSV example as export sends
 // it from the run the rows name: byte for byte, but for the Tags cells of the
 // two windowed rows, which read unverified and unattributed in their place.
@@ -231,7 +403,7 @@ func exampleWithWindowedUnverified(t *testing.T) []byte {
 func TestExportOutsideGitHubSendsNoRunToken(t *testing.T) {
 	stub := newPlatformStub(t, http.StatusOK, `{}`)
 	code, stdout, stderr := stub.export(t, map[string]string{platformTokenVariable: testIntegrationToken}, "--batch-id", "nightly-2026-11-07")
-	if code != 0 || len(stub.exports) != 1 || len(stub.identity) != 0 || len(stub.audience) != 0 {
+	if code != 0 || len(stub.exports) != 1 || len(stub.identity) != 1 || len(stub.audience) != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	if got := stub.exports[0].Header.Values("Costroid-Run-Token"); len(got) != 0 {
@@ -304,7 +476,7 @@ func TestExportBatchIDFromRun(t *testing.T) {
 	}
 	var paths []string
 	for _, request := range stub.exports {
-		paths = append(paths, strings.TrimPrefix(request.URL.Path, integrationPath+"/exports/"))
+		paths = append(paths, strings.TrimPrefix(request.URL.Path, exportContracts[0].path()+"/exports/"))
 	}
 	if want := "903114-16873409921-1 903114-16873409921-2 chosen.by-the_sender"; strings.Join(paths, " ") != want {
 		t.Errorf("batch ids %q, want %s", paths, want)
@@ -577,7 +749,7 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 			env := stub.githubEnv()
 			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
 			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, pace, &stdout, &stderr)
-			if code != check.code || stderr.String() != check.stderr {
+			if code != check.code || withoutVersionLine(stderr.String()) != check.stderr {
 				t.Fatalf("exit %d, stderr %q", code, stderr.String())
 			}
 			for _, line := range check.stdout {
@@ -632,7 +804,7 @@ func TestExportWarnsWhenNotBound(t *testing.T) {
 // 127.0.0.1, as the end-to-end harness serves it, and refuses plain http to
 // any other host, localhost included.
 func TestExportAcceptsLoopbackHTTP(t *testing.T) {
-	stub := &platformStub{status: http.StatusAccepted, body: `{"status":"accepted"}`, header: http.Header{}}
+	stub := &platformStub{status: http.StatusAccepted, body: `{"status":"accepted"}`, header: http.Header{}, states: speaksEvery()}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
 	t.Cleanup(stub.server.Close)
 	if !strings.HasPrefix(stub.server.URL, "http://127.0.0.1:") {
