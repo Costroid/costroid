@@ -56,6 +56,10 @@ type platformStub struct {
 	// states holds, by version path, the contract GET /identity states
 	// there. A path it does not hold is not served.
 	states map[string]contract
+	// identityRefused, when set, answers every GET /identity in its place,
+	// and identityDrops closes the connection instead.
+	identityRefused *turn
+	identityDrops   bool
 
 	mu       sync.Mutex
 	exports  []*http.Request
@@ -138,6 +142,12 @@ func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"value":"` + testRunToken + `"}`))
 	case !served:
 		http.Error(w, "", http.StatusNotFound)
+	case r.Method == http.MethodGet && rest == "/identity" && s.identityDrops:
+		panic(http.ErrAbortHandler)
+	case r.Method == http.MethodGet && rest == "/identity" && s.identityRefused != nil:
+		s.identity = append(s.identity, r.URL.Path)
+		w.WriteHeader(s.identityRefused.status)
+		w.Write([]byte(s.identityRefused.body))
 	case r.Method == http.MethodGet && rest == "/identity":
 		s.identity = append(s.identity, r.Header.Get("Authorization"))
 		stated, _ := json.Marshal(s.states[prefix])
@@ -312,6 +322,65 @@ func TestExportSendsTheContractThePlatformStates(t *testing.T) {
 	if code != exitFailure || len(stub.exports) != 0 || stderr != "costroid: the identity answer of Costroid Platform under /api/integration/v0.2 does not state integration/v0.2\n" {
 		t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
 	}
+}
+
+// Outside GitHub Actions a token without identity:read sent rows before
+// export read the contract. A 401 or 403 on GET /identity sends by v0.2 as
+// then, with one warning, and never fails the export. On GitHub Actions the
+// run token needs the tenant, so the refusal still fails it, and a network
+// failure fails it anywhere.
+func TestExportFallsBackToV02WhenIdentityIsRefused(t *testing.T) {
+	outside := map[string]string{platformTokenVariable: testIntegrationToken}
+	for name, refused := range map[string]turn{
+		"403 AUTH_TOKEN_SCOPE":   {http.StatusForbidden, `{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`},
+		"401 AUTH_TOKEN_INVALID": {http.StatusUnauthorized, `{"error":{"code":"AUTH_TOKEN_INVALID","message":"x"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newPlatformStub(t, http.StatusAccepted, `{"batch_id":"nightly-2026-11-07","status":"accepted"}`)
+			stub.identityRefused = &refused
+			var stdout, stderr bytes.Buffer
+			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation, "--batch-id", "nightly-2026-11-07"}
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return outside[name] }, testPace, &stdout, &stderr)
+			if code != 0 || len(stub.exports) != 1 {
+				t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr.String())
+			}
+			batch := contractV02.path() + "/exports/nightly-2026-11-07"
+			if path := stub.exports[0].URL.Path; path != batch {
+				t.Errorf("the batch went to %s, want %s", path, batch)
+			}
+			if len(stub.verdict) != 1 || stub.verdict[0] != batch {
+				t.Errorf("the verdict was asked at %q, want %s", stub.verdict, batch)
+			}
+			if want := []string{contractV03.path() + "/identity", contractV02.path() + "/identity"}; !slices.Equal(stub.identity, want) {
+				t.Errorf("GET /identity was asked at %q, want %q", stub.identity, want)
+			}
+			want := "costroid: warning: Costroid Platform refused the identity request: " + name + ", so export could not read the platform's contract and sends the batch by integration/v0.2, as it did before. Give the token identity:read to send by the newest version\n"
+			if stderr.String() != want {
+				t.Errorf("stderr %q, want %q", stderr.String(), want)
+			}
+			if !strings.Contains(stdout.String(), "costroid: batch nightly-2026-11-07 ingested, 11 rows\n") {
+				t.Errorf("stdout %q", stdout.String())
+			}
+		})
+	}
+
+	t.Run("on GitHub Actions the refusal fails the export", func(t *testing.T) {
+		stub := newPlatformStub(t, http.StatusAccepted, `{}`)
+		stub.identityRefused = &turn{http.StatusForbidden, `{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`}
+		code, _, stderr := stub.export(t, stub.githubEnv())
+		if code != exitRejected || len(stub.exports) != 0 || stderr != "costroid: Costroid Platform refused the identity request: 403 AUTH_TOKEN_SCOPE\n" {
+			t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
+		}
+	})
+
+	t.Run("a network failure is no refusal and fails the export", func(t *testing.T) {
+		stub := newPlatformStub(t, http.StatusAccepted, `{}`)
+		stub.identityDrops = true
+		code, _, stderr := stub.export(t, outside, "--batch-id", "nightly-2026-11-07")
+		if code != exitFailure || len(stub.exports) != 0 || !strings.HasPrefix(stderr, "costroid: send the identity request to Costroid Platform: ") {
+			t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
+		}
+	})
 }
 
 // exampleWithWindowedUnverified is the schemas' CSV example as export sends

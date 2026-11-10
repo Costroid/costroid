@@ -67,13 +67,16 @@ func (c contract) path() string {
 	return "/api/integration/v" + c.Version
 }
 
-// exportContracts are the versions export sends by, newest first. Version
-// 0.3 is 0.2 with rows of focus-row/v0.5 and tags of tags/v0.4, which carry
-// the tags a caller names and the repository's visibility.
-var exportContracts = []contract{
-	{Version: "0.3", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"},
-	{Version: "0.2", TagSet: "tags/v0.2", FocusRow: "focus-row/v0.3"},
-}
+// Version 0.3 is 0.2 with rows of focus-row/v0.5 and tags of tags/v0.4, which
+// carry the tags a caller names and the repository's visibility. Version 0.2
+// is what export sent before it read the platform's contract, so it is also
+// what export sends when the token may not read GET /identity.
+var (
+	contractV03 = contract{Version: "0.3", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
+	contractV02 = contract{Version: "0.2", TagSet: "tags/v0.2", FocusRow: "focus-row/v0.3"}
+	// exportContracts are the versions export sends by, newest first.
+	exportContracts = []contract{contractV03, contractV02}
+)
 
 // The patterns are integration/v0.2's, and version 0.3 keeps them.
 var (
@@ -100,8 +103,9 @@ const exportHelp = `Usage:
 export sends a rows file to Costroid Platform as one batch of CSV, under the
 integration token in COSTROID_PLATFORM_TOKEN. It reads GET /identity first and
 sends by integration/v0.3, or by v0.2 to a platform that states no later
-version, and names the version on standard error, so the token needs
-identity:read beside rows:write. --platform-url is the platform's
+version, and names the version on standard error. Outside GitHub Actions a
+token without identity:read still sends, by v0.2, with a warning.
+--platform-url is the platform's
 https origin, or an http one on a loopback address such as
 http://127.0.0.1:8787. --installation-id names the installation the rows came
 through: github:<id>, github-owner:<id> or gitlab-namespace:<id>. A bare
@@ -111,7 +115,7 @@ reads it.
 On GitHub Actions the batch id is the repository id, the run id and the run
 attempt, joined by hyphens, so sending a run's rows again restates its batch.
 The job's OIDC token rides with the batch and names the run. That needs
-id-token: write on the job.
+id-token: write on the job, and identity:read beside rows:write on the token.
 A row that names this run in GITHUB_RUN_ID and this repository in
 GITHUB_REPOSITORY goes as token_verified, and every other row as unverified.
 Elsewhere --batch-id names the batch, no run token is sent, and every row goes
@@ -184,6 +188,11 @@ func (r *refusal) Error() string {
 // a quota refused them, not anything in them.
 func (r *refusal) later() bool {
 	return r.status == http.StatusPaymentRequired || r.status == http.StatusTooManyRequests
+}
+
+// unauthorized reports a request refused for the token: 401 or 403.
+func (r *refusal) unauthorized() bool {
+	return r.status == http.StatusUnauthorized || r.status == http.StatusForbidden
 }
 
 // unbound reports a batch refused because the tenant holds no binding of its
@@ -483,11 +492,10 @@ func sendBatch(ctx context.Context, flags exportFlags, target *platform, getenv 
 	if err != nil {
 		return sentBatch{}, err
 	}
-	stated, tenant, err := target.statedContract(ctx)
+	tenant, err := target.contractFor(ctx, getenv, stderr)
 	if err != nil {
 		return sentBatch{}, err
 	}
-	fmt.Fprintf(stderr, "costroid: Costroid Platform states integration/v%s, so export sends the batch by it\n", stated.Version)
 	runToken, err := target.runToken(ctx, getenv, tenant)
 	if err != nil {
 		return sentBatch{}, err
@@ -571,6 +579,28 @@ func (p platform) runToken(ctx context.Context, getenv func(string) string, tena
 		return "", fmt.Errorf("no run token: %w", err)
 	}
 	return token, nil
+}
+
+// contractFor sets p.base to the version export sends by, says which on
+// stderr, and returns the token's tenant. Outside GitHub Actions a token
+// without identity:read sent rows before export read the contract, so a
+// 401 or 403 on GET /identity sends by integration/v0.2, as then, with a
+// warning and no tenant. On GitHub Actions the run token needs the tenant,
+// and any failure to read it, or a network failure anywhere, fails the export.
+func (p *platform) contractFor(ctx context.Context, getenv func(string) string, stderr io.Writer) (string, error) {
+	stated, tenant, err := p.statedContract(ctx)
+	var refused *refusal
+	switch {
+	case err == nil:
+		fmt.Fprintf(stderr, "costroid: Costroid Platform states integration/v%s, so export sends the batch by it\n", stated.Version)
+		return tenant, nil
+	case getenv("GITHUB_ACTIONS") != "true" && errors.As(err, &refused) && refused.unauthorized():
+		p.base = p.origin + contractV02.path()
+		fmt.Fprintf(stderr, "costroid: warning: %v, so export could not read the platform's contract and sends the batch by integration/v%s, as it did before. Give the token identity:read to send by the newest version\n", err, contractV02.Version)
+		return "", nil
+	default:
+		return "", err
+	}
 }
 
 // statedContract reads GET /identity under each version export sends by,
