@@ -10,6 +10,8 @@ The workflow below is a review workflow as a team might already have it, with th
 2. Add the `read` step after your Claude step, in the same job. It reads the run's `execution_file` and keeps the rows as an artifact.
 3. Add the `report` job. Its `needs:` names your job, here `review`. It posts the check and the comment.
 
+The `OTEL_RESOURCE_ATTRIBUTES` line on the Claude step is optional, and `init` does not write it. It gives Claude Code's own telemetry the pull request's join keys, the ones `costroid run` sets for the agents it starts. [`docs/adapters.md`](adapters.md#join-attributes) says what each value is. Without it, `costroid lint` prints a `join-attributes` note.
+
 ```yaml
 name: review
 
@@ -32,6 +34,8 @@ jobs:
       - name: Review with Claude
         id: claude
         uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
+        env:
+          OTEL_RESOURCE_ATTRIBUTES: cicd.pipeline.run.id=${{ github.run_id }},cicd.pipeline.task.run.id=${{ github.job }},vcs.change.id=${{ github.event.pull_request.number }},vcs.ref.base.revision=${{ github.event.pull_request.base.sha }},vcs.ref.head.revision=${{ github.event.pull_request.head.sha }},vcs.repository.url.full=${{ github.server_url }}/${{ github.repository }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
@@ -126,6 +130,8 @@ Block 2 reads the run's cap from the result object the `read` stage wrote, so it
 ```
 
 Block 2 is the `report` job above. `openai/codex-action` holds no cap Costroid can read, so the comment's grade reads `none`. The action takes only an API key, so the rows read `measured`.
+
+The optional `OTEL_RESOURCE_ATTRIBUTES` line goes on your Codex step in the same way, under its `env`.
 
 ## Which events report
 

@@ -382,6 +382,9 @@ func (l *linter) agentJob(root *yaml.Node, job entry, agent string, step *yaml.N
 		minimum: minimum,
 		action:  costroidStage(step) != "",
 	}, gitHubForbidden)
+	gitHubJoinAttributes(root, job.value, func(step *yaml.Node, text string) {
+		l.add(step, RuleJoinAttributes, "%s", text)
+	})
 	l.agentAdminKey(root, job)
 	l.agentCheckout(job)
 }

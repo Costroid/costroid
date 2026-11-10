@@ -62,6 +62,9 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         env:
+          # The pull request's join keys, with the values costroid run gives an
+          # agent it starts, so the agent's own telemetry names the pull request.
+          OTEL_RESOURCE_ATTRIBUTES: cicd.pipeline.run.id=${{ github.run_id }},cicd.pipeline.task.run.id=${{ github.job }},vcs.change.id=${{ github.event.pull_request.number }},vcs.ref.base.revision=${{ github.event.pull_request.base.sha }},vcs.ref.head.revision=${{ github.event.pull_request.head.sha }},vcs.repository.url.full=${{ github.server_url }}/${{ github.repository }}
           OTEL_LOG_USER_PROMPTS: "0"
           OTEL_LOG_ASSISTANT_RESPONSES: "0"
           OTEL_LOG_TOOL_DETAILS: "0"
