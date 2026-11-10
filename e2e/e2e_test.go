@@ -40,6 +40,8 @@ const (
 
 	owner      = "github.com:acme"
 	repository = "github.com/acme/widgets"
+	// visibility is what the job's event file states about the repository.
+	visibility = "private"
 	pull       = "7"
 	head       = "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"
 	base       = "1111111111111111111111111111111111111111"
@@ -210,7 +212,7 @@ func newWorkspace(t *testing.T) *workspace {
 	w.copy(filepath.Join(fixtures, "session.jsonl"), filepath.Join(project, session+".jsonl"))
 	w.copy(filepath.Join(fixtures, "subagents", "agent-1.jsonl"), filepath.Join(project, session, "subagents", "agent-1.jsonl"))
 	event := filepath.Join(directory, "event.json")
-	w.write(event, fmt.Sprintf(`{"pull_request":{"number":%s,"head":{"sha":%q},"base":{"sha":%q,"ref":"main"}}}`, pull, head, base), 0o644)
+	w.write(event, fmt.Sprintf(`{"pull_request":{"number":%s,"head":{"sha":%q},"base":{"sha":%q,"ref":"main"}},"repository":{"visibility":%q,"private":true}}`, pull, head, base, visibility), 0o644)
 	w.env = append(os.Environ(),
 		"CLAUDE_CONFIG_DIR="+config, "GITHUB_ACTIONS=true", "GITHUB_SERVER_URL=https://github.com",
 		"GITHUB_REPOSITORY=acme/widgets", "GITHUB_RUN_ID="+runID, "GITHUB_JOB=agent", "GITHUB_SHA="+merge,
@@ -276,6 +278,7 @@ func TestThePathFromARecordedRunToTheCommentHoldsOneFigure(t *testing.T) {
 
 	runAgent(t, job)
 	sendRows(t, services, key, job)
+	readStoredVisibility(t, services)
 	readView(t, services, key)
 	postReport(t, job)
 	reconcileRows(t, job)
@@ -321,6 +324,7 @@ func runAgent(t *testing.T, job *workspace) {
 	for tag, want := range map[string]string{
 		"costroid/repo": repository, "costroid/pr": pull, "costroid/commit_sha": head, "costroid/workflow_run_id": runID,
 		"costroid/run_identity": "unverified", "costroid/attribution_grade": "unattributed",
+		"costroid/repo_visibility": visibility,
 	} {
 		if first.Tags[tag] != want {
 			t.Errorf("%s reads %q, want %q", tag, first.Tags[tag], want)
@@ -346,6 +350,21 @@ func sendRows(t *testing.T, services *stack, key string, job *workspace) {
 	}
 	if answer.Accepted != recordedRows {
 		t.Errorf("accepted %d rows, want %d: %s", answer.Accepted, recordedRows, body)
+	}
+}
+
+// readStoredVisibility reads costroid/repo_visibility back from every row the
+// service stored, in the database itself.
+func readStoredVisibility(t *testing.T, services *stack) {
+	t.Helper()
+	var answer bytes.Buffer
+	query := `SELECT document->'Tags'->>'costroid/repo_visibility', count(*) FROM focus_rows GROUP BY 1`
+	if out, err := services.docker(&answer, "exec", "--no-TTY", "postgres", "psql", "--username=postgres", "--dbname=costroid",
+		"--no-align", "--tuples-only", "--field-separator=,", "--command", query); err != nil {
+		t.Fatalf("psql: %v\n%s", err, out)
+	}
+	if got, want := strings.TrimSpace(answer.String()), fmt.Sprintf("%s,%d", visibility, recordedRows); got != want {
+		t.Errorf("stored rows by costroid/repo_visibility read %q, want %q", got, want)
 	}
 }
 
