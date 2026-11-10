@@ -417,6 +417,12 @@ func (f rowFields) applyTags(c *charge, tags map[string]string, drops map[string
 	c.weakJoin = tags[focus.TagAttributionGrade] == gradeWindowed
 	c.session = optionalTag(tags[focus.TagSessionID], sessionTag, drops)
 	c.agentVersion = optionalTag(tags[focus.TagAgentVersion], versionTag, drops)
+	if visibility, stated := tags[focus.TagRepoVisibility]; stated {
+		if err := focus.CheckRepoVisibility(visibility); err != nil {
+			return invalidRow(f.line, focus.TagRepoVisibility+" "+err.Error())
+		}
+		c.visibility = visibility
+	}
 	return f.namedTags(c, tags)
 }
 
@@ -467,7 +473,7 @@ var definedTags = columnSet(
 	"costroid/repo", "costroid/pr", "costroid/commit_sha", "costroid/workflow_run_id", focus.TagSessionID,
 	focus.TagAgent, focus.TagAgentVersion, focus.TagModel, focus.TagCostSource, focus.TagCostBasis,
 	focus.TagAttributionGrade, focus.TagEnforcementGrade, focus.TagRunIdentity, focus.TagAssumedTTL,
-	focus.TagWorkItem, focus.TagArm, focus.TagTeam,
+	focus.TagWorkItem, focus.TagArm, focus.TagTeam, focus.TagRepoVisibility,
 )
 
 func (f rowFields) readOvershoot(c *charge) error {

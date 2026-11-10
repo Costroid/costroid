@@ -85,6 +85,9 @@ type charge struct {
 	assumedTTL string
 	// named holds the tags a caller names, by tag.
 	named map[string]string
+	// visibility is costroid/repo_visibility as the sender stated it, empty
+	// when it stated none.
+	visibility string
 
 	// Join keys as the sender stated them. Empty means not stated.
 	repo, pr, sha, run string
@@ -303,13 +306,14 @@ func tagsOf(c *charge, joined joinResult) map[string]string {
 		focus.TagRunIdentity:      joined.identity,
 	}
 	for key, value := range map[string]string{
-		store.TagRepo:          joined.repo,
-		store.TagPR:            joined.pr,
-		store.TagCommitSHA:     joined.sha,
-		store.TagWorkflowRunID: joined.run,
-		focus.TagSessionID:     c.session,
-		focus.TagAgentVersion:  c.agentVersion,
-		focus.TagAssumedTTL:    c.assumedTTL,
+		store.TagRepo:           joined.repo,
+		store.TagPR:             joined.pr,
+		store.TagCommitSHA:      joined.sha,
+		store.TagWorkflowRunID:  joined.run,
+		focus.TagSessionID:      c.session,
+		focus.TagAgentVersion:   c.agentVersion,
+		focus.TagAssumedTTL:     c.assumedTTL,
+		focus.TagRepoVisibility: c.visibility,
 	} {
 		if value != "" {
 			tags[key] = value

@@ -59,4 +59,6 @@ The tag is left out, never guessed, when:
 
 From `repository.private` alone, Costroid writes `public` or `private`, never `internal`.
 
+The ledger that `costroid serve` hosts stores the tag with the row. A row whose value is not one of the three is refused with 422 `ROW_INVALID`, and the refusal never repeats the value.
+
 The sources: GitHub's [webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads) for the `repository` object in an event, its [variables reference](https://docs.github.com/en/actions/reference/workflows-and-actions/variables) for `GITHUB_EVENT_PATH`, and GitLab's [predefined CI/CD variables](https://docs.gitlab.com/ci/variables/predefined_variables/) for `CI_PROJECT_VISIBILITY`. None of the three pages was re-read on 2026-11-10, so what they state about these fields is unverified here.
