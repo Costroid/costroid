@@ -277,6 +277,8 @@ env:
 
 None is a secret, and none comes from the pull request's text. A test evaluates the line on a pull request run and holds it to what `costroid run` sets, byte for byte. `costroid lint-recipes` rejects an agent step outside `costroid run` that lacks one of the six, and `costroid lint` notes it in your own workflow. On a GitLab job that runs the agent without `costroid run`, set the variable from the variables in the table.
 
+Both actions hand the step's environment to the agent. `claude-code-action` v1.0.248 builds the agent's environment from the whole step environment and removes only its OIDC and input variables (`base-action/src/parse-sdk-options.ts`). `codex-action` at the recipe's commit spawns `codex exec` with the whole step environment; its default `safety-strategy: drop-sudo` removes only the `SUDO_*` variables (`src/runCodexExec.ts`). Under `safety-strategy: unprivileged-user` it starts Codex through `sudo -u`, whose default `env_reset` drops `OTEL_RESOURCE_ATTRIBUTES`; the recipe uses `drop-sudo`. Read on 2026-11-10.
+
 ## Stdin
 
 Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with no data, `claude -p` waits three seconds and prints a warning. The warning is Claude Code's. A caller who wants it gone redirects `< /dev/null`.
