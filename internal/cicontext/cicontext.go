@@ -55,6 +55,10 @@ type Context struct {
 	Base          string
 	Run           string
 	Task          string
+	// Visibility is who can read the repository, as the CI system states it:
+	// one of focus.VisibilityPublic, focus.VisibilityPrivate and
+	// focus.VisibilityInternal, or empty when the system did not state it.
+	Visibility string
 }
 
 // System names a CI system.
@@ -107,6 +111,7 @@ func readGitHub(getenv func(string) string) (Context, error) {
 		}
 		return context.checked(), err
 	}
+	context.Visibility = event.visibility()
 	switch {
 	case event.PullRequest != nil:
 		context.PullRequest = fmt.Sprint(event.PullRequest.Number)
@@ -144,6 +149,7 @@ func readGitLab(getenv func(string) string) Context {
 		Base:          getenv("CI_MERGE_REQUEST_DIFF_BASE_SHA"),
 		Run:           getenv("CI_PIPELINE_ID"),
 		Task:          getenv("CI_JOB_ID"),
+		Visibility:    getenv("CI_PROJECT_VISIBILITY"),
 	}
 	return context.checked()
 }
@@ -153,11 +159,13 @@ func repositoryOf(host, path string) string {
 }
 
 // checked keeps the values the tag convention allows. A repository that fails
-// takes its address with it, because both name the same thing.
+// takes its address and its visibility with it, because all three are about
+// the same repository.
 func (c Context) checked() Context {
 	if len(c.Repository) > maxRepositoryLength || !repositoryPattern.MatchString(c.Repository) {
-		c.Repository, c.RepositoryURL = "", ""
+		c.Repository, c.RepositoryURL, c.Visibility = "", "", ""
 	}
+	c.Visibility = keep(focus.IsRepoVisibility, c.Visibility)
 	c.PullRequest = keep(pullRequestPattern.MatchString, c.PullRequest)
 	c.Head = keep(vcs.IsCommit, c.Head)
 	c.Base = keep(vcs.IsCommit, c.Base)
@@ -177,10 +185,11 @@ func keep(valid func(string) bool, value string) string {
 func (c Context) Tags() map[string]string {
 	tags := map[string]string{}
 	for key, value := range map[string]string{
-		focus.TagRepo:          c.Repository,
-		focus.TagPR:            c.PullRequest,
-		focus.TagCommitSHA:     c.Head,
-		focus.TagWorkflowRunID: c.Run,
+		focus.TagRepo:           c.Repository,
+		focus.TagPR:             c.PullRequest,
+		focus.TagCommitSHA:      c.Head,
+		focus.TagWorkflowRunID:  c.Run,
+		focus.TagRepoVisibility: c.Visibility,
 	} {
 		if value != "" {
 			tags[key] = value
@@ -257,6 +266,34 @@ type Event struct {
 			SHA string `json:"sha"`
 		} `json:"base"`
 	} `json:"pull_request"`
+	// Repository is the repository the workflow runs in. It is read only for
+	// its visibility, and a field of a shape Costroid does not expect states
+	// none rather than making the rest of the event unreadable.
+	Repository json.RawMessage `json:"repository"`
+}
+
+// visibility reads the repository's visibility from the event: its visibility
+// field when the event has one, else its private field, where true reads as
+// private. An event with neither states none. A visibility field the
+// convention does not define states none too, and the private field is not
+// read in its place, because the event has already said something else.
+func (e Event) visibility() string {
+	var repository struct {
+		Visibility *string `json:"visibility"`
+		Private    *bool   `json:"private"`
+	}
+	if json.Unmarshal(e.Repository, &repository) != nil {
+		return ""
+	}
+	switch {
+	case repository.Visibility != nil:
+		return *repository.Visibility
+	case repository.Private == nil:
+		return ""
+	case *repository.Private:
+		return focus.VisibilityPrivate
+	}
+	return focus.VisibilityPublic
 }
 
 // ReadEvent reads the event file at path. On a pull request GITHUB_SHA names

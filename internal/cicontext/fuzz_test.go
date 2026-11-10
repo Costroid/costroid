@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/vcs"
 )
 
@@ -30,8 +31,11 @@ func assertChecked(t *testing.T, c Context) {
 			t.Fatalf("the %s reads %q", name, field.value)
 		}
 	}
-	if len(c.Repository) > maxRepositoryLength || (c.Repository == "" && c.RepositoryURL != "") {
-		t.Fatalf("repository %q, address %q", c.Repository, c.RepositoryURL)
+	if len(c.Repository) > maxRepositoryLength || (c.Repository == "" && (c.RepositoryURL != "" || c.Visibility != "")) {
+		t.Fatalf("repository %q, address %q, visibility %q", c.Repository, c.RepositoryURL, c.Visibility)
+	}
+	if c.Visibility != "" && !focus.IsRepoVisibility(c.Visibility) {
+		t.Fatalf("the visibility reads %q", c.Visibility)
 	}
 	for key, value := range c.Tags() {
 		if value == "" || strings.ContainsAny(value, "\r\n") {
@@ -50,6 +54,9 @@ func FuzzReadEvent(f *testing.F) {
 	f.Add([]byte(`{"pull_request":{"number":-7,"head":{"sha":"HEAD"}}}`), "pull_request_target", "")
 	f.Add([]byte(`{"pull_request":{"number":99999999999999999999}}`), "push", fuzzHead)
 	f.Add([]byte(`[]`), "schedule", "not a sha")
+	f.Add([]byte(`{"repository":{"visibility":"internal","private":true}}`), "push", fuzzHead)
+	f.Add([]byte(`{"repository":{"private":false}}`), "workflow_dispatch", fuzzHead)
+	f.Add([]byte(`{"repository":{"visibility":"Public\n"}}`), "push", fuzzHead)
 	f.Fuzz(func(t *testing.T, event []byte, name, sha string) {
 		path := filepath.Join(t.TempDir(), "event.json")
 		if err := os.WriteFile(path, event, 0o600); err != nil {
