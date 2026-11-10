@@ -20,8 +20,8 @@ const (
 
 // The rules only the customer profile names. It also names
 // RulePullRequestTarget, RuleAgentIDToken, RuleExpressionInScript,
-// RuleUnpinned, RuleAgentPromptInput, RuleEgressAudit, RuleTwoCaps and
-// RuleUnreadable.
+// RuleUnpinned, RuleAgentPromptInput, RuleEgressAudit, RuleTwoCaps,
+// RuleJoinAttributes and RuleUnreadable.
 const (
 	RuleCommentTrigger    = "comment-trigger"
 	RuleAgentOpen         = "agent-open"
@@ -214,6 +214,9 @@ func (l *linter) customerAgentJob(root *yaml.Node, agent customerAgent, texts []
 	case granted["contents"] == "write" || granted["*"] == "write":
 		l.flag(job.key, Note, RuleAgentContentWrite, "job %s can write to your code: an injected agent can push to the pull request's branch", job.key.Value)
 	}
+	gitHubJoinAttributes(root, job.value, func(step *yaml.Node, text string) {
+		l.flag(step, Note, RuleJoinAttributes, "%s", text)
+	})
 	if node := subscriptionToken(root, job, agent.step); node != nil {
 		l.flag(node, Note, RuleSubscriptionToken, "the agent signs in with a Claude subscription's token, so Costroid reports its tokens at API list price as list-equivalent, never as billed")
 	}

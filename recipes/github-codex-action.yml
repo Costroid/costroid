@@ -70,6 +70,10 @@ jobs:
       - name: Review with Codex
         id: codex
         uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+        env:
+          # The pull request's join keys, with the values costroid run gives an
+          # agent it starts, so the agent's own telemetry names the pull request.
+          OTEL_RESOURCE_ATTRIBUTES: cicd.pipeline.run.id=${{ github.run_id }},cicd.pipeline.task.run.id=${{ github.job }},vcs.change.id=${{ github.event.pull_request.number }},vcs.ref.base.revision=${{ github.event.pull_request.base.sha }},vcs.ref.head.revision=${{ github.event.pull_request.head.sha }},vcs.repository.url.full=${{ github.server_url }}/${{ github.repository }}
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: ${{ runner.temp }}/codex-prompt.md

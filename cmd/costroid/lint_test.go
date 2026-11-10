@@ -35,7 +35,7 @@ func TestLintExitsOneOnAHighFinding(t *testing.T) {
 	if !strings.Contains(stderr, "mention.yml:17: high: agent-id-token: ") {
 		t.Fatalf("stderr: %s", stderr)
 	}
-	if !strings.Contains(stdout, ": note: subscription-token: ") || !strings.Contains(stdout, "2 high, 2 medium, 1 note\n") {
+	if !strings.Contains(stdout, ": note: subscription-token: ") || !strings.Contains(stdout, "2 high, 2 medium, 2 notes\n") {
 		t.Fatalf("stdout: %s", stdout)
 	}
 }

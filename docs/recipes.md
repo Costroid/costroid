@@ -204,7 +204,7 @@ To drop the step, delete it. Costroid does not depend on it, and the job then re
 
 Inside GitHub Actions or GitLab CI, `costroid run` and `costroid ingest-run` put the repository, the pull request, the head commit and the CI run on every row. On a GitHub pull request the head comes from the event file, because `GITHUB_SHA` is the merge commit. On a GitLab merged results pipeline it comes from `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, for the same reason.
 
-These are claims. Rows read `unverified` and `unattributed` until a ledger checks them against the job's OIDC token. `costroid run` also sets `vcs.change.id`, `vcs.ref.head.revision`, `vcs.ref.base.revision`, `vcs.repository.url.full`, `cicd.pipeline.run.id` and `cicd.pipeline.task.run.id` through `OTEL_RESOURCE_ATTRIBUTES` for the agent, beside what the job already set there.
+These are claims. Rows read `unverified` and `unattributed` until a ledger checks them against the job's OIDC token. `costroid run` also sets `vcs.change.id`, `vcs.ref.head.revision`, `vcs.ref.base.revision`, `vcs.repository.url.full`, `cicd.pipeline.run.id` and `cicd.pipeline.task.run.id` through `OTEL_RESOURCE_ATTRIBUTES` for the agent, beside what the job already set there. `costroid run` does not start the agent in the `claude-code-action` and `codex-action` recipes, so their agent step sets the same six itself, as [`docs/adapters.md`](adapters.md#join-attributes) shows.
 
 ## Send rows to a ledger
 
@@ -220,6 +220,7 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | `id-token: write` on the `ingest` job, and on the jobs that mint and close a gateway key in its environment | An agent that could mint the token could forge its run's identity, and only a job the environment admitted may attest a key |
 | Every action pinned to a full SHA, with its release beside it               | A moved tag cannot change what runs                                                 |
 | Content flags off                                                           | Prompts, responses, tool input and API bodies stay out of telemetry                 |
+| An agent outside `costroid run` sets the six join attributes               | The agent's own telemetry names the pull request, as under `costroid run`           |
 | The prompt is a literal in the recipe                                       | No comment, title or description reaches the agent, Costroid's own comment included |
 | No agent on a fork's pull request; a label before a first contributor's run | A stranger's pull request cannot spend your budget                                  |
 | GitLab's note token in `costroid:report` alone                              | The job that reads the pull request's content can never write to it                 |

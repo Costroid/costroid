@@ -268,6 +268,15 @@ The fixture is under `testdata/not-recorded/`. No run of the action made it. It 
 
 The job's own attributes stay, and a join key the job set already is replaced. A value that fails its tag pattern is left out, and outside CI none is set. A character the variable's syntax does not allow is percent-encoded. Like the rows' tags, these are what the CI system states, and nothing checks them before a server does.
 
+An agent that `costroid run` does not start gets none of them. The `claude-code-action` and `codex-action` recipes therefore set them on the agent's step, from the same context `costroid run` reads on a pull request:
+
+```yaml
+env:
+  OTEL_RESOURCE_ATTRIBUTES: cicd.pipeline.run.id=${{ github.run_id }},cicd.pipeline.task.run.id=${{ github.job }},vcs.change.id=${{ github.event.pull_request.number }},vcs.ref.base.revision=${{ github.event.pull_request.base.sha }},vcs.ref.head.revision=${{ github.event.pull_request.head.sha }},vcs.repository.url.full=${{ github.server_url }}/${{ github.repository }}
+```
+
+None is a secret, and none comes from the pull request's text. A test evaluates the line on a pull request run and holds it to what `costroid run` sets, byte for byte. `costroid lint-recipes` rejects an agent step outside `costroid run` that lacks one of the six, and `costroid lint` notes it in your own workflow. On a GitLab job that runs the agent without `costroid run`, set the variable from the variables in the table.
+
 ## Stdin
 
 Costroid passes its stdin to the agent unchanged. When that stdin is a pipe with no data, `claude -p` waits three seconds and prints a warning. The warning is Claude Code's. A caller who wants it gone redirects `< /dev/null`.

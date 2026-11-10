@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/Costroid/costroid/internal/cicontext"
 )
 
 // The rules only a GitLab template can break.
@@ -185,6 +187,11 @@ func (l *linter) gitlabJob(root *yaml.Node, job entry) {
 			env:     variables,
 			minimum: minimumVersionVariable,
 		}, gitLabForbidden)
+	}
+	if agent := agentOutsideRun(body); agent != "" {
+		if missing := missingJoinAttributes(variables[cicontext.ResourceAttributesVariable]); len(missing) > 0 {
+			l.add(job.key, RuleJoinAttributes, "%s", joinAttributesMessage(agent, "job", missing))
+		}
 	}
 }
 
