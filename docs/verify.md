@@ -1,16 +1,16 @@
 # Verify a release
 
-Every release carries its binaries, `SHA256SUMS`, an SPDX SBOM and one Sigstore bundle per file. Costroid's release workflow signs each file with cosign, keyless, under its own GitHub Actions identity. The image is signed the same way. Each release also carries SLSA build provenance for each file and for the image, as GitHub artifact attestations. 1.0.0-alpha.19 and earlier releases carry none, so `gh attestation verify` fails on them.
+Every release carries its binaries, `SHA256SUMS`, an SPDX SBOM and one Sigstore bundle per file. Costroid's release workflow signs each file with cosign, keyless, under its own GitHub Actions identity. The image is signed the same way. Each release also carries SLSA build provenance for each file and for the image, as GitHub artifact attestations. 1.0.0-alpha.20 and earlier releases carry none, so `gh attestation verify` fails on them.
 
 Each release also carries `NOTICE`, which lists the modules the binaries link and their licences, and `LICENSE`. `SHA256SUMS` names both, each is signed and attested like a binary, and the image holds the same two files in `/usr/share/doc/costroid/`.
 
-The commands below check `1.0.0-alpha.19`. Replace the version in every line for another release.
+The commands below check `1.0.0-alpha.20`. Replace the version in every line for another release.
 
 ## The checksum
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.19/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.19/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.20/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.20/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 ```
 
@@ -21,9 +21,9 @@ It prints `costroid-linux-amd64: OK`. A checksum proves the download matches `SH
 With cosign 3 or later:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.19/SHA256SUMS.sigstore.json
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.20/SHA256SUMS.sigstore.json
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.19 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.20 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 ```
 
@@ -35,7 +35,7 @@ The release notes name the image by digest. Check that digest, never a tag, beca
 
 ```sh
 cosign verify ghcr.io/costroid/costroid@sha256:<digest> \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.19 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.20 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
