@@ -233,3 +233,87 @@ func TestEventHeads(t *testing.T) {
 		})
 	}
 }
+
+func gitLab(visibility string) map[string]string {
+	return map[string]string{
+		"GITLAB_CI": "true", "CI_SERVER_HOST": "gitlab.example", "CI_PROJECT_PATH": "group/widgets",
+		"CI_PIPELINE_ID": "55", "CI_PROJECT_VISIBILITY": visibility,
+	}
+}
+
+// TestGitLabVisibilityFromTheVariable reads CI_PROJECT_VISIBILITY, the
+// variable GitLab sets on every job, and writes it as it reads.
+func TestGitLabVisibilityFromTheVariable(t *testing.T) {
+	for _, visibility := range []string{focus.VisibilityPublic, focus.VisibilityPrivate, focus.VisibilityInternal} {
+		context, err := Read(environment(gitLab(visibility)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{
+			focus.TagRepo: "gitlab.example/group/widgets", focus.TagWorkflowRunID: "55", focus.TagRepoVisibility: visibility,
+		}
+		if got := context.Tags(); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %v", visibility, got)
+		}
+	}
+}
+
+// TestUnknownVisibilityLeavesNoTag holds the tag to what the CI system stated.
+// A system that states nothing, or a value outside the three, leaves the tag
+// out, and so does a repository whose name was not kept. Nothing is guessed,
+// and the rest of the run's tags are kept.
+func TestUnknownVisibilityLeavesNoTag(t *testing.T) {
+	cases := []struct {
+		name   string
+		values map[string]string
+	}{
+		{name: "GitLab without the variable", values: gitLab("")},
+		{name: "GitLab with a value outside the three", values: gitLab("secret")},
+		{name: "GitLab in upper case", values: gitLab("PUBLIC")},
+		{name: "GitHub without a repository", values: github(t, pullRequestEvent)},
+		{name: "GitHub with a repository that states nothing", values: github(t, `{"repository":{"full_name":"acme/widgets"}}`)},
+		{name: "GitHub with a visibility outside the three", values: github(t, `{"repository":{"visibility":"secret","private":false}}`)},
+		{name: "GitHub with an empty visibility", values: github(t, `{"repository":{"visibility":"","private":false}}`)},
+		{name: "GitHub with a null visibility and no private", values: github(t, `{"repository":{"visibility":null}}`)},
+		{name: "GitHub with a visibility that is not a string", values: github(t, `{"repository":{"visibility":1,"private":false}}`)},
+		{name: "GitHub with a repository that is not an object", values: github(t, `{"repository":"public"}`)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			context, err := Read(environment(c.values))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tags := context.Tags()
+			if value, stated := tags[focus.TagRepoVisibility]; stated {
+				t.Errorf("the tag reads %q", value)
+			}
+			if tags[focus.TagRepo] == "" {
+				t.Errorf("the repository was lost with the visibility: %v", tags)
+			}
+		})
+	}
+	t.Run("a repository that misses its pattern", func(t *testing.T) {
+		values := github(t, `{"repository":{"visibility":"public"}}`)
+		values["GITHUB_REPOSITORY"] = "acme/wid gets"
+		context, err := Read(environment(values))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := context.Tags(); len(got) != 1 || got[focus.TagWorkflowRunID] == "" {
+			t.Errorf("%v", got)
+		}
+		values = gitLab(focus.VisibilityPublic)
+		values["CI_PROJECT_PATH"] = "group/wid gets"
+		if context, _ := Read(environment(values)); context.Visibility != "" {
+			t.Errorf("GitLab states %q for a repository it does not name", context.Visibility)
+		}
+	})
+	t.Run("an unreadable event", func(t *testing.T) {
+		values := github(t, `{"repository":{"visibility":"public"},`)
+		context, err := Read(environment(values))
+		if err == nil || context.Visibility != "" {
+			t.Errorf("%q, %v", context.Visibility, err)
+		}
+	})
+}

@@ -38,3 +38,29 @@ The command exits 125 before it writes a row, and prints why, for:
 The tags travel with the rows. Costroid Platform keeps every tag under `costroid/`. The ledger that `costroid serve` hosts stores the three tags with the row, and holds each value to the rule above: a row whose value misses it is refused with 422 `ROW_INVALID`, and the refusal never repeats the value. It refuses any other key under `costroid/` the same way.
 
 The comment and `costroid report` do not show the tags.
+
+## The repository's visibility
+
+`costroid run` and `costroid ingest-run` also write `costroid/repo_visibility` on every row: who can read the repository the run belongs to. No caller names it, and `--tag` does not take it. The row contract, [`tags/v0.4`](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.4), defines it, and it takes one of three values: `public`, `private` or `internal`.
+
+Costroid reads it from what the CI system already gives the job, and never asks the host:
+
+| CI system      | Where Costroid reads it                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| GitHub Actions | The event file at `GITHUB_EVENT_PATH`: `repository.visibility`, else `repository.private`, where `true` reads as `private` |
+| GitLab CI      | The variable `CI_PROJECT_VISIBILITY`                                                                                       |
+
+The tag is left out, never guessed, when:
+
+- the job runs outside GitHub Actions and GitLab CI;
+- the event file cannot be read, or its `repository` states neither field;
+- the value is not one of the three, as written, in lower case. Costroid does not read `repository.private` in place of a `repository.visibility` it does not know;
+- the repository's name was not kept, because it missed the pattern of `costroid/repo`.
+
+From `repository.private` alone, Costroid writes `public` or `private`, never `internal`.
+
+The ledger that `costroid serve` hosts stores the tag with the row. A row whose value is not one of the three is refused with 422 `ROW_INVALID`, and the refusal never repeats the value.
+
+GitLab's [predefined CI/CD variables](https://docs.gitlab.com/ci/variables/predefined_variables/), read 2026-11-10, describes `CI_PROJECT_VISIBILITY` as "The project visibility. Can be `internal`, `private`, or `public`." Its availability there is "Pre-pipeline".
+
+GitHub's [webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads) states, read 2026-11-10, that `repository` is "The repository on GitHub where the event occurred. Webhook payloads contain the repository property when the event occurs from activity in a repository." The page as read that day does not list that object's fields. GitHub's REST API answers them for a repository: on 2026-11-10, `gh api repos/Costroid/costroid` returned `"visibility": "public"` and `"private": false`, and a private repository returned `"visibility": "private"` and `"private": true`. The event's `repository` is read the same way; Costroid reads `visibility` first and falls back to `private`.
