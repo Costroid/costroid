@@ -61,4 +61,6 @@ From `repository.private` alone, Costroid writes `public` or `private`, never `i
 
 The ledger that `costroid serve` hosts stores the tag with the row. A row whose value is not one of the three is refused with 422 `ROW_INVALID`, and the refusal never repeats the value.
 
-The sources: GitHub's [webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads) for the `repository` object in an event, its [variables reference](https://docs.github.com/en/actions/reference/workflows-and-actions/variables) for `GITHUB_EVENT_PATH`, and GitLab's [predefined CI/CD variables](https://docs.gitlab.com/ci/variables/predefined_variables/) for `CI_PROJECT_VISIBILITY`. None of the three pages was re-read on 2026-11-10, so what they state about these fields is unverified here.
+GitLab's [predefined CI/CD variables](https://docs.gitlab.com/ci/variables/predefined_variables/), read 2026-11-10, describes `CI_PROJECT_VISIBILITY` as "The project visibility. Can be `internal`, `private`, or `public`." Its availability there is "Pre-pipeline".
+
+GitHub's [webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads) states, read 2026-11-10, that `repository` is "The repository on GitHub where the event occurred. Webhook payloads contain the repository property when the event occurs from activity in a repository." The page as read that day does not list the fields of that object, so what GitHub states about `repository.visibility` and `repository.private` is unverified here.
