@@ -27,7 +27,8 @@ import (
 
 const (
 	platformTokenVariable = "COSTROID_PLATFORM_TOKEN"
-	// integrationPath is where Costroid Platform serves integration/v0.2.
+	// integrationPath is where connect and doctor reach Costroid Platform:
+	// integration/v0.2, whose installations and identity version 0.3 keeps.
 	integrationPath = "/api/integration/v0.2"
 	// rowsAudience opens a run token's audience, and the tenant's id and
 	// /rows close it.
@@ -53,7 +54,28 @@ type verdictPace struct {
 // slow ingest still ends the job in about a minute.
 var ingestPace = verdictPace{interval: 2 * time.Second, limit: 60 * time.Second}
 
-// The patterns are integration/v0.2's.
+// contract is one version of the integration contract, as GET /identity
+// states it under that version's path.
+type contract struct {
+	Version  string `json:"version"`
+	TagSet   string `json:"tag_set"`
+	FocusRow string `json:"focus_row"`
+}
+
+// path is where a platform that speaks the version serves it.
+func (c contract) path() string {
+	return "/api/integration/v" + c.Version
+}
+
+// exportContracts are the versions export sends by, newest first. Version
+// 0.3 is 0.2 with rows of focus-row/v0.5 and tags of tags/v0.4, which carry
+// the tags a caller names and the repository's visibility.
+var exportContracts = []contract{
+	{Version: "0.3", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"},
+	{Version: "0.2", TagSet: "tags/v0.2", FocusRow: "focus-row/v0.3"},
+}
+
+// The patterns are integration/v0.2's, and version 0.3 keeps them.
 var (
 	integrationTokenPattern = regexp.MustCompile(`^costroid_it_[A-Za-z0-9_-]{43}$`)
 	installationIDPattern   = regexp.MustCompile(`^(github|github-owner|gitlab-namespace):[1-9][0-9]{0,19}$`)
@@ -76,7 +98,10 @@ const exportHelp = `Usage:
                   [--out PATH]
 
 export sends a rows file to Costroid Platform as one batch of CSV, under the
-integration token in COSTROID_PLATFORM_TOKEN. --platform-url is the platform's
+integration token in COSTROID_PLATFORM_TOKEN. It reads GET /identity first and
+sends by integration/v0.3, or by v0.2 to a platform that states no later
+version, and names the version on standard error, so the token needs
+identity:read beside rows:write. --platform-url is the platform's
 https origin, or an http one on a loopback address such as
 http://127.0.0.1:8787. --installation-id names the installation the rows came
 through: github:<id>, github-owner:<id> or gitlab-namespace:<id>. A bare
@@ -86,7 +111,7 @@ reads it.
 On GitHub Actions the batch id is the repository id, the run id and the run
 attempt, joined by hyphens, so sending a run's rows again restates its batch.
 The job's OIDC token rides with the batch and names the run. That needs
-id-token: write on the job, and identity:read beside rows:write on the token.
+id-token: write on the job.
 A row that names this run in GITHUB_RUN_ID and this repository in
 GITHUB_REPOSITORY goes as token_verified, and every other row as unverified.
 Elsewhere --batch-id names the batch, no run token is sent, and every row goes
@@ -167,9 +192,11 @@ func (r *refusal) unbound() bool {
 	return r.status == http.StatusConflict && r.code == installationNotBound
 }
 
-// platform is Costroid Platform's integration API under one token.
+// platform is Costroid Platform's integration API under one token. origin
+// is set where the version is still to be read, and base once it is.
 type platform struct {
 	client *http.Client
+	origin string
 	base   string
 	token  string
 }
@@ -196,8 +223,8 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	if flags.format != "" {
 		return writeFormat(flags, stdout, stderr)
 	}
-	target := platform{client: client, base: flags.origin + integrationPath, token: getenv(platformTokenVariable)}
-	sent, err := sendBatch(ctx, flags, target, getenv)
+	target := platform{client: client, origin: flags.origin, token: getenv(platformTokenVariable)}
+	sent, err := sendBatch(ctx, flags, &target, getenv, stderr)
 	var refused *refusal
 	switch {
 	case err == nil:
@@ -440,7 +467,10 @@ func (s sentBatch) print(path string, stdout, stderr io.Writer) {
 	}
 }
 
-func sendBatch(ctx context.Context, flags exportFlags, target platform, getenv func(string) string) (sentBatch, error) {
+// sendBatch sends the rows by the newest contract version the platform
+// states, and says which on stderr. target keeps that version's path, where
+// export then asks for the verdict.
+func sendBatch(ctx context.Context, flags exportFlags, target *platform, getenv func(string) string, stderr io.Writer) (sentBatch, error) {
 	if !integrationTokenPattern.MatchString(target.token) {
 		return sentBatch{}, errors.New("COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform")
 	}
@@ -453,7 +483,12 @@ func sendBatch(ctx context.Context, flags exportFlags, target platform, getenv f
 	if err != nil {
 		return sentBatch{}, err
 	}
-	runToken, err := target.runToken(ctx, getenv)
+	stated, tenant, err := target.statedContract(ctx)
+	if err != nil {
+		return sentBatch{}, err
+	}
+	fmt.Fprintf(stderr, "costroid: Costroid Platform states integration/v%s, so export sends the batch by it\n", stated.Version)
+	runToken, err := target.runToken(ctx, getenv, tenant)
 	if err != nil {
 		return sentBatch{}, err
 	}
@@ -522,18 +557,14 @@ func batchID(given string, getenv func(string) string) (string, error) {
 	return strings.Join(parts, "-"), nil
 }
 
-// runToken is the job's OIDC token for this tenant's rows audience, on GitHub
+// runToken is the job's OIDC token for the tenant's rows audience, on GitHub
 // Actions, and empty elsewhere.
-func (p platform) runToken(ctx context.Context, getenv func(string) string) (string, error) {
+func (p platform) runToken(ctx context.Context, getenv func(string) string, tenant string) (string, error) {
 	if getenv("GITHUB_ACTIONS") != "true" {
 		return "", nil
 	}
 	if getenv("ACTIONS_ID_TOKEN_REQUEST_URL") == "" || getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
 		return "", errors.New("this job has no id-token permission, so no run token can name the run: give the job id-token: write")
-	}
-	tenant, err := p.tenant(ctx)
-	if err != nil {
-		return "", err
 	}
 	token, err := gateway.ActionsToken(ctx, p.client, getenv, rowsAudience+tenant+"/rows")
 	if err != nil {
@@ -542,8 +573,28 @@ func (p platform) runToken(ctx context.Context, getenv func(string) string) (str
 	return token, nil
 }
 
-// tenant reads the token's tenant from GET /identity.
-func (p platform) tenant(ctx context.Context) (string, error) {
+// statedContract reads GET /identity under each version export sends by,
+// newest first, and keeps the first whose answer states that version. A
+// platform that does not speak a version serves no identity under its path,
+// so the next version is asked, and the last one's error is returned. It
+// sets p.base to the version's path and returns the token's tenant.
+func (p *platform) statedContract(ctx context.Context) (contract, string, error) {
+	var err error
+	for _, version := range exportContracts {
+		var tenant string
+		tenant, err = p.identityUnder(ctx, version)
+		if err == nil {
+			p.base = p.origin + version.path()
+			return version, tenant, nil
+		}
+	}
+	return contract{}, "", err
+}
+
+// identityUnder reads GET /identity under one version's path, and returns the
+// token's tenant when the answer states exactly that version.
+func (p platform) identityUnder(ctx context.Context, version contract) (string, error) {
+	p.base = p.origin + version.path()
 	request, err := p.request(ctx, http.MethodGet, "/identity", nil)
 	if err != nil {
 		return "", err
@@ -553,12 +604,16 @@ func (p platform) tenant(ctx context.Context) (string, error) {
 		return "", err
 	}
 	var identity struct {
-		Tenant struct {
+		Contract contract `json:"contract"`
+		Tenant   struct {
 			ID string `json:"id"`
 		} `json:"tenant"`
 	}
 	if err := json.Unmarshal(data, &identity); err != nil || !tenantIDPattern.MatchString(identity.Tenant.ID) {
 		return "", errors.New("the identity answer of Costroid Platform names no tenant id")
+	}
+	if identity.Contract != version {
+		return "", fmt.Errorf("the identity answer of Costroid Platform under %s does not state integration/v%s", version.path(), version.Version)
 	}
 	return identity.Tenant.ID, nil
 }
@@ -804,7 +859,7 @@ func (p platform) awaitVerdict(ctx context.Context, sent sentBatch, pace verdict
 		}
 	}
 	if !answer.settled() {
-		return batchAnswer{}, fmt.Errorf("the answer for batch %s names no status of integration/v0.2", sent.batch)
+		return batchAnswer{}, fmt.Errorf("the answer for batch %s names no status the integration contract defines", sent.batch)
 	}
 	return answer, nil
 }

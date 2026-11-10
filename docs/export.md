@@ -37,9 +37,9 @@ curl --header "Authorization: Bearer $TOKEN" \
 
 ## Costroid Platform
 
-`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract `integration/v0.2`, which `Costroid/costroid-schemas` publishes when Costroid Platform opens to it. The body is the rows as CSV, in the form [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3) gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
+`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.3), or by `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.3` first, and names it on standard error. The body is the rows as CSV, in the form [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3) gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
 
-The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` scope, and `identity:read` on GitHub Actions. Keep it as a secret named `COSTROID_PLATFORM_TOKEN`. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument. [`docs/connect.md`](connect.md) says why one token per owner, with `installations:write` as well, serves both commands.
+The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` and `identity:read` scopes. Keep it as a secret named `COSTROID_PLATFORM_TOKEN`. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument. [`docs/connect.md`](connect.md) says why one token per owner, with `installations:write` as well, serves both commands.
 
 The platform takes rows only under an installation its tenant has bound, so bind the owner first, as [Bind the owner](#bind-the-owner) shows.
 
