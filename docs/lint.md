@@ -16,7 +16,8 @@ A workflow is judged when one of its jobs has an agent step:
 - a step that uses `openai/codex-action`;
 - a step that uses Costroid's action with stage `run` or `all`;
 - a script that runs `claude -p`, `claude --print` or `codex exec`;
-- a script that runs `costroid run --agent`, such as a program on the Claude Agent SDK or the Codex SDK ([docs/sdk.md](sdk.md)).
+- a script that runs `costroid run --agent`, such as a program on the Claude Agent SDK or the Codex SDK ([docs/sdk.md](sdk.md));
+- a script that runs `costroid run` with no `--agent` on a command named `claude`, `codex`, `copilot` or `opencode`, the agent `costroid run` picks by that name.
 
 Any other workflow passes with nothing said. The last line counts the files read and the workflows judged.
 

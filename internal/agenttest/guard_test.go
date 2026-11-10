@@ -292,25 +292,28 @@ func TestEveryStubRefusesToRun(t *testing.T) {
 }
 
 // TestStubsCoverEveryAgentTheRunStarts reads the commands costroid run knows,
-// its agents and the launchers that start them, and holds each to a stub.
+// the agents agentcommand names by the command and the launchers that start
+// them, and holds each to a stub.
 func TestStubsCoverEveryAgentTheRunStarts(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "run", "run.go"), nil, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var commands []string
-	for _, decl := range file.Decls {
-		switch decl := decl.(type) {
-		case *ast.FuncDecl:
-			if decl.Name.Name == "AgentFor" {
-				commands = append(commands, caseStrings(decl.Body)...)
+	for _, file := range []string{filepath.Join("..", "agentcommand", "agentcommand.go"), filepath.Join("..", "run", "run.go")} {
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range parsed.Decls {
+			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				if decl.Name.Name == "Agent" && parsed.Name.Name == "agentcommand" {
+					commands = append(commands, caseStrings(decl.Body)...)
+				}
+			case *ast.GenDecl:
+				commands = append(commands, launcherKeys(decl)...)
 			}
-		case *ast.GenDecl:
-			commands = append(commands, launcherKeys(decl)...)
 		}
 	}
 	if len(commands) < 5 {
-		t.Fatalf("read %q from internal/run/run.go: the AgentFor switch or the launchers map moved", commands)
+		t.Fatalf("read %q: the switch in internal/agentcommand or the launchers map in internal/run moved", commands)
 	}
 	for _, command := range commands {
 		if !slices.Contains(agenttest.Names, command) {
