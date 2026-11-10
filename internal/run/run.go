@@ -24,6 +24,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/adapter/copilot"
 	"github.com/Costroid/costroid/internal/adapter/opencode"
+	"github.com/Costroid/costroid/internal/agentcommand"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -176,22 +177,16 @@ func (o Options) agent() (adapter.Agent, error) {
 	return AgentFor(o.Argv)
 }
 
-// AgentFor picks the adapter by the command's name.
+// AgentFor picks the adapter by the command's name, by agentcommand's rule.
 func AgentFor(argv []string) (adapter.Agent, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("run: no agent command")
 	}
-	switch filepath.Base(argv[0]) {
-	case "claude":
-		return claudecode.Agent{}, nil
-	case "codex":
-		return codex.Agent{}, nil
-	case "copilot":
-		return copilot.Agent{}, nil
-	case "opencode":
-		return opencode.Agent{}, nil
+	name, known := agentcommand.Agent(argv[0])
+	if !known {
+		return nil, fmt.Errorf("run: no adapter for %q: costroid runs %s; --agent names the one the command starts", filepath.Base(argv[0]), agentList())
 	}
-	return nil, fmt.Errorf("run: no adapter for %q: costroid runs %s; --agent names the one the command starts", filepath.Base(argv[0]), agentList())
+	return AgentNamed(name)
 }
 
 // agentList names every agent in Agents as a sentence does: a, b and c.

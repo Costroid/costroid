@@ -19,6 +19,8 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/Costroid/costroid/internal/agentcommand"
 )
 
 // The rules a finding can name.
@@ -544,35 +546,57 @@ func mergeVariables(nodes ...*yaml.Node) map[string]string {
 }
 
 // agentsNamed lists the agents a text starts, in a stable order: each one
-// costroid run --agent names, then claude -p and codex exec, unless an agent
-// named already runs on that provider.
+// costroid run --agent names, then claude -p and codex exec, then each agent
+// costroid run picks by its command's name, unless an agent already listed
+// runs on that provider.
 func agentsNamed(body string) []string {
-	agents := runAgentNames(body)
+	agents, byCommand := runAgentNames(body)
 	for _, command := range []struct {
 		agent   string
 		pattern *regexp.Regexp
 	}{{claudeAgent, claudeCommand}, {codexAgent, codexCommand}} {
-		named := slices.ContainsFunc(agents, func(agent string) bool { return agentKinds[agent].provider == command.agent })
-		if !named && command.pattern.MatchString(body) {
+		if !providerListed(agents, command.agent) && command.pattern.MatchString(body) {
 			agents = append(agents, command.agent)
+		}
+	}
+	for _, agent := range byCommand {
+		if !providerListed(agents, agentKinds[agent].provider) {
+			agents = append(agents, agent)
 		}
 	}
 	return agents
 }
 
-// runAgentNames lists the values of --agent in each costroid run command of a
-// script. A backslash at a line's end continues the command. Its options end
-// at --, where the program's own arguments start, or at a shell operator.
-func runAgentNames(script string) []string {
-	var names []string
+// providerListed reports whether an agent in agents runs on provider.
+func providerListed(agents []string, provider string) bool {
+	return slices.ContainsFunc(agents, func(agent string) bool { return agentKinds[agent].provider == provider })
+}
+
+// runAgentNames reads each costroid run command of a script: named lists the
+// values of --agent, and byCommand the agent of each command with no --agent,
+// picked from the name of the program after -- as costroid run picks it. A
+// backslash at a line's end continues the command. Its options end at --,
+// where the program's own arguments start, or at a shell operator.
+func runAgentNames(script string) (named, byCommand []string) {
 	for line := range strings.SplitSeq(strings.ReplaceAll(script, "\\\n", " "), "\n") {
 		for _, at := range costroidRun.FindAllStringIndex(line, -1) {
-			if name, found := agentOption(strings.Fields(line[at[1]:])); found && !slices.Contains(names, name) {
-				names = append(names, name)
+			words := strings.Fields(line[at[1]:])
+			if name, found := agentOption(words); found {
+				named = appendNew(named, name)
+			} else if name, found := commandAgent(words); found {
+				byCommand = appendNew(byCommand, name)
 			}
 		}
 	}
-	return names
+	return named, byCommand
+}
+
+// appendNew appends name unless names holds it.
+func appendNew(names []string, name string) []string {
+	if slices.Contains(names, name) {
+		return names
+	}
+	return append(names, name)
 }
 
 // agentOption reads --agent NAME or --agent=NAME from a command's options.
@@ -587,6 +611,23 @@ func agentOption(words []string) (string, bool) {
 		if word == "--agent" && i+1 < len(words) {
 			return strings.Trim(words[i+1], `"'`), true
 		}
+	}
+	return "", false
+}
+
+// commandAgent names the agent costroid run picks for the program after its
+// options' --, by agentcommand's rule. It is false for a program that rule
+// knows no agent by, and for options a shell operator ends, in a word of its
+// own or at the end of one.
+func commandAgent(words []string) (string, bool) {
+	for i, word := range words {
+		if strings.ContainsAny(word, ";&|") {
+			break
+		}
+		if word != "--" || i+1 == len(words) {
+			continue
+		}
+		return agentcommand.Agent(strings.Trim(words[i+1], `"'`))
 	}
 	return "", false
 }
