@@ -69,6 +69,9 @@ type Figure struct {
 	// ProxyCap is the AI-credit cap gh-aw's proxy held the run to, as every
 	// row of the figure states it, empty when one states none or another.
 	ProxyCap string
+	// Subscription is true when every row of the figure notes a run that
+	// proved a subscription login.
+	Subscription bool
 }
 
 // Trace is the rows of one Figure that share a catalog, a token class and a
@@ -153,6 +156,12 @@ func (r row) fallback() bool {
 	return strings.Contains(r.ChargeDescription, focus.NoteFallback)
 }
 
+// subscription reports whether the writer noted a run that proved a
+// subscription login. The note must be one whole note of the description.
+func (r row) subscription() bool {
+	return slices.Contains(strings.Split(r.ChargeDescription, "; "), focus.NoteSubscription)
+}
+
 func (r row) catalog() Data {
 	if r.CatalogVersion == nil {
 		return ""
@@ -177,6 +186,8 @@ type figureTally struct {
 	// proxyCaps are the gh-aw caps the rows state, an empty one for a row
 	// that states none.
 	proxyCaps map[string]struct{}
+	// subscriptionRows counts the rows that note a subscription login.
+	subscriptionRows int
 }
 
 // spendKey is what a budget is compared within: one currency, one basis.
@@ -278,6 +289,9 @@ func (t *tally) add(line []byte) error {
 	entry.figure.Rows++
 	entry.add(priced)
 	entry.proxyCaps[parsed.proxyCap()] = struct{}{}
+	if parsed.subscription() {
+		entry.subscriptionRows++
+	}
 	t.logRequest(spendKey{key.currency, key.basis}, parsed, priced)
 	if parsed.fallback() {
 		entry.figure.FallbackRows++
@@ -525,6 +539,7 @@ func (t *tally) ledger() Ledger {
 func (f *figureTally) withTrace() Figure {
 	figure := f.figure
 	figure.Catalogs, _ = capped(f.catalogs)
+	figure.Subscription = f.subscriptionRows == figure.Rows
 	if len(f.proxyCaps) == 1 {
 		for limit := range f.proxyCaps {
 			figure.ProxyCap = limit

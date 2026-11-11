@@ -197,6 +197,11 @@ type Report struct {
 	// unit, nil when it states none. No row holds it, and it is never
 	// converted or added to an amount.
 	AgentStated *Stated
+	// Subscription is true when the run proves it was signed in on a plan
+	// subscription, which bills no tokens: its figure is list-equivalent, and
+	// no provider usage report can reconcile it. False means not proven, never
+	// that the run bills a key. Each nested session states its own.
+	Subscription bool
 }
 
 // UnitAICredits is the unit of gh-aw's AI credits.

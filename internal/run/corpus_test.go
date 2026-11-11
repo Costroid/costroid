@@ -28,13 +28,14 @@ var corpusRoots = map[string]string{
 }
 
 // corpusRows is what the rows of one recording come to: how many, their list
-// total in USD, how many the catalog's fallback priced, and the grade on
-// every row.
+// total in USD, how many the catalog's fallback priced, the grade on every
+// row, and whether every row notes a subscription login or none does.
 type corpusRows struct {
-	rows     int
-	total    string
-	fallback int
-	grade    string
+	rows         int
+	total        string
+	fallback     int
+	grade        string
+	subscription bool
 }
 
 // runCorpus pins the rows every recording writes, by its agent and its
@@ -71,6 +72,9 @@ var runCorpus = map[string]corpusRows{
 	// Stopped at --max-budget-usd 0.0001. Its one model, claude-haiku-5-5, had
 	// spent USD 0.0001285, and its session file holds no request.
 	"claude-code/2.1.316/action-budget-stop": {rows: 2, total: "0.0001285", grade: adapter.GradeNone},
+	// claude-code-action on claude_code_oauth_token. Its total is the run's
+	// own total_cost_usd, list-equivalent: no per-token bill exists for it.
+	"claude-code/2.1.316/action-subscription": {rows: 12, total: "0.0302309", grade: adapter.GradeNone, subscription: true},
 }
 
 // corpusAt is when the corpus reads a recording as run or saved.
@@ -325,6 +329,10 @@ func TestRunCorpus(t *testing.T) {
 				}
 				if grade := tagOf(row, focus.TagEnforcementGrade); grade != want.grade {
 					t.Errorf("a %s row reads grade %s", row["SkuMeter"], grade)
+				}
+				notes := strings.Split(row["ChargeDescription"].(string), "; ")
+				if slices.Contains(notes, focus.NoteSubscription) != want.subscription {
+					t.Errorf("a %s row reads %q, want the subscription note %t", row["SkuMeter"], row["ChargeDescription"], want.subscription)
 				}
 			}
 			if result.Rows != want.rows || len(written) != want.rows || fallback != want.fallback || result.Enforcement.Grade != want.grade {

@@ -116,7 +116,12 @@ func (b rowBuilder) rows(report adapter.Report) ([]focus.Row, error) {
 	return rows, nil
 }
 
+// sessionRows prices one session's requests. A session that proved a
+// subscription login says so on every row.
 func (b rowBuilder) sessionRows(report adapter.Report, notes []string) ([]focus.Row, error) {
+	if report.Subscription {
+		notes = append(slices.Clone(notes), focus.NoteSubscription)
+	}
 	var rows []focus.Row
 	for _, request := range report.Requests {
 		if err := request.Tokens.Check(); err != nil {

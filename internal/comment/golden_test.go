@@ -150,6 +150,14 @@ func copilotInput(t *testing.T) Input {
 // figure its agent stated, with no budget.
 func statedRunInput(t *testing.T, rows string, stated adapter.Stated) Input {
 	t.Helper()
+	input := rowsFileInput(t, rows)
+	input.AgentStated = &stated
+	return input
+}
+
+// rowsFileInput is the report on a rows file under testdata, with no budget.
+func rowsFileInput(t *testing.T, rows string) Input {
+	t.Helper()
 	file, err := os.Open(filepath.Join("testdata", rows))
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +169,15 @@ func statedRunInput(t *testing.T, rows string, stated adapter.Stated) Input {
 	}
 	input := realInput(t)
 	input.Ledger, input.Budget = ledger, nil
-	input.AgentStated = &stated
 	return input
+}
+
+// subscriptionInput is the rows ingest-run wrote for the recorded
+// claude-code-action run on claude_code_oauth_token,
+// internal/adapter/claudecode/testdata/2.1.316/action-subscription.
+func subscriptionInput(t *testing.T) Input {
+	t.Helper()
+	return rowsFileInput(t, "subscription-rows.jsonl")
 }
 
 // unheldInput is one row nothing held, given a cap of USD 0.05 it went over,
@@ -298,6 +313,10 @@ func goldenStates(t *testing.T) map[string]Input {
 	states["copilot-stated-nano-aiu-withheld"] = withheld(copilot)
 
 	states[policyBudgetNoCap] = policyBudgetWithoutCap(t)
+
+	subscription := subscriptionInput(t)
+	states["subscription"] = subscription
+	states["subscription-withheld"] = withheld(subscription)
 
 	// A recorded run's figures, shown on a pull request that spent nothing.
 	recorded := neutral

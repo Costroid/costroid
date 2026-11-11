@@ -194,6 +194,8 @@ type Session struct {
 	// billedThroughGateway is true when the run starts the agent on a
 	// gateway's key, which the gateway bills per token upstream.
 	billedThroughGateway bool
+	// sawRateLimit is true when a rate_limit_event message came.
+	sawRateLimit bool
 }
 
 // jsonString reads a JSON string. Absent, null and any other value read as
@@ -295,7 +297,7 @@ func (s *Session) checkResult() error {
 // the bound refuses the run. Any other count they cannot give discards them:
 // the result's totals stand, and with no result the run is refused.
 func (s *Session) finishRun() (adapter.Report, transcript, error) {
-	report := adapter.Report{SessionID: s.sessionID, AgentVersion: s.version, CostBasis: s.costBasis(), AgentError: s.agentError()}
+	report := adapter.Report{SessionID: s.sessionID, AgentVersion: s.version, CostBasis: s.costBasis(), AgentError: s.agentError(), Subscription: s.onSubscription()}
 	if err := s.checkResult(); err != nil {
 		return report, transcript{}, err
 	}
@@ -380,6 +382,22 @@ func (s *Session) unsplitWrite() focus.TokenClass {
 		return focus.CacheWrite5m
 	}
 	return focus.CacheWrite1h
+}
+
+// noKeySource is the apiKeySource of a run that names no API key. Alone it
+// does not prove a subscription login.
+const noKeySource = "none"
+
+// rateLimitEvent is the type of a message Claude Code sent on the recorded
+// subscription login, action-subscription. No recorded run on an API key
+// holds one.
+const rateLimitEvent = "rate_limit_event"
+
+// onSubscription says the run proves it was signed in on a Claude
+// subscription: it names no API key, a rate_limit_event came, and no gateway
+// bills it. Anything less leaves the run unmarked.
+func (s *Session) onSubscription() bool {
+	return s.apiKeySource == noKeySource && s.sawRateLimit && !s.billedThroughGateway
 }
 
 func (s *Session) costBasis() focus.CostBasis {

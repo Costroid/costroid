@@ -436,6 +436,9 @@ func TestStreamWithNoResultAndNoSessionIsAnErrorNotZeroUsage(t *testing.T) {
 	}
 }
 
+// TestFixturesCarryNoPathsNamesOrProviderIDs scans every fixture. A
+// rate_limit_event message keeps its type, which marks a subscription login,
+// and no other rate-limit data.
 func TestFixturesCarryNoPathsNamesOrProviderIDs(t *testing.T) {
 	forbidden := regexp.MustCompile(`/home/|/tmp/|/Users/|req_0|msg_0|toolu_0|sk-ant|organizationUuid|accountUuid|rate_limit`)
 	err := filepath.WalkDir("testdata", func(path string, entry os.DirEntry, err error) error {
@@ -446,6 +449,7 @@ func TestFixturesCarryNoPathsNamesOrProviderIDs(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		data = bytes.ReplaceAll(data, []byte(`"`+rateLimitEvent+`"`), nil)
 		if match := forbidden.Find(data); match != nil {
 			t.Errorf("%s carries %q", path, match)
 		}
