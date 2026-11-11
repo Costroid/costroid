@@ -26,14 +26,16 @@ type corpusManifest struct {
 }
 
 // corpusRead is what one recording reads as. Warnings holds a part of each
-// warning, in order.
+// warning, in order. Subscription is true for a run that proves a
+// subscription login, and false for every other.
 type corpusRead struct {
-	source   string
-	basis    focus.CostBasis
-	requests int
-	tokens   adapter.Tokens
-	grade    string
-	warnings []string
+	source       string
+	basis        focus.CostBasis
+	requests     int
+	tokens       adapter.Tokens
+	grade        string
+	warnings     []string
+	subscription bool
 }
 
 // claudeCorpus pins what every recording under testdata reads as, by its
@@ -71,7 +73,7 @@ var claudeCorpus = map[string]corpusRead{
 	// Two requests come from the session file, and claude-haiku-5-5's side
 	// request from the result.
 	"2.1.316/action-subscription": {
-		source: SourceSessionFile, basis: focus.ListEquivalent, requests: 3, grade: adapter.GradeNone,
+		source: SourceSessionFile, basis: focus.ListEquivalent, requests: 3, grade: adapter.GradeNone, subscription: true,
 		tokens: adapter.Tokens{InputUncached: 1204, CacheRead: 28899, CacheWrite1h: 6341, Output: 202, CachedInputReported: 28899},
 	},
 	// The Agent SDK's TypeScript and Python programs, read as Claude Code's
@@ -310,6 +312,9 @@ func TestClaudeCodeCorpus(t *testing.T) {
 			}
 			report, grade := readRecording(t, path)
 			got := corpusRead{source: report.CostSource, basis: report.CostBasis, requests: len(report.Requests), tokens: sum(report.Requests), grade: grade}
+			if report.Subscription != want.subscription {
+				t.Errorf("subscription %t, want %t", report.Subscription, want.subscription)
+			}
 			if report.AgentVersion != manifest.Version {
 				t.Errorf("agent version %q, the manifest says %q", report.AgentVersion, manifest.Version)
 			}

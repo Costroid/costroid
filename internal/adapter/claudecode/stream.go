@@ -52,6 +52,8 @@ func (s *Session) Feed(line []byte, at time.Time) error {
 		s.readAssistant(line)
 	case "result":
 		s.readResult(line, subtype)
+	case rateLimitEvent:
+		s.sawRateLimit = true
 	}
 	return nil
 }

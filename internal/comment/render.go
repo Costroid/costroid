@@ -472,7 +472,8 @@ type figureLine struct {
 	Attribution string
 	Enforcement string
 	Note        string
-	// Mark is the visible flag on a figure with a row at the fallback tier.
+	// Mark is the visible flag on a figure with a row at the fallback tier,
+	// or whose rows all note a subscription login.
 	Mark string
 	// Catalogs and the token columns are the job summary's.
 	Catalogs                                     string
@@ -547,6 +548,10 @@ type view struct {
 // part, and the fallback sentence opens with the same words.
 const fallbackMark = ", fallback price"
 
+// subscriptionMark sits beside a figure whose rows all note a subscription
+// login.
+const subscriptionMark = "; " + focus.NoteSubscription
+
 func (i Input) view() view {
 	shown := i.Amounts == AmountsShown
 	result := view{
@@ -588,6 +593,9 @@ func (i Input) view() view {
 		}
 		if figure.FallbackRows > 0 {
 			line.Mark = fallbackMark
+		}
+		if figure.Subscription {
+			line.Mark += subscriptionMark
 		}
 		line.Catalogs = spans(figure.Catalogs)
 		columns := tokenColumns(figure.Tokens)

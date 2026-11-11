@@ -30,6 +30,8 @@ const (
 const (
 	NoteInformational = "informational"
 	NoteFallback      = "priced at the catalog fallback tier: the sheet does not name this model, tier and class"
+	// NoteSubscription marks a row of a run that proved a subscription login.
+	NoteSubscription = "subscription: list-equivalent, no provider report to reconcile"
 )
 
 // ResidencyNote states a residency multiplier in ChargeDescription.
