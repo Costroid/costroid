@@ -2,6 +2,12 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.23 (2026-11-11)
+
+### Added
+
+- The comment says when a Claude Code run signed in on a Claude subscription. Beside the figure of a run whose `apiKeySource` is `none`, that holds a `rate_limit_event`, and that no gateway bills, it prints `subscription: list-equivalent, no provider report to reconcile`. The figure, its basis and every total are unchanged. `none` alone never marks a run, so a subscription run without the event stays unmarked. The rule rests on a recorded `claude-code-action` run on a subscription's token ([`docs/adapters.md`](docs/adapters.md)).
+
 ## 1.0.0-alpha.22 (2026-11-11)
 
 ### Security
