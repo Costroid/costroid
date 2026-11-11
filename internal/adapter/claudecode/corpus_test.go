@@ -66,6 +66,14 @@ var claudeCorpus = map[string]corpusRead{
 		tokens:   adapter.Tokens{InputUncached: 1200, Output: 17},
 		warnings: []string{"no session file: one set of rows per model, for the whole run"},
 	},
+	// claude-code-action signed in with claude_code_oauth_token alone. The
+	// execution file states apiKeySource none and holds a rate_limit_event.
+	// Two requests come from the session file, and claude-haiku-5-5's side
+	// request from the result.
+	"2.1.316/action-subscription": {
+		source: SourceSessionFile, basis: focus.ListEquivalent, requests: 3, grade: adapter.GradeNone,
+		tokens: adapter.Tokens{InputUncached: 1204, CacheRead: 28899, CacheWrite1h: 6341, Output: 202, CachedInputReported: 28899},
+	},
 	// The Agent SDK's TypeScript and Python programs, read as Claude Code's
 	// own stream. Each session counts a request outside the conversation on
 	// the conversation's own model, 1200 input tokens with no cache read or

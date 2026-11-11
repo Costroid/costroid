@@ -71,6 +71,9 @@ var runCorpus = map[string]corpusRows{
 	// Stopped at --max-budget-usd 0.0001. Its one model, claude-haiku-5-5, had
 	// spent USD 0.0001285, and its session file holds no request.
 	"claude-code/2.1.316/action-budget-stop": {rows: 2, total: "0.0001285", grade: adapter.GradeNone},
+	// claude-code-action on claude_code_oauth_token. Its total is the run's
+	// own total_cost_usd, list-equivalent: no per-token bill exists for it.
+	"claude-code/2.1.316/action-subscription": {rows: 12, total: "0.0302309", grade: adapter.GradeNone},
 }
 
 // corpusAt is when the corpus reads a recording as run or saved.
