@@ -87,7 +87,9 @@ DEADCODE_VERSION = v0.52.0
 GOVULNCHECK_VERSION = v1.9.0
 SHELLCHECK_DEB = shellcheck_0.11.0-2_amd64.deb
 SHELLCHECK_SHA256 = 06990eaf21b5dfa3d855e492f7ca2d6fcacf63b490a73a545850c50cf7af2bce
-SHELLCHECK_URL = http://archive.ubuntu.com/ubuntu/pool/universe/s/shellcheck/$(SHELLCHECK_DEB)
+# The Ubuntu archive first, then a mirror of it. The pinned SHA-256 decides
+# either way, so a mirror cannot change what installs.
+SHELLCHECK_URLS = http://archive.ubuntu.com/ubuntu/pool/universe/s/shellcheck/$(SHELLCHECK_DEB) https://mirrors.edge.kernel.org/ubuntu/pool/universe/s/shellcheck/$(SHELLCHECK_DEB)
 ACTIONLINT = $(LINT_BIN)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 DEADCODE = $(LINT_BIN)/deadcode-$(DEADCODE_VERSION)/deadcode
 GOVULNCHECK = $(LINT_BIN)/govulncheck-$(GOVULNCHECK_VERSION)/govulncheck
@@ -145,7 +147,7 @@ $(GOVULNCHECK):
 
 $(SHELLCHECK):
 	mkdir -p $(@D)
-	curl -fsSL --retry 3 -o $(@D)/$(SHELLCHECK_DEB) $(SHELLCHECK_URL)
+	for url in $(SHELLCHECK_URLS); do curl -fsSL --retry 3 -o $(@D)/$(SHELLCHECK_DEB) $$url && break; done
 	echo '$(SHELLCHECK_SHA256)  $(@D)/$(SHELLCHECK_DEB)' | sha256sum --check --strict
 	dpkg-deb --fsys-tarfile $(@D)/$(SHELLCHECK_DEB) | tar -xO ./usr/bin/shellcheck >$@.partial
 	rm $(@D)/$(SHELLCHECK_DEB)
