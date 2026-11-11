@@ -2,6 +2,13 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.21 (2026-11-11)
+
+### What you can now do
+
+- Group an agent's own telemetry by pull request without a vendor exporter: the `claude-code-action` and `codex-action` recipes set `OTEL_RESOURCE_ATTRIBUTES` on the agent step with `vcs.change.id`, `vcs.ref.head.revision`, `vcs.ref.base.revision`, `vcs.repository.url.full`, `cicd.pipeline.run.id` and `cicd.pipeline.task.run.id`, the values `costroid run` already gives the agents it starts. `costroid lint-recipes` rejects an agent step outside `costroid run` that lacks one; `costroid lint` notes it.
+- `costroid export` sends by integration contract v0.3, rows `focus-row/v0.5` and tags `tags/v0.4`, to a platform that states it, and by v0.2 otherwise, saying which. Outside GitHub Actions, a token that may not read the platform's contract keeps sending by v0.2, with one warning. The contract is published in [Costroid/costroid-schemas](https://github.com/Costroid/costroid-schemas).
+
 ## 1.0.0-alpha.20 (2026-11-10)
 
 ### What you can now do
