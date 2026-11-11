@@ -20,7 +20,7 @@ import (
 	"github.com/Costroid/costroid/internal/run"
 )
 
-// recorded is dogfood run 42629874786: Copilot CLI 1.0.103 on the user's own
+// recorded is GitHub Actions run 42629874786: Copilot CLI 1.0.103 on the user's own
 // Anthropic key, claude-haiku-5-5, three model requests, recorded with
 // scripts/record. Its README states the run's own totals.
 var recorded = filepath.Join("testdata", "1.0.103", "byok")

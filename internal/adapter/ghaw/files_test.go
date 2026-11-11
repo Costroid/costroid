@@ -22,7 +22,7 @@ var uploadLists = filepath.Join("testdata", "upload-lists")
 // the artifact's root.
 const uploadRoot = "/tmp/gh-aw/usage/"
 
-// recordedRun is every file the usage artifact of dogfood run 42469416753
+// recordedRun is every file the usage artifact of GitHub Actions run 42469416753
 // held, gh-aw v1.0.1 running Codex 0.164.0, as gh run download wrote it on
 // 2026-11-08.
 var recordedRun = []string{

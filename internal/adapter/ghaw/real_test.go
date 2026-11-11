@@ -16,12 +16,12 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 )
 
-// recordedCodex is dogfood run 42469416753, gh-aw v1.0.1 running Codex
+// recordedCodex is GitHub Actions run 42469416753, gh-aw v1.0.1 running Codex
 // 0.164.0 behind firewall v0.29.0 with max-ai-credits: 10, recorded with
 // scripts/record as gh run download wrote its usage and info artifacts.
 var recordedCodex = filepath.Join("testdata", "0.29.0", "codex")
 
-// recordedClaude is dogfood run 42486902241, gh-aw v1.0.1 running Claude Code
+// recordedClaude is GitHub Actions run 42486902241, gh-aw v1.0.1 running Claude Code
 // 2.1.310 on claude-sonnet-5 behind firewall v0.29.0 with max-ai-credits: 10,
 // recorded the same way. gh-aw stated 11.80342 AI credits for it, and opened
 // an issue that the run hit its max-ai-credits guardrail.

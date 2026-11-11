@@ -17,7 +17,7 @@ import (
 	"github.com/Costroid/costroid/internal/run"
 )
 
-// recordedStop is dogfood run 42945131550: costroid run --budget-usd 0.001
+// recordedStop is GitHub Actions run 42945131550: costroid run --budget-usd 0.001
 // around Copilot CLI 1.0.103 on the user's own Anthropic key,
 // claude-haiku-5-5, stopped at the cap after its first request. Its README
 // states the run's figures.

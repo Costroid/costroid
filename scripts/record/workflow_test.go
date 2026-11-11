@@ -13,9 +13,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// dogfoodVariable names the checkout of the repository that holds the
+// recordingVariable names the checkout of the repository that holds the
 // recording workflows. The test skips without it.
-const dogfoodVariable = "COSTROID_DOGFOOD_DIR"
+const recordingVariable = "COSTROID_RECORDING_DIR"
 
 // scenarios are the runs the recording workflow can record, in its order.
 var scenarios = []string{
@@ -95,9 +95,9 @@ func checkSteps(t *testing.T, name string, w workflow) (uploads int) {
 }
 
 func TestRecordWorkflowShape(t *testing.T) {
-	dir := os.Getenv(dogfoodVariable)
+	dir := os.Getenv(recordingVariable)
 	if dir == "" {
-		t.Skip(dogfoodVariable + " names no checkout of the recording workflows")
+		t.Skip(recordingVariable + " names no checkout of the recording workflows")
 	}
 
 	record := readWorkflow(t, dir, "record.yml")

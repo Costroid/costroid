@@ -20,8 +20,8 @@ const ghawArtifact = "../../internal/adapter/ghaw/testdata/not-recorded/claude"
 
 // The recorded gh-aw runs, each with its usage and info artifacts side by
 // side as gh run download writes them, and each with max-ai-credits: 10.
-// recordedGhAw is dogfood run 42469416753, gh-aw v1.0.1 running Codex, and
-// recordedGhAwClaude is dogfood run 42486902241, gh-aw v1.0.1 running Claude
+// recordedGhAw is GitHub Actions run 42469416753, gh-aw v1.0.1 running Codex, and
+// recordedGhAwClaude is GitHub Actions run 42486902241, gh-aw v1.0.1 running Claude
 // Code, which gh-aw stated ended at 11.80342 AI credits.
 const (
 	recordedGhAw       = "../../internal/adapter/ghaw/testdata/0.29.0/codex"
