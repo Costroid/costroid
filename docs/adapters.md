@@ -97,6 +97,22 @@ A Claude Code `session.id` joins a row and never earns `exact`. Anthropic's usag
 
 `apiKeySource` was `none` on these runs. Costroid reads `none`, an absent value and any unknown value as a subscription. A recorded `claude -p` run on an API key, Claude Code 2.1.319, reads `ANTHROPIC_API_KEY`.
 
+### A subscription on the comment
+
+That rule sets the basis and no more. The comment also says when a run proves it signed in on a Claude subscription. Beside that run's figure it prints `subscription: list-equivalent, no provider report to reconcile`. A subscription bills no tokens, so no provider usage report can reconcile the figure. The figure, its basis and every total stay as they are.
+
+A run proves it when two facts hold together: its `init` message states `apiKeySource` `none`, and the run holds a message of type `rate_limit_event`. Its rows then carry the same words as a note in `ChargeDescription`, and the comment prints the line beside a figure only when every row of that figure carries the note. The machine block does not name it, because `costroid.result/0.9` has no field for it.
+
+Nothing else marks a run:
+
+- `apiKeySource` `none` alone. The recordings of November 1, 2026 state it and hold no `rate_limit_event`, so they stay unmarked.
+- A `rate_limit_event` on a run whose `apiKeySource` names a key, is absent or is any other value.
+- A run on a gateway's key, which the gateway bills per token.
+- The model, the figure or the workflow's inputs. `costroid lint` notes a `claude_code_oauth_token` in a workflow, but the comment reads only the run.
+- A nested session. Its file states neither fact.
+
+The recording is `testdata/2.1.316/action-subscription/`: `claude-code-action` v1.0.248 on Claude Code 2.1.316, workflow run 42999335843 on 2026-11-11, signed in with `claude_code_oauth_token` and no API key. Its execution file states `apiKeySource` `none` and holds one `rate_limit_event`, whose body the scrub removed. Its rows come to 0.0302309 USD, list-equivalent. The run's own `total_cost_usd` reads 0.030230900000000005, the same figure in binary64. The three API-key recordings of `claude-code-action`, `action-session`, `action-budget-stop` and `execution-file`, state `ANTHROPIC_API_KEY` and hold no `rate_limit_event`. A test reads every recording and holds each to its mark.
+
 ### Nested sessions
 
 A hook or a plugin can start its own `claude -p`. That process writes its own session file under its own session id, and the run's result does not hold its spend. Costroid counts such a session when every rule holds:
