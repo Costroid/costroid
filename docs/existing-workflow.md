@@ -141,7 +141,7 @@ A fork's pull request receives no secrets on `pull_request`, so your Claude step
 
 ## On a Claude subscription
 
-A workflow that signs Claude in with `claude_code_oauth_token` in place of `anthropic_api_key` reports the same way. The run's execution file states how it was billed in `apiKeySource`. A value that names a key reads `measured`. Any other value reads `list_equivalent`: the tokens priced at the API's list rate, which says what the run would cost on a key, and the comment prints "not billed" beside the amount. No run on a subscription's token has been recorded, so that reading is unverified. [`docs/bases.md`](bases.md) defines both bases.
+A workflow that signs Claude in with `claude_code_oauth_token` in place of `anthropic_api_key` reports the same way. The run's execution file states how it was billed in `apiKeySource`. A value that names a key reads `measured`. Any other value reads `list_equivalent`: the tokens priced at the API's list rate, which says what the run would cost on a key, and the comment prints "not billed" beside the amount. A recorded run on a subscription's token, `claude-code-action` v1.0.248 on 2026-11-11, reads `list_equivalent`, and the comment says so beside its figure ([`docs/adapters.md`](adapters.md)). [`docs/bases.md`](bases.md) defines both bases.
 
 `costroid lint` prints a note for a subscription's token. A note fails nothing.
 
