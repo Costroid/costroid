@@ -41,7 +41,7 @@ Where a provider offers only a full admin key, that key never leaves your side. 
 The pull agent is the same image, run where the key lives:
 
 ```sh
-docker run --rm --user "$(id -u)" -e ANTHROPIC_ADMIN_KEY -v "$PWD:/work" ghcr.io/costroid/costroid:1.0.0-alpha.21 \
+docker run --rm --user "$(id -u)" -e ANTHROPIC_ADMIN_KEY -v "$PWD:/work" ghcr.io/costroid/costroid:1.0.0-alpha.22 \
   reconcile --rows /work/rows.jsonl --from 2026-10-01 --to 2026-10-31 --out /work/reconciliation.jsonl
 ```
 
