@@ -2,6 +2,13 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.22 (2026-11-11)
+
+### Security
+
+- Built with Go 1.27.4, which fixes GO-2026-6859: an HTTP/1 server could crash on a header race in `net/http`'s `MaxBytesReader`. `costroid serve` is an HTTP server and its webhook route reads bodies that way, so a self-hosted `serve` should move to this release. The binary, the container image and every release file are built with it.
+- `golang.org/x/crypto` is v0.58.0. GO-2026-5932, in its OpenPGP package, never reached Costroid's code; the bump leaves no known vulnerability in the module graph.
+
 ## 1.0.0-alpha.21 (2026-11-11)
 
 ### What you can now do
