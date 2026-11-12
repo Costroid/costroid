@@ -12,6 +12,8 @@ Signed-off-by: Your Name <you@example.com>
 
 CI rejects a pull request with an unsigned commit. Contributions are licensed under Apache-2.0, the licence of this repository.
 
+Commits the maintainers make with their automation carry a `Co-Authored-By` line. They are not signed and carry no `Signed-off-by`. The Developer Certificate of Origin and its CI check apply to pull requests from contributors.
+
 ## Changing the repository
 
 1. Install Go 1.27, staticcheck and Docker. `make check` starts Postgres in Docker.
