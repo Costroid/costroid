@@ -20,10 +20,32 @@ env:
   IMAGE: ghcr.io/costroid/costroid
 
 jobs:
-  guard:
+  # A release ships only a commit that ci passed on main. The tag is pushed
+  # after the ci run of the commit it names is green, so this finds that run.
+  tested:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
-    permissions: {}
+    permissions:
+      actions: read
+    steps:
+      - name: Require a successful ci run on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f head_sha="$GITHUB_SHA" -f event=push -f status=success \
+            --jq '.workflow_runs[] | "\(.head_sha) \(.status) \(.conclusion)"')
+          if ! grep -qxF "$GITHUB_SHA completed success" <<<"$runs"; then
+            echo "::error::$GITHUB_SHA has no successful ci run on a push to main, so it is not released"
+            exit 1
+          fi
+
+  guard:
+    needs: tested
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -39,6 +61,32 @@ jobs:
             exit 1
           fi
           echo "version=${TAG#v}" >>"$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The release notes open with the version's own section of the
+      # changelog. A version the changelog does not describe stops here,
+      # before any job pushes or publishes.
+      - name: Read the version's changes from the changelog
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          awk -v heading="## $VERSION (" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found && /^[[:space:]]*$/ { if (printed) blank = blank "\n"; next }
+            found { printf "%s%s\n", blank, $0; blank = ""; printed = 1 }
+          ' CHANGELOG.md >changes.md
+          if [[ ! -s changes.md ]]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION, so nothing is published"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: changes
+          path: changes.md
+          if-no-files-found: error
+          retention-days: 7
 
   binaries:
     needs: guard
@@ -115,14 +163,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # The image is pushed by its digest alone. The tag job names it by its
+      # version after the sign job signs and attests that digest, so a failed
+      # signature leaves no version tag on ghcr.io.
       - id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.IMAGE }}:${{ env.VERSION }}
-          build-args: VERSION=${{ env.VERSION }}
+          tags: ${{ env.IMAGE }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ github.sha }}
           provenance: false
       - name: Write the image's SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
@@ -214,8 +267,36 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Runs only after the sign job has signed and attested the digest.
+  tag:
+    needs: [guard, image, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Name the signed image by its version
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          # From one source that is an image index, imagetools writes the
+          # index's own bytes under the new tag, so the digest stays the one
+          # the sign job signed. The check below holds it to that.
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+          tagged=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+          if [[ $tagged != "$DIGEST" ]]; then
+            echo "::error::$IMAGE:$VERSION names $tagged, not the signed $DIGEST"
+            exit 1
+          fi
+
   publish:
-    needs: [guard, binaries, image, sign]
+    needs: [guard, binaries, image, sign, tag]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -229,6 +310,10 @@ jobs:
         with:
           name: image-sbom
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: changes
+          path: changes
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -240,7 +325,9 @@ jobs:
           if [[ $TAG == *-* ]]; then
             flags+=(--prerelease)
           fi
-          cat >notes.md <<NOTES
+          cp changes/changes.md notes.md
+          cat >>notes.md <<NOTES
+
           Install: download \`costroid-install.sh\`, read it, then run it. It checks this release's signature and checksum before it installs anything, and needs cosign 3 or later.
 
           \`\`\`sh

@@ -158,11 +158,12 @@ func TestReleaseUploadsNoticeAndLicense(t *testing.T) {
 	dist := filepath.Join(work, "dist")
 	recorded := filepath.Join(work, "recorded")
 	tools := filepath.Join(work, "tools")
-	for _, directory := range []string{dist, tools} {
+	for _, directory := range []string{dist, tools, filepath.Join(work, "changes")} {
 		if err := os.Mkdir(directory, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	write(t, filepath.Join(work, "changes", "changes.md"), []byte("### Fixes\n\n- A fix.\n"))
 	for _, name := range shipped {
 		write(t, filepath.Join(work, name), read(t, filepath.Join("..", name)))
 	}

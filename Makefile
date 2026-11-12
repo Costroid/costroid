@@ -72,7 +72,7 @@ pin:
 IMAGE ?= ghcr.io/costroid/costroid:$(VERSION)
 
 image:
-	docker build --tag $(IMAGE) --build-arg VERSION=$(VERSION) .
+	docker build --tag $(IMAGE) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) .
 
 # Brings the Compose stack up, walks the recorded run through every step and
 # tears it down. It needs Docker, and it stays out of check.

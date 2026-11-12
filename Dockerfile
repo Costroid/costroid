@@ -3,6 +3,9 @@
 # no shell and no home.
 FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 ARG VERSION=dev
+# The commit the release's tag names. The build context holds no .git, so the
+# commit comes in as an argument, as it does for the release's binaries.
+ARG COMMIT=
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
@@ -10,7 +13,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs=false \
-    -ldflags "-s -w -X main.version=$VERSION" -o /out/costroid ./cmd/costroid
+    -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT" -o /out/costroid ./cmd/costroid
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/costroid /usr/local/bin/costroid
