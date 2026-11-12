@@ -1,16 +1,18 @@
 costroid runs a coding agent under a budget and records what it cost.
 
 Usage:
+  costroid demo
+  costroid lint [--strict] [paths]
+  costroid init [github|gitlab] --agent AGENT
+  costroid doctor
   costroid run --budget-usd N -- <agent command>
   costroid report --rows rows.jsonl
-  costroid demo
   costroid validate [costroid.yml]
-  costroid lint [--strict] [paths]
   costroid help <command>
   costroid --version
 
 The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 
-Other commands: ingest-run, init, doctor, follow-up, approve, reconcile, export,
-connect, review, policy, lint-recipes, version, result, mcp, emit-otlp, app.
+Other commands: ingest-run, follow-up, approve, reconcile, export, connect,
+review, policy, lint-recipes, version, result, mcp, emit-otlp, app.
 Ledger commands: gateway, serve, keys, egress.

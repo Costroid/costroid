@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -243,7 +244,7 @@ func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
 
 var update = flag.Bool("update", false, "rewrite testdata/usage.golden and testdata/existing-claude.golden")
 
-const maxUsageLines = 16
+const maxUsageLines = 18
 
 func TestBareCommandPrintsShortUsage(t *testing.T) {
 	code, stdout, stderr := execute(t)
@@ -264,6 +265,31 @@ func TestBareCommandPrintsShortUsage(t *testing.T) {
 	for _, entry := range commands {
 		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(entry.name) + `\b`).MatchString(stdout) {
 			t.Errorf("the short usage does not name %s", entry.name)
+		}
+	}
+}
+
+// TestShortUsageListsTheFirstCommandsFirst holds the usage block to the
+// order a first reader meets the commands: demo and lint, which need no key,
+// then init and doctor, which add the check to a repository, then run. None
+// of the four is named again under other commands.
+func TestShortUsageListsTheFirstCommandsFirst(t *testing.T) {
+	text := usage.String()
+	block, others, _ := strings.Cut(text, "\nOther commands:")
+	_, block, _ = strings.Cut(block, "Usage:\n")
+	var named []string
+	for line := range strings.SplitSeq(block, "\n") {
+		if fields := strings.Fields(line); len(fields) > 1 && fields[0] == "costroid" {
+			named = append(named, fields[1])
+		}
+	}
+	if want := []string{"demo", "lint", "init", "doctor", "run"}; len(named) < len(want) || !slices.Equal(named[:len(want)], want) {
+		t.Errorf("the usage block names %v, want it to open with %v:\n%s", named, want, text)
+	}
+	others, _, _ = strings.Cut(others, "Ledger commands:")
+	for _, name := range []string{"demo", "lint", "init", "doctor"} {
+		if regexp.MustCompile(`[ ,]` + name + `[,.]`).MatchString(others) {
+			t.Errorf("%s is named under other commands:\n%s", name, text)
 		}
 	}
 }

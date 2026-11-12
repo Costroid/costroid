@@ -36,13 +36,17 @@ type stdio struct {
 	stdout, stderr io.Writer
 }
 
+// commands lists the commands with a short line first, in the order a first
+// reader meets them: what costs nothing, what adds the check to a repository,
+// then a run of one's own.
 var commands = []command{
+	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
+	{name: "lint", short: "costroid lint [--strict] [paths]", help: lintHelp, run: withoutContext(lintCommand)},
+	{name: "init", short: "costroid init [github|gitlab] --agent AGENT", help: initHelp, run: withoutContext(initCommand)},
+	{name: "doctor", short: "costroid doctor", help: doctorHelp, run: withOutputs(doctorCommand)},
 	{name: "run", short: "costroid run --budget-usd N -- <agent command>", help: runHelp, run: runCommand},
 	{name: "ingest-run", help: ingestRunHelp, run: withoutContext(ingestRunCommand)},
 	{name: "report", short: "costroid report --rows rows.jsonl", help: reportHelp, run: withOutputs(reportCommand)},
-	{name: "demo", short: "costroid demo", help: demoHelp, run: withOutputs(demoCommand)},
-	{name: "init", help: initHelp, run: withoutContext(initCommand)},
-	{name: "doctor", help: doctorHelp, run: withOutputs(doctorCommand)},
 	{name: "follow-up", help: followUpHelp, run: withOutputs(followUpCommand)},
 	{name: "approve", help: approveHelp, run: withOutputs(approveCommand)},
 	{name: "reconcile", help: reconcileHelp, run: reconcileWithProvider},
@@ -51,7 +55,6 @@ var commands = []command{
 	{name: "review", help: reviewHelp, run: withOutputs(reviewCommand)},
 	{name: "policy", help: policyHelp, run: withOutputs(policyCommand)},
 	{name: "validate", short: "costroid validate [costroid.yml]", help: validateHelp, run: withoutContext(validateCommand)},
-	{name: "lint", short: "costroid lint [--strict] [paths]", help: lintHelp, run: withoutContext(lintCommand)},
 	{name: "lint-recipes", help: lintRecipesHelp, run: withoutContext(lintRecipes)},
 	{name: "gateway", ledger: true, help: gatewayUsage, run: withOutputs(gatewayCommand)},
 	{name: "serve", ledger: true, help: server.ServeUsage, run: func(ctx context.Context, args []string, std stdio) int { return server.Main(ctx, args, std.stderr) }},
