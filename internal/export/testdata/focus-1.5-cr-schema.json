@@ -1,0 +1,196 @@
+{
+  "SchemaId": "6376aaed-3283-8e5f-8432-1d7af4f3a87e",
+  "FocusVersion": "1.5-cr",
+  "CreationDate": "2026-11-12T00:00:00Z",
+  "DatasetInstanceId": "9bd054ff-ae14-8274-bf6f-d107964267e6",
+  "ColumnDefinition": [
+    {
+      "ColumnName": "BilledCost",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "BillingAccountId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "BillingAccountName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "BillingCurrency",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "BillingPeriodEnd",
+      "DataType": "DATETIME"
+    },
+    {
+      "ColumnName": "BillingPeriodStart",
+      "DataType": "DATETIME"
+    },
+    {
+      "ColumnName": "ChargeCategory",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ChargeClass",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ChargeDescription",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ChargeFrequency",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ChargePeriodEnd",
+      "DataType": "DATETIME"
+    },
+    {
+      "ColumnName": "ChargePeriodStart",
+      "DataType": "DATETIME"
+    },
+    {
+      "ColumnName": "ConsumedQuantity",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "ConsumedUnit",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ContractedCost",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "ContractedUnitPrice",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "CredentialId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "EffectiveCost",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "HostProviderName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "InvoiceIssuerName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ListCost",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "ListUnitPrice",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "PricingCategory",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "PricingQuantity",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "PricingUnit",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "PrincipalId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "RegionId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "RegionName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "RequesterDetails",
+      "DataType": "JSON"
+    },
+    {
+      "ColumnName": "ServiceCategory",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ServiceName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ServiceProviderName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "ServiceSubcategory",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "SkuId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "SkuMeter",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "SkuPriceDetails",
+      "DataType": "JSON"
+    },
+    {
+      "ColumnName": "SkuPriceId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "SubAccountId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "SubAccountName",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "Tags",
+      "DataType": "JSON",
+      "ProviderTagPrefixes": [
+        "costroid/"
+      ]
+    },
+    {
+      "ColumnName": "x_CostroidCatalogVersion",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "x_CostroidOvershootBound",
+      "DataType": "DECIMAL",
+      "NumberScale": 12
+    },
+    {
+      "ColumnName": "x_CostroidRowId",
+      "DataType": "STRING"
+    },
+    {
+      "ColumnName": "x_CostroidServiceTier",
+      "DataType": "STRING"
+    }
+  ]
+}

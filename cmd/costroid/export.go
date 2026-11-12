@@ -97,8 +97,8 @@ var (
 const exportHelp = `Usage:
   costroid export --rows rows.jsonl --platform-url URL --installation-id ID
                   [--batch-id ID]
-  costroid export --rows rows.jsonl --format focus-csv|vantage|datadog
-                  [--out PATH]
+  costroid export --rows rows.jsonl --format FORMAT [--out PATH]
+                  [--root-dir BUCKET]
 
 export sends a rows file to Costroid Platform as one batch of CSV, under the
 integration token in COSTROID_PLATFORM_TOKEN. It reads GET /identity first and
@@ -144,6 +144,18 @@ row states it: none is converted, rounded or added up.
   datadog           Datadog's Custom Costs CSV. It takes USD only, so a row in
                     another currency refuses the file, and the line names it.
                     Each tag that every row carries is a column
+  harness           Harness's custom cost CSV, in FOCUS 1.1 columns: one file
+                    for each billing period, and another past 20,000,000
+                    bytes, numbered as vantage numbers its files
+  cloudability      a Cloudability FOCUS 1.1 drop: under the directory --out
+                    names, a gzip CSV and its manifest for each billing
+                    period. --root-dir names the bucket the manifest names
+  ternary           Ternary's FOCUS 1.2 CSV: under the directory --out names,
+                    one file for each UTC day a charge starts on
+  focus-1.5-cr      FOCUS 1.5's candidate release, with its token and
+                    credential columns and its metadata, under the directory
+                    --out names. Ratification may change it, and the format
+                    is then named focus-1.5
 
 In vantage and datadog, BilledCost is the row's EffectiveCost, because a row's
 own BilledCost is 0: Costroid issues no invoice.
@@ -163,9 +175,11 @@ Exit codes of export:
 
 type exportFlags struct {
 	rows, origin, installation, batch string
-	// format and out are the file export writes instead of sending.
-	format exportformat.Format
-	out    string
+	// format and out are the file export writes instead of sending, and
+	// rootDir the bucket a cloudability manifest names.
+	format  exportformat.Format
+	out     string
+	rootDir string
 }
 
 // refusal is an answer of the platform that took nothing.
@@ -275,6 +289,7 @@ func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 	batch := set.String("batch-id", "", "the batch id; GitHub Actions derives one from the run")
 	format := set.String("format", "", "the file format to write instead of sending")
 	out := set.String("out", "", "the file --format writes; standard output when absent")
+	rootDir := set.String("root-dir", "", "the bucket or container a cloudability manifest names")
 	if err := parseFlags(set, args, exportHelp, stdout, stderr); err != nil {
 		return exportFlags{}, err
 	}
@@ -282,10 +297,10 @@ func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 		return exportFlags{}, errors.New("export takes no argument")
 	}
 	if *format != "" {
-		return parseFormatFlags(*rows, *format, *out, *address != "" || *installation != "" || *batch != "")
+		return parseFormatFlags(exportFlags{rows: *rows, out: *out, rootDir: *rootDir}, *format, *address != "" || *installation != "" || *batch != "")
 	}
-	if *out != "" {
-		return exportFlags{}, errors.New("--out names the file --format writes, and export without --format sends to Costroid Platform")
+	if *out != "" || *rootDir != "" {
+		return exportFlags{}, errors.New("--out and --root-dir name what --format writes, and export without --format sends to Costroid Platform")
 	}
 	if *rows == "" || *address == "" || *installation == "" {
 		return exportFlags{}, errors.New("export needs --rows, --platform-url and --installation-id")
@@ -306,8 +321,8 @@ func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 
 // parseFormatFlags reads the flags of a file export, which refuses any flag
 // that names the platform: sends reports one.
-func parseFormatFlags(rows, format, out string, sends bool) (exportFlags, error) {
-	if rows == "" {
+func parseFormatFlags(flags exportFlags, format string, sends bool) (exportFlags, error) {
+	if flags.rows == "" {
 		return exportFlags{}, errors.New("export --format needs --rows")
 	}
 	if sends {
@@ -317,7 +332,16 @@ func parseFormatFlags(rows, format, out string, sends bool) (exportFlags, error)
 	if err != nil {
 		return exportFlags{}, err
 	}
-	return exportFlags{rows: rows, format: parsed, out: out}, nil
+	switch {
+	case parsed.Layout() && flags.out == "":
+		return exportFlags{}, fmt.Errorf("export --format %s writes a directory of files, so it needs --out to name the directory", parsed)
+	case parsed == exportformat.Cloudability && flags.rootDir == "":
+		return exportFlags{}, exportformat.ErrNoRootDir
+	case parsed != exportformat.Cloudability && flags.rootDir != "":
+		return exportFlags{}, errors.New("--root-dir names the bucket a cloudability manifest names, and only --format cloudability writes one")
+	}
+	flags.format = parsed
+	return flags, nil
 }
 
 // writeFormat writes the rows file in its format. Nothing is written until
@@ -329,7 +353,7 @@ func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 	defer file.Close()
-	written, err := exportformat.Write(flags.format, file)
+	written, err := exportformat.Write(flags.format, file, exportformat.Options{Now: time.Now().UTC(), RootDir: flags.rootDir})
 	var refused *exportformat.RowsError
 	switch {
 	case errors.Is(err, exportformat.ErrNoRows):
@@ -349,14 +373,49 @@ func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
 		return writeStdout(flags.format, written.Files, stdout, stderr)
 	}
 	paths := partPaths(flags.out, len(written.Files))
+	if flags.format.Layout() {
+		paths = layoutPaths(flags.out, written.Files)
+	}
 	for i, part := range written.Files {
-		if err := os.WriteFile(paths[i], part.Body, 0o644); err != nil {
+		if err := writeExportFile(paths[i], part.Body); err != nil {
 			fmt.Fprintf(stderr, "costroid: %v\n", err)
 			return exitFailure
 		}
-		fmt.Fprintf(stdout, "costroid: wrote %d rows as %s to %s\n", part.Rows, flags.format, paths[i])
+		printWritten(stdout, flags.format, part, paths[i])
 	}
 	return 0
+}
+
+// layoutPaths are the paths of a layout format's files under the directory
+// --out names.
+func layoutPaths(directory string, files []exportformat.File) []string {
+	paths := make([]string, len(files))
+	for i, file := range files {
+		paths[i] = filepath.Join(directory, filepath.FromSlash(file.Name))
+	}
+	return paths
+}
+
+// writeExportFile writes a file of an export, making the directories its path
+// names.
+func writeExportFile(path string, body []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
+}
+
+// printWritten names a file the export wrote: the rows it holds and, where it
+// says, what they are, or what a file of no rows is.
+func printWritten(stdout io.Writer, format exportformat.Format, file exportformat.File, path string) {
+	switch {
+	case file.Rows == 0:
+		fmt.Fprintf(stdout, "costroid: wrote the %s to %s\n", file.Note, path)
+	case file.Note != "":
+		fmt.Fprintf(stdout, "costroid: wrote %d rows as %s to %s, %s\n", file.Rows, format, path, file.Note)
+	default:
+		fmt.Fprintf(stdout, "costroid: wrote %d rows as %s to %s\n", file.Rows, format, path)
+	}
 }
 
 // writeStdout writes a format of one file to standard output, and refuses one

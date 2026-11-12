@@ -13,9 +13,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
-var update = flag.Bool("update", false, "rewrite the golden vantage.csv and datadog.csv")
+var update = flag.Bool("update", false, "rewrite the golden files under testdata")
+
+// testOptions name the time and the bucket of an export, so every golden is
+// the same bytes on every run.
+var testOptions = Options{Now: time.Date(2026, 11, 12, 9, 30, 0, 0, time.UTC), RootDir: "example-focus-drops"}
 
 // exampleRows and exampleCSV are focus-row/v0.3's examples, which the focus
 // package's tests hold to the schemas' copy.
@@ -61,7 +66,7 @@ func readFile(t *testing.T, path string) []byte {
 
 func write(t *testing.T, format Format, rows []byte) Export {
 	t.Helper()
-	written, err := Write(format, bytes.NewReader(rows))
+	written, err := Write(format, bytes.NewReader(rows), testOptions)
 	if err != nil {
 		t.Fatalf("%s: %v", format, err)
 	}
@@ -224,7 +229,7 @@ func TestVantageSplitsAt2000000Bytes(t *testing.T) {
 func TestDatadogRefusesNonUSD(t *testing.T) {
 	lines := exampleLines(t)
 	lines[1]["BillingCurrency"], lines[4]["BillingCurrency"] = "EUR", "GBP"
-	written, err := Write(Datadog, bytes.NewReader(encodeLines(t, lines)))
+	written, err := Write(Datadog, bytes.NewReader(encodeLines(t, lines)), testOptions)
 	var refused *RowsError
 	if !errors.As(err, &refused) || len(written.Files) != 0 {
 		t.Fatalf("Write returned %d files and %v", len(written.Files), err)
@@ -309,7 +314,7 @@ func TestDatadogDaysEndInclusive(t *testing.T) {
 func TestDatadogRefusesABlankValue(t *testing.T) {
 	lines := exampleLines(t)
 	lines[2]["ChargeDescription"] = nil
-	_, err := Write(Datadog, bytes.NewReader(encodeLines(t, lines)))
+	_, err := Write(Datadog, bytes.NewReader(encodeLines(t, lines)), testOptions)
 	var refused *RowsError
 	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "row 3 ") || !strings.Contains(err.Error(), "ChargeDescription is blank") {
 		t.Fatalf("%v", err)

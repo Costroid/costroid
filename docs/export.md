@@ -163,8 +163,20 @@ Every amount is written as the row states it. None is converted, rounded or adde
 | `focus-csv` | FOCUS 1.4 CSV: the row contract's 40 columns, the same CSV Costroid Platform takes. 36 are FOCUS 1.4 columns, and 4 are Costroid's own, each named with the `x_` prefix FOCUS requires of a custom column |
 | `vantage` | A Vantage custom provider's CSV |
 | `datadog` | A Datadog Custom Costs CSV |
+| `harness` | A Harness custom cost CSV, in FOCUS 1.1 columns |
+| `cloudability` | A Cloudability FOCUS 1.1 drop: a gzip CSV and its manifest for each billing period, under the directory `--out` names |
+| `ternary` | FOCUS 1.2 CSV, one file for each UTC day, under the directory `--out` names |
+| `focus-1.5-cr` | FOCUS 1.5's candidate release, with its token and credential columns and its metadata, under the directory `--out` names |
 
-A row's `BilledCost` is 0, because Costroid issues no invoice, and FOCUS 1.4 requires 0 there of anyone who does not invoice the charge. The row's figure is in `EffectiveCost`: the priced figure of a `measured` row, and 0 on a `list_equivalent` row, whose figure is never shown as billed. [The row contract](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.5#which-cost-column-holds-what) lists each cost column by basis. Vantage and Datadog read their cost from `BilledCost`, so both files carry the row's `EffectiveCost` there.
+A row's `BilledCost` is 0, because Costroid issues no invoice, and FOCUS 1.4 requires 0 there of anyone who does not invoice the charge. The row's figure is in `EffectiveCost`: the priced figure of a `measured` row, and 0 on a `list_equivalent` row, whose figure is never shown as billed. [The row contract](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.5#which-cost-column-holds-what) lists each cost column by basis. Vantage and Datadog read their cost from `BilledCost`, so both files carry the row's `EffectiveCost` there. Harness reads `EffectiveCost`. The Cloudability, Ternary and FOCUS 1.5 files are whole FOCUS files, so each keeps `BilledCost` at 0 and the figure in `EffectiveCost`, as the row states them.
+
+Every file keeps the row's `Tags`, so the repository, pull request, commit, run and cost basis of each figure travel with it. Datadog's file carries each tag that every row has as a column of its own, as [Datadog](#datadog) says.
+
+### Older FOCUS versions
+
+FOCUS 1.1 and 1.2 have `ProviderName` and `PublisherName`, which FOCUS 1.4 does not, and lack `ServiceProviderName` and `HostProviderName`, which 1.4 has. The `harness`, `cloudability` and `ternary` files read `ProviderName`, and `PublisherName` where the file has it, from the row's `ServiceProviderName`: the provider that sells a model's tokens and, in a row Costroid writes, the one that produces them. `HostProviderName` has no 1.1 or 1.2 column, so the Cloudability and Ternary files carry it as the custom column `x_HostProviderName`, after every FOCUS column, as FOCUS 1.1's column ordering asks of a custom column. Their four `x_Costroid` columns stay as they are. Every other column keeps its name. The column lists are the specification's at the tags [v1.1](https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.1/specification/columns) and [v1.2](https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/tree/v1.2/specification/columns), read 2026-11-12.
+
+A row whose four date columns are not UTC instants to the second, as `2026-10-14T09:31:02Z`, is refused by these files, so no charge moves to another day or period to fit.
 
 Those figures are the same spend the provider bills. If the tool also imports the provider's own bill, do not add the two.
 
@@ -195,6 +207,127 @@ The page states of `BillingCurrency`: "Must be USD." A rows file with a row in a
 
 "For a CSV file, add a column per tag." Each tag key becomes a column after the six, named as the key, such as `costroid/repo`. The page also states: "NULL or blank ("") parameter values are not accepted." So a tag gets a column only when every row carries it with a value, and the command names the tags it left out. `costroid/cost_basis` is on every row Costroid writes, so each figure keeps its basis. A value past the page's 1,000 characters, or blank in a required column, refuses the file and names the row.
 
+### Harness
+
+Harness's [custom cost provider page](https://developer.harness.io/cloud-cost-management/integrations/custom-cost-provider), read 2026-11-12, states: "All uploads must follow the FOCUSv1 specification. The following fields are mandatory." Its link for FOCUSv1 is the FOCUS 1.1 specification. The file holds the page's 17 fields in the page's order: `BillingAccountId`, `BillingAccountName`, `BillingPeriodStart`, `BillingPeriodEnd`, `ChargeCategory`, `ChargePeriodStart`, `ChargePeriodEnd`, `ConsumedQuantity`, `EffectiveCost`, `ProviderName`, `RegionName`, `ResourceId`, `ServiceName`, `SkuId`, `SubAccountId`, `SubAccountName` and `Tags`. Each is the row's column of the same name, but `ProviderName`, which is the row's `ServiceProviderName`. `ResourceId` is null, because a row is no resource.
+
+`BillingCurrency` and `ConsumedUnit` follow them. The page lists neither. FOCUS 1.1 states `EffectiveCost` in `BillingCurrency` and counts `ConsumedQuantity` in `ConsumedUnit`, so each figure keeps its currency and each count its unit: `Tokens`, `Informational Tokens` or `Credits`. The page names no currency rule, so the file keeps each row's currency.
+
+The page states of `BillingPeriodStart`: "Must match invoice month on upload." So each file holds one billing period, and the command's line names it. It also states: "File size limit: 20 MB per upload. Split larger files before uploading." It does not say whether 20 MB is 20,000,000 or 20,971,520 bytes, so a file stays within 20,000,000. Past either bound the rows go to more than one file, each with the header: `--out costs.csv` writes `costs-1.csv`, `costs-2.csv` and on, the earlier billing period first.
+
+The page states "no nulls" for `BillingAccountId`, both billing period columns, `ChargeCategory`, both charge period columns, `EffectiveCost`, `ProviderName` and `ServiceName`, and lists `Usage`, `Purchase`, `Tax`, `Credit` and `Adjustment` as `ChargeCategory`'s allowed values. A row that misses either refuses the file, and the line names it.
+
+The page states that `ProviderName` "Should match the ProviderType used when setting up the integration." Name the source after the provider in the rows' `ServiceProviderName`. The page documents an upload in the console only: "Select the External Cost Data Sources tab. Click + Create New. Fill in the required details and upload your FOCUS CSV file." So no command can upload it from a CI job.
+
+### Cloudability
+
+IBM Cloudability's [FOCUS ingress page](https://www.ibm.com/docs/en/cloudability-commercial/cloudability-essentials/saas?topic=cloudability-connect-custom-data-focus-ingress), read 2026-11-12, states that Cloudability "currently supports" FOCUS 1.0 and 1.1, that a CSV is compressed with gzip, and that each drop lies at:
+
+```text
+<Root Directory>/<Optional_Sub_Directories>/<Vendor>/<Report_Period>/<Epoch Time Folder>/<prefix>-Manifest.json
+```
+
+The rows are FOCUS 1.4, so the file is their FOCUS 1.1 form, as [Older FOCUS versions](#older-focus-versions) says. `--out` names a directory, and `--root-dir` the bucket or container the manifest names:
+
+```sh
+costroid export --rows month.jsonl --format cloudability --out drops --root-dir example-focus-drops
+```
+
+For each billing period the rows name, the command writes a folder under `drops`:
+
+| Part of the path | What it is |
+| ---------------- | ---------- |
+| `Costroid` | The vendor, "A vendor name which would help in identifying the vendor type". Enter `Costroid` as the vendor when you connect the bucket |
+| `20261001-20261101` | The billing period, from its first day to the day its end falls on. The page states it "must be in the formats YYYYMMDD-YYYYMM(+1)DD" |
+| `1794475800` | The export's time in seconds since 1970, which "will be used to identify the latest drop for month-to-date data" |
+| `costroid-cost-and-usage.csv.gz` | The rows, compressed with gzip |
+| `costroid-Manifest.json` | The manifest. "The M in Manifest should always be capitalized." |
+
+The manifest holds the page's required fields and two of its optional ones:
+
+```json
+{
+  "compression": "GZIP",
+  "content_type": "CSV",
+  "root_dir": "example-focus-drops",
+  "all_report_keys": [
+    "Costroid/20261001-20261101/1794475800/costroid-cost-and-usage.csv.gz"
+  ],
+  "updated_at": "2026-11-12T09:30:00Z",
+  "focus_version": "1.1"
+}
+```
+
+`all_report_keys` is "the list of only new absolute file paths excluding the root directory". The page's table reads "CSV : gzip" for `compression`, and its one sample manifest writes the value as `GZIP`, which the manifest follows. `focus_version` "must match the exact FOCUS Spec version". The page states that dates in Parquet "must be stored as ISO-8601 UTC strings" in the form `YYYY-MM-DDTHH:mm:ssZ`, which is the form every row's dates take.
+
+The page states: "All the data that is uploaded to any of the storage services must be the entire month-to-date data." So build each drop from every rows file of the month so far, not from one run's. The artifact `costroid-rows` lasts 7 days, so keep each run's rows file where the month's drop can be built from it. Copy the folder `Costroid` and its contents to the root of the bucket, keeping the paths. The page states no limit on size and no rule on currency, so the file keeps each row's currency.
+
+### Ternary
+
+LiteLLM's [Ternary page](https://docs.litellm.ai/docs/observability/ternary.md), read 2026-11-12, states that a gateway "transforms recent spend into FOCUS 1.2 CSV and uploads one file per UTC day", and that "Each day maps to one file, so re-sending a day replaces it rather than double-counting." `--out` names a directory, and the command writes one FOCUS 1.2 file in it for each UTC day a row's charge starts on, named for the day, such as `2026-10-14.csv`. A charge that runs past midnight is in the day it started.
+
+The file is the rows' FOCUS 1.2 form, as [Older FOCUS versions](#older-focus-versions) says, with `InvoiceId` beside it. FOCUS 1.2 recommends `InvoiceId` and requires it to be null on a charge that no invoice holds, which is every row Costroid writes.
+
+Since a day sent again replaces the day, a day's file must hold every row of that day. Write it once the UTC day is over, from every rows file of the day. LiteLLM's page states that the upload asks Ternary for a URL with `POST {TERNARY_BASE_URL}/external-cost-sources/v1/{TERNARY_CONNECTION_ID}/upload-url` and the body `{"day": "YYYY-MM-DD"}`, and that "Ternary returns a short-lived signed Google Cloud Storage URL for exactly that day's file, plus the headers the upload must carry." It does not name the fields of that answer, so this page gives no upload command.
+
+Ternary's [Bring Your Own Data page](https://docs.ternary.app/docs/focus), read 2026-11-12, reads CSV from a bucket every four hours and states that "Column names must be valid BigQuery identifiers", which every column of the file is. It also states: "Tags or other JSON-heavy columns can cause “response too big” errors during the update lineage step. Leave these columns unmapped." A file loaded that way leaves out `Tags`, and with it the repository, pull request, run and basis of each figure.
+
+### Microsoft FinOps hubs
+
+Costroid writes no Parquet. Microsoft's [FinOps hubs data processing page](https://learn.microsoft.com/en-us/cloud-computing/finops/toolkit/hubs/data-processing), read 2026-11-12, states that data from outside Cost Management goes to the `ingestion` container as Parquet, at:
+
+```text
+ingestion/{dataset}/{date-folder-path}/{scope-id-path}/{ingestion-id}__{original-file-name}.parquet
+```
+
+For cost rows, `{dataset}` is `Costs`, and `{date-folder-path}` as `{yyyy}/{mm}` keeps "the latest ingestion per month". The page states of `{ingestion-id}`: "This value is used to remove previously ingested data in the same folder path." So each ingestion holds the month's rows so far. Once every file is in place, an empty `manifest.json` in the same folder starts the ingestion. The page states that "support for non-Azure data hasn't been explicitly tested in the latest release", and it names no column type or FOCUS version for such a file. Hubs convert the data they ingest to FOCUS 1.2, which the `ternary` files are.
+
+To try it, write the month's rows as `ternary`, then convert the files to one Parquet file with a tool of your own. With DuckDB, `all_varchar` keeps every amount as the decimal string the row wrote. The command below ran with DuckDB 1.5.5 on 2026-11-12:
+
+```sh
+costroid export --rows month.jsonl --format ternary --out days
+duckdb -c "COPY (SELECT * FROM read_csv('days/*.csv', all_varchar = true)) TO 'costroid.parquet' (FORMAT parquet)"
+```
+
+Place it at `ingestion/Costs/2026/11/costroid/<ingestion-id>__costroid.parquet`, then add the empty `manifest.json` beside it.
+
+### FOCUS 1.5's candidate release
+
+FOCUS 1.5 is a candidate release, published on 2026-11-02 as the tag [v1.5-cr](https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS_Spec/releases/tag/v1.5-cr) of the specification. Its text states: "This version is a candidate release but not an official publication." `--format focus-1.5-cr` writes the rows with the columns the candidate adds. Ratification may change them, and the format is then named `focus-1.5`. Read 2026-11-12, from `FOCUS_spec-v1.5-cr.md` and `model-1.5-cr.json`.
+
+`--out` names a directory, laid out as the candidate's metadata examples lay theirs out:
+
+| File | What it holds |
+| ---- | ------------- |
+| `data/cost-and-usage.csv` | The rows |
+| `data/cost-and-usage-metadata.json` | The schema the rows conform to, by its `SchemaId`, and the data file's bytes and rows |
+| `metadata/data_generator.json` | `{"DataGenerator": "Costroid"}` |
+| `metadata/dataset_instances.json` | The one dataset instance, `Costroid rows`, of the dataset `CostAndUsage` |
+| `metadata/schemas/schema-<SchemaId>.json` | `FocusVersion`, the date the schema was written, and each column's name and type, in the file's order |
+
+The schema declares `FocusVersion` `1.5-cr`, the name the candidate's tag gives it, never `1.5`, so no reader takes the file for the ratified version. Its id is derived from the version and the columns, so the same columns keep the same id.
+
+The file holds the row contract's 36 FOCUS columns, with four the candidate adds, in the candidate's alphabetical order, then the four `x_Costroid` columns:
+
+| Column | From the row |
+| ------ | ------------ |
+| `SkuPriceDetails` | `ModelId` from `costroid/model`, and the token properties of the row's class in `SkuMeter`, as the next table shows. A row states no model developer, family or version, so the file names none |
+| `CredentialId` | The row's `SubAccountId`: the credential a run named with `--credential` or `COSTROID_CREDENTIAL`, or the id of the key `costroid run --gateway` made. Null where `SubAccountId` is null or is the session id, which names no credential |
+| `RequesterDetails` | `[{"key":"Credential","value":{}}]` where `CredentialId` is not null, and null where it is. The candidate asks for an entry beside every `CredentialId`. The row states no type, name or email of the credential, so the entry holds none |
+| `PrincipalId` | Null on every row: no row states a principal |
+
+| `SkuMeter` | `TokenDirection` | `TokenCacheAction` | `x_CacheWriteLifetime` |
+| ---------- | ---------------- | ------------------ | ---------------------- |
+| `input_uncached` | `Input` | `Uncached` | |
+| `cache_read` | `Input` | `Read` | |
+| `cache_write_5m`, `cache_write_30m`, `cache_write_1h`, `cache_write_12h` | `Input` | `Write` | `5m`, `30m`, `1h`, `12h` |
+| `output` | `Output` | | |
+| `reasoning_output`, `cached_input_reported` | | | |
+
+The candidate gives a cache write no lifetime, and states that "cache retention duration" is not a value of either property. A 5-minute and a 1-hour write are both `Write`, and the custom property `x_CacheWriteLifetime` keeps which it was. The two informational classes count tokens that a billed row already counts, so they carry neither property, and a query that selects `TokenDirection` `Output` counts each token once.
+
+The candidate states that `CredentialId` "MUST NOT contain a *credential* value that authenticates a request (e.g., an API key string, an access token, a password)". A `SubAccountId` that opens with `sk-`, as provider keys do, refuses the file, and the line names the row and never the value. `--credential` refuses the same shape.
+
 ## What does not exist yet
 
-Costroid has no writer for an S3 or GCS bucket, no Snowflake or BigQuery share, and sends to no FinOps platform besides Costroid Platform. For Vantage and Datadog it writes the file their import takes, as [Files for another tool](#files-for-another-tool) shows. To reach any other tool today, load the rows file or a `focus-csv` file with that tool's own import.
+Costroid has no writer for an S3 or GCS bucket, no Snowflake or BigQuery share, no Parquet, and sends to no FinOps platform besides Costroid Platform. For Vantage, Datadog, Harness, Cloudability and Ternary it writes the file their import takes, as [Files for another tool](#files-for-another-tool) shows, and you upload it. To reach any other tool today, load the rows file or a `focus-csv` file with that tool's own import.

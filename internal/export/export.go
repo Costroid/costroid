@@ -1,7 +1,9 @@
 // Package export writes a rows file in the import format of another cost tool:
-// FOCUS 1.4 CSV, a Vantage custom provider's CSV, or Datadog's Custom Costs
-// CSV. Every amount leaves as the row wrote it. Nothing is converted, rounded
-// or added up, and a tool that takes one currency refuses a row in another.
+// FOCUS 1.4 CSV, a Vantage custom provider's CSV, Datadog's Custom Costs CSV,
+// Harness's custom cost CSV, a Cloudability FOCUS drop, Ternary's daily FOCUS
+// 1.2 files, or FOCUS 1.5's candidate release. Every amount leaves as the row
+// wrote it. Nothing is converted, rounded or added up, and a tool that takes
+// one currency refuses a row in another.
 package export
 
 import (
@@ -12,6 +14,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Costroid/costroid/internal/focus"
 )
@@ -21,13 +24,25 @@ type Format string
 
 // The formats export writes.
 const (
-	FocusCSV Format = "focus-csv"
-	Vantage  Format = "vantage"
-	Datadog  Format = "datadog"
+	FocusCSV     Format = "focus-csv"
+	Vantage      Format = "vantage"
+	Datadog      Format = "datadog"
+	Harness      Format = "harness"
+	Cloudability Format = "cloudability"
+	Ternary      Format = "ternary"
+	// Focus15CR is FOCUS 1.5's candidate release, v1.5-cr. Ratification may
+	// change its content, and the format is then named focus-1.5.
+	Focus15CR Format = "focus-1.5-cr"
 )
 
 // Formats are the formats in the order the help names them.
-var Formats = []Format{FocusCSV, Vantage, Datadog}
+var Formats = []Format{FocusCSV, Vantage, Datadog, Harness, Cloudability, Ternary, Focus15CR}
+
+// Layout reports a format that writes a tree of named files under a directory,
+// where the other formats write one file, or numbered parts of one.
+func (f Format) Layout() bool {
+	return f == Cloudability || f == Ternary || f == Focus15CR
+}
 
 // ErrNoRows is a rows file that holds no row, of which no format writes a file.
 var ErrNoRows = errors.New("the rows file holds no rows")
@@ -66,8 +81,22 @@ func ParseFormat(name string) (Format, error) {
 
 // File is one file of an export and the number of rows it holds.
 type File struct {
+	// Name is the file's path under the directory a layout format writes,
+	// and empty in a format that writes one file.
+	Name string
 	Body []byte
 	Rows int
+	// Note says what the file holds where its rows do not: what a file of no
+	// rows is, or the billing period of a part.
+	Note string
+}
+
+// Options are what a format takes besides the rows.
+type Options struct {
+	// Now is when the export runs, which a Cloudability drop is named by.
+	Now time.Time
+	// RootDir is the bucket or container a Cloudability manifest names.
+	RootDir string
 }
 
 // Export is what a format made of a rows file.
@@ -81,7 +110,7 @@ type Export struct {
 // Write reads rows as JSON lines and writes them in format. A line that is
 // not a row of the contract refuses the export, as does a row the format
 // cannot take, and nothing is written.
-func Write(format Format, lines io.Reader) (Export, error) {
+func Write(format Format, lines io.Reader, options Options) (Export, error) {
 	var contract bytes.Buffer
 	count, err := focus.WriteCSV(&contract, lines)
 	if err != nil {
@@ -102,6 +131,14 @@ func Write(format Format, lines io.Reader) (Export, error) {
 		return writeVantage(rows)
 	case Datadog:
 		return writeDatadog(rows)
+	case Harness:
+		return writeHarness(rows)
+	case Cloudability:
+		return writeCloudability(rows, options)
+	case Ternary:
+		return writeTernary(rows)
+	case Focus15CR:
+		return writeFocus15CR(rows)
 	}
 	return Export{}, fmt.Errorf("export writes no format %q", format)
 }

@@ -1,0 +1,10 @@
+{
+  "compression": "GZIP",
+  "content_type": "CSV",
+  "root_dir": "example-focus-drops",
+  "all_report_keys": [
+    "Costroid/20261001-20261101/1794475800/costroid-cost-and-usage.csv.gz"
+  ],
+  "updated_at": "2026-11-12T09:30:00Z",
+  "focus_version": "1.1"
+}

@@ -2,17 +2,21 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -556,7 +560,7 @@ func TestExportHelpNamesEveryFlag(t *testing.T) {
 	if _, err := parseExport([]string{"-h"}, new(bytes.Buffer), new(bytes.Buffer)); err != flag.ErrHelp {
 		t.Fatalf("-h: %v", err)
 	}
-	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", "--format", "--out", "focus-csv", "vantage", "datadog", platformTokenVariable} {
+	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", "--format", "--out", "--root-dir", "focus-csv", "vantage", "datadog", "harness", "cloudability", "ternary", "focus-1.5-cr", platformTokenVariable} {
 		if !strings.Contains(exportHelp, name) {
 			t.Errorf("the help does not name %s", name)
 		}
@@ -838,11 +842,11 @@ func runExport(t *testing.T, args ...string) (int, string, string) {
 // to standard output, the same bytes both ways, and sends nothing: no platform
 // flag is given and none is taken.
 func TestExportFormatWritesAFileAndSendsNothing(t *testing.T) {
-	for _, format := range []string{"focus-csv", "vantage", "datadog"} {
+	for format, note := range map[string]string{"focus-csv": "", "vantage": "", "datadog": "", "harness": ", billing period 2026-10-01T00:00:00Z to 2026-11-01T00:00:00Z"} {
 		t.Run(format, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "costs.csv")
 			code, stdout, stderr := runExport(t, "--rows", exampleRows, "--format", format, "--out", path)
-			if code != 0 || stdout != "costroid: wrote 11 rows as "+format+" to "+path+"\n" {
+			if code != 0 || stdout != "costroid: wrote 11 rows as "+format+" to "+path+note+"\n" {
 				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
 			}
 			file, err := os.ReadFile(path)
@@ -867,8 +871,10 @@ func TestExportFormatWritesAFileAndSendsNothing(t *testing.T) {
 // Without --format, export sends to the platform as before, and --out alone
 // is refused, so no file is written by mistake.
 func TestExportWithoutFormatStillSends(t *testing.T) {
-	if code, _, stderr := runExport(t, "--rows", exampleRows, "--out", filepath.Join(t.TempDir(), "costs.csv")); code != exitFailure || !strings.Contains(stderr, "--out names the file --format writes") {
-		t.Fatalf("exit %d: %s", code, stderr)
+	for _, flag := range []string{"--out", "--root-dir"} {
+		if code, _, stderr := runExport(t, "--rows", exampleRows, flag, filepath.Join(t.TempDir(), "costs")); code != exitFailure || !strings.Contains(stderr, "--out and --root-dir name what --format writes") {
+			t.Fatalf("%s: exit %d: %s", flag, code, stderr)
+		}
 	}
 	if code, _, stderr := runExport(t, "--rows", exampleRows); code != exitFailure || !strings.Contains(stderr, "export needs --rows, --platform-url and --installation-id") {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -880,10 +886,13 @@ func TestExportFormatRefusesBeforeWriting(t *testing.T) {
 		args []string
 		want string
 	}{
-		"an unknown format": {[]string{"--rows", exampleRows, "--format", "parquet"}, `--format is "parquet", and export writes focus-csv, vantage, datadog`},
-		"no rows":           {[]string{"--format", "vantage"}, "export --format needs --rows"},
-		"a platform flag":   {[]string{"--rows", exampleRows, "--format", "vantage", "--platform-url", "https://app.costroid.com"}, "writes a file and sends nothing"},
-		"a batch id":        {[]string{"--rows", exampleRows, "--format", "datadog", "--batch-id", "nightly"}, "writes a file and sends nothing"},
+		"an unknown format":           {[]string{"--rows", exampleRows, "--format", "parquet"}, `--format is "parquet", and export writes focus-csv, vantage, datadog, harness, cloudability, ternary, focus-1.5-cr`},
+		"a layout to standard output": {[]string{"--rows", exampleRows, "--format", "ternary"}, "export --format ternary writes a directory of files, so it needs --out to name the directory"},
+		"a drop with no bucket":       {[]string{"--rows", exampleRows, "--format", "cloudability", "--out", "drops"}, "cloudability needs --root-dir"},
+		"a bucket for another format": {[]string{"--rows", exampleRows, "--format", "harness", "--root-dir", "drops"}, "only --format cloudability writes one"},
+		"no rows":                     {[]string{"--format", "vantage"}, "export --format needs --rows"},
+		"a platform flag":             {[]string{"--rows", exampleRows, "--format", "vantage", "--platform-url", "https://app.costroid.com"}, "writes a file and sends nothing"},
+		"a batch id":                  {[]string{"--rows", exampleRows, "--format", "datadog", "--batch-id", "nightly"}, "writes a file and sends nothing"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := runExport(t, check.args...)
@@ -1011,5 +1020,134 @@ func TestExportDocsFormatExampleRuns(t *testing.T) {
 	}
 	if code, stdout, stderr := runExport(t, args...); code != 0 || stdout != "costroid: wrote 11 rows as vantage to "+out+"\n" {
 		t.Fatalf("%v: exit %d: %s%s", args, code, stdout, stderr)
+	}
+}
+
+// writtenLine is a line a layout export prints for each file: its rows and
+// format, or what the file is, and its path.
+var writtenLine = regexp.MustCompile(`^costroid: wrote (?:(\d+) rows as ([a-z0-9.-]+)|the [A-Za-z ]+) to (.+)$`)
+
+// TestExportLayoutFormatsWriteTheirFiles writes each layout format of the
+// example rows under a directory, and reads back every file a line names:
+// each exists under the directory, and the data files hold the rows the
+// lines count, 11 in all.
+func TestExportLayoutFormatsWriteTheirFiles(t *testing.T) {
+	for _, format := range []string{"cloudability", "ternary", "focus-1.5-cr"} {
+		t.Run(format, func(t *testing.T) {
+			dir := t.TempDir()
+			args := []string{"--rows", exampleRows, "--format", format, "--out", dir}
+			if format == "cloudability" {
+				args = append(args, "--root-dir", "example-focus-drops")
+			}
+			code, stdout, stderr := runExport(t, args...)
+			if code != 0 || stderr != "" {
+				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+			}
+			total := 0
+			for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+				match := writtenLine.FindStringSubmatch(line)
+				if match == nil || !strings.HasPrefix(match[3], dir+string(filepath.Separator)) {
+					t.Fatalf("the line %q names no file under %s", line, dir)
+				}
+				data, err := os.ReadFile(match[3])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if match[1] == "" {
+					if !json.Valid(data) {
+						t.Errorf("%s is not JSON", match[3])
+					}
+					continue
+				}
+				if strings.HasSuffix(match[3], ".gz") {
+					data = gunzipFile(t, data)
+				}
+				records, err := csv.NewReader(bytes.NewReader(data)).ReadAll()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rows, _ := strconv.Atoi(match[1]); match[2] != format || len(records)-1 != rows {
+					t.Errorf("%q, and the file holds %d rows", line, len(records)-1)
+				}
+				total += len(records) - 1
+			}
+			if total != 11 {
+				t.Errorf("the files hold %d rows, want 11", total)
+			}
+		})
+	}
+}
+
+func gunzipFile(t *testing.T, data []byte) []byte {
+	t.Helper()
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plain
+}
+
+// A candidate export of a row whose SubAccountId reads like a key exits 1,
+// names the row and never the key, and writes nothing.
+func TestExportCandidateRefusesAKeyAndWritesNothing(t *testing.T) {
+	key := "sk-ant-api03-" + strings.Repeat("K", 40)
+	data, err := os.ReadFile(exampleRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(rows, bytes.Replace(data, []byte(`"SubAccountId":"workspace-ci"`), []byte(`"SubAccountId":"`+key+`"`), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "focus")
+	code, stdout, stderr := runExport(t, "--rows", rows, "--format", "focus-1.5-cr", "--out", dir)
+	if code != exitRejected || stdout != "" || !strings.HasPrefix(stderr, "costroid: focus-1.5-cr refuses row 1 (x_CostroidRowId ") || strings.Contains(stderr, key[:8]) {
+		t.Fatalf("exit %d: %s%s", code, stdout, stderr)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the directory was written: %v", err)
+	}
+}
+
+// TestExportDocsExamplesAllRun runs every costroid export line in the code
+// blocks of docs/export.md's Files for another tool, on the example rows,
+// into paths of its own.
+func TestExportDocsExamplesAllRun(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", "docs", "export.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, _ := strings.Cut(string(page), "## Files for another tool\n")
+	section, _, _ = strings.Cut(section, "\n## ")
+	ran := 0
+	for _, block := range strings.Split(section, "```sh\n")[1:] {
+		block, _, _ = strings.Cut(block, "\n```")
+		for _, line := range strings.Split(block, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[0] != "costroid" || fields[1] != "export" {
+				continue
+			}
+			dir := t.TempDir()
+			args := slices.Clone(fields[2:])
+			for i, arg := range args {
+				switch {
+				case arg == "rows.jsonl" || arg == "month.jsonl":
+					args[i] = exampleRows
+				case i > 0 && args[i-1] == "--out":
+					args[i] = filepath.Join(dir, arg)
+				}
+			}
+			if code, stdout, stderr := runExport(t, args...); code != 0 || !strings.Contains(stdout, "costroid: wrote 11 rows as ") {
+				t.Errorf("%s: exit %d: %s%s", line, code, stdout, stderr)
+			}
+			ran++
+		}
+	}
+	if ran < 3 {
+		t.Fatalf("the section runs %d examples, want the vantage, cloudability and ternary ones", ran)
 	}
 }
