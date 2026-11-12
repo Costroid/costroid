@@ -107,6 +107,40 @@ func TestPolicyRefusesWhatItCannotRead(t *testing.T) {
 	}
 }
 
+// TestPolicyNamesTheFileItRead holds costroid policy to the costroid.yml it
+// read: the working directory's by default, and a file --config names by its
+// path. Only the report reads the base branch's.
+func TestPolicyNamesTheFileItRead(t *testing.T) {
+	rows, err := filepath.Abs(realRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	t.Chdir(directory)
+	other := writeBaseConfig(t, "comment:\n  show_cost: true\n")
+	for name, check := range map[string]struct {
+		config string
+		args   []string
+		want   string
+	}{
+		"no file":               {"", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no threshold."},
+		"a file with no policy": {"comment:\n  show_cost: true\n", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no threshold."},
+		"an invalid file":       {"policy: [\n", nil, "No rule ran, so the check concludes neutral: `costroid.yml` in this directory is not valid"},
+		"another file":          {"", []string{"--config", other}, "No rule applied: `" + other + "` sets no budget and no threshold."},
+	} {
+		os.Remove(configFile)
+		if check.config != "" {
+			if err := os.WriteFile(configFile, []byte(check.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		code, stdout, stderr := execute(t, append([]string{"policy", "--rows", rows}, check.args...)...)
+		if code != 0 || !strings.Contains(stdout, check.want) || strings.Contains(stdout, "base branch") {
+			t.Errorf("%s: exit %d, want %q and no base branch:\n%s%s", name, code, check.want, stdout, stderr)
+		}
+	}
+}
+
 func TestAWithheldCommentStatesTheVerdictWithoutAmounts(t *testing.T) {
 	stub := reportEnvironment(t, pullRequestEvent())
 	stub.SetPrivate(false)

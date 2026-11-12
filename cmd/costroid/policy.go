@@ -72,7 +72,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
-	if err := printVerdict(stdout, verdict, flags.json); err != nil {
+	if err := printVerdict(stdout, verdict, flags.config, flags.json); err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
@@ -105,7 +105,7 @@ func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, err
 	})
 }
 
-func printVerdict(stdout io.Writer, verdict policy.Verdict, asJSON bool) error {
+func printVerdict(stdout io.Writer, verdict policy.Verdict, config string, asJSON bool) error {
 	if asJSON {
 		encoded, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
@@ -115,7 +115,7 @@ func printVerdict(stdout io.Writer, verdict policy.Verdict, asJSON bool) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "Verdict: %s.\n", verdict.Conclusion)
-	for _, sentence := range comment.VerdictSentences(verdict, true) {
+	for _, sentence := range comment.VerdictSentences(verdict, true, comment.LocalConfig(config)) {
 		fmt.Fprintln(stdout, sentence)
 	}
 	return nil

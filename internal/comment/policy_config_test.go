@@ -113,10 +113,10 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 			withheld = tc.shown
 		}
 		verdict := policy.Verdict{Results: []policy.Result{tc.result}}
-		if got := VerdictSentences(verdict, true)[0]; got != tc.shown {
+		if got := VerdictSentences(verdict, true, LocalConfig("costroid.yml"))[0]; got != tc.shown {
 			t.Errorf("shown:\n got %s\nwant %s", got, tc.shown)
 		}
-		if got := VerdictSentences(verdict.WithoutAmounts(), false)[0]; got != withheld {
+		if got := VerdictSentences(verdict.WithoutAmounts(), false, LocalConfig("costroid.yml"))[0]; got != withheld {
 			t.Errorf("withheld:\n got %s\nwant %s", got, withheld)
 		}
 	}

@@ -2,6 +2,7 @@ package comment
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -64,12 +65,22 @@ func (i Input) verdictLine(shown bool) string {
 	return line
 }
 
+// LocalConfig names a costroid.yml read from the working tree at path: the
+// default file as the one in this directory, any other by its path.
+func LocalConfig(path string) string {
+	if filepath.Clean(path) == "costroid.yml" {
+		return directoryConfig
+	}
+	return "`" + path + "`"
+}
+
 // VerdictSentences says what the policy found, one sentence per fact, in the
-// words the comment uses. shown says whether amounts may be printed. It reads
-// no lifetime, so a pull request's total is said to add every basis. It
+// words the comment uses. shown says whether amounts may be printed, and
+// config names the costroid.yml the verdict read, as LocalConfig does. It
+// reads no lifetime, so a pull request's total is said to add every basis. It
 // carries no link, so a terminal can print it.
-func VerdictSentences(verdict policy.Verdict, shown bool) []string {
-	return verdictSentences(verdict, shown, nil, baseBranchConfig, false)
+func VerdictSentences(verdict policy.Verdict, shown bool, config string) []string {
+	return verdictSentences(verdict, shown, nil, config, false)
 }
 
 // verdictSentences is built from the verdict's closed fields and its amounts,
