@@ -211,6 +211,12 @@ The file holds amounts, counts, times and words from closed lists. It never hold
 
 When the agent has ended, `state` reads `ended`. The run's last write states the grade the run earned once its rows were checked, the same grade as the run's object beside the rows file, which states what the run came to.
 
+## Ask from inside a run
+
+`costroid mcp` answers the Model Context Protocol on standard input and output, so an agent can ask what its run has cost while it works. Its four tools only read: `run_status` reads the status file above, `pull_result` reads the result object of the newest `costroid` check on a pull request's head commit, `policy_check` gives the verdict `costroid policy` gives, and `ledger_pull` reads a pull request's total from a ledger you host. Every amount is a decimal string beside its currency. `claude mcp add costroid -- costroid mcp` adds it to Claude Code.
+
+`pull_result` reads GitHub with `GITHUB_TOKEN`, and the repository from `--repo`, else `GITHUB_REPOSITORY`. `ledger_pull` asks the `costroid serve` that `--ledger` names, with `COSTROID_LEDGER_TOKEN` as its bearer: an ingest key, or a CI job's OIDC token. `--ledger` is `https`, or `http` on a loopback address. The agent names a pull request and never a host, so no token goes to a host the command line did not name.
+
 ## In a workflow
 
 The action sets the same figures as step outputs on the report job: `cost`, `currency`, `cost_basis`, `tokens_input_uncached`, `tokens_cache_read`, `tokens_cache_write`, `tokens_output`, `enforcement_grade`, `catalog_version`, `check_run_id`, `conclusion` and `result`. When the figures hold more than one currency or basis, `currency` or `cost_basis` reads `multiple`, `cost` and the token outputs are empty, and `result` holds each figure.

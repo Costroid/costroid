@@ -1,8 +1,23 @@
 # Costroid
 
-Costroid is the cost check for pull requests. An agent's own cost figure is an estimate, so Costroid prices the run's tokens from a pinned, dated catalog and posts the figure, with its basis, on the pull request. A recorded run on 2026-11-07:
+Costroid is the cost check for pull requests. An agent's own cost figure is an estimate, so Costroid prices the run's tokens from a pinned, [dated catalog](docs/catalog.md) and posts the figure, with its basis, on the pull request. A recorded run on 2026-11-07:
 
 > This run cost USD 0.0391529 at list (Measured). No cap held it.
+
+## First commands
+
+They need no key and spend nothing:
+
+```sh
+costroid demo                  # the whole comment a pull request gets, from a recorded run
+costroid demo --state capped   # a run stopped at its cap; also failure and skipped
+costroid demo --markdown       # the same comment as the Markdown the report posts
+costroid lint                  # judges the agent workflows in .github/workflows
+```
+
+## Without installing anything
+
+Copy a recipe to `.github/workflows/costroid.yml`, set its one secret and open a pull request: [`github-claude-code-action.yml`](recipes/github-claude-code-action.yml) for Claude Code through `anthropics/claude-code-action`, on `ANTHROPIC_API_KEY` and capped at USD 5 a run, or [`github-codex-action.yml`](recipes/github-codex-action.yml) for `openai/codex-action`, on `OPENAI_API_KEY` and uncapped. Costroid's action installs its own binary. On a private repository, [`harden-runner`](docs/recipes.md#egress-in-the-agents-job) limits egress only with StepSecurity's subscription.
 
 ## Install
 
@@ -10,18 +25,18 @@ The recipes pin `1.0.0-alpha.23`: [install it](docs/install.md).
 
 ## Add it to the workflow you have
 
-Already on `claude-code-action`, with an API key or a Claude subscription, or on `openai/codex-action`:
+Already on `claude-code-action`, or on `openai/codex-action` with a `codex-home`:
 
 ```sh
 costroid init github --existing .github/workflows/claude.yml > costroid.patch
 git apply costroid.patch
 ```
 
-The patch adds a `read` step and a `report` job, [shown here](docs/existing-workflow.md).
+[The patch](docs/existing-workflow.md) adds a `read` step and a `report` job.
 
 ## Try it on a pull request
 
-`--pr` also sets the key and opens the pull request. Without it, `init` prints the rest:
+`init` prints the commands left, and `--pr` runs them:
 
 ```sh
 costroid init github --agent claude
@@ -32,9 +47,7 @@ git commit -m "Add the costroid check"
 gh pr create --fill
 ```
 
-The agent's job runs the third-party [`harden-runner`](docs/recipes.md#egress-in-the-agents-job) to limit its egress.
-
-## First command
+## A run on your machine
 
 With Claude Code installed and signed in:
 
@@ -53,18 +66,16 @@ costroid: budget USD 5, agent-flag: client-side estimate, can pass the cap
 costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT
 ```
 
-Each row is one request's token class, such as `"SkuMeter":"input_uncached"`. `report --preview` prints the comment the rows would post.
+Each row is one request's token class, such as `"SkuMeter":"input_uncached"`.
 
 ## More
 
-In Claude Code, install the plugin:
+[`docs/`](docs/README.md) lists every task. In Claude Code, install the plugin:
 
 ```text
 /plugin marketplace add Costroid/costroid
 /plugin install costroid@costroid
 ```
-
-[`costroid connect`](docs/connect.md) binds an owner to Costroid Platform. [`export --format`](docs/export.md#files-for-another-tool) writes rows for another cost tool. [The SDK recipes](docs/sdk.md) record Claude Agent SDK and Codex SDK programs. [`docs/`](docs) has the rest.
 
 ## Licence
 

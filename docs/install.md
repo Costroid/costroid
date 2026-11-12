@@ -4,7 +4,9 @@
 
 ## In one step
 
-The release carries `costroid-install.sh`. It checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`. Read it first:
+The release carries `costroid-install.sh`. It needs cosign 3 or later on your `PATH`, which [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) installs. Without cosign it stops and installs nothing: the six commands under [The binary](#the-binary) install it instead, checked against `SHA256SUMS` alone.
+
+The script checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`. Read it first:
 
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.23/costroid-install.sh
@@ -64,7 +66,7 @@ From the root of your repository:
 costroid init github --agent claude
 ```
 
-`init` writes `.github/workflows/costroid.yml` from the recipe this release ships, with Costroid's action pinned to the commit of the release the binary belongs to. `--agent` takes `claude`, `codex`, `claude-code-action` or `codex-action`. [`docs/recipes.md`](recipes.md) describes each recipe.
+`init` reads the host from the repository's remote. `github` or `gitlab` after `init`, or `--host`, names it instead. It writes `.github/workflows/costroid.yml` from the recipe this release ships, with Costroid's action pinned to the commit of the release the binary belongs to. `--agent` takes `claude`, `codex`, `claude-code-action` or `codex-action`. [`docs/recipes.md`](recipes.md) describes each recipe.
 
 On GitLab, `init` writes `.gitlab/costroid.yml`, with `COSTROID_VERSION` and `COSTROID_COMMIT` set to that release and `COSTROID_AGENT` to the agent, `claude` or `codex`:
 

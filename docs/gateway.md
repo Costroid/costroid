@@ -22,6 +22,8 @@ A job cannot hand a secret to another job through its outputs: GitHub refuses to
 | 4    | Agent             | `costroid run --gateway` waits until the key authenticates, reads the key back from the gateway, and starts the agent with the gateway's URL and the key in the agent's environment alone                                                                                                 |
 | 5    | Close, always     | `costroid gateway close` runs after mint and the agent's job, and deletes the key by its alias, which names the run and the attempt. With a ledger named, it first reads what the gateway counted on the key, and after the delete attests that figure to the ledger |
 
+The LiteLLM recipe gives each step what it needs through variables, and each variable has a flag. `gateway mint` and `gateway close` take the gateway's URL from `COSTROID_GATEWAY_URL`, or `--url`. `costroid run` takes it from the same variable, or `--gateway`, and the key's file from `COSTROID_GATEWAY_KEY_FILE`, or `--gateway-key-file`. `gateway mint` reads the sealed request from this run's artifact, or from the file `--request` names. It sets the key's limits from `--budget-usd`, `--lifetime-minutes`, `--max-request-tokens`, the most tokens one request may hold, input and output together, and `--max-parallel-requests`, the requests the key may have in flight at once, 1 unless it is given. The recipe passes `--max-request-tokens 1128000` and `--max-parallel-requests 1`.
+
 The sealing key pair is drawn at random, once, on your own machine:
 
 ```sh

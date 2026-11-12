@@ -296,8 +296,9 @@ func readingWords(text string) int {
 
 // TestReadmeReadsInAMinute holds the README to STYLE.md's minute. The licence
 // is a legal statement, not reading toward the first command, so it is not
-// counted. The README leads with the path for a workflow a team already runs,
-// then init --pr, then the comment previewed on the reader's own machine.
+// counted. The README leads with the two commands that cost nothing, demo and
+// lint, then a recipe pasted with no install, then the path for a workflow a
+// team already runs, then init --pr, then a run on the reader's own machine.
 func TestReadmeReadsInAMinute(t *testing.T) {
 	readme := read(t, readmePath)
 	body, _, found := strings.Cut(readme, "\n## Licence\n")
@@ -308,15 +309,15 @@ func TestReadmeReadsInAMinute(t *testing.T) {
 		t.Errorf("README.md reads %d words outside its code and its licence, past a minute at %d", words, minuteOfReading)
 	}
 	at := 0
-	for _, step := range []string{"costroid init github --existing ", "`--pr`", "costroid report --preview --rows rows.jsonl\n"} {
+	for _, step := range []string{"\ncostroid demo ", "\ncostroid lint ", "\n## Without installing anything\n", "costroid init github --existing ", "`--pr`", "costroid report --preview --rows rows.jsonl\n"} {
 		next := strings.Index(readme[at:], step)
 		if next < 0 {
-			t.Fatalf("README.md does not name %q after byte %d: it leads with --existing, then --pr, then report --preview", step, at)
+			t.Fatalf("README.md does not name %q after byte %d: it leads with demo, lint, a pasted recipe, --existing, --pr, then report --preview", step, at)
 		}
 		at += next + len(step)
 	}
-	if !strings.Contains(section(t, readme, "First command"), "Claude Code installed and signed in") {
-		t.Error("the first command does not say it needs Claude Code installed and signed in")
+	if !strings.Contains(section(t, readme, "A run on your machine"), "Claude Code installed and signed in") {
+		t.Error("the run on your machine does not say it needs Claude Code installed and signed in")
 	}
 }
 

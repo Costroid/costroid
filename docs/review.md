@@ -27,6 +27,8 @@ After the run, the agent's step reads the answer the run ended with and writes i
 | `codex exec`, under `stage: run` | The stream the action keeps on the runner | The last agent message of the last turn that completed |
 | `codex-action`, under `stage: read` | Its `codex-home` | The `last_agent_message` of the last completed turn, in a thread no other thread started |
 
+The step runs `costroid review --keep --from KIND=PATH --out FILE`. From a `codex-home` it also passes `--since`, the time the job started, so a rollout file an earlier job left there is not read. The report's step runs `costroid review --post --file FILE` on the file the artifact carried.
+
 Nothing the agent wrote or read on the way is kept: no reasoning, no reply before the last, no command and no file. A run that stopped at its cap, failed or never finished has no answer, and the step writes no file. The step never fails the agent's job.
 
 Under `stage: run` the answer is read from the file the stream goes to. With `show-output: true` the stream goes to the job log instead, and no answer is kept.
