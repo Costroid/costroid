@@ -575,9 +575,10 @@ func TestInitExistingPrintsAPatchAndWritesNothing(t *testing.T) {
 	}
 }
 
-// TestInitExistingMatchesTheDocs takes docs/existing-workflow.md's example
-// without its two blocks and the step's id, patches it, and gets the example
-// back with the page's cap lines added as its diff shows them.
+// TestInitExistingMatchesTheDocs builds costroid as the release the page's
+// example pins, runs init --existing on the example's lines above the step id
+// init adds, applies the patch it prints, and gets the example back, byte for
+// byte.
 func TestInitExistingMatchesTheDocs(t *testing.T) {
 	page := readFile(t, "../../docs/existing-workflow.md")
 	blocks := regexp.MustCompile("(?s)```yaml\n(.*?)```").FindAllStringSubmatch(page, -1)
@@ -585,59 +586,42 @@ func TestInitExistingMatchesTheDocs(t *testing.T) {
 		t.Fatalf("the page holds %d YAML blocks", len(blocks))
 	}
 	example := blocks[0][1]
-	cut := strings.Index(example, "\n\n      # Block 1")
+	cut := strings.Index(example, "        id: claude\n")
 	if cut < 0 || strings.Count(example, "        id: claude\n") != 1 {
-		t.Fatal("the example's layout moved: update this test")
+		t.Fatal("the example holds no id: claude line for init to add")
 	}
-	before := strings.Replace(example[:cut+1], "        id: claude\n", "", 1)
 	docsPin := regexp.MustCompile(regexp.QuoteMeta(costroidActionPath) + `@([0-9a-f]{40}) # v(\S+)`).FindStringSubmatch(example)
 	if docsPin == nil {
 		t.Fatal("the example pins no release")
 	}
+	binary := filepath.Join(t.TempDir(), "costroid")
+	build := exec.Command("go", "build", "-ldflags", "-X main.version="+docsPin[2]+" -X main.commit="+docsPin[1], "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v: %s", err, output)
+	}
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "review.yml"), before)
-	code, patch, stderr := runInit(t, root, buildInfo{version: docsPin[2], commit: docsPin[1]}, costroid.Recipes, "github", "--agent", "claude-code-action", "--existing", "review.yml")
-	if code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
+	if output, err := exec.Command("git", "init", "--quiet", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
 	}
-	patched := applyPatch(t, "review.yml", before, patch)
-	capped := addDiffLines(t, example, page, "## Hold each run to a cap")
-	if !reflect.DeepEqual(decodeYAML(t, patched), decodeYAML(t, capped)) {
-		t.Errorf("the patched workflow differs from the page's example with its cap lines:\n%s\nwant:\n%s", patched, capped)
+	name := filepath.Join(workflowDir, "review.yml")
+	writeFile(t, filepath.Join(root, name), example[:cut])
+	command := exec.Command(binary, "init", "github", "--existing", name)
+	command.Dir = root
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	patch, err := command.Output()
+	if err != nil {
+		t.Fatalf("costroid init github --existing %s: %v\n%s", name, err, stderr.String())
 	}
-}
-
-// addDiffLines adds to text the + lines of the first diff block under the
-// page's heading, each after the context line before it. A context line of
-// ... skips lines.
-func addDiffLines(t *testing.T, text, page, heading string) string {
-	t.Helper()
-	_, section, found := strings.Cut(page, heading+"\n")
-	diff := regexp.MustCompile("(?s)```diff\n(.*?)```").FindStringSubmatch(section)
-	if !found || diff == nil {
-		t.Fatalf("the page has no diff under %s", heading)
+	apply := exec.Command("git", "apply", "-")
+	apply.Dir = root
+	apply.Stdin = bytes.NewReader(patch)
+	if output, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("git apply: %v\n%s\npatch:\n%s", err, output, patch)
 	}
-	lines := strings.Split(text, "\n")
-	at, added := 0, 0
-	for line := range strings.SplitSeq(strings.TrimSuffix(diff[1], "\n"), "\n") {
-		switch {
-		case strings.HasPrefix(line, "+"):
-			lines = slices.Insert(lines, at, line[1:])
-			at++
-			added++
-		case strings.TrimSpace(line) == "...":
-		default:
-			next := slices.Index(lines[at:], strings.TrimPrefix(line, " "))
-			if next < 0 {
-				t.Fatalf("the diff's context line %q is not in the example after line %d", line, at)
-			}
-			at += next + 1
-		}
+	if patched := readFile(t, filepath.Join(root, name)); patched != example {
+		t.Errorf("init --existing writes a workflow other than the page's example:\n%s", lineDiff(example, patched))
 	}
-	if added == 0 {
-		t.Fatalf("the diff under %s adds no line", heading)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func TestInitRefusesWhatItCannotWrite(t *testing.T) {

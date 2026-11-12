@@ -17,7 +17,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Review with Claude
-        id: claude
         uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         env:
           OTEL_RESOURCE_ATTRIBUTES: cicd.pipeline.run.id=${{ github.run_id }},cicd.pipeline.task.run.id=${{ github.job }},vcs.change.id=${{ github.event.pull_request.number }},vcs.ref.base.revision=${{ github.event.pull_request.base.sha }},vcs.ref.head.revision=${{ github.event.pull_request.head.sha }},vcs.repository.url.full=${{ github.server_url }}/${{ github.repository }}
@@ -26,17 +25,17 @@ jobs:
           github_token: ${{ github.token }}
           claude_args: --max-budget-usd 5
           prompt: Review this pull request.
-
-      # Block 1: read what the run cost.
+        id: claude
       - name: Read what the run cost
         if: always() && steps.claude.outputs.execution_file != ''
         uses: Costroid/costroid/action@61a5b2e3836a940838e127311ed15f3087f3d6d5 # v1.0.0-alpha.23
         with:
           stage: read
           execution-file: ${{ steps.claude.outputs.execution_file }}
+          budget-usd: "5"
+          claude-args: --max-budget-usd 5
           billing-account: ${{ github.repository_owner }}
 
-  # Block 2: report it on the pull request.
   report:
     needs: review
     if: always() && github.event_name == 'pull_request'
@@ -50,4 +49,5 @@ jobs:
       - uses: Costroid/costroid/action@61a5b2e3836a940838e127311ed15f3087f3d6d5 # v1.0.0-alpha.23
         with:
           stage: report
+          budget-usd: "5"
           agent-result: ${{ needs.review.result }}
