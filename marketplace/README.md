@@ -8,7 +8,7 @@ Newest release: [`__RELEASE_TAG__`](https://github.com/Costroid/costroid/release
 
 Each pull request gets one check, `costroid`, and one comment. The comment's first line states what the run cost and on what basis. For a recorded run of Claude Code 2.1.316 under `claude-code-action` on 2026-11-07, it reads:
 
-> This run cost USD 0.0391529 at list (Measured). Nothing held it to a budget.
+> This run cost USD 0.0391529 at list (Measured). No cap held it.
 
 The figure equals the `total_cost_usd` the run itself reported. [The recording's notes](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/cmd/costroid/demo/README.md) say how its rows were read, and [the whole comment](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/docs/comment-example.md) is what Costroid renders from them. `costroid demo` prints it.
 

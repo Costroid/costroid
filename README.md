@@ -2,7 +2,7 @@
 
 Costroid is the cost check for pull requests. An agent's own cost figure is an estimate, so Costroid prices the run's tokens from a pinned, dated catalog and posts the figure, with its basis, on the pull request. A recorded run on 2026-11-07:
 
-> This run cost USD 0.0391529 at list (Measured). Nothing held it to a budget.
+> This run cost USD 0.0391529 at list (Measured). No cap held it.
 
 ## Install
 
