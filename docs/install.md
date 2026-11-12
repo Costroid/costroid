@@ -72,7 +72,7 @@ On GitLab, `init` writes `.gitlab/costroid.yml`, with `COSTROID_VERSION` and `CO
 costroid init gitlab --agent codex
 ```
 
-`init` also writes `costroid.yml` at the root when the repository has none. Every key of the schema is in it, commented out under its description, so the file sets nothing until you remove a `#`. [`docs/configuration.md`](configuration.md) describes the keys.
+`init` also writes `costroid.yml` at the root when the repository has none. Each key a check reads is in it, commented out under its description, so the file sets nothing until you remove a `#`. Its first line names the schema at the release `init` pins. [`docs/configuration.md`](configuration.md) describes the keys.
 
 It holds the recipe to the rules of `costroid lint-recipes` before it writes it, and it refuses to replace a file unless you pass `--force`. Then it prints what each push to a pull request can spend, and the commands that are left: the secret, a branch, a commit and a pull request, then the label a first contributor's pull request needs. It runs none of them.
 

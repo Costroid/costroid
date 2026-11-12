@@ -193,6 +193,11 @@ type agentAction struct {
 // nothing from, so the costroid.yml init writes leaves them out.
 var reservedKeys = []string{"policy_pack", "budget_owner", "assumptions", "catalog", "agents"}
 
+// unreadKeys are keys below the top level, by their dotted path, whose rule
+// reads a figure no check receives yet, so the costroid.yml init writes
+// leaves them out as well.
+var unreadKeys = []string{"policy.monthly_budget_usd"}
+
 var (
 	releaseVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$`)
 	fullSHA        = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -236,6 +241,15 @@ func (p pin) uses() string {
 		return costroidActionPath + "@" + p.commit + " # set by costroid init --action-ref"
 	}
 	return costroidActionPath + "@" + p.commit + " # v" + p.version
+}
+
+// tree is the git ref of Costroid's repository at this pin: the release's
+// tag, or the commit --action-ref named.
+func (p pin) tree() string {
+	if p.version == "" {
+		return p.commit
+	}
+	return "v" + p.version
 }
 
 func (p pin) String() string {
@@ -765,7 +779,7 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 		fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", connectWorkflow, connectRecipeName, release)
 		changed = append(changed, connectWorkflow)
 	}
-	settings, err := commentedConfig()
+	settings, err := commentedConfig(release)
 	if err != nil {
 		return initFailed(stderr, err)
 	}
@@ -1198,7 +1212,6 @@ func secretNames(recipe []byte) []string {
 // schemaNode is the part of costroid.schema.json init writes from: each key
 // in the file's order, its description and its default.
 type schemaNode struct {
-	ID          string           `json:"$id"`
 	Description string           `json:"description"`
 	Default     json.RawMessage  `json:"default"`
 	Properties  schemaProperties `json:"properties"`
@@ -1237,26 +1250,36 @@ func (p *schemaProperties) UnmarshalJSON(data []byte) error {
 
 // commentedConfig is a costroid.yml that sets nothing and names every key
 // of the schema this release reads, each under its description and
-// commented out.
-func commentedConfig() ([]byte, error) {
+// commented out. Its schema line names the schema at the pinned release, so
+// a later change to the schema on main does not mark the file invalid.
+func commentedConfig(release pin) ([]byte, error) {
 	var schema schemaNode
 	if err := json.Unmarshal(costroid.ConfigSchema, &schema); err != nil {
 		return nil, fmt.Errorf("read the embedded schema of costroid.yml: %w", err)
 	}
 	var text strings.Builder
-	fmt.Fprintf(&text, "# yaml-language-server: $schema=%s\n", schema.ID)
+	fmt.Fprintf(&text, "# yaml-language-server: $schema=%s\n", configSchemaURL(release))
 	writeComment(&text, "# ", schema.Description+" To set a key, remove the # before it and before each key it sits under. costroid validate checks the file.")
 	for _, property := range schema.Properties {
 		if slices.Contains(reservedKeys, property.name) {
 			continue
 		}
 		text.WriteString("\n")
-		writeCommentedKey(&text, property, 0)
+		writeCommentedKey(&text, property, "", 0)
 	}
 	return []byte(text.String()), nil
 }
 
-func writeCommentedKey(text *strings.Builder, property schemaProperty, depth int) {
+// configSchemaURL is the schema of costroid.yml as the pinned release holds it.
+func configSchemaURL(release pin) string {
+	return "https://raw.githubusercontent.com/" + strings.TrimPrefix(modulePath, "github.com/") + "/" + release.tree() + "/costroid.schema.json"
+}
+
+func writeCommentedKey(text *strings.Builder, property schemaProperty, parent string, depth int) {
+	path := parent + property.name
+	if slices.Contains(unreadKeys, path) {
+		return
+	}
 	indent := strings.Repeat("  ", depth)
 	prefix := "# "
 	if depth > 0 {
@@ -1269,7 +1292,7 @@ func writeCommentedKey(text *strings.Builder, property schemaProperty, depth int
 	}
 	text.WriteString(line + "\n")
 	for _, child := range property.node.Properties {
-		writeCommentedKey(text, child, depth+1)
+		writeCommentedKey(text, child, path+".", depth+1)
 	}
 }
 

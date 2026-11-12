@@ -35,6 +35,9 @@ const (
 
 var releaseBuild = buildInfo{version: testRelease, commit: testCommit}
 
+// releaseBuildPin is what init pins for releaseBuild.
+var releaseBuildPin = pin{commit: testCommit, version: testRelease}
+
 // testPR holds --pr to no terminal and to runs that show at once.
 var testPR = prSettings{getenv: os.Getenv, terminal: filepath.Join(os.TempDir(), "costroid-no-terminal"), polls: 3}
 
@@ -240,9 +243,10 @@ func TestInitRefusesARecipeThatBreaksARule(t *testing.T) {
 }
 
 // TestInitConfigNamesEverySchemaKey holds the costroid.yml init writes to the
-// schema: every key this release reads, at its depth, commented out.
+// schema: every key a rule or the comment reads, at its depth, commented out,
+// and no key whose rule reads a figure no check receives.
 func TestInitConfigNamesEverySchemaKey(t *testing.T) {
-	settings, err := commentedConfig()
+	settings, err := commentedConfig(releaseBuildPin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,22 +255,31 @@ func TestInitConfigNamesEverySchemaKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := 0
-	var walk func(node map[string]any, depth int)
-	walk = func(node map[string]any, depth int) {
+	var walk func(node map[string]any, path string, depth int)
+	walk = func(node map[string]any, path string, depth int) {
 		properties, _ := node["properties"].(map[string]any)
 		for name, child := range properties {
 			if depth == 0 && slices.Contains(reservedKeys, name) {
 				continue
 			}
-			count++
 			line := "\n# " + strings.Repeat("  ", depth) + name + ":"
+			if slices.Contains(unreadKeys, path+name) {
+				if strings.Contains(string(settings), line) {
+					t.Errorf("costroid.yml names %s, which no check reads yet", path+name)
+				}
+				continue
+			}
+			count++
 			if !strings.Contains(string(settings), line) {
 				t.Errorf("costroid.yml lacks %q", line)
 			}
-			walk(child.(map[string]any), depth+1)
+			walk(child.(map[string]any), path+name+".", depth+1)
 		}
 	}
-	walk(schema, 0)
+	walk(schema, "", 0)
+	if strings.Contains(string(settings), "monthly_budget_usd") {
+		t.Error("costroid.yml names policy.monthly_budget_usd, whose rule reads a month to date no check receives")
+	}
 	if count < 10 {
 		t.Fatalf("read %d keys from the schema", count)
 	}
@@ -278,8 +291,21 @@ func TestInitConfigNamesEverySchemaKey(t *testing.T) {
 			t.Errorf("a line of %d bytes: %q", len(line), line)
 		}
 	}
-	if !strings.HasPrefix(string(settings), "# yaml-language-server: $schema="+schema["$id"].(string)+"\n") {
-		t.Errorf("costroid.yml does not open with the schema line:\n%s", settings)
+	if !strings.HasPrefix(string(settings), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Costroid/costroid/v"+testRelease+"/costroid.schema.json\n") {
+		t.Errorf("costroid.yml does not open with the schema line of v%s:\n%s", testRelease, settings)
+	}
+	if !strings.HasSuffix(schema["$id"].(string), "/costroid.schema.json") {
+		t.Errorf("the schema's $id is %s, and costroid.yml names the file at the release", schema["$id"])
+	}
+	named, err := commentedConfig(pin{commit: testCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(named), "# yaml-language-server: $schema=https://raw.githubusercontent.com/Costroid/costroid/"+testCommit+"/costroid.schema.json\n") {
+		t.Errorf("costroid.yml under --action-ref does not name the schema at that commit:\n%s", named)
+	}
+	if problems, err := config.Validate(settings); err != nil || len(problems) > 0 {
+		t.Errorf("the costroid.yml init writes is not valid: %v %v", problems, err)
 	}
 }
 
@@ -1339,7 +1365,7 @@ func TestSchemaAndDocsNameOneReadPoint(t *testing.T) {
 		t.Error("docs/configuration.md names the base commit")
 	}
 
-	settings, err := commentedConfig()
+	settings, err := commentedConfig(releaseBuildPin)
 	if err != nil {
 		t.Fatal(err)
 	}
