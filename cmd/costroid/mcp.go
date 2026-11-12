@@ -35,11 +35,12 @@ ask what its run has cost while it works. Its four tools only read:
 Every amount in an answer is a decimal string beside its currency.
 
 pull_result reads GitHub with GITHUB_TOKEN, and the repository from --repo,
-else GITHUB_REPOSITORY. ledger_pull sends COSTROID_LEDGER_TOKEN, an ingest key
-or a CI job's OIDC token, as its bearer, and asks for github.com/OWNER/NAME
-unless the agent names another repository. --ledger must be https, or http on
-a loopback address. The agent names a pull request and never a host, so no
-token goes anywhere the command line did not name.
+else GITHUB_REPOSITORY, else the GitHub repository the git remote origin
+names, or the only remote. ledger_pull sends COSTROID_LEDGER_TOKEN, an ingest
+key or a CI job's OIDC token, as its bearer, and asks for
+github.com/OWNER/NAME unless the agent names another repository. --ledger must
+be https, or http on a loopback address. The agent names a pull request and
+never a host, so no token goes anywhere the command line did not name.
 
 To add it to Claude Code:
   claude mcp add costroid -- costroid mcp

@@ -28,6 +28,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - `costroid init github` prints `git push --set-upstream origin try-costroid` before `gh pr create --fill`, as `init gitlab` prints it.
 - `costroid policy` names the `costroid.yml` it read: ``No rule applied: `costroid.yml` in this directory sets no budget and no threshold.``, or the path `--config` gives. It said `on the base branch`, which only the report reads. `costroid report --preview` already said `in this directory`.
 - A run outside CI whose rows name no billing account prints one `costroid: note:` line that names `--billing-account`, where it printed a warning. In GitHub Actions and GitLab CI the line is still a warning.
+- `costroid mcp --help` says `pull_result` reads the repository the git remote names when neither `--repo` nor `GITHUB_REPOSITORY` names one, as `costroid result` does. [`docs/serve.md`](docs/serve.md#prices) says how the ledger reads an estimate row's `ListCost` and a `SkuPriceId` it cannot use, and that a stated spend is at most 64 characters.
 
 ## 1.0.0-alpha.24 (2026-11-12)
 

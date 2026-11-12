@@ -166,6 +166,18 @@ func TestPullResultReadsCheckRunNotComment(t *testing.T) {
 	}
 }
 
+// TestMCPHelpNamesTheRepositoryResultReads holds the help of costroid mcp to
+// the places costroid result reads the repository from, which pull_result
+// shares.
+func TestMCPHelpNamesTheRepositoryResultReads(t *testing.T) {
+	const clause = "the repository from --repo, else GITHUB_REPOSITORY, else the GitHub repository the git remote origin names, or the only remote"
+	for name, help := range map[string]string{"result": resultHelp, "mcp": mcpHelp} {
+		if !strings.Contains(strings.Join(strings.Fields(help), " "), clause) {
+			t.Errorf("costroid %s's help does not say it reads %s", name, clause)
+		}
+	}
+}
+
 func TestPolicyCheckMatchesPolicyCommand(t *testing.T) {
 	const at = "2026-11-06T00:00:00Z"
 	for name, test := range map[string]struct {

@@ -137,7 +137,7 @@ It posts the body to `POST /v1/credentials/{key}/spend`, where `{key}` is the ke
 - the bearer is a CI token whose `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`;
 - the token's repository, run and attempt equal the body's;
 - the key is attested as minted for that repository, run and attempt;
-- `currency` is `USD`, the only currency the service takes for the count, and `spend` is a decimal of zero or more with at most 12 fractional digits.
+- `currency` is `USD`, the only currency the service takes for the count, and `spend` is a decimal of zero or more with at most 12 fractional digits and at most 64 characters.
 
 A refusal answers `403` with `ATTESTATION_FORBIDDEN` for the first, `403` with `JOIN_KEY_MISMATCH` for the second, `409` with `JOIN_KEY_MISMATCH` for the third, and `400` with `BODY_MALFORMED` for the fourth. A key's spend is the largest figure attested for it, because a gateway's count only grows. A smaller figure later answers `204` and changes nothing.
 
@@ -171,9 +171,9 @@ Over a limit, the agent's own counts are enough: a rule that fails on them fails
 
 ## Prices
 
-The service prices every row from its token count. It never reads a cost column, a unit price or a catalog version from a sender, and each one it sees is counted under `client_cost`.
+The service prices every agent's row from its token count. It never reads a cost column, a unit price or a catalog version from such a row, and each one it sees is counted under `client_cost`. An estimate row, whose `Tags` state the basis `estimate`, is never priced: the service stores its `ListCost` as stated, a plain decimal of zero or more with at most 26 integer and 12 fractional digits, and counts its other cost columns under `client_cost`.
 
-`POST /v1/rows` accepts row versions 0.1, 0.2 and 0.3. `RegionId` and `x_CostroidServiceTier` state the region and the tier from version 0.2 on. `SkuPriceId` supplies the context tier, and the service tier of a version 0.1 row. They are usage facts, trusted as far as token counts are, and reconciliation checks them. An id naming another model or class is ignored. A row with no `RegionId` prices at `global`.
+`POST /v1/rows` accepts row versions 0.1, 0.2 and 0.3. `RegionId` and `x_CostroidServiceTier` state the region and the tier from version 0.2 on. `SkuPriceId` supplies the context tier, and the service tier of a version 0.1 row. They are usage facts, trusted as far as token counts are, and reconciliation checks them. An id of another shape, or one naming another model or class, states no context tier. When the row's model has more than one context tier, the row prices at the highest, and its note says the figure may read high. An id naming another model or class, or not of six fields, states no service tier either, and the row prices at the standard tier unless `x_CostroidServiceTier` states one. A row with no `RegionId` prices at `global`.
 
 A cache write prices at its own class, and `cache_write_30m` and `cache_write_12h` are classes of their own. `costroid/assumed_ttl` says a rule assigned the class. It stays on the stored row and changes no figure. A value that is not the lifetime of the row's class rejects the request.
 
