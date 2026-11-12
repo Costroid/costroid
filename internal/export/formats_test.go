@@ -111,7 +111,8 @@ func TestHarnessFileHoldsTheDocumentedColumns(t *testing.T) {
 		"RegionName", "ResourceId", "ServiceName", "SkuId", "SubAccountId", "SubAccountName", "Tags",
 	}
 	noNulls := []string{"BillingAccountId", "BillingPeriodStart", "BillingPeriodEnd", "ChargeCategory", "ChargePeriodStart", "ChargePeriodEnd", "EffectiveCost", "ProviderName", "ServiceName", "BillingCurrency"}
-	written := write(t, Harness, readFile(t, exampleRows))
+	source := distinctProviders(t)
+	written := write(t, Harness, encodeLines(t, source))
 	if len(written.Files) != 1 || written.Files[0].Note != "billing period 2026-10-01T00:00:00Z to 2026-11-01T00:00:00Z" {
 		t.Fatalf("%d files, the first noted %q", len(written.Files), written.Files[0].Note)
 	}
@@ -123,7 +124,6 @@ func TestHarnessFileHoldsTheDocumentedColumns(t *testing.T) {
 	if want := append(slices.Clone(pageFields), "BillingCurrency", "ConsumedUnit"); !slices.Equal(header, want) {
 		t.Fatalf("the header is %v, want %v", header, want)
 	}
-	source := exampleLines(t)
 	for i, record := range rows {
 		for _, column := range noNulls {
 			if cellOf(t, header, record, column) == "" {
@@ -152,7 +152,17 @@ func TestHarnessFileHoldsTheDocumentedColumns(t *testing.T) {
 		}
 		holdsTheRow(t, header, record, source[i])
 	}
-	golden(t, "harness.csv", file.Body)
+	golden(t, "harness.csv", write(t, Harness, readFile(t, exampleRows)).Files[0].Body)
+}
+
+// distinctProviders are the example rows with a first row whose service
+// provider, host provider and invoice issuer are three entities, so a test
+// can tell which one a column reads.
+func distinctProviders(t *testing.T) []map[string]any {
+	t.Helper()
+	lines := exampleLines(t)
+	lines[0]["ServiceProviderName"], lines[0]["HostProviderName"], lines[0]["InvoiceIssuerName"] = "Example Model Lab", "Example Cloud", "Example Marketplace"
+	return lines
 }
 
 // Rows of two billing periods go to two Harness files, the earlier first,
@@ -226,7 +236,8 @@ func gunzipped(t *testing.T, data []byte) []byte {
 // custom, with every 1.1 Mandatory column, dates as UTC instants, and the
 // repository, pull request, run and basis kept in Tags.
 func TestCloudabilityFileIsFocus11WithItsManifest(t *testing.T) {
-	written := write(t, Cloudability, readFile(t, exampleRows))
+	source := distinctProviders(t)
+	written := write(t, Cloudability, encodeLines(t, source))
 	if len(written.Files) != 2 {
 		t.Fatalf("%d files, want a data file and its manifest", len(written.Files))
 	}
@@ -258,7 +269,6 @@ func TestCloudabilityFileIsFocus11WithItsManifest(t *testing.T) {
 			t.Errorf("the file lacks %s, which FOCUS 1.1 makes mandatory", column)
 		}
 	}
-	source := exampleLines(t)
 	if len(rows) != len(source) || data.Rows != len(source) {
 		t.Fatalf("%d rows, stated %d, for %d", len(rows), data.Rows, len(source))
 	}
@@ -280,8 +290,9 @@ func TestCloudabilityFileIsFocus11WithItsManifest(t *testing.T) {
 		}
 		holdsTheRow(t, header, record, source[i])
 	}
-	golden(t, "cloudability.csv", plain)
-	golden(t, "cloudability-Manifest.json", manifest.Body)
+	example := write(t, Cloudability, readFile(t, exampleRows))
+	golden(t, "cloudability.csv", gunzipped(t, example.Files[0].Body))
+	golden(t, "cloudability-Manifest.json", example.Files[1].Body)
 }
 
 // Each billing period is a drop of its own, and a drop names its bucket, so a
