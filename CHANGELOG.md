@@ -2,6 +2,14 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.25 (2026-11-12)
+
+### What you can now do
+
+- Read each performance bar, how it is measured and its last reading in [`docs/performance.md`](docs/performance.md).
+- Time the start: `make bench-start` runs `costroid --version` and `costroid policy` 30 times each, a fresh process every time, and fails when a p95 reaches 100 ms or 1 second. CI runs it on two cores on every push to `main` and every pull request.
+- Hold ingest to its floor: `make bench-ingest` fails when one stream writes under 10,000 rows a second.
+
 ## 1.0.0-alpha.24 (2026-11-12)
 
 ### Breaking changes
