@@ -100,8 +100,13 @@ func TestOpenCodeWatchdogStopsAtTheCap(t *testing.T) {
 	if err := checkListTotal(got.result.ListTotal, "0.0013544"); err != nil {
 		t.Error(err)
 	}
+	// The watchdog stopped the run, and the grade still reads none: no
+	// recorded run has proven the stop.
+	if got.result.Enforcement.Grade != "none" || !got.result.Enforcement.Watchdog {
+		t.Errorf("the run earned %+v", got.result.Enforcement)
+	}
 	for _, row := range got.rows {
-		if grade := tagOf(row, focus.TagEnforcementGrade); grade != "wrapper-watchdog" {
+		if grade := tagOf(row, focus.TagEnforcementGrade); grade != "none" {
 			t.Errorf("grade %s", grade)
 		}
 	}

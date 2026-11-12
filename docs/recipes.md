@@ -129,7 +129,7 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. The
 
 ## OpenCode
 
-[`recipes/github-opencode.yml`](../recipes/github-opencode.yml) runs OpenCode 1.19.4 on `anthropic/claude-haiku-5-5` with the secret `ANTHROPIC_API_KEY`, and stops it at the cap between its steps. It reads no `opencode.json` from the repository, which the pull request can change, and it denies OpenCode's edits, commands, web fetches and subagents. [`docs/adapters.md`](adapters.md#opencode) says how Costroid reads OpenCode.
+[`recipes/github-opencode.yml`](../recipes/github-opencode.yml) runs OpenCode 1.19.4 on `anthropic/claude-haiku-5-5` with the secret `ANTHROPIC_API_KEY`, and stops it at the cap between its steps. Its grade reads `none` until a recorded run proves that stop. It reads no `opencode.json` from the repository, which the pull request can change, and it denies OpenCode's edits, commands, web fetches and subagents. [`docs/adapters.md`](adapters.md#opencode) says how Costroid reads OpenCode.
 
 ## A LiteLLM gateway
 

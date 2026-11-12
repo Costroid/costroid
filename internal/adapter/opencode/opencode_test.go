@@ -120,7 +120,7 @@ func TestOpenCodeStepFinishRows(t *testing.T) {
 	if report.SessionID != "ses_fixture_0001" || report.CostBasis != focus.Measured || report.CostSource != "agent_stream" {
 		t.Errorf("session %q, basis %s, source %s", report.SessionID, report.CostBasis, report.CostSource)
 	}
-	if report.Enforcement.Grade != adapter.GradeWrapperWatchdog || !report.Enforcement.Watchdog {
+	if report.Enforcement != (adapter.Enforcement{Grade: adapter.GradeNone, Note: unprovenNote, Watchdog: true}) {
 		t.Errorf("enforcement %+v", report.Enforcement)
 	}
 	if stated := report.AgentStated; stated == nil || *stated != (adapter.Stated{Unit: "USD", Quantity: "0.00153317", Source: Name}) {
@@ -177,8 +177,8 @@ func TestOpenCodeStepFinishRows(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if report.Enforcement.Grade != adapter.GradeNone || report.Unrecorded != 2 || len(report.Warnings) != 2 {
-			t.Errorf("grade %s, unrecorded %d, warnings %q: a step in flight and one subagent", report.Enforcement.Grade, report.Unrecorded, report.Warnings)
+		if report.Enforcement.Grade != adapter.GradeNone || !strings.Contains(report.Enforcement.Note, "subagents spent outside the stream") || report.Unrecorded != 2 || len(report.Warnings) != 2 {
+			t.Errorf("enforcement %+v, unrecorded %d, warnings %q: a step in flight and one subagent", report.Enforcement, report.Unrecorded, report.Warnings)
 		}
 	})
 }
@@ -208,8 +208,8 @@ func TestOpenCodeContinuesASession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Requests) != 1 || report.Unrecorded != 0 || report.Enforcement.Grade != adapter.GradeWrapperWatchdog {
-		t.Errorf("%d requests, unrecorded %d, grade %s: an earlier message's subagent is not this run's", len(report.Requests), report.Unrecorded, report.Enforcement.Grade)
+	if len(report.Requests) != 1 || report.Unrecorded != 0 || report.Enforcement.Note != unprovenNote {
+		t.Errorf("%d requests, unrecorded %d, grade note %q: an earlier message's subagent is not this run's", len(report.Requests), report.Unrecorded, report.Enforcement.Note)
 	}
 
 	explicit := []string{"opencode", "run", "--format=json", "--title", "x", "-m", recordedModel, "work"}

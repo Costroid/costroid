@@ -36,7 +36,10 @@ const (
 
 	costSource = "agent_stream"
 
-	watchedNote = "wrapper-watchdog: priced from each step OpenCode reports, with a stop at the cap that a step in flight can pass"
+	// unprovenNote is the grade's note. The wrapper holds the run as it holds
+	// a Codex or Copilot CLI run, but no recorded run has stopped at its cap,
+	// and a grade is claimed only on a recorded stop.
+	unprovenNote = "none: the wrapper stops the run at the cap between steps, and no recorded run has proven that stop yet"
 
 	// StatedUnit is the unit of OpenCode's own price for a step, and of its
 	// figure for the run, AgentStated.
@@ -80,7 +83,8 @@ func (Agent) Name() string {
 
 // Plan adds --format json, and --title= when the command names no title. It
 // refuses a command whose model the catalog cannot price, since a run that
-// cannot be priced cannot be held to the budget.
+// cannot be priced cannot be held to the budget. The watchdog holds the run,
+// and the grade reads none until a recorded run proves the stop.
 func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	subcommand := slices.Index(argv, "run")
 	if subcommand < 1 {
@@ -102,7 +106,7 @@ func (Agent) Plan(argv []string, _ decimal.Decimal) (adapter.Plan, error) {
 	}
 	return adapter.Plan{
 		Argv:        slices.Insert(slices.Clone(argv), subcommand+1, added...),
-		Enforcement: adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: watchedNote, Watchdog: true},
+		Enforcement: adapter.Enforcement{Grade: adapter.GradeNone, Note: unprovenNote, Watchdog: true},
 	}, nil
 }
 
