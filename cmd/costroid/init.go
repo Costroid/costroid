@@ -1144,10 +1144,8 @@ func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed 
 			commands = append(commands, variableCommand(flags.platformURL))
 		}
 	}
-	commands = append(commands, "git switch -c try-costroid", "git add "+strings.Join(changed, " "), `git commit -m "Add the costroid check"`)
-	if flags.host == gitlabHost {
-		commands = append(commands, "git push --set-upstream origin try-costroid")
-	} else {
+	commands = append(commands, "git switch -c try-costroid", "git add "+strings.Join(changed, " "), `git commit -m "Add the costroid check"`, "git push --set-upstream origin try-costroid")
+	if flags.host != gitlabHost {
 		commands = append(commands, "gh pr create --fill")
 	}
 	fmt.Fprint(stdout, "\nThese commands are left, and init ran none of them:\n")

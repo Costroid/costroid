@@ -44,6 +44,7 @@ gh secret set ANTHROPIC_API_KEY
 git switch -c try-costroid
 git add .github/workflows/costroid.yml costroid.yml
 git commit -m "Add the costroid check"
+git push --set-upstream origin try-costroid
 gh pr create --fill
 ```
 

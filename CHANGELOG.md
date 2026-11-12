@@ -21,6 +21,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - OpenCode runs read the grade `wrapper-watchdog` again, on a recorded stop: under a USD 0.001 cap, OpenCode 1.19.4 made one step at USD 0.001438275, and the wrapper stopped it before a second step. The wrapper stops OpenCode between steps, so one step can pass the cap; that run passed it by USD 0.000438275, and each row's note says so. A run that calls OpenCode's `task` tool still reads `none`.
 - The first link under the comment and the GitLab note reads `Costroid Platform (not open yet)`. It read `Your account on costroid.com`, and no account opens there yet. Where it leads is unchanged.
 - `costroid app create` sends the browser the page that says GitHub created the App before it stops listening on the local address. It stopped at once, so the page could be cut short, and a browser that asked again was refused.
+- `costroid init github` prints `git push --set-upstream origin try-costroid` before `gh pr create --fill`, as `init gitlab` prints it.
 
 ## 1.0.0-alpha.24 (2026-11-12)
 
