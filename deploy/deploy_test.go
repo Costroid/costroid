@@ -190,8 +190,34 @@ func TestReleaseSignsAndWritesAnSPDXSBOM(t *testing.T) {
 	}
 }
 
-func TestTheChartAndTheFirstReleaseShareAVersion(t *testing.T) {
-	if !bytes.Contains(read(t, filepath.Join(chart, "Chart.yaml")), []byte("appVersion: 1.0.0-alpha.1")) {
-		t.Error("the chart does not name 1.0.0-alpha.1")
+// TestChartAndComposeNameTheNewestRelease holds the chart's version and
+// appVersion, which picks the image when image.tag is empty, and Compose's
+// default image to the release the recipes pin. make pin moves all of them.
+func TestChartAndComposeNameTheNewestRelease(t *testing.T) {
+	match := regexp.MustCompile(`Costroid/costroid/action@[0-9a-f]{40} # v(\S+)`).FindSubmatch(read(t, "../recipes/github-claude-code.yml"))
+	if match == nil {
+		t.Fatal("recipes/github-claude-code.yml pins no release")
+	}
+	newest := string(match[1])
+	var chartFile struct {
+		Version    string `yaml:"version"`
+		AppVersion string `yaml:"appVersion"`
+	}
+	if err := yaml.Unmarshal(read(t, filepath.Join(chart, "Chart.yaml")), &chartFile); err != nil {
+		t.Fatal(err)
+	}
+	if chartFile.Version != newest || chartFile.AppVersion != newest {
+		t.Errorf("the chart names version %s and appVersion %s; the recipes pin %s", chartFile.Version, chartFile.AppVersion, newest)
+	}
+	var file struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(read(t, composed), &file); err != nil {
+		t.Fatal(err)
+	}
+	if want := "${COSTROID_IMAGE:-ghcr.io/costroid/costroid:" + newest + "}"; file.Services["costroid"].Image != want {
+		t.Errorf("Compose runs %s by default, want %s", file.Services["costroid"].Image, want)
 	}
 }

@@ -2,7 +2,7 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 GOFILES_CHECK = test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image notice e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows lint-deadcode
+.PHONY: check test check-short bench-view bench-ingest fuzz fixture build image notice pin e2e e2e-bite lint lint-vulnerabilities lint-shell lint-workflows lint-deadcode
 
 # Runs everything, with Postgres in Docker. A missing Docker fails this target.
 check: test
@@ -61,6 +61,13 @@ build:
 # after a dependency changes.
 notice:
 	go run ./scripts/notice -o NOTICE
+
+# Moves the release the README, the docs, the recipes, the listing, the chart
+# and Compose name to VERSION at COMMIT, the commit its tag names. COMMIT is
+# never read from HEAD here: name it.
+pin:
+	@test "$(origin COMMIT)" = "command line" || { echo "make pin VERSION=1.0.0-alpha.N COMMIT=<the commit the tag names, 40 hex>" >&2; exit 2; }
+	go run ./scripts/pin -version "$(VERSION)" -commit "$(COMMIT)"
 
 IMAGE ?= ghcr.io/costroid/costroid:$(VERSION)
 

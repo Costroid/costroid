@@ -2,8 +2,8 @@ apiVersion: v2
 name: costroid
 description: The Costroid ledger service, with its own Postgres or yours.
 type: application
-version: 1.0.0-alpha.1
-appVersion: 1.0.0-alpha.1
+version: 1.0.0-alpha.23
+appVersion: 1.0.0-alpha.23
 home: https://github.com/Costroid/costroid
 sources:
   - https://github.com/Costroid/costroid
