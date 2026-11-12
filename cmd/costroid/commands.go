@@ -358,14 +358,17 @@ Exit codes of reconcile:
 
 const policyHelp = `Usage:
   costroid policy --rows rows.jsonl [--config costroid.yml]
-                  [--workflow-added T] [--at T] [--json]
+                  [--history earlier.jsonl] [--workflow-added T] [--at T]
+                  [--json]
 
 policy gives, offline, the verdict the check gives: it holds the rows to the
 policy keys of the costroid.yml named, which should be the base branch's.
---workflow-added and --at state when the workflow reached the base branch and
-when the check ran, both as RFC 3339. Without --workflow-added the warn-only
-period has not ended. --json prints the verdict as the check's machine block
-carries it.
+--history names the result objects of the pull request's earlier check runs,
+one per line, each with its check_run_id: the pull request's total and the
+agent's baseline are read from them as the report reads them. --workflow-added
+and --at state when the workflow reached the base branch and when the check
+ran, both as RFC 3339. Without --workflow-added the warn-only period has not
+ended. --json prints the verdict as the check's machine block carries it.
 
 Exit codes of policy:
   0                 success or neutral

@@ -23,8 +23,8 @@ Four rules read figures from outside the run. One that is set and lacks its figu
 
 | Rule                                   | Reads                                                         | In this release                                                                        |
 | -------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `run_increase`, `run_increase_percent` | The median of 10 or more earlier runs of the same agent        | No baseline reaches the check, so both conclude `unproven` with reason `no_baseline`   |
-| `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | `costroid report` reads it on a GitHub pull request. Off a pull request, on GitLab, under `costroid policy`, or when a commit's check runs cannot be read, it concludes `unproven` with reason `no_lifetime` |
+| `run_increase`, `run_increase_percent` | The median of 10 or more earlier runs of the same agent, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --history` from a file. With fewer runs, off a pull request, on GitLab, or when a commit's check runs cannot be read, both conclude `unproven` with reason `no_baseline` |
+| `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --history` from a file. Off a pull request, on GitLab, under `costroid policy` without `--history`, or when a commit's check runs cannot be read, it concludes `unproven` with reason `no_lifetime` |
 | `monthly_budget`                       | The repository's month to date, from a ledger                 | No ledger reaches the check, so it concludes `unproven` with reason `no_ledger`        |
 
 `pr_budget` runs when `costroid report` posts on a GitHub pull request. The report reads the `costroid` check runs on every commit of the pull request, adds up the figures in USD of every basis, and adds this run's rows. A figure in another currency is left out of the total, and the rule then cannot pass. An earlier report with this run's `rows_sha256` is this run reported again and is left out, and a repeated `rows_sha256` counts once. The comment states the same total under the figures, per currency and basis.
@@ -34,6 +34,19 @@ The rule's line names the bases its total adds, because a Measured figure and a 
 `pr_budget` treats a total that may count one report twice as no proof either way: the rule concludes `unproven` with reason `repeat_possible`. That happens when an earlier report states no `rows_sha256`, as every result object before `result/v0.6` does, and when this run's rows name no row ids.
 
 Any job of the repository can post a check run named `costroid`, so the total is unverified. It can show a pull request over its budget, never within it: the rule warns or fails, or concludes `unproven`. A total that leaves out check runs, because GitHub lists at most 250 commits or an object could not be read, can only read low.
+
+## The baseline
+
+`run_increase` and `run_increase_percent` hold a run to the median of the same agent's earlier runs. The report reads those runs from the `costroid` check runs on the pull request's commits, as it reads them for `pr_budget`, so the baseline is the pull request's own earlier runs.
+
+- A run is one earlier report on rows that name one agent, the agent this run's rows name. A run that names no agent or several joins no baseline, and when this run's rows name no agent or several, there is no baseline.
+- A run's cost is its figures added up at list, over every basis, as the run rules read this run. A run whose figures span two currencies has no single cost and joins no baseline. Each currency has its own baseline, and the rules read the one in USD.
+- A run counts once, at the first check run that reported its `rows_sha256`, so an approval that posts the report again adds nothing. A report that states no `rows_sha256` may repeat another, and is left out. So is this run's own report.
+- The window is the latest 20 runs with a cost in the currency, by check run id, the order in which GitHub creates check runs. Twenty runs is the count that ends the warn-only period.
+- With fewer than 10 runs there is no baseline, and both rules conclude `unproven` with reason `no_baseline`. Below 10, one run moves the median.
+- The median is the nearest-rank P50: the costs are sorted, and the median is the cost at rank ⌈n × 50 / 100⌉, counted from 1. Of 10 runs it is the 5th, of 20 the 10th. It is always one of the runs' costs, compared as an exact decimal, never a midpoint and never a float.
+
+Any job of the repository can post a check run named `costroid`, so a baseline is unverified, as the pull request's total is. It can show a run over it, never within it: the rules warn or fail, or conclude `unproven`.
 
 `model_allowlist` takes exact model ids, and prefixes that end in `*`: `claude-*` admits `claude-sonnet-5-5`, and `claude` admits only `claude`. A row whose tag is absent, or is not a model id of at most 128 letters, digits and `._:/+-`, cannot pass the rule: it concludes `unproven` with reason `unreadable_model`. A model off the list fails the rule whatever else the rows hold, and the verdict names at most 10 such models.
 
@@ -135,5 +148,14 @@ costroid policy --rows rows.jsonl --config base.yml
 ```
 
 It prints the conclusion, then the verdict's sentences one per line, in the comment's words. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
+
+`--history` takes the result objects of the pull request's earlier check runs, one object per line, each with its `check_run_id`. The command reads the pull request's total, the count that ends the warn-only period and the baseline from them, as the report reads them from the check runs, with the rows as this run's report. A line that is not a JSON object, or that names no check run, refuses the file with its line number. An object the report would skip, such as one that withholds its amounts, is skipped. This collects the objects on one commit:
+
+```sh
+gh api repos/OWNER/REPO/commits/SHA/check-runs \
+  --jq '.check_runs[] | select(.name == "costroid") | .output.text | ltrimstr("```json\n") | rtrimstr("\n```") | fromjson | tojson' \
+  >> earlier.jsonl
+costroid policy --rows rows.jsonl --config base.yml --history earlier.jsonl
+```
 
 It exits 0 on `success` or `neutral`, 1 on `failure`, and 125 when it cannot read a file.

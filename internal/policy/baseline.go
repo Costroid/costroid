@@ -3,15 +3,19 @@ package policy
 import "github.com/Costroid/costroid/internal/decimal"
 
 // MinBaselineRuns is the fewest earlier runs a baseline is read from before a
-// rule holds a run to it.
+// rule holds a run to it. Below it the nearest-rank P95 of 9 runs is their
+// highest cost, and one run moves the P50.
 const MinBaselineRuns = 10
 
 // Baseline is what this agent's earlier runs on the repository cost, in USD.
 type Baseline struct {
 	// Runs counts the earlier runs the median was read from.
 	Runs int
-	// MedianUSD is the median of their USD totals. It is never negative.
+	// MedianUSD is the median of their USD totals, their nearest-rank P50.
+	// It is never negative.
 	MedianUSD decimal.Decimal
+	// P95USD is the nearest-rank P95 of their USD totals.
+	P95USD decimal.Decimal
 	// Trust is who vouches for those runs' rows. Only a token-verified
 	// baseline can show that a run stayed within it.
 	Trust Trust
@@ -33,15 +37,20 @@ type Lifetime struct {
 	Trust Trust
 }
 
-// baselineInput is the baseline as the pack reads it: for each increase key
-// that is set, the USD amount a run may reach. The pack cannot add or
-// multiply, so the limits are computed here. A baseline of too few runs is
-// none.
+// baselineInput is the baseline as the pack reads it: its trust, its runs,
+// its P50 and P95 in USD, and for each increase key that is set, the USD
+// amount a run may reach. The pack cannot add or multiply, so the limits are
+// computed here. A baseline of too few runs is none.
 func baselineInput(baseline *Baseline, settings Settings) map[string]any {
-	if baseline == nil || baseline.Runs < MinBaselineRuns || baseline.MedianUSD.Sign() < 0 {
+	if baseline == nil || baseline.Runs < MinBaselineRuns || baseline.MedianUSD.Sign() < 0 || baseline.P95USD.Sign() < 0 {
 		return nil
 	}
-	input := map[string]any{"trust": string(trusted(baseline.Trust))}
+	input := map[string]any{
+		"trust":   string(trusted(baseline.Trust)),
+		"runs":    baseline.Runs,
+		"p50_usd": baseline.MedianUSD.String(),
+		"p95_usd": baseline.P95USD.String(),
+	}
 	median := baseline.MedianUSD
 	if increase, set := settings.Amounts[keyMaxIncrease]; set {
 		input[keyMaxIncrease] = median.Add(increase).String()

@@ -90,15 +90,17 @@ func postInputCheck(ctx context.Context, host scm.Reporter, input comment.Input,
 // verdictRequest is what a flow holds a run's rows to. commits names where
 // the settings are read, and start reads when the warn-only period began.
 // earlier is what the pull request's earlier runs cost, nil when it was not
-// read, and then the pull request budget does not run. measured counts the
-// pull request's reports with a measured figure, and at the twentieth the
-// warn-only period ends.
+// read, and then the pull request budget does not run. baseline is what the
+// agent's earlier runs cost, nil when they were not read, and then the
+// increase rules do not run. measured counts the pull request's reports with
+// a measured figure, and at the twentieth the warn-only period ends.
 type verdictRequest struct {
 	commits  policy.Commits
 	start    func(context.Context) policy.Start
 	rowsPath string
 	state    comment.State
 	earlier  *policy.Lifetime
+	baseline *policy.Baseline
 	measured int
 }
 
@@ -118,6 +120,7 @@ func decideVerdict(ctx context.Context, host scm.Reporter, request verdictReques
 		Config:               policy.ReadConfig(ctx, host, request.commits),
 		Start:                request.start(ctx),
 		At:                   time.Now(),
+		Baseline:             request.baseline,
 		Lifetime:             request.earlier,
 		MeasuredPullRequests: request.measured,
 	})

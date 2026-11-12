@@ -685,27 +685,27 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Platform, input.Repository, input.PullRequest = target.platform, target.repository, pull.pullRequest
 	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
 	// A recorded run's figures were spent on no commit of this pull request,
-	// so they join no total.
-	var lifetime *comment.Lifetime
-	var earlier *policy.Lifetime
+	// so they join no total and no baseline.
+	var runs earlierRuns
 	if input.Recorded == nil {
-		lifetime, earlier = readLifetime(ctx, host, pull, input, stderr)
+		runs = readLifetime(ctx, host, pull, input, stderr)
 	}
-	input.Lifetime = lifetime
+	input.Lifetime = runs.lifetime
 	if input.Refused == nil {
 		input.Verdict = decideVerdict(ctx, host, verdictRequest{
 			commits:  policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0},
 			start:    func(ctx context.Context) policy.Start { return workflowStart(ctx, host, pull, stderr) },
 			rowsPath: rowsPath,
 			state:    input.State,
-			earlier:  earlier,
-			measured: measuredReports(lifetime),
+			earlier:  runs.earlier,
+			baseline: runs.baseline,
+			measured: measuredReports(runs.lifetime),
 		}, stderr)
 		input.Approval = reportApproval(ctx, host, pull, input.Verdict, stderr)
 	}
 	input = postInputCheck(ctx, host, input, stderr)
 	if pull.pullRequest > 0 {
-		postComment(ctx, host, input, lifetime, pull.pullRequest, stderr)
+		postComment(ctx, host, input, runs.lifetime, pull.pullRequest, stderr)
 	}
 	return input
 }

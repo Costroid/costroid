@@ -15,10 +15,10 @@ import (
 )
 
 type policyFlags struct {
-	rows, config string
-	start        policy.Start
-	at           time.Time
-	json         bool
+	rows, config, history string
+	start                 policy.Start
+	at                    time.Time
+	json                  bool
 }
 
 func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
@@ -26,6 +26,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	config := set.String("config", configFile, "costroid.yml as the base branch holds it")
+	earlier := set.String("history", "", "the result objects of the pull request's earlier check runs, one per line")
 	added := set.String("workflow-added", "", "when the workflow reached the base branch, as RFC 3339")
 	at := set.String("at", "", "the time of the check, as RFC 3339; now when empty")
 	asJSON := set.Bool("json", false, "print the verdict as the machine block carries it")
@@ -35,7 +36,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	if *rows == "" || set.NArg() > 0 {
 		return policyFlags{}, errors.New("policy needs --rows and takes no argument")
 	}
-	flags := policyFlags{rows: *rows, config: *config, at: time.Now(), json: *asJSON}
+	flags := policyFlags{rows: *rows, config: *config, history: *earlier, at: time.Now(), json: *asJSON}
 	if *added != "" {
 		start, err := time.Parse(time.RFC3339, *added)
 		if err != nil {
@@ -96,13 +97,39 @@ func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, err
 	if config.Unread != nil {
 		return policy.Verdict{}, config.Unread
 	}
+	runs, err := historyOf(ctx, flags)
+	if err != nil {
+		return policy.Verdict{}, err
+	}
 	return policy.Evaluate(ctx, policy.Request{
-		Usage:  usage,
-		Trust:  policy.Unverified,
-		Config: config,
-		Start:  flags.start,
-		At:     flags.at,
+		Usage:                usage,
+		Trust:                policy.Unverified,
+		Config:               config,
+		Start:                flags.start,
+		At:                   flags.at,
+		Baseline:             runs.baseline,
+		Lifetime:             runs.earlier,
+		MeasuredPullRequests: measuredReports(runs.lifetime),
 	})
+}
+
+// historyOf reads --history as the report reads the pull request's check
+// runs, with the rows as this run's report. Without the flag there is no
+// history, and the rules that read one do not run.
+func historyOf(ctx context.Context, flags policyFlags) (earlierRuns, error) {
+	if flags.history == "" {
+		return earlierRuns{}, nil
+	}
+	checks, err := readHistoryFile(flags.history)
+	if err != nil {
+		return earlierRuns{}, err
+	}
+	rows, err := readReportRows(flags.rows)
+	if err != nil {
+		return earlierRuns{}, err
+	}
+	own := comment.Input{Ledger: rows.ledger, State: rows.state, Reason: rows.reason, RowsSHA256: rows.rowsSHA256, RowsFileSHA256: rows.fileSHA256}
+	return earlierRunsOf(ctx, checks, 0, historyFileCommit, own)
 }
 
 func printVerdict(stdout io.Writer, verdict policy.Verdict, config string, asJSON bool) error {

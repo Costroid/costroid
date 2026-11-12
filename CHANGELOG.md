@@ -10,6 +10,8 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 
 ### What you can now do
 
+- Hold a run to its agent's earlier runs: `run_increase` and `run_increase_percent` compare the run with the median of the same agent's latest 20 earlier runs on the pull request, read from the `costroid` check runs on its commits. The median is the nearest-rank P50, one of the runs' costs as an exact decimal. With fewer than 10 such runs both rules still conclude `unproven` with reason `no_baseline`, as they did on every run before. A run whose figures span two currencies, or that names no agent or several, joins no baseline. [`docs/policy.md`](docs/policy.md#the-baseline) says how a run is counted.
+- Give `costroid policy` the pull request's history: `--history FILE` takes the result objects of its earlier check runs, one per line, and the command reads the pull request's total, the count that ends the warn-only period and the baseline from them, as the report does. Without it, `pr_budget` and the increase rules do not run offline.
 - Read each performance bar, how it is measured and its last reading in [`docs/performance.md`](docs/performance.md).
 - Time the start: `make bench-start` runs `costroid --version` and `costroid policy` 30 times each, a fresh process every time, and fails when a p95 reaches 100 ms or 1 second. CI runs it on two cores on every push to `main` and every pull request.
 - Hold ingest to its floor: `make bench-ingest` fails when one stream writes under 10,000 rows a second.
