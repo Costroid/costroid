@@ -3,7 +3,7 @@
 `costroid.yml` sits at the repository's root. Every key is optional, and a repository with no file gets the defaults. The report reads it at the head of the pull request's base branch, or a GitLab merge request's target branch, when it runs, so a change cannot alter its own setting.
 
 ```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Costroid/costroid/v1.0.0-alpha.23/costroid.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Costroid/costroid/v1.0.0-alpha.24/costroid.schema.json
 comment:
   show_cost: false
 ```

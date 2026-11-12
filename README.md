@@ -21,7 +21,7 @@ Copy a recipe to `.github/workflows/costroid.yml`, set its one secret and open a
 
 ## Install
 
-The recipes pin `1.0.0-alpha.23`: [install it](docs/install.md).
+The recipes pin `1.0.0-alpha.24`: [install it](docs/install.md).
 
 ## Add it to the workflow you have
 
