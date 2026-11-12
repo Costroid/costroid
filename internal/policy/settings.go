@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -36,6 +37,10 @@ type Settings struct {
 // amountPattern is a plain decimal of at most the row contract's scale, the
 // same pattern the schema states.
 var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,12})?$`)
+
+// integerPattern is a plain non-negative decimal integer, the only form an
+// integer setting takes.
+var integerPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // modelEntryPattern is an entry of policy.models: a model id a comment may
 // print, or such an id's prefix followed by *.
@@ -184,9 +189,9 @@ func ParseApproval(data []byte) (ApprovalSettings, error) {
 			}
 			settings.AllowAuthor = value.Value == "true"
 		case keyExpiresDays:
-			var days int
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!int" || value.Decode(&days) != nil || days < 1 || days > maxApprovalDays {
-				return ApprovalSettings{}, fmt.Errorf("policy: approval.expires_days must be a whole number of days from 1 to %d", maxApprovalDays)
+			days, err := readDays(value)
+			if err != nil {
+				return ApprovalSettings{}, err
 			}
 			settings.ExpiresDays = days
 		default:
@@ -194,6 +199,21 @@ func ParseApproval(data []byte) (ApprovalSettings, error) {
 		}
 	}
 	return settings, nil
+}
+
+// readDays reads approval.expires_days from its source text. Only plain
+// digits are read: YAML also reads 0x10, 0o17, 017, 1_000 and +7 as whole
+// numbers, and none of them is written as the number it stands for: 017 is 15.
+func readDays(value *yaml.Node) (int, error) {
+	refused := fmt.Errorf("policy: approval.expires_days must be a whole number of days from 1 to %d, written in plain digits such as 7", maxApprovalDays)
+	if value.Kind != yaml.ScalarNode || value.Tag != "!!int" || !integerPattern.MatchString(value.Value) {
+		return 0, refused
+	}
+	days, err := strconv.Atoi(value.Value)
+	if err != nil || days < 1 || days > maxApprovalDays {
+		return 0, refused
+	}
+	return days, nil
 }
 
 // amountTags are the YAML tags a plain decimal resolves to: 5 is an integer,

@@ -1,14 +1,17 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/policy"
 )
@@ -231,6 +234,82 @@ func TestValidateRefusesFloatDays(t *testing.T) {
 	for _, body := range []string{"approval:\n  expires_days: 7\n", "approval:\n  expires_days: 90\n"} {
 		if problems, err := Validate([]byte(body)); err != nil || len(problems) != 0 {
 			t.Errorf("%q: %v, %v", body, problems, err)
+		}
+	}
+}
+
+// integerSettings are the settings the published schema states as an
+// integer, as section.key.
+func integerSettings(t *testing.T) []string {
+	t.Helper()
+	var document struct {
+		Properties map[string]struct {
+			Properties map[string]struct {
+				Type any `json:"type"`
+			} `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(costroid.ConfigSchema, &document); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for section, properties := range document.Properties {
+		for key, property := range properties.Properties {
+			if property.Type == "integer" {
+				keys = append(keys, section+"."+key)
+			}
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// TestIntegerSettingsRefuseNonDecimalForms holds every integer setting to
+// plain digits in the reader, in validate and in the schema. YAML reads 0x7,
+// 0o7, 017, 1_0 and +7 as whole numbers, and 017 would be 15 days: the reader
+// and validate refuse each in one sentence that names the key. JSON has none
+// of those forms, and the schema refuses a sign and a string; it reads 7.0 by
+// its value alone, and validate refuses it by its text.
+func TestIntegerSettingsRefuseNonDecimalForms(t *testing.T) {
+	if keys := integerSettings(t); !slices.Equal(keys, []string{"approval.expires_days"}) {
+		t.Fatalf("the schema states the integer settings %v: give each a reader that takes plain digits alone, and hold it here", keys)
+	}
+	schema, err := compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sentence = "approval.expires_days must be a whole number of days from 1 to 90, written in plain digits such as 7"
+	for _, tc := range []struct {
+		literal   string
+		days      int
+		valueOnly bool
+	}{
+		{"7", 7, false}, {"1", 1, false}, {"90", 90, false}, {"10", 10, false},
+		{"0x7", 0, false}, {"0X7", 0, false}, {"0o7", 0, false}, {"017", 0, false}, {"07", 0, false},
+		{"0010", 0, false}, {"1_0", 0, false}, {"+7", 0, false}, {"-7", 0, false}, {"+0x7", 0, false},
+		{"0b111", 0, false}, {`"7"`, 0, false}, {`"017"`, 0, false}, {"7.0", 0, true}, {"1e1", 0, true},
+	} {
+		body := "approval:\n  expires_days: " + tc.literal + "\n"
+		settings, readErr := policy.ParseApproval([]byte(body))
+		problems, err := Validate([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		read := tc.days != 0
+		switch {
+		case read && (readErr != nil || settings.ExpiresDays != tc.days || len(problems) != 0):
+			t.Errorf("%s: the reader %d, %v, validate %v, want %d days", tc.literal, settings.ExpiresDays, readErr, problems, tc.days)
+		case !read && (readErr == nil || readErr.Error() != "policy: "+sentence):
+			t.Errorf("%s: the reader read %d days, %v", tc.literal, settings.ExpiresDays, readErr)
+		case !read && (len(problems) != 1 || problems[0] != Problem{Path: "/approval/expires_days", Message: sentence}):
+			t.Errorf("%s: validate says %v", tc.literal, problems)
+		}
+		schemaTakes := false
+		if instance, err := jsonschema.UnmarshalJSON(strings.NewReader(`{"approval": {"expires_days": ` + tc.literal + `}}`)); err == nil {
+			schemaTakes = schema.Validate(instance) == nil
+		}
+		if want := read || tc.valueOnly; schemaTakes != want {
+			t.Errorf("%s: the schema takes it %t, want %t", tc.literal, schemaTakes, want)
 		}
 	}
 }

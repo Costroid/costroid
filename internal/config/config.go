@@ -60,7 +60,7 @@ func Validate(data []byte) ([]Problem, error) {
 	if err != nil {
 		return nil, err
 	}
-	forms = append(forms, floatDays(&root)...)
+	forms = append(forms, dayForms(&root)...)
 	instance, err := jsonValue(document)
 	switch {
 	case err != nil && len(forms) > 0:
@@ -119,23 +119,32 @@ func sectionKeys() (map[string]bool, error) {
 }
 
 // daysSentence is the approval rule's own sentence for an
-// approval.expires_days it cannot read, so validate refuses a float in the
-// same words.
-const daysSentence = "approval.expires_days must be a whole number of days from 1 to 90"
+// approval.expires_days it cannot read, so validate names it in the same
+// words.
+const daysSentence = "approval.expires_days must be a whole number of days from 1 to 90, written in plain digits such as 7"
 
-// floatDays finds an approval.expires_days that YAML reads as a float, such as
-// 7.0, which the approval rule refuses and the schema, reading JSON, takes as
-// the integer 7.
-func floatDays(root *yaml.Node) []Problem {
+// integerPattern is a plain non-negative decimal integer, as the approval
+// rule reads one.
+var integerPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+
+// dayForms finds an approval.expires_days the approval rule cannot read from
+// its text: a YAML float such as 7.0, a string, or a whole number written as
+// 0x10, 0o17, 017, 1_000 or +7. The schema reads the value a JSON parser would
+// make of it, 7, 16, 15, 1000 or 7, and only the YAML node still says how it
+// was written.
+func dayForms(root *yaml.Node) []Problem {
 	mapping := valueOf(root.Content[0], "approval")
 	if mapping == nil {
 		return nil
 	}
 	value := valueOf(mapping, "expires_days")
-	if value == nil || value.Kind != yaml.ScalarNode || value.Tag != "!!float" {
+	if value == nil || value.Kind != yaml.ScalarNode || value.Tag == "!!null" {
 		return nil
 	}
-	return []Problem{{Path: "/approval/expires_days", Message: daysSentence}}
+	if value.Tag != "!!int" || !integerPattern.MatchString(value.Value) {
+		return []Problem{{Path: "/approval/expires_days", Message: daysSentence}}
+	}
+	return nil
 }
 
 // amountSentence is the policy's own sentence for an amount it cannot read,

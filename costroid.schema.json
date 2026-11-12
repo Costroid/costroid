@@ -94,7 +94,7 @@
           "default": false
         },
         "expires_days": {
-          "description": "How many days after it was submitted a review approves the head it names. A new push ends an approval sooner.",
+          "description": "How many days after it was submitted a review approves the head it names, in plain digits such as 7. A new push ends an approval sooner.",
           "type": "integer",
           "minimum": 1,
           "maximum": 90,

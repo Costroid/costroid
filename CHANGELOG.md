@@ -4,6 +4,10 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 
 ## 1.0.0-alpha.25 (2026-11-12)
 
+### Breaking changes
+
+- `approval.expires_days` is read only when it is written in plain digits, such as `7`. Hex (`0x7`), octal (`0o7`, and a leading zero such as `017`), underscores (`1_0`) and a sign were read as whole numbers, and are now refused, by the approval rule and by `costroid validate`, in one sentence that names the key. `expires_days: 017` read as 15 days. With a refused value no approval counts, as with any other invalid approval setting.
+
 ### What you can now do
 
 - Read each performance bar, how it is measured and its last reading in [`docs/performance.md`](docs/performance.md).

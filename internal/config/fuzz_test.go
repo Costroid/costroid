@@ -25,6 +25,8 @@ func FuzzValidate(f *testing.F) {
 		"policy:\n  run_budget_usd: 1e3\n  max_increase_usd: -0\n  max_increase_percent: +5\n",
 		"policy:\n  run_budget_usd: 0.1234567890123\n",
 		"approval:\n  expires_days: 90\n",
+		"approval:\n  expires_days: 017\n",
+		"approval:\n  expires_days: 0x7\n",
 		"policy: &a\n  enforce: true\napproval: *a\n",
 		"? [a]\n: 1\n",
 		".inf\n",
