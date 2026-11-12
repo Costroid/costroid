@@ -105,6 +105,12 @@ Costroid did not start this run. When the step's `claude_args` holds `--max-budg
 
 It needs the same one secret, `ANTHROPIC_API_KEY`. Then open a test pull request.
 
+## An infrastructure estimate beside the agent's cost
+
+[`recipes/github-claude-code-action-infrastructure.yml`](../recipes/github-claude-code-action-infrastructure.yml) is the `claude-code-action` recipe with one step and two inputs added. The step is yours: it runs your estimator before the agent and writes a FOCUS cost file, a header and one row per resource with its period, cost and currency. The `read` step takes the file as `infrastructure-file`, and its rows join the agent's before the rows are kept. The report job does not change. The comment states the estimate under the agent's figure, one line per currency and period, and never adds the two together. [`docs/infrastructure.md`](infrastructure.md) lists the columns the file needs.
+
+The estimator's key, `INFRASTRUCTURE_ESTIMATOR_KEY` in the recipe, reaches the estimate step alone, and the agent's job holds no new permission. With `infrastructure-optional: "true"`, a run whose estimate step wrote no file, because the key is not set, adds no rows and does not fail, and the comment reads "Infrastructure estimate: not available", with the reason. A fork's pull request runs no agent job in this recipe, as in the others, so its comment says the agent did not run.
+
 ## codex-action
 
 `openai/codex-action` runs Codex itself, so `costroid run` cannot wrap it. [`recipes/github-codex-action.yml`](../recipes/github-codex-action.yml) runs its own `codex-action` step and adds Costroid around it: the step writes its rollout files to `codex-home`, a directory the job makes under `runner.temp`, and the action's `read` stage reads that directory in the same job. A separate job posts the comment. Put your own prompt in the step that writes it.

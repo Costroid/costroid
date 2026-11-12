@@ -255,13 +255,17 @@ func evidenceOf(budget budgetView) policy.Evidence {
 	return policy.AgentCounts
 }
 
-// ledgerLines hands the pack every line of the pull request, eligible or
-// not. A line the ledger did not attribute can show spend over a limit, and
-// keeps any rule from passing.
+// ledgerLines hands the pack every agent's line of the pull request, eligible
+// or not. A line the ledger did not attribute can show spend over a limit, and
+// keeps any rule from passing. An estimate's line is not an agent's, so it
+// never raises or satisfies a budget.
 func ledgerLines(lines []store.Line) []policy.LedgerLine {
 	out := make([]policy.LedgerLine, 0, len(lines))
 	for i := range lines {
 		line := &lines[i]
+		if !agentLine(line) {
+			continue
+		}
 		out = append(out, policy.LedgerLine{
 			Currency:   line.Currency,
 			ListCost:   line.ListCost,

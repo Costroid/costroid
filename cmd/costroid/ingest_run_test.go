@@ -263,11 +263,11 @@ func TestIngestRunFromTableRefusesTwoSources(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--from", "gemini-cli=dir"}, "takes KIND=PATH, with KIND one of execution-file, codex-home, gh-aw or example"},
-		{[]string{"--from", executionFile}, "takes KIND=PATH, with KIND one of execution-file, codex-home, gh-aw or example"},
+		{[]string{"--from", "gemini-cli=dir"}, "takes KIND=PATH, with KIND one of execution-file, codex-home, gh-aw, focus or example"},
+		{[]string{"--from", executionFile}, "takes KIND=PATH, with KIND one of execution-file, codex-home, gh-aw, focus or example"},
 		{[]string{"--from", "codex-home="}, "codex-home takes a path"},
 		{[]string{"--from", "example=" + home, "--since", "2026-11-07T13:27:51Z"}, "ingest-run takes --since only with codex-home"},
-		{[]string{}, "ingest-run needs --from KIND=PATH and --out, with KIND one of execution-file, codex-home, gh-aw or example"},
+		{[]string{}, "ingest-run needs --from KIND=PATH and --out, with KIND one of execution-file, codex-home, gh-aw, focus or example"},
 	} {
 		code, _, stderr := execute(t, append(append([]string{"ingest-run"}, tc.args...), "--out", filepath.Join(t.TempDir(), "rows.jsonl"))...)
 		if code != exitFailure || !strings.Contains(stderr, tc.want) {

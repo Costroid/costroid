@@ -15,6 +15,13 @@ import (
 var labels = map[string]string{
 	string(focus.Measured):       "Measured",
 	string(focus.ListEquivalent): "List-equivalent",
+	string(estimateBasis):        "Estimate",
+}
+
+// agentLine reports whether a line is an agent's. An estimate's line is not:
+// it stands in the view under its own basis, and no budget reads it.
+func agentLine(line *store.Line) bool {
+	return line.CostBasis != string(estimateBasis)
 }
 
 type viewLine struct {
@@ -141,7 +148,8 @@ func (s *Server) measuredSpend(ctx context.Context, tenant store.TenantID, repo,
 	return measuredSpend{kept: true, rows: rows, usd: usd}, nil
 }
 
-// budgetOf sums list cost per currency over eligible lines only. Informational
+// budgetOf sums list cost per currency over an agent's eligible lines only. An
+// estimate's line never counts, whatever its grade. Informational
 // lines carry zero, so they never move the figure. The basis is reconciled
 // when a provider's report wrote every eligible line, and gateway_measured
 // when the gateway's attested count covers every eligible row and each is in
@@ -154,7 +162,7 @@ func budgetOf(lines []store.Line, measured measuredSpend) budgetView {
 	found, reconciled, inUSD := false, true, true
 	for i := range lines {
 		line := &lines[i]
-		if !line.BudgetEligible {
+		if !line.BudgetEligible || !agentLine(line) {
 			continue
 		}
 		found = true

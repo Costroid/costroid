@@ -18,7 +18,7 @@ const joinAttributeLine = "          OTEL_RESOURCE_ATTRIBUTES: "
 
 // actionRecipes start their agent through its own action, so costroid run
 // does not start it.
-var actionRecipes = []string{"github-claude-code-action.yml", "github-codex-action.yml"}
+var actionRecipes = []string{"github-claude-code-action.yml", "github-codex-action.yml", "github-claude-code-action-infrastructure.yml"}
 
 // joinFindings lists what a recipe lint says under RuleJoinAttributes.
 func joinFindings(findings []Finding) []Finding {

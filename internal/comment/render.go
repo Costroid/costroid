@@ -23,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/vcs"
@@ -255,6 +256,10 @@ type Input struct {
 	// of the pull request's own, nil for a report on the pull request's own
 	// rows. One that names no run or no calendar date is dropped.
 	Recorded *Recorded
+	// EstimateUnavailable is the note ingest-run --optional left beside the
+	// rows when the estimate it was given was not there, nil when it left
+	// none. Its reason is from a closed list. The machine block omits it.
+	EstimateUnavailable *focusfile.Unavailable
 }
 
 // Recorded is a run recorded earlier, as costroid report --recorded names it.
@@ -539,10 +544,16 @@ type view struct {
 	Details        []string
 	DetailsSummary string
 	Traces         []traceBlock
-	AccountURL     string
-	ExportURL      string
-	CheckRunID     *int64
-	Block          string
+	// Infrastructure states the figures that are not an agent's, nil when the
+	// rows hold none.
+	Infrastructure *infrastructureView
+	// EstimateUnavailable says an estimate the workflow named was not there,
+	// empty when none is missing.
+	EstimateUnavailable string
+	AccountURL          string
+	ExportURL           string
+	CheckRunID          *int64
+	Block               string
 }
 
 // fallbackMark sits in the first cell of a figure the fallback tier priced in
@@ -576,6 +587,8 @@ func (i Input) view() view {
 		CheckRunID:     i.CheckRunID,
 	}
 	result.CapLine = i.capLine()
+	result.Infrastructure = i.Ledger.Infrastructure.view(shown)
+	result.EstimateUnavailable = i.estimateUnavailable()
 	result.Details, result.DetailsSummary = i.details(shown, result.CapLine)
 	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
@@ -846,9 +859,14 @@ func runLine(head, link string) string {
 	return line
 }
 
-// why states the reason a report has no figures, from the closed list.
+// why states the reason a report has no figures, from the closed list. Beside
+// figures that are not an agent's, it says the report shows no agent figures.
 func (i Input) why() string {
-	const shows = "so this report shows no figures."
+	figures, rows := "figures", "rows"
+	if len(i.Ledger.Infrastructure.Figures) > 0 {
+		figures, rows = "agent figures", "agent rows"
+	}
+	shows := "so this report shows no " + figures + "."
 	switch {
 	case i.State == Reported:
 		return ""
@@ -865,13 +883,13 @@ func (i Input) why() string {
 	case i.Reason == AgentSkipped:
 		return "The agent did not run on this pull request: the workflow skipped its job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request."
 	case i.readerLine() != "":
-		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. The reader's first error: `%s`.", i.RunReason, i.RunReason.Sentence(), i.readerLine())
+		return fmt.Sprintf("This report shows no %s. Reason `%s`: %s. The reader's first error: `%s`.", figures, i.RunReason, i.RunReason.Sentence(), i.readerLine())
 	case i.agentError() != "":
-		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s. It ended with `%s`: %s.", i.RunReason, i.RunReason.Sentence(), i.AgentError, reason.AgentErrorFix(i.AgentError))
+		return fmt.Sprintf("This report shows no %s. Reason `%s`: %s. It ended with `%s`: %s.", figures, i.RunReason, i.RunReason.Sentence(), i.AgentError, reason.AgentErrorFix(i.AgentError))
 	case i.runReason() != "":
-		return fmt.Sprintf("This report shows no figures. Reason `%s`: %s.", i.RunReason, i.RunReason.Sentence())
+		return fmt.Sprintf("This report shows no %s. Reason `%s`: %s.", figures, i.RunReason, i.RunReason.Sentence())
 	case i.State == NoRows:
-		return "The rows file holds no rows, " + shows + " Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
+		return "The rows file holds no " + rows + ", " + shows + " Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
 	}
 	return "The rows file could not be read, " + shows
 }

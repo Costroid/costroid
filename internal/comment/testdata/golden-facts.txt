@@ -559,6 +559,193 @@ gitlab-note-withheld	`output`
 gitlab-note-withheld	`reasoning_output`
 gitlab-note-withheld	| agent-flag: client-side estimate, can pass the cap |
 gitlab-note-withheld	| unattributed |
+infrastructure	0
+infrastructure	0.0000008
+infrastructure	0.000136
+infrastructure	0.00015605
+infrastructure	0.000436875
+infrastructure	0.00089
+infrastructure	0.001619725
+infrastructure	0.01
+infrastructure	0.1
+infrastructure	0.125
+infrastructure	0.2
+infrastructure	0.5
+infrastructure	1,000,000
+infrastructure	1000
+infrastructure	121
+infrastructure	15605
+infrastructure	19
+infrastructure	2026-11-12
+infrastructure	2026-12
+infrastructure	25.488
+infrastructure	272
+infrastructure	3495
+infrastructure	4.998380275
+infrastructure	4450
+infrastructure	5
+infrastructure	8
+infrastructure	EUR 25.488
+infrastructure	List-equivalent, not billed
+infrastructure	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+infrastructure	Run budget: unverified rows cannot satisfy a budget.
+infrastructure	USD 0
+infrastructure	USD 0.0000008
+infrastructure	USD 0.000136
+infrastructure	USD 0.00015605
+infrastructure	USD 0.000436875
+infrastructure	USD 0.00089
+infrastructure	USD 0.001619725
+infrastructure	USD 0.01
+infrastructure	USD 0.1
+infrastructure	USD 0.125
+infrastructure	USD 0.2
+infrastructure	USD 0.5
+infrastructure	USD 1000
+infrastructure	USD 4.998380275
+infrastructure	USD 5
+infrastructure	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure	](https://docs.costroid.com/export)
+infrastructure	](https://docs.costroid.com/policy)
+infrastructure	](https://github.com/example/widgets/actions/runs/19203384756)
+infrastructure	`0.4.1`
+infrastructure	`9f2c6e1`
+infrastructure	`Amazon EC2`
+infrastructure	`Compute Engine`
+infrastructure	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+infrastructure	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+infrastructure	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+infrastructure	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+infrastructure	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+infrastructure	`anthropic:informational:cached_input_reported`
+infrastructure	`anthropic:informational:reasoning_output`
+infrastructure	`aws_instance.web`
+infrastructure	`cache_read`
+infrastructure	`cache_write_1h`
+infrastructure	`cache_write_5m`
+infrastructure	`cached_input_reported`
+infrastructure	`claude-code`
+infrastructure	`claude-haiku-5-5`
+infrastructure	`costroid.yml`
+infrastructure	`google_compute_instance.batch`
+infrastructure	`infrastructure`
+infrastructure	`input_uncached`
+infrastructure	`output`
+infrastructure	`policy.run_budget_usd`
+infrastructure	`reasoning_output`
+infrastructure	| agent-flag: client-side estimate, can pass the cap |
+infrastructure	| unattributed |
+infrastructure-not-available	0
+infrastructure-not-available	0.0000008
+infrastructure-not-available	0.000136
+infrastructure-not-available	0.00015605
+infrastructure-not-available	0.000436875
+infrastructure-not-available	0.00089
+infrastructure-not-available	0.001619725
+infrastructure-not-available	0.01
+infrastructure-not-available	0.1
+infrastructure-not-available	0.125
+infrastructure-not-available	0.2
+infrastructure-not-available	0.5
+infrastructure-not-available	1,000,000
+infrastructure-not-available	121
+infrastructure-not-available	15605
+infrastructure-not-available	19
+infrastructure-not-available	2026-11-12
+infrastructure-not-available	272
+infrastructure-not-available	3495
+infrastructure-not-available	4.998380275
+infrastructure-not-available	4450
+infrastructure-not-available	5
+infrastructure-not-available	8
+infrastructure-not-available	List-equivalent, not billed
+infrastructure-not-available	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+infrastructure-not-available	Run budget: unverified rows cannot satisfy a budget.
+infrastructure-not-available	USD 0
+infrastructure-not-available	USD 0.0000008
+infrastructure-not-available	USD 0.000136
+infrastructure-not-available	USD 0.00015605
+infrastructure-not-available	USD 0.000436875
+infrastructure-not-available	USD 0.00089
+infrastructure-not-available	USD 0.001619725
+infrastructure-not-available	USD 0.01
+infrastructure-not-available	USD 0.1
+infrastructure-not-available	USD 0.125
+infrastructure-not-available	USD 0.2
+infrastructure-not-available	USD 0.5
+infrastructure-not-available	USD 4.998380275
+infrastructure-not-available	USD 5
+infrastructure-not-available	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure-not-available	](https://docs.costroid.com/export)
+infrastructure-not-available	](https://docs.costroid.com/policy)
+infrastructure-not-available	](https://github.com/example/widgets/actions/runs/19203384756)
+infrastructure-not-available	`0.4.1`
+infrastructure-not-available	`9f2c6e1`
+infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+infrastructure-not-available	`anthropic:informational:cached_input_reported`
+infrastructure-not-available	`anthropic:informational:reasoning_output`
+infrastructure-not-available	`cache_read`
+infrastructure-not-available	`cache_write_1h`
+infrastructure-not-available	`cache_write_5m`
+infrastructure-not-available	`cached_input_reported`
+infrastructure-not-available	`claude-code`
+infrastructure-not-available	`claude-haiku-5-5`
+infrastructure-not-available	`costroid.yml`
+infrastructure-not-available	`input_uncached`
+infrastructure-not-available	`output`
+infrastructure-not-available	`policy.run_budget_usd`
+infrastructure-not-available	`reasoning_output`
+infrastructure-not-available	| agent-flag: client-side estimate, can pass the cap |
+infrastructure-not-available	| unattributed |
+infrastructure-withheld	19
+infrastructure-withheld	2026-11-12
+infrastructure-withheld	2026-12
+infrastructure-withheld	List-equivalent, not billed
+infrastructure-withheld	Run budget: unverified rows cannot satisfy a budget.
+infrastructure-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure-withheld	](https://docs.costroid.com/export)
+infrastructure-withheld	](https://docs.costroid.com/policy)
+infrastructure-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+infrastructure-withheld	`0.4.1`
+infrastructure-withheld	`9f2c6e1`
+infrastructure-withheld	`Amazon EC2`
+infrastructure-withheld	`Compute Engine`
+infrastructure-withheld	`aws_instance.web`
+infrastructure-withheld	`cache_read`
+infrastructure-withheld	`cache_write_1h`
+infrastructure-withheld	`cache_write_5m`
+infrastructure-withheld	`cached_input_reported`
+infrastructure-withheld	`claude-code`
+infrastructure-withheld	`claude-haiku-5-5`
+infrastructure-withheld	`comment.show_cost: false`
+infrastructure-withheld	`costroid.yml`
+infrastructure-withheld	`google_compute_instance.batch`
+infrastructure-withheld	`infrastructure`
+infrastructure-withheld	`input_uncached`
+infrastructure-withheld	`output`
+infrastructure-withheld	`reasoning_output`
+infrastructure-withheld	| agent-flag: client-side estimate, can pass the cap |
+infrastructure-withheld	| unattributed |
+infrastructure-without-agent-rows	2026-12
+infrastructure-without-agent-rows	25.488
+infrastructure-without-agent-rows	35.008
+infrastructure-without-agent-rows	9.52
+infrastructure-without-agent-rows	EUR 25.488
+infrastructure-without-agent-rows	EUR 35.008
+infrastructure-without-agent-rows	EUR 9.52
+infrastructure-without-agent-rows	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure-without-agent-rows	](https://docs.costroid.com/export)
+infrastructure-without-agent-rows	](https://github.com/example/widgets/actions/runs/19203384756)
+infrastructure-without-agent-rows	`9f2c6e1`
+infrastructure-without-agent-rows	`Amazon EBS`
+infrastructure-without-agent-rows	`Amazon EC2`
+infrastructure-without-agent-rows	`aws_ebs_volume.data`
+infrastructure-without-agent-rows	`aws_instance.web`
+infrastructure-without-agent-rows	`infrastructure`
 lifetime	0
 lifetime	0.0000008
 lifetime	0.000136

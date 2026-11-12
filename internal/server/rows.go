@@ -138,8 +138,12 @@ func parseRow(text []byte, line int, drops map[string]int64) (charge, error) {
 	if err := json.Unmarshal(text, &columns); err != nil {
 		return charge{}, invalidRow(line, "not a JSON object")
 	}
-	countLeftBehind(columns, drops)
 	fields := rowFields{columns: columns, line: line}
+	if fields.estimate() {
+		countLeftBehind(columns, drops, estimateColumns)
+		return fields.readEstimate(drops)
+	}
+	countLeftBehind(columns, drops, costColumns)
 	c := charge{source: sourceStream}
 	var err error
 	if c.rowID, err = fields.matching(columnRowID, rowIDPattern); err != nil {
@@ -163,12 +167,14 @@ func parseRow(text []byte, line int, drops map[string]int64) (charge, error) {
 	return c, fields.readOvershoot(&c)
 }
 
-func countLeftBehind(columns map[string]json.RawMessage, drops map[string]int64) {
+// countLeftBehind counts each column the row path does not read: a sender's
+// figure in costs, and a column outside the row contract by its name.
+func countLeftBehind(columns map[string]json.RawMessage, drops map[string]int64, costs map[string]bool) {
 	for name := range columns {
 		switch {
-		case costColumns[name]:
+		case costs[name]:
 			drops[otlp.DropClientCost]++
-		case ignoredColumns[name], name == columnSku, name == columnPrice, name == columnMeter, name == columnQuantity,
+		case ignoredColumns[name], costColumns[name], name == columnSku, name == columnPrice, name == columnMeter, name == columnQuantity,
 			name == columnStart, name == columnEnd, name == columnTags, name == columnOvershoot, name == columnRowID,
 			name == columnRegion, name == columnTier, name == columnAccount, name == columnBilling:
 		default:
@@ -360,13 +366,22 @@ func (f rowFields) instant(column string) (time.Time, error) {
 }
 
 func (f rowFields) readTags(c *charge, drops map[string]int64) error {
+	read, err := f.tagMap(c, drops)
+	if err != nil {
+		return err
+	}
+	return f.applyTags(c, read, drops)
+}
+
+// tagMap reads the convention's tags as strings, and drops every other tag.
+func (f rowFields) tagMap(c *charge, drops map[string]int64) (map[string]string, error) {
 	raw, ok := f.columns[columnTags]
 	if !ok {
-		return invalidRow(f.line, "Tags is absent")
+		return nil, invalidRow(f.line, "Tags is absent")
 	}
 	var tags map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &tags); err != nil {
-		return invalidRow(f.line, "Tags is not an object")
+		return nil, invalidRow(f.line, "Tags is not an object")
 	}
 	read := map[string]string{}
 	for key, value := range tags {
@@ -375,15 +390,15 @@ func (f rowFields) readTags(c *charge, drops map[string]int64) error {
 			continue
 		}
 		if !definedTags[key] {
-			return invalidRow(f.line, "a costroid/ tag this version does not define")
+			return nil, invalidRow(f.line, "a costroid/ tag this version does not define")
 		}
 		var text string
 		if err := json.Unmarshal(value, &text); err != nil {
-			return invalidRow(f.line, "a costroid/ tag is not a string")
+			return nil, invalidRow(f.line, "a costroid/ tag is not a string")
 		}
 		read[key] = text
 	}
-	return f.applyTags(c, read, drops)
+	return read, nil
 }
 
 // userTag drops a tag outside the convention: a free-form key and value are
@@ -421,13 +436,19 @@ func (f rowFields) applyTags(c *charge, tags map[string]string, drops map[string
 	default:
 		return invalidRow(f.line, "costroid/cost_basis is not measured or list_equivalent")
 	}
+	c.enforcement = tags[focus.TagEnforcementGrade]
+	c.session = optionalTag(tags[focus.TagSessionID], sessionTag, drops)
+	c.agentVersion = optionalTag(tags[focus.TagAgentVersion], versionTag, drops)
+	return f.joinTags(c, tags)
+}
+
+// joinTags keeps what every row states about its run: the source, the join
+// keys as claims, the visibility and the tags a caller names.
+func (f rowFields) joinTags(c *charge, tags map[string]string) error {
 	c.source = sourceOf(tags[focus.TagCostSource])
 	c.repo = strings.ToLower(tags["costroid/repo"])
 	c.pr, c.sha, c.run = tags["costroid/pr"], tags["costroid/commit_sha"], tags["costroid/workflow_run_id"]
-	c.enforcement = tags[focus.TagEnforcementGrade]
 	c.weakJoin = tags[focus.TagAttributionGrade] == gradeWindowed
-	c.session = optionalTag(tags[focus.TagSessionID], sessionTag, drops)
-	c.agentVersion = optionalTag(tags[focus.TagAgentVersion], versionTag, drops)
 	if visibility, stated := tags[focus.TagRepoVisibility]; stated {
 		if err := focus.CheckRepoVisibility(visibility); err != nil {
 			return invalidRow(f.line, focus.TagRepoVisibility+" "+err.Error())

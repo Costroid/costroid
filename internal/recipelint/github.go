@@ -193,6 +193,7 @@ func (l *linter) job(root *yaml.Node, job entry, workflowPermissions *yaml.Node,
 	}
 	granted := grants(permissions)
 	l.platform(job, steps, granted)
+	l.estimateInputs(steps)
 	if agent == "" {
 		attests := gateway && namesEnvironment(job.value)
 		if granted["id-token"] == "write" && !ingest && !attests && !slices.ContainsFunc(steps, connects) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/reconcile"
@@ -323,6 +324,25 @@ func goldenStates(t *testing.T) map[string]Input {
 	recorded.Recorded = &Recorded{RunID: 42368537950, Date: "2026-11-07"}
 	states["recorded-run"] = recorded
 	states["recorded-run-withheld"] = withheld(recorded)
+
+	// A FOCUS cost file's rows beside the agent's: one line per currency and
+	// period, never added to the agent figure, and the same rows alone.
+	estimated := withEstimate(t, neutral, twoCurrencies)
+	states["infrastructure"] = estimated
+	states["infrastructure-withheld"] = withheld(estimated)
+	estimatesAlone, err := ReadRows(strings.NewReader(estimateLines(t, twoSubAccounts)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutAgentRows := noFigures(NoRows, EmptyRowsFile)
+	withoutAgentRows.Ledger = estimatesAlone
+	states["infrastructure-without-agent-rows"] = withoutAgentRows
+	// The estimate the workflow named was not there, as on a fork's pull
+	// request: one line says so, beside the agent's figures.
+	unavailable := neutral
+	note := focusfile.NotAvailable(focusfile.DefaultSource)
+	unavailable.EstimateUnavailable = &note
+	states["infrastructure-not-available"] = unavailable
 
 	// A report states no cap for a run nothing held. A preview compares the
 	// cost with the cap it was given, and names the costroid.yml it read.

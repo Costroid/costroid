@@ -44,8 +44,9 @@ STAGES
 }
 
 # check_rows refuses the costroid-rows artifact unless each entry in it is one
-# of the two files the run stage keeps, or the agent's answer it keeps beside
-# them, each as a plain file. Stage report takes the answer only when
+# of the files the run stage keeps: the rows, the run object and the note of
+# an estimate that was not there, or the agent's answer it keeps beside them,
+# each as a plain file. Stage report takes the answer only when
 # post-review is true. Stage ingest reads the rows alone, so it takes the
 # answer whatever the setting and deletes it unread. The agent's job chose
 # the names, so the first ten are printed with anything outside A-Z, a-z, 0-9,
@@ -57,7 +58,7 @@ check_rows() {
   local LC_ALL=C dir=$RUNNER_TEMP/costroid-rows-in entry kind count=0 names="" answer=false
   mkdir -p "$dir"
   while IFS= read -r -d '' entry && IFS= read -r -d '' kind; do
-    if [[ $kind == f && ($entry == costroid-rows.jsonl || $entry == costroid-rows.run.json) ]]; then
+    if [[ $kind == f && ($entry == costroid-rows.jsonl || $entry == costroid-rows.run.json || $entry == costroid-rows.infrastructure.json) ]]; then
       continue
     fi
     if [[ $kind == f && $entry == costroid-review.md && ($COSTROID_STAGE == ingest || ${COSTROID_POST_REVIEW:-false} == true) ]]; then

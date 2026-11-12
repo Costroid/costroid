@@ -218,7 +218,8 @@ func TestAReportInstallWithNoOutputFileFails(t *testing.T) {
 
 func TestInstallTakesTheRowsAndTheRunObjectOrNoArtifact(t *testing.T) {
 	for name, files := range map[string]map[string]string{
-		"both files":  {"costroid-rows.jsonl": "{}\n", "costroid-rows.run.json": "{}"},
+		"both files": {"costroid-rows.jsonl": "{}\n", "costroid-rows.run.json": "{}"},
+		"the note of an estimate that was not there": {"costroid-rows.jsonl": "{}\n", "costroid-rows.run.json": "{}", "costroid-rows.infrastructure.json": "{}"},
 		"rows alone":  {"costroid-rows.jsonl": "{}\n"},
 		"no artifact": nil,
 	} {

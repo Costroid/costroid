@@ -208,6 +208,8 @@ const ingestRunHelp = `Usage:
                       [--tag KEY=VALUE]... [--focus-profile strict]
   costroid ingest-run --from execution-file=F --out rows.jsonl --cap-usd N
                       [--claude-args TEXT]
+  costroid ingest-run --from focus=FILE --out rows.jsonl [--source NAME]
+                      [--optional] [--billing-account ID]
 
 ingest-run writes the rows of an agent's run after the run ended, from what
 the run left at PATH. KIND is one of:
@@ -215,6 +217,7 @@ the run left at PATH. KIND is one of:
   execution-file  the execution_file output of anthropics/claude-code-action
   codex-home      the codex-home given to openai/codex-action
   gh-aw           the directory a gh-aw run's usage artifact was downloaded to
+  focus           a FOCUS cost file, as CSV, that a step of the workflow wrote
 
 --since, with codex-home, is when the job started, in RFC 3339: a file last
 written before it belongs to an earlier job and is not read. --execution-file F
@@ -227,6 +230,15 @@ none unless the workflow states a cap.
 agent-flag when the run stopped at that cap, or ended under it with
 claude_args stating it; otherwise it reads none, with the reason. The result
 object states the cap.
+
+--from focus=FILE adds one row per row of FILE after the rows the rows file
+holds, each with the basis estimate, and leaves the run's object as it is. The
+figure is read from ListCost, or else from the one of EffectiveCost,
+ContractedCost and BilledCost the file holds. Every row needs BillingCurrency,
+ChargePeriodStart and ChargePeriodEnd. The file's Tags are dropped, and
+--credential is not read: SubAccountId is the file's. --source names the
+estimate's origin, infrastructure unless given. --optional adds no rows and
+says why when FILE is not there. docs/infrastructure.md describes the file.
 
 ` + accountHelp + `
 ` + rowFlagsHelp + `

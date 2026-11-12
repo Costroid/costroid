@@ -24,6 +24,7 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/scm"
@@ -382,20 +383,52 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 	}
 	stated := readRunReason(flags.rows, stderr)
 	input := comment.Input{
-		Ledger:         rows.ledger,
-		State:          rows.state,
-		Reason:         rows.reason,
-		ReasonLine:     rows.line,
-		RunReason:      runReasonFor(rows.state, stated.RunReason, stderr),
-		ReaderLine:     stated.ReaderError,
-		AgentError:     agentErrorFor(stated.AgentError, stderr),
-		AgentStated:    agentStatedFor(stated.AgentStated, stderr),
-		Budget:         runCap(flags, stated, stderr),
-		RowsSHA256:     rows.rowsSHA256,
-		RowsFileSHA256: rows.fileSHA256,
-		Recorded:       flags.recorded,
+		Ledger:              rows.ledger,
+		State:               rows.state,
+		Reason:              rows.reason,
+		ReasonLine:          rows.line,
+		RunReason:           runReasonFor(rows.state, stated.RunReason, stderr),
+		ReaderLine:          stated.ReaderError,
+		AgentError:          agentErrorFor(stated.AgentError, stderr),
+		AgentStated:         agentStatedFor(stated.AgentStated, stderr),
+		Budget:              runCap(flags, stated, stderr),
+		RowsSHA256:          rows.rowsSHA256,
+		RowsFileSHA256:      rows.fileSHA256,
+		Recorded:            flags.recorded,
+		EstimateUnavailable: readEstimateNote(flags.rows, stderr),
 	}
 	return withAgentResult(input, flags.agentResult, stderr)
+}
+
+// readEstimateNote reads the note ingest-run --optional left beside the rows
+// when the estimate it was given was not there, nil when there is none. The
+// agent's job wrote it, so a link, a large file or a reason off the closed
+// list is ignored with a warning.
+func readEstimateNote(rows string, stderr io.Writer) *focusfile.Unavailable {
+	path := estimateNotePath(rows)
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err == nil && !info.Mode().IsRegular() {
+		err = errors.New("not a regular file")
+	}
+	if err == nil && info.Size() > focusfile.MaxUnavailableBytes {
+		err = fmt.Errorf("larger than %d bytes", focusfile.MaxUnavailableBytes)
+	}
+	var data []byte
+	if err == nil {
+		data, err = os.ReadFile(path)
+	}
+	var note focusfile.Unavailable
+	if err == nil {
+		note, err = focusfile.ParseUnavailable(data)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the estimate's note %s is ignored: %v\n", path, err)
+		return nil
+	}
+	return &note
 }
 
 // refusedArtifact reads what the action's install found in a costroid-rows

@@ -13,6 +13,14 @@
 
 {{if .Why -}}
 {{.Why}}
+{{- if .Infrastructure}}
+
+{{template "infrastructure" .Infrastructure}}
+{{- end}}
+{{- if .EstimateUnavailable}}
+
+{{.EstimateUnavailable}}
+{{- end}}
 {{- else -}}
 {{if .ShowAmounts -}}
 | Cost | Basis | Attribution | Enforcement |
@@ -27,6 +35,12 @@
 | {{.Basis}}{{.Mark}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
 {{end}}
 {{- end}}
+{{if .Infrastructure}}{{template "infrastructure" .Infrastructure}}
+
+{{end -}}
+{{if .EstimateUnavailable}}{{.EstimateUnavailable}}
+
+{{end -}}
 {{if .Fallback -}}
 {{.Fallback}}
 
@@ -67,6 +81,37 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{template "trace" .}}
 {{- end}}
 {{- end}}
+{{- end -}}
+
+{{- define "infrastructure" -}}
+{{range .Lines}}{{.}}
+
+{{end -}}
+{{if .LinesOmitted}}{{.LinesOmitted}} more lines are left out.
+
+{{end -}}
+{{.Apart}}
+
+<details>
+<summary>Infrastructure rows</summary>
+
+{{if .ShowAmounts -}}
+| Resource | Service | Period | Amount |
+| --- | --- | --- | --- |
+{{range .Rows -}}
+| {{.Resource}} | {{.Service}} | {{.Period}} | {{.Amount}} |
+{{end}}
+{{- else -}}
+| Resource | Service | Period |
+| --- | --- | --- |
+{{range .Rows -}}
+| {{.Resource}} | {{.Service}} | {{.Period}} |
+{{end}}
+{{- end}}
+{{- if .RowsOmitted}}
+{{.RowsOmitted}} more rows are left out of this table.
+{{end}}
+</details>
 {{- end -}}
 
 {{- define "trace" -}}

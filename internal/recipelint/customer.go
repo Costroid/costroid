@@ -118,6 +118,7 @@ func (l *linter) customerWorkflow(root *yaml.Node) bool {
 	on := field(root, "on")
 	target, texts := l.customerEvents(on)
 	for _, job := range entries(field(root, "jobs")) {
+		l.customerEstimateInputs(sequence(field(job.value, "steps")))
 		for _, step := range sequence(field(job.value, "steps")) {
 			if run := field(step, "run"); run != nil && strings.Contains(run.Value, "${{") {
 				l.flag(run, High, RuleExpressionInScript, "an expression in a script is a shell injection: pass it through env")

@@ -258,7 +258,7 @@ func TestPostReviewIsOffByDefault(t *testing.T) {
 		case name == "Keep the rows":
 			lines := strings.Split(strings.TrimSpace(yamlValue(yamlKey(step, "with"), "path")), "\n")
 			want := "${{ " + optedIn + " && format('{0}/costroid-review.md', runner.temp) || '' }}"
-			if len(lines) != 3 || lines[2] != want {
+			if len(lines) != 4 || lines[3] != want {
 				t.Errorf("the upload's paths read %q", lines)
 			}
 		case name == "Install costroid":

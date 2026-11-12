@@ -13,6 +13,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/fanout"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/store"
 	"github.com/Costroid/costroid/internal/vcs"
@@ -99,6 +100,9 @@ type charge struct {
 	email    string
 	// requestID is the provider's request id, empty when the sender gave none.
 	requestID string
+	// estimate is an estimate row's own facts, nil on an agent's row. The
+	// ledger stores it as stated and never prices it.
+	estimate *focusfile.Estimate
 }
 
 // joinResult is what the join decided for one row.
@@ -369,6 +373,10 @@ func (s *Server) write(r *http.Request, who caller, charges []charge, drops map[
 		joined, err := s.join(c, who, proven)
 		if err != nil {
 			return err
+		}
+		if c.estimate != nil {
+			records[i] = estimateRecord(c, joined)
+			return nil
 		}
 		records[i], err = s.price(c, joined)
 		return err

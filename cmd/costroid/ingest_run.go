@@ -19,11 +19,14 @@ import (
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/run"
 )
 
 type ingestRunFlags struct {
 	source givenSource
+	// estimate is what --source and --optional state about a FOCUS cost file.
+	estimate estimateFlags
 	// since is when the job started. Zero reads every file the source holds.
 	since   time.Time
 	out     string
@@ -47,7 +50,10 @@ type sourceKind struct {
 	since bool
 	// capped says the kind takes --cap-usd and --claude-args.
 	capped bool
-	open   func(path string, since time.Time) (endedRun, error)
+	// estimate says PATH is a FOCUS cost file, whose rows join the agent's in
+	// the rows file. It takes --source and --optional, and opens no run.
+	estimate bool
+	open     func(path string, since time.Time) (endedRun, error)
 }
 
 // sourceKinds is every source ingest-run reads, one row each. ingest-run
@@ -56,6 +62,7 @@ var sourceKinds = []sourceKind{
 	{name: "execution-file", alias: true, what: "the execution_file output of anthropics/claude-code-action", capped: true, open: openExecutionFile},
 	{name: "codex-home", alias: true, what: "the codex-home given to openai/codex-action", since: true, open: openCodexHome},
 	{name: "gh-aw", what: "the directory a gh-aw run's usage artifact was downloaded to", open: openGhAwUsage},
+	{name: "focus", what: "a FOCUS cost file, as CSV, that a step of the workflow wrote", estimate: true},
 }
 
 // givenSource is one source the command line names.
@@ -120,6 +127,8 @@ func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, er
 	capUSD := set.String("cap-usd", "", "the cap the workflow held the run to, in USD")
 	claudeArgs := set.String("claude-args", "", "the claude_args the claude-code-action step was given")
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines")
+	source := set.String("source", focusfile.DefaultSource, "with focus, what the estimate came from, in costroid/cost_source")
+	optional := set.Bool("optional", false, "with focus, add no rows and say why when the file is not there")
 	account := addAccountFlags(set)
 	shaping := addRowFlags(set)
 	if err := parseFlags(set, args, ingestRunHelp, stdout, stderr); err != nil {
@@ -141,8 +150,13 @@ func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, er
 		return ingestRunFlags{}, fmt.Errorf("ingest-run takes --cap-usd and --claude-args only with %s", kindNames(cappedKinds, "or"))
 	case *claudeArgs != "" && *capUSD == "":
 		return ingestRunFlags{}, errors.New("ingest-run takes --claude-args only with --cap-usd, the cap they are held to")
+	case (named(set, "source") || named(set, "optional")) && !given[0].kind.estimate:
+		return ingestRunFlags{}, errors.New("ingest-run takes --source and --optional only with focus")
 	}
-	flags := ingestRunFlags{source: given[0], out: *out, account: account}
+	if err := focusfile.CheckSource(*source); err != nil {
+		return ingestRunFlags{}, fmt.Errorf("ingest-run --source %w", err)
+	}
+	flags := ingestRunFlags{source: given[0], out: *out, account: account, estimate: estimateFlags{source: *source, optional: *optional}}
 	if *since != "" {
 		at, err := time.Parse(time.RFC3339Nano, *since)
 		if err != nil {
@@ -166,6 +180,13 @@ func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, er
 	}
 	flags.shape = shape
 	return flags, nil
+}
+
+// named reports whether the command line set the flag, whatever its value.
+func named(set *flag.FlagSet, name string) bool {
+	found := false
+	set.Visit(func(given *flag.Flag) { found = found || given.Name == name })
+	return found
 }
 
 // endedRun is a run that already ended, as ingest-run reads it.
@@ -317,7 +338,10 @@ func ingestRunCommand(args []string, stdout, stderr io.Writer) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
-	if err == nil {
+	switch {
+	case err == nil && flags.source.kind.estimate:
+		err = ingestEstimate(flags, stderr)
+	case err == nil:
 		err = ingestRun(flags, stderr)
 	}
 	if err != nil {

@@ -15,6 +15,7 @@ One page per task, in the order a team meets them.
 - [`sdk.md`](sdk.md): record a program that runs an agent through its SDK.
 - [`gh-aw.md`](gh-aw.md): read what a GitHub Agentic Workflows run cost.
 - [`review.md`](review.md): post the agent's own answer beside the report.
+- [`infrastructure.md`](infrastructure.md): show an infrastructure estimate beside the agent's cost.
 - [`configuration.md`](configuration.md): the keys of `costroid.yml`.
 - [`security.md`](security.md): what a fork's pull request and a branch can reach.
 

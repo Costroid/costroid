@@ -13,6 +13,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 const (
@@ -105,6 +106,9 @@ type Ledger struct {
 	FallbackPrices        []Data
 	FallbackPricesOmitted int
 	FallbackCatalogs      []Data
+	// Infrastructure is what the rows that are not an agent's say. Rows and
+	// every field above count an agent's rows alone.
+	Infrastructure Infrastructure
 	// requests holds each currency and basis's requests, for the overshoot.
 	requests map[spendKey]*requestLog
 }
@@ -135,6 +139,7 @@ type row struct {
 	SkuMeter          string     `json:"SkuMeter"`
 	SkuPriceID        string     `json:"SkuPriceId"`
 	ChargeDescription string     `json:"ChargeDescription"`
+	ServiceName       string     `json:"ServiceName"`
 	Tags              focus.Tags `json:"Tags"`
 	CatalogVersion    *string    `json:"x_CostroidCatalogVersion"`
 }
@@ -229,11 +234,13 @@ type tally struct {
 	fallbackModels   map[Data]struct{}
 	fallbackPrices   map[Data]struct{}
 	fallbackCatalogs map[Data]struct{}
+	infrastructure   infrastructureTally
 }
 
 // ReadRows reads FOCUS rows as JSON lines. One bad row refuses the file: a
 // partial total would read as a smaller cost. A line at fault comes back as a
-// RowError.
+// RowError. A row that is not an agent's, as policy.FromAgent tells, is read
+// into Ledger.Infrastructure and into no agent's figure.
 func ReadRows(source io.Reader) (Ledger, error) {
 	total := tally{
 		figures:          map[figureKey]*figureTally{},
@@ -244,6 +251,7 @@ func ReadRows(source io.Reader) (Ledger, error) {
 		fallbackModels:   map[Data]struct{}{},
 		fallbackPrices:   map[Data]struct{}{},
 		fallbackCatalogs: map[Data]struct{}{},
+		infrastructure:   infrastructureTally{figures: map[infrastructureKey]*InfrastructureFigure{}},
 	}
 	err := focus.EachLine(source, total.add)
 	var fault *focus.LineError
@@ -263,6 +271,9 @@ func (t *tally) add(line []byte) error {
 	}
 	if !currencyPattern.MatchString(parsed.BillingCurrency) {
 		return fmt.Errorf("BillingCurrency %q is not an ISO code", string(Clean(parsed.BillingCurrency)))
+	}
+	if !policy.FromAgent(parsed.Tags) {
+		return t.infrastructure.add(parsed)
 	}
 	priced, err := parsed.arithmetic()
 	if err != nil {
@@ -530,6 +541,7 @@ func (t *tally) ledger() Ledger {
 		FallbackPrices:        fallbackPrices,
 		FallbackPricesOmitted: fallbackPricesOmitted,
 		FallbackCatalogs:      fallbackCatalogs,
+		Infrastructure:        t.infrastructure.infrastructure(),
 		requests:              t.requests,
 	}
 }

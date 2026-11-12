@@ -115,16 +115,29 @@ func (r usageRow) joinable() bool {
 		r.tag(focus.TagPR) != "" && r.tag(focus.TagCommitSHA) != ""
 }
 
+// FromAgent reports whether a row is an agent's, by its tags. A row that
+// states a cost source and names no agent is not: an infrastructure estimate
+// the workflow added is one. Every rule of the pack reads an agent's rows
+// alone, so such a row never raises or satisfies a budget.
+func FromAgent(tags focus.Tags) bool {
+	agent, _ := tags.Text(focus.TagAgent)
+	source, _ := tags.Text(focus.TagCostSource)
+	return agent != "" || source == ""
+}
+
 // ReadUsage reads FOCUS rows as JSON lines from a file the agent's job wrote.
 // Every row is unattributed whatever its tags claim, because the job could
 // write any tag. One bad row refuses the file: a partial total would read as a
-// smaller cost.
+// smaller cost. A row that is not an agent's is not read.
 func ReadUsage(source io.Reader) (Usage, error) {
 	totals := map[string]*CurrencyUsage{}
 	rows := 0
 	err := focus.EachLine(source, func(line []byte) error {
-		rows++
-		return add(totals, line)
+		read, err := add(totals, line)
+		if read {
+			rows++
+		}
+		return err
 	})
 	var fault *focus.LineError
 	switch {
@@ -143,23 +156,28 @@ func ReadUsage(source io.Reader) (Usage, error) {
 	return usage, nil
 }
 
-func add(totals map[string]*CurrencyUsage, line []byte) error {
+// add adds one row to its currency's totals, and reports whether it read it:
+// a row that is not an agent's is checked as every row is, and left out.
+func add(totals map[string]*CurrencyUsage, line []byte) (bool, error) {
 	var row usageRow
 	if err := json.Unmarshal(line, &row); err != nil {
-		return err
+		return false, err
 	}
 	if !currencyPattern.MatchString(row.BillingCurrency) {
-		return errors.New("BillingCurrency is not an ISO code")
+		return false, errors.New("BillingCurrency is not an ISO code")
 	}
 	if len(row.ListCost) > maxAmountLength {
-		return fmt.Errorf("ListCost is past %d characters", maxAmountLength)
+		return false, fmt.Errorf("ListCost is past %d characters", maxAmountLength)
 	}
 	cost, err := decimal.Parse(row.ListCost)
 	if err != nil {
-		return fmt.Errorf("ListCost: %w", err)
+		return false, fmt.Errorf("ListCost: %w", err)
 	}
 	if cost.Scale() > focus.MaxScale {
-		return fmt.Errorf("ListCost has more than %d fractional digits", focus.MaxScale)
+		return false, fmt.Errorf("ListCost has more than %d fractional digits", focus.MaxScale)
+	}
+	if !FromAgent(row.Tags) {
+		return false, nil
 	}
 	entry, found := totals[row.BillingCurrency]
 	if !found {
@@ -177,5 +195,5 @@ func add(totals map[string]*CurrencyUsage, line []byte) error {
 	if row.joinable() {
 		entry.JoinableRows++
 	}
-	return nil
+	return true, nil
 }

@@ -119,6 +119,24 @@ inputs:
       set. The ingest step takes the file whatever this says and deletes it unread.
       docs/review.md says what the comment shows.
     default: "false"
+  infrastructure-file:
+    description: >-
+      For stages run, read and all, a FOCUS cost file, as CSV, that an earlier step of the job
+      wrote: the workflow's own estimate of the change's infrastructure. Its rows join the agent's
+      before the rows are kept, with the basis estimate, and the comment states them apart from the
+      agent's figure. Empty reads none. docs/infrastructure.md describes the file.
+    default: ""
+  infrastructure-source:
+    description: >-
+      What the estimate came from, as costroid/cost_source and in the comment: lower-case letters,
+      digits and single hyphens.
+    default: infrastructure
+  infrastructure-optional:
+    description: >-
+      true lets infrastructure-file be absent, as on a fork's pull request whose estimator step
+      did not run: no rows are added, the step does not fail, and the comment says the estimate is
+      not available and why.
+    default: "false"
 
 outputs:
   cost:
@@ -196,3 +214,6 @@ runs:
         installation-id: ${{ inputs.installation-id }}
         platform-token: ${{ inputs.platform-token }}
         post-review: ${{ inputs.post-review }}
+        infrastructure-file: ${{ inputs.infrastructure-file }}
+        infrastructure-source: ${{ inputs.infrastructure-source }}
+        infrastructure-optional: ${{ inputs.infrastructure-optional }}

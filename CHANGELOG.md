@@ -9,6 +9,15 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Read each performance bar, how it is measured and its last reading in [`docs/performance.md`](docs/performance.md).
 - Time the start: `make bench-start` runs `costroid --version` and `costroid policy` 30 times each, a fresh process every time, and fails when a p95 reaches 100 ms or 1 second. CI runs it on two cores on every push to `main` and every pull request.
 - Hold ingest to its floor: `make bench-ingest` fails when one stream writes under 10,000 rows a second.
+- Show an infrastructure estimate beside the agent's cost: `costroid ingest-run --from focus=FILE` adds a FOCUS cost file's rows, from your own estimator step, to the rows file with the basis `estimate`. The figure is read from `ListCost`, or from the one other FOCUS cost column the file holds; every row needs a currency and a charge period, and the file's tags are dropped. The comment states the rows under the agent's figure, one line per currency and period, such as ``Infrastructure, estimated: EUR 25.488 for 2026-12, from `infrastructure`.``, folds them into a table of resource, service, period and amount, and says the agent figure and the estimate are not added together. [`docs/infrastructure.md`](docs/infrastructure.md) lists the columns and the refusals.
+- Give the action's `run` or `read` step `infrastructure-file`, with `infrastructure-source` and `infrastructure-optional`, and the estimate rides to the report job with the agent's rows. [`recipes/github-claude-code-action-infrastructure.yml`](recipes/github-claude-code-action-infrastructure.yml) runs an estimator before `claude-code-action`.
+- With `--optional`, or `infrastructure-optional: "true"`, a run whose estimator wrote no file, as on a fork's pull request with no secret, does not fail: the comment reads `Infrastructure estimate: not available`, with the reason.
+- Send an estimate row to a ledger: `costroid serve` stores it as its sender states it, shows it in the per-pull-request view as its own total under the label Estimate, and keeps it out of every budget and verdict. It refused such a row before.
+
+### Fixes
+
+- An estimate row never raises or satisfies an agent's budget: the policy reads an agent's rows alone, in the report and in the ledger.
+- `costroid lint-recipes` and `costroid lint` name, under `infrastructure-file`, an estimate input of the action that does nothing or fails its step.
 
 ## 1.0.0-alpha.24 (2026-11-12)
 
