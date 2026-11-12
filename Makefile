@@ -33,6 +33,15 @@ INGEST_CORES ?= 8
 bench-ingest:
 	GOMAXPROCS=$(INGEST_CORES) go test -run '^$$' -bench '^BenchmarkIngestRows(Concurrently)?$$' -benchtime 10x ./internal/server
 
+.PHONY: bench-start
+
+# Builds the binary as a release is built, then runs costroid --version and
+# costroid policy 30 times each, a fresh process every time. It prints min,
+# median, p95 and max for each, and fails when a p95 reaches its bar: 100 ms for
+# --version, 1 second for policy.
+bench-start: build
+	COSTROID_START_BINARY=$(CURDIR)/bin/costroid go test -tags starttime -count=1 -v -run '^TestVersionAndPolicyP95HoldTheirBarsOverThirtyFreshProcesses$$' ./cmd/costroid
+
 FUZZTIME ?= 30s
 
 # Runs every fuzz target in the module for FUZZTIME each. -short keeps the
