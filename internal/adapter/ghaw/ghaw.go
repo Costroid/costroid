@@ -142,8 +142,8 @@ type usageFile struct {
 	credits *decimal.Decimal
 	// copilot counts the kept requests Copilot served.
 	copilot int
-	// unpriced counts the requests to each provider the catalog holds no
-	// sheet for.
+	// unpriced counts the requests the catalog holds no sheet for, by why:
+	// their provider, or the model Copilot served.
 	unpriced map[string]int
 }
 
@@ -336,7 +336,7 @@ func (f *usageFile) add(line []byte) error {
 		return nil
 	}
 	if !priced {
-		f.unpriced[r.Provider]++
+		f.unpriced[r.unpricedReason()]++
 		return nil
 	}
 	if r.Provider == providerCopilot {
@@ -384,13 +384,23 @@ func uniqueIDs(files []usageFile) error {
 	return nil
 }
 
+// unpricedReason says why the catalog prices no row of a record: Copilot
+// serves models of many publishers, so the model is named; another provider
+// has no sheet at all.
+func (r record) unpricedReason() string {
+	if r.Provider == providerCopilot {
+		return fmt.Sprintf("the catalog holds no sheet of the provider that publishes the model %q, which Copilot served", r.Model)
+	}
+	return "the catalog holds no price for provider " + r.Provider
+}
+
 // unpricedWarnings names the requests left out because the catalog prices no
 // model of their provider.
 func (f usageFile) unpricedWarnings() []string {
 	var warnings []string
-	for _, provider := range slices.Sorted(maps.Keys(f.unpriced)) {
-		warnings = append(warnings, fmt.Sprintf("%s in %s %s left out: the catalog holds no price for provider %s",
-			counted(f.unpriced[provider], "request"), f.name, plural(f.unpriced[provider], "is", "are"), provider))
+	for _, reason := range slices.Sorted(maps.Keys(f.unpriced)) {
+		warnings = append(warnings, fmt.Sprintf("%s in %s %s left out: %s",
+			counted(f.unpriced[reason], "request"), f.name, plural(f.unpriced[reason], "is", "are"), reason))
 	}
 	return warnings
 }

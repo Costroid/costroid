@@ -433,3 +433,40 @@ func hasWarning(report adapter.Report, part string) bool {
 	}
 	return false
 }
+
+// TestGhAwCopilotModelsPriceAtTheirPublisher prices each model Copilot served
+// at the sheet of the provider that publishes it: o3 and codex-mini-latest at
+// OpenAI's, gemini-3.8-flash at Google's. Google prices no cache write, so a
+// write on gemini-3.8-flash counts as uncached input, and the request says
+// so. A model whose publisher has no sheet is left out, and the warning
+// names the model.
+func TestGhAwCopilotModelsPriceAtTheirPublisher(t *testing.T) {
+	artifact := artifactWith(
+		record("copilot", "o3", `"request_id":"copilot-1","input_tokens":10`),
+		record("copilot", "codex-mini-latest", `"request_id":"copilot-2","input_tokens":10`),
+		record("copilot", "gemini-3.8-flash", `"request_id":"copilot-3","input_tokens":50,"cache_read_tokens":20,"cache_write_tokens":10`),
+		record("copilot", "mai-code-1.1-flash", `"request_id":"copilot-4","input_tokens":10`),
+	)
+	report, err := ghaw.ReadUsage(artifact, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Requests) != 3 {
+		t.Fatalf("%d requests", len(report.Requests))
+	}
+	for i, want := range []string{"openai", "openai", "google"} {
+		if got := report.Requests[i].Provider; got != want {
+			t.Errorf("%s priced at %s, want %s", report.Requests[i].Model, got, want)
+		}
+	}
+	gemini := report.Requests[2]
+	if gemini.Tokens != (adapter.Tokens{InputUncached: 30, CacheRead: 20}) || gemini.AssumedWrite != "" || !strings.Contains(gemini.Note, "cache writes are counted as uncached input") {
+		t.Errorf("gemini-3.8-flash reads %+v at %q, noted %q", gemini.Tokens, gemini.AssumedWrite, gemini.Note)
+	}
+	if !hasWarning(report, `1 request in agent/token_usage.jsonl is left out: the catalog holds no sheet of the provider that publishes the model "mai-code-1.1-flash", which Copilot served`) {
+		t.Errorf("warnings %q", report.Warnings)
+	}
+	if len(rowsOf(t, report)) == 0 {
+		t.Error("the priced requests wrote no row")
+	}
+}

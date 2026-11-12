@@ -60,6 +60,13 @@ func runFake(t *testing.T, budget, pause string) (run.Result, []row) {
 // agent unless it is empty.
 func runFakeAs(t *testing.T, name, agent, budget, pause string) (run.Result, []row, error) {
 	t.Helper()
+	return runFakeOn(t, name, agent, budget, pause, absolute(t, filepath.Join(recorded, "events.jsonl")))
+}
+
+// runFakeOn runs the fake as runFakeAs does, writing the session file at
+// events in place of the recorded one.
+func runFakeOn(t *testing.T, name, agent, budget, pause, events string) (run.Result, []row, error) {
+	t.Helper()
 	dir := t.TempDir()
 	command := filepath.Join(dir, name)
 	if err := os.WriteFile(command, []byte(fakeCopilot), 0o755); err != nil {
@@ -68,7 +75,7 @@ func runFakeAs(t *testing.T, name, agent, budget, pause string) (run.Result, []r
 	for name, value := range map[string]string{
 		"COPILOT_HOME": filepath.Join(dir, "home"),
 		"FAKE_PAUSE":   pause,
-		"FAKE_EVENTS":  absolute(t, filepath.Join(recorded, "events.jsonl")),
+		"FAKE_EVENTS":  events,
 		"FAKE_STREAM":  absolute(t, filepath.Join(recorded, "stream.jsonl")),
 	} {
 		t.Setenv(name, value)

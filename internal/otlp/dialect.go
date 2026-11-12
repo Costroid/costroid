@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
@@ -77,9 +78,9 @@ const NoteTotalDisagrees = "the agent's total token count is not the sum of its 
 const MaxTokens = 1_000_000_000_000
 
 const (
-	providerAnthropic = "anthropic"
-	providerOpenAI    = "openai"
-	providerGoogle    = "google"
+	providerAnthropic = catalog.ProviderAnthropic
+	providerOpenAI    = catalog.ProviderOpenAI
+	providerGoogle    = catalog.ProviderGoogle
 	tierFast          = "fast"
 	tierStandard      = "standard"
 )
@@ -383,13 +384,7 @@ func providerOf(dialect Dialect, r *record, model string) string {
 	case providerOpenAI:
 		return providerOpenAI
 	}
-	switch {
-	case strings.HasPrefix(model, "claude"):
-		return providerAnthropic
-	case strings.HasPrefix(model, "gpt-"), strings.HasPrefix(model, "chatgpt"), strings.HasPrefix(model, "codex"):
-		return providerOpenAI
-	}
-	return ""
+	return catalog.OwnerOf(model)
 }
 
 // standInID names a record that carries no provider request id. The

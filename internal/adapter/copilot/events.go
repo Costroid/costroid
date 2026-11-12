@@ -3,6 +3,7 @@ package copilot
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,13 +32,18 @@ const recordedVersion = "1.0.103"
 
 // The providers a request can be priced at.
 const (
-	providerAnthropic = "anthropic"
-	providerOpenAI    = "openai"
+	providerAnthropic = catalog.ProviderAnthropic
+	providerOpenAI    = catalog.ProviderOpenAI
+	providerGoogle    = catalog.ProviderGoogle
 )
 
 // copilotServedNote says how a request Copilot served, not the user's own
 // provider key, was priced.
 const copilotServedNote = "Copilot served this request; priced at the list rate of the model's own provider"
+
+// googleWriteNote says how a request's cache writes on a Google model were
+// counted.
+const googleWriteNote = "Google's sheet prices no cache write, so this request's cache writes are counted as uncached input"
 
 // event is one line of events.jsonl.
 type event struct {
@@ -206,15 +212,21 @@ func (f *sessionFile) read(line []byte) error {
 // its figures in its own units. They reach AgentStated and a warning, never a
 // row, and never become dollars.
 func ReadEvents(events io.Reader, keyed bool) (adapter.Report, error) {
+	report, _, err := readEvents(events, keyed)
+	return report, err
+}
+
+// readEvents is ReadEvents, which also lists the requests that wrote no row.
+func readEvents(events io.Reader, keyed bool) (adapter.Report, []unpriced, error) {
 	file, err := readSessionFile(events)
 	if err != nil {
-		return adapter.Report{}, fmt.Errorf("copilot: read the session file: %w", err)
+		return adapter.Report{}, nil, fmt.Errorf("copilot: read the session file: %w", err)
 	}
 	if file.session == "" {
-		return adapter.Report{}, errors.New("copilot: the session file holds no session.start naming the session")
+		return adapter.Report{}, nil, errors.New("copilot: the session file holds no session.start naming the session")
 	}
 	if len(file.shutdowns) > 1 {
-		return adapter.Report{}, fmt.Errorf("copilot: the session file holds %d session.shutdown events: the session was resumed, and this run's spend cannot be told from the earlier runs'", len(file.shutdowns))
+		return adapter.Report{}, nil, fmt.Errorf("copilot: the session file holds %d session.shutdown events: the session was resumed, and this run's spend cannot be told from the earlier runs'", len(file.shutdowns))
 	}
 	report := adapter.Report{
 		SessionID:    file.session,
@@ -223,7 +235,7 @@ func ReadEvents(events io.Reader, keyed bool) (adapter.Report, error) {
 	}
 	if len(file.shutdowns) == 1 {
 		if err := file.check(file.shutdowns[0]); err != nil {
-			return adapter.Report{}, err
+			return adapter.Report{}, nil, err
 		}
 		report.AgentStated, report.Warnings = stated(file.shutdowns[0], file.records)
 	} else {
@@ -232,18 +244,19 @@ func ReadEvents(events io.Reader, keyed bool) (adapter.Report, error) {
 	if file.cut {
 		report.Warnings = append(report.Warnings, "the session file ends inside a line, as a stopped run leaves it; that line is not read, and a usage record in it reached no row")
 	}
-	requests, warnings, err := file.requests(keyed)
+	requests, missed, err := file.requests(keyed)
 	if err != nil {
-		return adapter.Report{}, err
+		return adapter.Report{}, nil, err
 	}
 	report.Requests = requests
-	report.Warnings = append(report.Warnings, warnings...)
+	report.Warnings = append(report.Warnings, unpricedWarnings(missed)...)
+	var warnings []string
 	report.CostBasis, warnings = basis(file.records, keyed)
 	report.Warnings = append(report.Warnings, warnings...)
 	if file.version != "" && file.version != recordedVersion {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("Copilot CLI %s is not a recorded version; its session file passed every check", file.version))
 	}
-	return report, nil
+	return report, missed, nil
 }
 
 // check holds the usage records to the shutdown's totals: per model, the
@@ -288,11 +301,18 @@ func plural(count int64, noun string) string {
 	return fmt.Sprintf("%d %ss", count, noun)
 }
 
-// requests maps each usage record to one request. A record whose provider
-// the catalog holds no sheet for writes no row, and a warning counts them.
-func (f sessionFile) requests(keyed bool) ([]adapter.Request, []string, error) {
+// unpriced is a request whose spend no sheet states: its model, and the
+// provider it ran on when that was the user's own key. Copilot's own routing
+// leaves provider empty.
+type unpriced struct {
+	model, provider string
+}
+
+// requests maps each usage record to one request. A record that no sheet of
+// the catalog prices writes no row, and is listed apart.
+func (f sessionFile) requests(keyed bool) ([]adapter.Request, []unpriced, error) {
 	var requests []adapter.Request
-	unpriced := map[string]int64{}
+	var missed []unpriced
 	seen := map[string]bool{}
 	for i, record := range f.records {
 		request, err := record.request(keyed)
@@ -307,16 +327,50 @@ func (f sessionFile) requests(keyed bool) ([]adapter.Request, []string, error) {
 		}
 		seen[request.ID] = true
 		if request.Provider == "" {
-			unpriced[record.provider(keyed)]++
+			missed = append(missed, unpriced{model: record.Model, provider: record.keyProvider(keyed)})
 			continue
 		}
 		requests = append(requests, request)
 	}
-	var warnings []string
-	for _, provider := range slices.Sorted(maps.Keys(unpriced)) {
-		warnings = append(warnings, fmt.Sprintf("%s to the provider %q wrote no row: the catalog holds no sheet for it, so their spend is not stated", plural(unpriced[provider], "request"), provider))
+	return requests, missed, nil
+}
+
+// unpricedWarnings counts the requests that wrote no row, by model and by the
+// provider of the user's own key.
+func unpricedWarnings(missed []unpriced) []string {
+	counts := map[unpriced]int64{}
+	for _, request := range missed {
+		counts[request]++
 	}
-	return requests, warnings, nil
+	var warnings []string
+	for _, request := range slices.SortedFunc(maps.Keys(counts), compareUnpriced) {
+		count := plural(counts[request], "request")
+		if request.provider == "" {
+			warnings = append(warnings, fmt.Sprintf("%s on the model %q wrote no row: the catalog holds no sheet of the provider that publishes the model, so their spend is not stated", count, request.model))
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("%s on the model %q through the provider %q wrote no row: the catalog holds no sheet for that provider, so their spend is not stated", count, request.model, request.provider))
+	}
+	return warnings
+}
+
+func compareUnpriced(a, b unpriced) int {
+	return cmp.Or(cmp.Compare(a.model, b.model), cmp.Compare(a.provider, b.provider))
+}
+
+// unpricedModels names the models of the requests that wrote no row, in a
+// sentence.
+func unpricedModels(missed []unpriced) string {
+	var models []string
+	for _, request := range missed {
+		models = append(models, strconv.Quote(request.model))
+	}
+	slices.Sort(models)
+	models = slices.Compact(models)
+	if len(models) == 1 {
+		return "the model " + models[0]
+	}
+	return "the models " + strings.Join(models[:len(models)-1], ", ") + " and " + models[len(models)-1]
 }
 
 // byok says whether the record ran on the user's own provider key. A record
@@ -334,16 +388,14 @@ func (r usageRecord) billsKey(keyed bool) bool {
 	return r.byok(keyed) && !strings.HasPrefix(r.ByokKind, "local_")
 }
 
-// provider names the provider family that served the record: modelProvider
-// on the user's own key, and Copilot's own routing otherwise.
-func (r usageRecord) provider(keyed bool) string {
-	switch {
-	case !r.byok(keyed):
-		return "copilot"
-	case r.ModelProvider != "":
-		return r.ModelProvider
+// keyProvider is the provider of the user's own key that served the record,
+// as modelProvider names it, and empty when Copilot's own routing served it
+// or the record names none.
+func (r usageRecord) keyProvider(keyed bool) string {
+	if !r.byok(keyed) {
+		return ""
 	}
-	return "unknown"
+	return r.ModelProvider
 }
 
 // pricedAt is the catalog provider that prices the record, empty when no
@@ -351,26 +403,13 @@ func (r usageRecord) provider(keyed bool) string {
 // one Copilot served, at the sheet of the model's own provider.
 func (r usageRecord) pricedAt(keyed bool) string {
 	if !r.byok(keyed) {
-		return modelOwner(r.Model)
+		return catalog.OwnerOf(r.Model)
 	}
 	switch r.ModelProvider {
 	case providerAnthropic, providerOpenAI:
 		return r.ModelProvider
 	case "":
-		return modelOwner(r.Model)
-	}
-	return ""
-}
-
-// modelOwner is the provider whose sheet prices a model by its name, empty
-// when none does.
-func modelOwner(model string) string {
-	name := strings.ToLower(model)
-	switch {
-	case strings.HasPrefix(name, "claude-"):
-		return providerAnthropic
-	case strings.HasPrefix(name, "gpt-"), strings.HasPrefix(name, "o1"), strings.HasPrefix(name, "o3"), strings.HasPrefix(name, "o4"):
-		return providerOpenAI
+		return catalog.OwnerOf(r.Model)
 	}
 	return ""
 }
@@ -403,9 +442,14 @@ func (r usageRecord) request(keyed bool) (adapter.Request, error) {
 	if request.ID == "" {
 		request.ID = r.Accounting.UsageID
 	}
+	var notes []string
 	if !r.byok(keyed) {
-		request.Note = copilotServedNote
+		notes = append(notes, copilotServedNote)
 	}
+	if provider == providerGoogle && r.CacheWriteTokens > 0 {
+		notes = append(notes, googleWriteNote)
+	}
+	request.Note = strings.Join(notes, "; ")
 	return request, nil
 }
 
@@ -415,7 +459,8 @@ func (r usageRecord) request(keyed bool) (adapter.Request, error) {
 // states how long a write lives: an Anthropic write takes the lifetime
 // cachePolicyTtlSeconds names, five minutes unless it names an hour, and an
 // OpenAI write takes OpenAI's default of 30 minutes. Either way the row says
-// the lifetime was assumed.
+// the lifetime was assumed. Google's sheet prices no cache write, so a write
+// on a Google model counts as uncached input, and the row says so.
 func (r usageRecord) tokens(provider string) (adapter.Tokens, focus.TokenClass, error) {
 	for _, count := range r.fields() {
 		if count.value < 0 {
@@ -434,6 +479,9 @@ func (r usageRecord) tokens(provider string) (adapter.Tokens, focus.TokenClass, 
 	}
 	class := focus.CacheWrite30m
 	switch {
+	case provider == providerGoogle:
+		class = ""
+		tokens.InputUncached += r.CacheWriteTokens
 	case provider == providerAnthropic && r.CacheTTLSeconds == int64(time.Hour/time.Second):
 		class = focus.CacheWrite1h
 		tokens.CacheWrite1h = r.CacheWriteTokens

@@ -254,12 +254,15 @@ func (s *Session) Finish() (adapter.Report, error) {
 		return adapter.Report{}, fmt.Errorf("copilot: open the session file: %w", err)
 	}
 	defer file.Close()
-	report, err := ReadEvents(file, s.keyed)
+	report, missed, err := readEvents(file, s.keyed)
 	if err != nil {
 		return adapter.Report{}, err
 	}
 	if report.SessionID != session {
 		return adapter.Report{}, errors.New("copilot: the session file's session.start names another session than the run's")
+	}
+	if len(missed) > 0 {
+		s.refuse(fmt.Sprintf("the catalog holds no price for %s, so the watch could not count %s", unpricedModels(missed), plural(int64(len(missed)), "request")))
 	}
 	report.Enforcement = s.earned()
 	if s.skipped > 0 {

@@ -2,7 +2,6 @@ package ghaw
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
@@ -12,13 +11,18 @@ import (
 // The providers a record can name that the catalog prices, and Copilot, which
 // serves models of both.
 const (
-	providerAnthropic = "anthropic"
-	providerOpenAI    = "openai"
+	providerAnthropic = catalog.ProviderAnthropic
+	providerOpenAI    = catalog.ProviderOpenAI
+	providerGoogle    = catalog.ProviderGoogle
 	providerCopilot   = "copilot"
 )
 
 // copilotNote says how a Copilot request's rows were priced.
 const copilotNote = "Copilot served this request; priced at the list rate of the model's own provider; how its input counts cached tokens is unverified"
+
+// googleWriteNote says how a request's cache writes on a Google model were
+// counted.
+const googleWriteNote = "Google's sheet prices no cache write, so this request's cache writes are counted as uncached input"
 
 // request maps one record. priced is false when the catalog holds no sheet
 // for the record's provider, so no row can state a price for it.
@@ -52,12 +56,15 @@ func (r record) request() (adapter.Request, bool, error) {
 	case providerOpenAI:
 		request.Tokens, request.AssumedWrite, request.ContextInputTokens, err = counts.openAI()
 	case providerCopilot:
-		owner := modelOwner(r.Model)
+		owner := catalog.OwnerOf(r.Model)
 		if owner == "" {
 			return request, false, nil
 		}
 		request.Provider = owner
 		request.Note = joinNotes(request.Note, copilotNote)
+		if owner == providerGoogle && counts.cacheWrite > 0 {
+			request.Note = joinNotes(request.Note, googleWriteNote)
+		}
 		request.Tokens, request.AssumedWrite, request.ContextInputTokens = counts.copilot(owner)
 	default:
 		return request, false, nil
@@ -133,7 +140,9 @@ func (c tokenCounts) openAI() (adapter.Tokens, focus.TokenClass, int64, error) {
 // them in, without them when it splits them out, and the record does not say
 // which. Input that can hold the cached tokens and writes is read as holding
 // them, as OpenAI's does; smaller input can only be the split form. Writes
-// take the default lifetime of the model's own provider.
+// take the default lifetime of the model's own provider. Google's sheet
+// prices no cache write, so a write on a Google model counts as uncached
+// input.
 func (c tokenCounts) copilot(owner string) (adapter.Tokens, focus.TokenClass, int64) {
 	uncached := c.input
 	if c.cacheRead+c.cacheWrite <= c.input {
@@ -146,10 +155,14 @@ func (c tokenCounts) copilot(owner string) (adapter.Tokens, focus.TokenClass, in
 		ReasoningOutput: c.reasoning,
 	}
 	class := focus.CacheWrite30m
-	if owner == providerAnthropic {
+	switch owner {
+	case providerGoogle:
+		class = ""
+		tokens.InputUncached += c.cacheWrite
+	case providerAnthropic:
 		class = focus.CacheWrite5m
 		tokens.CacheWrite5m = c.cacheWrite
-	} else {
+	default:
 		tokens.CacheWrite30m = c.cacheWrite
 	}
 	return tokens, assumed(c.cacheWrite, class), uncached + c.cacheRead + c.cacheWrite
@@ -160,17 +173,4 @@ func assumed(writes int64, class focus.TokenClass) focus.TokenClass {
 		return ""
 	}
 	return class
-}
-
-// modelOwner is the provider whose catalog sheet prices a model Copilot
-// served, read from the model's name, empty when no sheet does.
-func modelOwner(model string) string {
-	name := strings.ToLower(model)
-	switch {
-	case strings.HasPrefix(name, "claude-"):
-		return providerAnthropic
-	case strings.HasPrefix(name, "gpt-"), strings.HasPrefix(name, "o1"), strings.HasPrefix(name, "o3"), strings.HasPrefix(name, "o4"):
-		return providerOpenAI
-	}
-	return ""
 }
