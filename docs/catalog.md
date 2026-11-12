@@ -8,7 +8,7 @@ The sheets are published in [Costroid/costroid-catalog](https://github.com/Costr
 
 From 0.3.0, the catalog's release workflow signs each release's `SHA256SUMS` at the release's tag. This repository embeds the same files under `catalog/<version>/`, and its CI checks that signature, then each sheet against the signed `SHA256SUMS`.
 
-Catalog 0.3.0 holds five sheets, each dated 2026-11-08: `anthropic-2026-11-08.json`, `cursor-2026-11-08.json`, `github-copilot-2026-11-08.json`, `google-2026-11-08.json` and `openai-2026-11-08.json`. Their prices were read on 2026-11-01 and 2026-11-08.
+Catalog 0.4.1 holds five sheets, each dated 2026-11-12: `anthropic-2026-11-12.json`, `cursor-2026-11-12.json`, `github-copilot-2026-11-12.json`, `google-2026-11-12.json` and `openai-2026-11-12.json`. Their prices were read on 2026-11-01, 2026-11-08 and 2026-11-12. A row read before 2026-11-12 prices a model its provider's page no longer lists, and the release keeps it as an earlier release read it.
 
 ## How a price names its source
 
@@ -36,7 +36,7 @@ A figure uses the fallback tier when the sheet names no price for the request's 
 costroid version
 ```
 
-It prints the release and the catalog, such as `costroid 1.0.0-alpha.23, catalog 0.3.0`. `costroid run` names the same version in its summary line, and the action's `catalog_version` output on the report job states it. The dates are in that release's sheets: their file names and `SheetDate` give the sheet's day, and each row's `RetrievalDate` the day its price was read.
+It prints the release, then the catalog and the day its sheets state, such as `catalog 0.4.1, prices read 2026-11-12`. `costroid run` names the same version in its summary line, and the action's `catalog_version` output on the report job states it. The dates are in that release's sheets: their file names and `SheetDate` give the sheet's day, which `prices read` names, and each row's `RetrievalDate` the day its own price was read.
 
 ## A newer catalog
 

@@ -61,20 +61,22 @@ func embedded(t *testing.T, version string) *Catalog {
 }
 
 // TestEmbeddedReleaseCarriesTheFiveSheets holds that a run prices with
-// release 0.3.0 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
-// sheets, and that releases 0.2.0 and 0.1.0, embedded beside it, still parse
-// on their own with three sheets and two.
+// release 0.4.1 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
+// sheets, and that releases 0.3.0, 0.2.0 and 0.1.0, embedded beside it, still
+// parse on their own with five sheets, three and two.
 func TestEmbeddedReleaseCarriesTheFiveSheets(t *testing.T) {
+	five := map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "github-copilot": "GitHub", "cursor": "Cursor"}
 	releases := []struct {
 		catalog   *Catalog
 		version   string
 		providers map[string]string
 	}{
-		{pinned(t), "0.3.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "github-copilot": "GitHub", "cursor": "Cursor"}},
+		{pinned(t), "0.4.1", five},
+		{embedded(t, "0.3.0"), "0.3.0", five},
 		{embedded(t, "0.2.0"), "0.2.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}},
 		{embedded(t, "0.1.0"), "0.1.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI"}},
 	}
-	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0"}) {
+	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0", "0.4.1"}) {
 		t.Errorf("the binary carries releases %v", versions)
 	}
 	for _, release := range releases {
@@ -488,8 +490,8 @@ func TestFallbackBoundsEveryRegionalPrice(t *testing.T) {
 	}{
 		{"openai", "a-model-no-sheet-names", "regional", "660"},
 		{"openai", "a-model-no-sheet-names", RegionGlobal, "600"},
-		{"anthropic", "a-model-no-sheet-names", "us", "82.5"},
-		{"anthropic", "claude-opus-4-1-20250805", "us", "75"},
+		{"anthropic", "a-model-no-sheet-names", "us", "88"},
+		{"anthropic", "claude-opus-4-1-20250805", "us", "80"},
 	} {
 		q := query(tc.provider, tc.model, focus.Output)
 		q.ServiceTier, q.Region = "a-tier-no-sheet-names", tc.region
@@ -717,5 +719,200 @@ func TestRerouteDayPricesTheSuccessor(t *testing.T) {
 	}
 	if checked != 6 {
 		t.Errorf("%d lookups checked", checked)
+	}
+}
+
+// TestFable52PricesAtItsOwnRows holds that Claude Fable 5.2 and Claude Mythos
+// 5.2 price at their own rows of the default release, in USD per million
+// tokens: standard input 8, output 40, 5-minute cache write 10, 1-hour cache
+// write 16 and cache read 0.20; fast input 16 and output 80. Fast-mode cache
+// writes are the fast input times the sheet's cache write multipliers, 20 and
+// 32, and they set the sheet's fallback for those classes, as the fast input
+// and output set it for theirs. Release 0.3.0 named neither model, and priced
+// both at its fallback of 15 input and 75 output.
+func TestFable52PricesAtItsOwnRows(t *testing.T) {
+	prices := []struct {
+		tier  string
+		class focus.TokenClass
+		price string
+	}{
+		{TierStandard, focus.InputUncached, "8"},
+		{TierStandard, focus.Output, "40"},
+		{TierStandard, focus.CacheWrite5m, "10"},
+		{TierStandard, focus.CacheWrite1h, "16"},
+		{TierStandard, focus.CacheRead, "0.20"},
+		{TierFast, focus.InputUncached, "16"},
+		{TierFast, focus.Output, "80"},
+	}
+	c := pinned(t)
+	before := embedded(t, "0.3.0")
+	for _, model := range []string{"claude-fable-5-2", "claude-mythos-5-2"} {
+		for _, tc := range prices {
+			q := query(ProviderAnthropic, model, tc.class)
+			q.ServiceTier, q.At = tc.tier, time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := "anthropic:" + model + ":global:" + tc.tier + ":all:" + string(tc.class)
+			if got.Fallback || got.CacheMultiplier != nil || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(tc.price)) != 0 {
+				t.Errorf("%s %s %s: %s at %s, fallback %t; want %s at %s", model, tc.tier, tc.class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, tc.price)
+			}
+		}
+		for class, price := range map[focus.TokenClass]string{focus.CacheWrite5m: "20", focus.CacheWrite1h: "32"} {
+			q := query(ProviderAnthropic, model, class)
+			q.ServiceTier = TierFast
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := "anthropic:" + model + ":global:fast:all:" + string(class)
+			if got.Fallback || got.CacheMultiplier == nil || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("%s fast %s: %s at %s, fallback %t; want %s at %s", model, class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+			}
+		}
+		for class, price := range map[focus.TokenClass]string{focus.InputUncached: "15", focus.Output: "75"} {
+			got, err := before.Lookup(query(ProviderAnthropic, model, class))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Fallback || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("release 0.3.0 %s %s: %s at %s, fallback %t; want the fallback at %s", model, class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, price)
+			}
+		}
+	}
+	for class, price := range map[focus.TokenClass]string{focus.InputUncached: "16", focus.Output: "80", focus.CacheWrite5m: "20", focus.CacheWrite1h: "32"} {
+		got, err := c.Lookup(query(ProviderAnthropic, "a-model-no-sheet-names", class))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Fallback || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 || !strings.Contains(got.FallbackBasis, "claude-fable-5-2:global:fast") {
+			t.Errorf("the anthropic fallback for %s: %s at %s, basis %q; want %s, set by Fable 5.2's fast mode", class, got.SkuPriceID, got.ListUnitPrice, got.FallbackBasis, price)
+		}
+	}
+}
+
+// TestGemini4CarbonPricesByDay holds Gemini 4 Carbon to its two dated rows in
+// each tier Google prices it at, in USD per million tokens: a request on
+// 2026-11-30 at the first row, and one on 2026-12-01 at the row that follows
+// it. Standard input is 2.00 then 4.00, output 10.00 then 20.00 and cache
+// read 0.10 then 0.20; batch and flex half that; priority 3.60 then 7.20,
+// 18.00 then 36.00 and 0.18 then 0.36. None is the fallback. Release 0.3.0
+// named no Gemini 4 Carbon, and priced it at its fallback of 7.20 input and
+// 36.00 output.
+func TestGemini4CarbonPricesByDay(t *testing.T) {
+	cases := []struct {
+		tier          string
+		class         focus.TokenClass
+		before, after string
+	}{
+		{TierStandard, focus.InputUncached, "2.00", "4.00"},
+		{TierStandard, focus.Output, "10.00", "20.00"},
+		{TierStandard, focus.CacheRead, "0.10", "0.20"},
+		{"batch", focus.InputUncached, "1.00", "2.00"},
+		{"batch", focus.Output, "5.00", "10.00"},
+		{"batch", focus.CacheRead, "0.05", "0.10"},
+		{"flex", focus.InputUncached, "1.00", "2.00"},
+		{"flex", focus.Output, "5.00", "10.00"},
+		{"flex", focus.CacheRead, "0.05", "0.10"},
+		{"priority", focus.InputUncached, "3.60", "7.20"},
+		{"priority", focus.Output, "18.00", "36.00"},
+		{"priority", focus.CacheRead, "0.18", "0.36"},
+	}
+	c := pinned(t)
+	for _, tc := range cases {
+		id := "google:gemini-4-carbon:global:" + tc.tier + ":all:" + string(tc.class)
+		for _, day := range []struct {
+			at        time.Time
+			id, price string
+		}{
+			{time.Date(2026, 11, 30, 23, 59, 59, 0, time.UTC), id, tc.before},
+			{time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), id + ":from-2026-12-01", tc.after},
+		} {
+			q := query(ProviderGoogle, "gemini-4-carbon", tc.class)
+			q.ServiceTier, q.At = tc.tier, day.at
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Fallback || got.SkuPriceID != day.id || got.ListUnitPrice.Cmp(decimal.MustParse(day.price)) != 0 {
+				t.Errorf("%s %s on %s: %s at %s, fallback %t; want %s at %s", tc.tier, tc.class, day.at.Format(time.DateTime), got.SkuPriceID, got.ListUnitPrice, got.Fallback, day.id, day.price)
+			}
+		}
+	}
+	before := embedded(t, "0.3.0")
+	for class, price := range map[focus.TokenClass]string{focus.InputUncached: "7.20", focus.Output: "36.00"} {
+		got, err := before.Lookup(query(ProviderGoogle, "gemini-4-carbon", class))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Fallback || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+			t.Errorf("release 0.3.0 %s: %s at %s, fallback %t; want the fallback at %s", class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, price)
+		}
+	}
+}
+
+// TestAPromotionThatEndsFallsToTheFallback holds each price of the default
+// release that ends with no later price: every row of the model ends on the
+// day named, a request in the last second before it prices at the row, and
+// one at the first second of it prices at the sheet's fallback for the class,
+// marked as a fallback. The days are those the catalog's release report names.
+func TestAPromotionThatEndsFallsToTheFallback(t *testing.T) {
+	ends := []struct{ provider, model, day string }{
+		{ProviderOpenAI, "gpt-5.6-sol", "2026-12-01"},
+		{ProviderOpenAI, "gpt-6-astra-law", "2027-01-01"},
+		{"github-copilot", "gemini-3.8-flash", "2027-01-01"},
+		{"github-copilot", "gemini-4-argon", "2026-12-01"},
+		{"cursor", "gpt-5.6-sol", "2026-11-22"},
+	}
+	c := pinned(t)
+	for _, end := range ends {
+		s := c.sheets[end.provider]
+		if s == nil {
+			t.Fatalf("release %s holds no %s sheet", c.Version(), end.provider)
+		}
+		fallbacks := map[string]string{}
+		for _, r := range s.Rows {
+			if r.RowType == "fallback" {
+				fallbacks[r.TokenClass] = r.ListUnitPrice
+			}
+		}
+		last, err := time.Parse(dayLayout, end.day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := 0
+		for i := range s.Rows {
+			r := &s.Rows[i]
+			if r.RowType != "unit_price" || r.ModelID != end.model {
+				continue
+			}
+			rows++
+			if r.EffectiveEnd == nil || *r.EffectiveEnd != end.day {
+				t.Errorf("%s %s does not end on %s", end.provider, r.SkuPriceID, end.day)
+				continue
+			}
+			q := Query{Provider: end.provider, Model: r.ModelID, Class: focus.TokenClass(r.TokenClass), ServiceTier: r.ServiceTier,
+				Region: RegionGlobal, ContextInputTokens: insideTier(r), At: last.Add(-time.Second)}
+			own, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if own.Fallback || own.SkuPriceID != r.SkuPriceID || own.ListUnitPrice.Cmp(decimal.MustParse(r.ListUnitPrice)) != 0 {
+				t.Errorf("%s the day before %s: %s at %s, fallback %t; want its row at %s", r.SkuPriceID, end.day, own.SkuPriceID, own.ListUnitPrice, own.Fallback, r.ListUnitPrice)
+			}
+			q.At = last
+			after, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := end.provider + ":fallback:" + r.TokenClass
+			if !after.Fallback || after.SkuPriceID != id || after.ListUnitPrice.Cmp(decimal.MustParse(fallbacks[r.TokenClass])) != 0 {
+				t.Errorf("%s on %s: %s at %s, fallback %t; want %s at %s", r.SkuPriceID, end.day, after.SkuPriceID, after.ListUnitPrice, after.Fallback, id, fallbacks[r.TokenClass])
+			}
+		}
+		if rows == 0 {
+			t.Errorf("the %s sheet prices no %s", end.provider, end.model)
+		}
 	}
 }

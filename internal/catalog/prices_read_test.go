@@ -10,7 +10,7 @@ import (
 // TestPricesReadIsTheDayOfTheEmbeddedSheets reads the day of each release the
 // binary carries from its sheets, and none for a release it does not carry.
 func TestPricesReadIsTheDayOfTheEmbeddedSheets(t *testing.T) {
-	for version, want := range map[string]string{"0.1.0": "2026-11-01", "0.2.0": "2026-11-07", "0.3.0": "2026-11-08"} {
+	for version, want := range map[string]string{"0.1.0": "2026-11-01", "0.2.0": "2026-11-07", "0.3.0": "2026-11-08", "0.4.1": "2026-11-12"} {
 		if day, known := PricesRead(version); !known || day != want {
 			t.Errorf("release %s: %q, %t, want %s", version, day, known, want)
 		}
