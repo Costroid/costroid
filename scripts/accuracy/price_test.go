@@ -67,7 +67,7 @@ func keepSplit(t *testing.T, inputs string, d day, outputCents string) {
 		client: client,
 		now:    d.savedAt,
 	}
-	if got := runAccuracy(t, outside, "-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rows); got.code != 0 {
+	if got := runAccuracy(t, outside, saveArgs(inputs, d, rows)...); got.code != 0 {
 		t.Fatalf("-save exited %d: %s", got.code, got.stderr)
 	}
 }

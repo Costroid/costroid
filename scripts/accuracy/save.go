@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/reconcile"
@@ -43,15 +46,51 @@ type doer = reconcile.Doer
 func liveClient() doer { return reconcile.NewClient() }
 
 // dayRecord is day.json: which day the directory keeps, when its reports were
-// saved and whether they were, and the Costroid release that kept them.
-// Reason says why a report is missing.
+// saved and whether they were, and the Costroid release the day's agent ran
+// under, as the agent's job recorded it that day. Reason says why a report is
+// missing. Shared names the runs that spent on the key that day outside
+// Costroid, so no row covers their requests.
 type dayRecord struct {
-	Day        string `json:"day"`
-	SavedAt    string `json:"saved_at"`
-	Credential string `json:"credential"`
-	Report     string `json:"report"`
-	Reason     string `json:"reason"`
-	Writer     string `json:"writer"`
+	Day        string      `json:"day"`
+	SavedAt    string      `json:"saved_at"`
+	Credential string      `json:"credential"`
+	Report     string      `json:"report"`
+	Reason     string      `json:"reason"`
+	Writer     string      `json:"writer"`
+	Shared     []sharedRun `json:"shared,omitempty"`
+}
+
+// sharedRun is one workflow run that spent on the day's key with no row to
+// show for it: a step outside Costroid, or a run whose rows were not kept.
+type sharedRun struct {
+	Workflow string `json:"workflow"`
+	Run      string `json:"run"`
+	Step     string `json:"step"`
+}
+
+// readShared reads the runs -shared names: a JSON array, in any order. Each
+// names its workflow and its run's numeric id.
+func readShared(path string) ([]sharedRun, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read the shared runs: %w", err)
+	}
+	var runs []sharedRun
+	if err := json.Unmarshal(data, &runs); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	for _, run := range runs {
+		if run.Workflow == "" || run.Run == "" || strings.Trim(run.Run, "0123456789") != "" {
+			return nil, fmt.Errorf("%s: a shared run names the workflow %q and the run %q, want a workflow and a numeric run id", path, run.Workflow, run.Run)
+		}
+	}
+	slices.SortFunc(runs, func(a, b sharedRun) int {
+		return cmp.Or(cmp.Compare(len(a.Run), len(b.Run)), strings.Compare(a.Run, b.Run), strings.Compare(a.Workflow, b.Workflow), strings.Compare(a.Step, b.Step))
+	})
+	return slices.Compact(runs), nil
 }
 
 // save keeps the rows, the reports and day.json. day.json is written whatever
@@ -63,6 +102,10 @@ func save(ctx context.Context, opts options, outside world, stdout io.Writer) er
 		return err
 	}
 	rows, err := os.ReadFile(opts.rows)
+	if err != nil {
+		return err
+	}
+	shared, err := readShared(opts.shared)
 	if err != nil {
 		return err
 	}
@@ -82,7 +125,8 @@ func save(ctx context.Context, opts options, outside world, stdout io.Writer) er
 		SavedAt:    outside.now().UTC().Format(focus.InstantLayout),
 		Credential: opts.credential,
 		Report:     reportNone,
-		Writer:     version,
+		Writer:     opts.writer,
+		Shared:     shared,
 	}
 	saveErr := saveReports(ctx, opts, days, rows, outside, &record)
 	if err := keepRecord(opts.save, record); err != nil {

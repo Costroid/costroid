@@ -73,26 +73,43 @@ func TestAccuracyPageNamesTheWriterVersion(t *testing.T) {
 	}
 }
 
-func TestSaveRecordsTheWriter(t *testing.T) {
-	inputs := keepAll(t, passingDay(firstDay))
-	if writer := recordedWriter(t, inputs, firstDay); writer != shipped {
-		t.Errorf("-save recorded the writer %q, want the release it was built as, %s", writer, shipped)
+// TestWriterIsReadFromTheMeasuredDay keeps a day as the reports job does, two
+// days after it: the writer is the release the agent's job recorded on the
+// day, passed in, and never a release the saving command names for itself.
+func TestWriterIsReadFromTheMeasuredDay(t *testing.T) {
+	d := passingDay(firstDay)
+	for _, writer := range []string{"1.0.0-alpha.2", shipped} {
+		inputs := t.TempDir()
+		args := []string{"-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rowsFileOf(t, d), "-writer", writer}
+		if got := runAccuracy(t, reportsWorld(t, d), args...); got.code != 0 {
+			t.Fatalf("-save exited %d: %s", got.code, got.stderr)
+		}
+		if recorded := recordedWriter(t, inputs, d.date); recorded != writer {
+			t.Errorf("-save -writer %s recorded the writer %q", writer, recorded)
+		}
+		page, got := writeAndCheck(t, inputs, 1)
+		if got.code != 0 {
+			t.Fatalf("-check exited %d on a day its agent ran under %s: %s", got.code, writer, got.stderr)
+		}
+		if text := dayLine(t, page, d.date); !strings.Contains(text, "| claude-code 2.1.316, Costroid "+writer+" |") || verdictOf(t, text) != "pass" {
+			t.Errorf("the line does not pass under the release the agent ran under, %s: %s", writer, text)
+		}
 	}
 
-	built := version
-	t.Cleanup(func() { version = built })
-	version = "dev"
-	inputs = keepAll(t, passingDay(firstDay))
-	if writer := recordedWriter(t, inputs, firstDay); writer != "dev" {
-		t.Errorf("a development build recorded the writer %q, want dev", writer)
+	inputs := t.TempDir()
+	args := []string{"-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rowsFileOf(t, d)}
+	if got := runAccuracy(t, reportsWorld(t, d), args...); got.code != 0 {
+		t.Fatalf("-save exited %d with no -writer: %s", got.code, got.stderr)
+	}
+	if recorded := recordedWriter(t, inputs, d.date); recorded != "" {
+		t.Errorf("-save with no -writer recorded the writer %q, want none", recorded)
 	}
 	page, got := writeAndCheck(t, inputs, 1)
 	if got.code != exitRefused {
-		t.Fatalf("-check exited %d on a day a development build kept, want %d", got.code, exitRefused)
+		t.Fatalf("-check exited %d on a day the agent's job recorded no writer for, want %d", got.code, exitRefused)
 	}
-	text := dayLine(t, page, firstDay)
-	if verdictOf(t, text) != failWriterUnreleased || !strings.Contains(text, "| claude-code 2.1.316, Costroid dev |") {
-		t.Errorf("a day a development build kept does not read as no release: %s", text)
+	if text := dayLine(t, page, d.date); verdictOf(t, text) != failNoWriter {
+		t.Errorf("a day with no recorded writer does not fail as one: %s", text)
 	}
 }
 
@@ -112,42 +129,102 @@ func TestADayWithNoWriterFails(t *testing.T) {
 	}
 }
 
-func TestAccuracyPinLagsNoRelease(t *testing.T) {
-	releases := []release{
-		{"1.0.0-alpha.4", "2026-11-09"},
-		{"1.0.0-alpha.3", "2026-11-07"},
-		{"1.0.0-alpha.2", "2026-11-07"},
-		{"1.0.0-alpha.1", "2026-11-01"},
-	}
+// laggingReleases ship several in a day, as releases have.
+var laggingReleases = []release{
+	{"1.0.0-alpha.6", "2026-11-20"},
+	{"1.0.0-alpha.5", "2026-11-12"},
+	{"1.0.0-alpha.4", "2026-11-12"},
+	{"1.0.0-alpha.3", "2026-11-12"},
+	{"1.0.0-alpha.2", "2026-11-03"},
+	{"1.0.0-alpha.1", "2026-11-01"},
+}
+
+func TestWriterLagIsJudgedInDays(t *testing.T) {
 	for _, test := range []struct {
 		name, writer, day, want string
 	}{
-		{"the newest release out on the day", "1.0.0-alpha.3", "2026-11-08", ""},
-		{"one release behind", "1.0.0-alpha.2", "2026-11-08", ""},
-		{"two releases behind", "1.0.0-alpha.1", "2026-11-08", failWriterLags},
-		{"two behind a release out that day", "1.0.0-alpha.2", "2026-11-09", failWriterLags},
-		{"a release out only after the day", "1.0.0-alpha.4", "2026-11-08", failWriterUnreleased},
-		{"a day before any release", "1.0.0-alpha.1", "2026-10-31", failWriterUnreleased},
-		{"a build the changelog does not list", "dev", "2026-11-08", failWriterUnreleased},
-		{"a day that names no writer", "", "2026-11-08", failNoWriter},
+		{"three releases behind on the day all three shipped", "1.0.0-alpha.3", "2026-11-12", ""},
+		{"superseded on the day itself", "1.0.0-alpha.2", "2026-11-12", ""},
+		{"superseded only after the day", "1.0.0-alpha.2", "2026-11-10", ""},
+		{"superseded exactly 7 days before the day", "1.0.0-alpha.2", "2026-11-19", ""},
+		{"superseded 8 days before the day", "1.0.0-alpha.2", "2026-11-20", failWriterLags},
+		{"three behind, superseded 7 days before", "1.0.0-alpha.3", "2026-11-19", ""},
+		{"three behind, superseded 8 days before", "1.0.0-alpha.3", "2026-11-20", failWriterLags},
+		{"the newest release, long after it shipped", "1.0.0-alpha.6", "2026-12-31", ""},
+		{"superseded the day after it shipped, 8 days back", "1.0.0-alpha.1", "2026-11-11", failWriterLags},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := writerFailure(test.writer, test.day, releases); got != test.want {
-				t.Errorf("writer %q on %s: got %q, want %q", test.writer, test.day, got, test.want)
+			if got := writerFailure(test.writer, test.day, laggingReleases); got != test.want {
+				t.Errorf("writer %s on %s: got %q, want %q", test.writer, test.day, got, test.want)
 			}
 		})
 	}
 
+	// On the test changelog, 1.0.0-alpha.2 was superseded on 2026-11-09 and
+	// 1.0.0-alpha.1 on 2026-11-02, one and eight days before firstDay.
 	for writer, want := range map[string]string{"1.0.0-alpha.2": "pass", "1.0.0-alpha.1": failWriterLags} {
 		inputs := keepAll(t, passingDay(firstDay))
 		nameWriter(t, inputs, firstDay, writer)
 		page, got := writeAndCheck(t, inputs, 1)
 		if verdict := verdictOf(t, dayLine(t, page, firstDay)); verdict != want {
-			t.Errorf("%s against %s: verdict %q, want %q", writer, shipped, verdict, want)
+			t.Errorf("%s on %s: verdict %q, want %q", writer, firstDay, verdict, want)
 		}
 		if failed := got.code != 0; failed != (want != "pass") {
 			t.Errorf("-check exited %d with the writer %s: %s", got.code, writer, got.stderr)
 		}
+	}
+}
+
+func TestBuildThatIsNoReleaseStillFails(t *testing.T) {
+	for _, test := range []struct {
+		name, writer, day, want string
+	}{
+		{"a development build", "dev", "2026-11-12", failWriterUnreleased},
+		{"a version the changelog does not list", "1.0.0-alpha.99", "2026-11-12", failWriterUnreleased},
+		{"a release out only after the day", "1.0.0-alpha.6", "2026-11-19", failWriterUnreleased},
+		{"a day before any release", "1.0.0-alpha.1", "2026-10-31", failWriterUnreleased},
+		{"a day that names no writer", "", "2026-11-12", failNoWriter},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := writerFailure(test.writer, test.day, laggingReleases); got != test.want {
+				t.Errorf("writer %q on %s: got %q, want %q", test.writer, test.day, got, test.want)
+			}
+		})
+	}
+
+	d := passingDay(firstDay)
+	inputs := t.TempDir()
+	args := []string{"-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rowsFileOf(t, d), "-writer", "dev"}
+	if got := runAccuracy(t, reportsWorld(t, d), args...); got.code != 0 {
+		t.Fatalf("-save exited %d: %s", got.code, got.stderr)
+	}
+	page, got := writeAndCheck(t, inputs, 1)
+	if got.code != exitRefused {
+		t.Fatalf("-check exited %d on a day a development build wrote, want %d", got.code, exitRefused)
+	}
+	text := dayLine(t, page, firstDay)
+	if verdictOf(t, text) != failWriterUnreleased || !strings.Contains(text, "| claude-code 2.1.316, Costroid dev |") {
+		t.Errorf("a day a development build wrote does not read as no release: %s", text)
+	}
+}
+
+func TestUnreleasedHeadingNamesNoRelease(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
+	if err := os.WriteFile(path, []byte("# Changelog\n\n## Unreleased\n\n### Fixes\n\n"+strings.TrimPrefix(testChangelog, "# Changelog\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	releases, err := readReleases(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 3 || releases[0] != (release{shipped, "2026-11-09"}) {
+		t.Errorf("a changelog with an Unreleased heading lists %v", releases)
+	}
+	if err := os.WriteFile(path, []byte("# Changelog\n\n## Next\n\n"+strings.TrimPrefix(testChangelog, "# Changelog\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readReleases(path); err == nil {
+		t.Error("a heading that is neither a release nor Unreleased was read")
 	}
 }
 

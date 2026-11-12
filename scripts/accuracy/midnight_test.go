@@ -123,7 +123,7 @@ func keepServed(t *testing.T, inputs string, d day, rows []byte, served servedDa
 		}),
 		now: d.savedAt,
 	}
-	if got := runAccuracy(t, outside, "-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", path); got.code != 0 {
+	if got := runAccuracy(t, outside, saveArgs(inputs, d, path)...); got.code != 0 {
 		t.Fatalf("-save exited %d: %s", got.code, got.stderr)
 	}
 }

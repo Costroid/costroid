@@ -19,21 +19,30 @@ import (
 
 const usage = `Usage:
   go run ./scripts/accuracy -save DIR -day YYYY-MM-DD -rows FILE [-credential ID]
+      [-writer RELEASE] [-shared FILE]
   go run ./scripts/accuracy -write FILE [-inputs DIR] [-costroid BINARY] [-changelog FILE]
   go run ./scripts/accuracy -check FILE [-days N] [-inputs DIR] [-costroid BINARY] [-changelog FILE]
 
 -save keeps one UTC day's inputs in DIR: the rows, the provider's usage and
 cost reports cut to the credentials the rows name, when the reports were
-saved, and the Costroid release this command was built as. It reads
-ANTHROPIC_ADMIN_KEY and OPENAI_ADMIN_KEY. When a report's key is not set, it
-records that no provider report was saved and exits 0. Build it with
--ldflags "-X main.version=VERSION" to name the release; any other build
-records dev, which is no release.
+saved, the Costroid release the day's agent ran under, and the runs that spent
+on the key that day outside Costroid. It reads ANTHROPIC_ADMIN_KEY and
+OPENAI_ADMIN_KEY. When a report's key is not set, it records that no provider
+report was saved and exits 0.
+
+-writer is the release the agent's job ran under, as that job recorded it on
+the day. Without it the day names no writer, and fails. The release this
+command was built as is never recorded.
+
+-shared names a JSON array of the runs that spent on the key outside Costroid
+that day, each {"workflow": NAME, "run": ID, "step": NAME}. A day that names
+one fails, because the provider's figures hold requests no row covers.
 
 -write re-runs costroid reconcile on each day kept under -inputs, one
-directory per day, and writes the page. -check recomputes the page the same
-way, refuses it when one line differs, and passes only when the last -days
-days on it are consecutive UTC days that each passed.
+directory per day, and writes the page. Each day is reconciled in a temporary
+directory, so the working directory is left as it was. -check recomputes the
+page the same way, refuses it when one line differs, and passes only when the
+last -days days on it are consecutive UTC days that each passed.
 
 -costroid names the binary that reconciles. Without it, the command builds
 cmd/costroid from this module.
@@ -53,16 +62,13 @@ const (
 	defaultDays   = 14
 )
 
-// version is the Costroid release this command was built as, set at link
-// time.
-var version = "dev"
-
 // errRefused marks a page that was read and turned down, as against inputs
 // that could not be read.
 var errRefused = errors.New("refused")
 
 type options struct {
 	save, day, rows, credential string
+	writer, shared              string
 	write, check                string
 	inputs, costroid, changelog string
 	days                        int
@@ -119,6 +125,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	set.StringVar(&opts.day, "day", "", "the UTC day to save, YYYY-MM-DD")
 	set.StringVar(&opts.rows, "rows", "", "the rows of that day, as JSON lines")
 	set.StringVar(&opts.credential, "credential", "", "the credential of rows whose SubAccountId is null")
+	set.StringVar(&opts.writer, "writer", "", "the Costroid release the day's agent ran under")
+	set.StringVar(&opts.shared, "shared", "", "a JSON array of the runs that spent on the key outside Costroid that day")
 	set.StringVar(&opts.write, "write", "", "the page to write")
 	set.StringVar(&opts.check, "check", "", "the page to check")
 	set.StringVar(&opts.inputs, "inputs", defaultInputs, "the directory of kept days, one directory per day")

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/reconcile"
@@ -23,12 +24,14 @@ const (
 
 // line is one reconciliation of one credential on one day, as the page shows
 // it. A line with no failures passed. explained says it passed only once the
-// residual's named causes were taken out. writer is the Costroid release that
-// wrote the day's rows, empty when the day does not name it.
+// residual's named causes were taken out. writer is the Costroid release the
+// day's agent ran under, empty when the day does not name it. shared is the
+// runs that spent on the key that day outside Costroid.
 type line struct {
 	day string
 	named
 	writer    string
+	shared    []sharedRun
 	tokens    []tokenFigure
 	dollars   *dollarFigure
 	failures  []string
@@ -109,11 +112,13 @@ Costroid prices an agent's run from the agent's own token counts. This page comp
 
 Each day a scheduled job in a private repository runs one small Claude Code task under ` + "`costroid run`" + `, with a budget of 0.10 USD. Two days later a second job saves the provider's usage and cost reports for that day, cut to that key's own records, beside every row the key's runs wrote that day. The rows, the reports and the time they were saved are that day's inputs. Each week they are committed to the private repository.
 
+Other workflows in that repository spend on the same key. Each one that runs under Costroid keeps its rows, and the second job gathers them. A run that spends on the key outside Costroid, such as a raw recording of an agent, writes no row. The day names each such run, the cause ` + "`shared_key`" + ` lists its run id, and the day fails: the provider's figures hold requests no row covers.
+
 Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 
 ` + "`go run ./scripts/accuracy -write docs/accuracy.md`" + ` re-runs ` + "`costroid reconcile`" + ` on each day's inputs and writes this page. A day passes when every token class matches the usage report within 1%, every price the cost report implies equals the catalog's to the last digit the report states, each token class's list-price dollars land within 1% of the cost report's where the report splits them by class, and the day's list-price dollars land within 10% of the cost report, or within 10% once the residual's named causes are taken out. [Compare a ledger with a provider's report](reconcile.md) defines each step and each cause.
 
-Each day names the Costroid release that kept its inputs, which the job pins to the release it runs the agent under. A day fails when it names no release, when it names a build that is no release, or when its release trails the newest release out on that day by more than one.
+Each day names the Costroid release its agent ran under, which the agent's job records on the day it runs. A day fails when it names no release or a build that is no release. It also fails when its release was superseded more than 7 days before the day. Several releases can ship in one day, so the rule counts days, not releases: a release passes when it was the newest at some moment in the 7 days before the day or on the day itself.
 
 No line is edited by hand. ` + "`go run ./scripts/accuracy -check docs/accuracy.md -days 14`" + ` recomputes every line from the inputs, refuses the page when one line differs, and passes only when the last 14 days on it are consecutive and each passed. The last column is the SHA-256 of a listing of each input file's SHA-256 and path, in the form ` + "`sha256sum`" + ` prints, so a line names the exact inputs it was computed from.
 `
@@ -188,7 +193,7 @@ func renderDays(w io.Writer, lines []line) {
 	fmt.Fprintln(w, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 	for _, l := range lines {
 		fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n", l.day, cell(l.source), writerCell(l), cell(l.catalog), cell(l.measured),
-			tokensCell(l.tokens), dollarsCell(l.dollars), residualCell(l.dollars), causesCell(l.dollars), l.verdict(), l.digest)
+			tokensCell(l.tokens), dollarsCell(l.dollars), residualCell(l.dollars), causesCell(l.dollars, l.shared), l.verdict(), l.digest)
 	}
 }
 
@@ -242,21 +247,48 @@ func residualCell(dollars *dollarFigure) string {
 	return cell(dollars.Residual)
 }
 
-func causesCell(dollars *dollarFigure) string {
-	if !dollars.compared() {
-		return noFigure
-	}
+// causesCell names each cause of the residual with its amount. The runs that
+// spent on the key outside Costroid stand beside shared_key, or alone when no
+// amount was reached for it.
+func causesCell(dollars *dollarFigure, shared []sharedRun) string {
 	var parts []string
-	for _, named := range dollars.Causes {
-		parts = append(parts, cell(named.Name)+" "+cell(named.Amount))
+	runs := sharedCell(shared)
+	if dollars.compared() {
+		for _, named := range dollars.Causes {
+			part := cell(named.Name) + " " + cell(named.Amount)
+			if named.Name == string(reconcile.CauseSharedKey) && runs != "" {
+				part, runs = part+" from "+runs, ""
+			}
+			parts = append(parts, part)
+		}
+		if dollars.Unattributed != "" && dollars.Unattributed != "0" {
+			parts = append(parts, "unattributed "+cell(dollars.Unattributed))
+		}
 	}
-	if dollars.Unattributed != "" && dollars.Unattributed != "0" {
-		parts = append(parts, "unattributed "+cell(dollars.Unattributed))
+	if runs != "" {
+		parts = append(parts, string(reconcile.CauseSharedKey)+" from "+runs)
 	}
 	if len(parts) == 0 {
 		return noFigure
 	}
 	return strings.Join(parts, "; ")
+}
+
+// sharedCell names each run once, with its workflow, as "run 42 (record)" or
+// "runs 42 (record), 43 (canary)".
+func sharedCell(shared []sharedRun) string {
+	var named []string
+	for _, run := range shared {
+		named = appendNew(named, cell(run.Run)+" ("+cell(run.Workflow)+")")
+	}
+	switch len(named) {
+	case 0:
+		return ""
+	case 1:
+		return "run " + named[0]
+	default:
+		return "runs " + strings.Join(named, ", ")
+	}
 }
 
 // cell keeps a value from closing a table cell or the row.
@@ -288,9 +320,9 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 	if err != nil {
 		return nil, err
 	}
-	writers := map[string]string{}
+	records := map[string]dayRecord{}
 	for _, day := range days {
-		writers[day.record.Day] = strings.TrimPrefix(day.record.Writer, "v")
+		records[day.record.Day] = day.record
 	}
 	var lines []line
 	for _, group := range groups {
@@ -299,9 +331,13 @@ func compute(ctx context.Context, opts options, stderr io.Writer) ([]line, error
 			return nil, err
 		}
 		for i := range groupLines {
-			writer := writers[groupLines[i].day]
-			groupLines[i].writer = writer
-			if failure := writerFailure(writer, groupLines[i].day, releases); failure != "" {
+			record := records[groupLines[i].day]
+			groupLines[i].writer = strings.TrimPrefix(record.Writer, "v")
+			groupLines[i].shared = record.Shared
+			if len(record.Shared) > 0 {
+				groupLines[i].failures = append(groupLines[i].failures, failShared)
+			}
+			if failure := writerFailure(groupLines[i].writer, groupLines[i].day, releases); failure != "" {
 				groupLines[i].failures = append(groupLines[i].failures, failure)
 			}
 		}
@@ -330,35 +366,50 @@ func groupLinesOf(ctx context.Context, binary string, group []keptDay, scratch s
 	return lines, nil
 }
 
-// The verdicts a line fails with when the release that wrote its rows is
-// not the one that ships.
+// failShared is the verdict of a day whose key was used outside Costroid:
+// the provider's figures hold requests no row covers.
+const failShared = "key used outside Costroid"
+
+// The verdicts a line fails with when the release its agent ran under is not
+// one that ships.
 const (
 	failNoWriter         = "day names no writer"
 	failWriterUnreleased = "writer is no release"
-	failWriterLags       = "writer lags the newest release"
+	failWriterLags       = "writer superseded over 7 days before the day"
 )
 
-// maxWriterLag is how many releases the writer may trail the newest release
-// out on its day: one, for the day a release ships and the pin moves.
-const maxWriterLag = 1
+// writerWindowDays is how many days before the measured day the writer may
+// have been the newest release. Several releases can ship in a day, so the
+// rule counts days, never releases.
+const writerWindowDays = 7
 
-// writerFailure judges the release that wrote a day's rows against the
-// releases out on that day, counted in the changelog's order. A writer the
-// changelog does not list, or lists after the day, is no release.
+// writerFailure judges the release a day's agent ran under. A writer the
+// changelog does not list, or lists after the day, is no release. A release
+// is the newest from its date until the next release's date, so the writer
+// passes when no release has followed it, or when the next one came out no
+// earlier than writerWindowDays before the day.
 func writerFailure(writer, day string, releases []release) string {
 	if writer == "" {
 		return failNoWriter
 	}
-	newest := slices.IndexFunc(releases, func(r release) bool { return r.date <= day })
 	wrote := slices.IndexFunc(releases, func(r release) bool { return r.version == writer })
-	switch {
-	case newest < 0 || wrote < newest:
+	if wrote < 0 || releases[wrote].date > day {
 		return failWriterUnreleased
-	case wrote-newest > maxWriterLag:
-		return failWriterLags
-	default:
-		return ""
 	}
+	if wrote > 0 && releases[wrote-1].date < daysBefore(day, writerWindowDays) {
+		return failWriterLags
+	}
+	return ""
+}
+
+// daysBefore is the UTC day n days before day. Every kept day's name parses,
+// as readDays requires, so a day that does not is returned as it is.
+func daysBefore(day string, n int) string {
+	at, err := time.Parse(dayLayout, day)
+	if err != nil {
+		return day
+	}
+	return at.AddDate(0, 0, -n).Format(dayLayout)
 }
 
 // release is one entry of the changelog: a version and its UTC date.
@@ -373,9 +424,13 @@ const (
 
 var changelogHeading = regexp.MustCompile(`^## (\S+) \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)$`)
 
+// unreleasedHeading holds changes no release carries yet. It names no
+// release, so no writer can be it.
+const unreleasedHeading = "## Unreleased"
+
 // readReleases lists the releases in a changelog, newest first: the one at
 // path, or this module's when path is empty. A second-level heading of
-// another form is refused, so no release is skipped when the lag is counted.
+// another form is refused, so no release is skipped when a writer is judged.
 func readReleases(path string) ([]release, error) {
 	if path == "" {
 		root, err := moduleRoot()
@@ -390,7 +445,7 @@ func readReleases(path string) ([]release, error) {
 	}
 	var releases []release
 	for _, text := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(text, "## ") {
+		if !strings.HasPrefix(text, "## ") || text == unreleasedHeading {
 			continue
 		}
 		match := changelogHeading.FindStringSubmatch(text)
@@ -435,9 +490,14 @@ func declares(goMod []byte, module string) bool {
 }
 
 // costroidBinary builds cmd/costroid from this module unless a binary is named.
+// A named path is made absolute, since reconcile runs in another directory; a
+// bare name is found on PATH.
 func costroidBinary(ctx context.Context, named, scratch string, stderr io.Writer) (string, error) {
-	if named != "" {
+	if named != "" && !strings.ContainsRune(named, filepath.Separator) {
 		return named, nil
+	}
+	if named != "" {
+		return filepath.Abs(named)
 	}
 	binary := filepath.Join(scratch, "costroid")
 	if err := goBuild(ctx, binary, stderr); err != nil {

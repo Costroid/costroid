@@ -182,13 +182,23 @@ type reconcileInput struct {
 }
 
 // reconcileInputs runs `costroid reconcile` and reads the rows it wrote to out.
+// The command runs in out's directory, a temporary one, so nothing it writes
+// lands in the working directory; every path it is given is absolute.
 func reconcileInputs(ctx context.Context, binary string, input reconcileInput, out string, stderr io.Writer) ([]reconciledRow, error) {
+	directory, err := filepath.Abs(input.directory)
+	if err != nil {
+		return nil, err
+	}
+	out, err = filepath.Abs(out)
+	if err != nil {
+		return nil, err
+	}
 	args := []string{
 		"reconcile",
-		"--rows", filepath.Join(input.directory, rowsFile),
+		"--rows", filepath.Join(directory, rowsFile),
 		"--from", input.from,
 		"--to", input.to,
-		"--reports", filepath.Join(input.directory, reportsDirectory),
+		"--reports", filepath.Join(directory, reportsDirectory),
 		"--as-of", input.savedAt,
 		"--out", out,
 	}
@@ -196,10 +206,11 @@ func reconcileInputs(ctx context.Context, binary string, input reconcileInput, o
 		args = append(args, "--credential", input.credential)
 	}
 	command := exec.CommandContext(ctx, binary, args...)
+	command.Dir = filepath.Dir(out)
 	var said bytes.Buffer
 	command.Stdout = io.Discard
 	command.Stderr = &said
-	err := command.Run()
+	err = command.Run()
 	var exit *exec.ExitError
 	switch {
 	case err == nil, errors.As(err, &exit) && exit.ExitCode() == reconcileMissed:

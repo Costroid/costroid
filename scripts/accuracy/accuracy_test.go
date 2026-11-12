@@ -29,7 +29,8 @@ const (
 )
 
 // The releases every test judges a writer against. shipped is the newest out
-// on every day the tests keep, and the release -save records.
+// on every day the tests keep, and the release the agent's job records as each
+// day's writer.
 const (
 	shipped       = "1.0.0-alpha.3"
 	testChangelog = `# Changelog
@@ -62,7 +63,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	version = shipped
 	code := m.Run()
 	os.RemoveAll(scratch)
 	os.Exit(code)
@@ -260,19 +260,30 @@ func runAccuracy(t *testing.T, outside world, args ...string) result {
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
-// keep saves one day through -save, as the workflow does. -save records
-// shipped as the day's writer.
+// saveArgs are the arguments of -save for one day, as the workflow passes
+// them: the day's writer is shipped, as the agent's job recorded it.
+func saveArgs(inputs string, d day, rows string, extra ...string) []string {
+	return append([]string{"-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rows, "-writer", shipped}, extra...)
+}
+
+// keep saves one day through -save, as the workflow does.
 func keep(t *testing.T, inputs string, d day) result {
 	t.Helper()
-	rows := filepath.Join(t.TempDir(), "rows.jsonl")
-	if err := os.WriteFile(rows, d.rows(t), 0o644); err != nil {
-		t.Fatal(err)
+	got := runAccuracy(t, reportsWorld(t, d), saveArgs(inputs, d, rowsFileOf(t, d))...)
+	if got.code != 0 {
+		t.Fatalf("-save exited %d: %s", got.code, got.stderr)
 	}
+	return got
+}
+
+// reportsWorld is what -save reads on the day the reports job saves d: the
+// admin key, unless d has no report, and d's synthetic reports.
+func reportsWorld(t *testing.T, d day) world {
 	key := adminKey
 	if d.noReport {
 		key = ""
 	}
-	outside := world{
+	return world{
 		getenv: func(name string) string {
 			if name == "ANTHROPIC_ADMIN_KEY" {
 				return key
@@ -282,11 +293,16 @@ func keep(t *testing.T, inputs string, d day) result {
 		client: d.provider(t),
 		now:    d.savedAt,
 	}
-	got := runAccuracy(t, outside, "-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rows)
-	if got.code != 0 {
-		t.Fatalf("-save exited %d: %s", got.code, got.stderr)
+}
+
+// rowsFileOf writes d's rows to a file of their own.
+func rowsFileOf(t *testing.T, d day) string {
+	t.Helper()
+	rows := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(rows, d.rows(t), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	return got
+	return rows
 }
 
 func keepAll(t *testing.T, days ...day) string {
@@ -642,7 +658,7 @@ func TestSaveCreatesAMissingParent(t *testing.T) {
 	if err := os.WriteFile(rows, d.rows(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	again := runAccuracy(t, world{getenv: func(string) string { return "" }, client: d.provider(t), now: d.savedAt}, "-save", filepath.Join(inputs, d.date), "-day", d.date, "-rows", rows)
+	again := runAccuracy(t, world{getenv: func(string) string { return "" }, client: d.provider(t), now: d.savedAt}, saveArgs(inputs, d, rows)...)
 	if again.code == 0 {
 		t.Fatal("-save replaced a kept day")
 	}
