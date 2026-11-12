@@ -26,8 +26,9 @@ var (
 	placeholder = regexp.MustCompile(`<[a-z][a-z -]*>`)
 )
 
-// printedShapes reads every line the binary and the action print that starts
-// with costroid:, as a shape with a hole wherever a value goes in.
+// printedShapes reads every line the binary, the action and the install script
+// print that starts with costroid:, as a shape with a hole wherever a value
+// goes in.
 func printedShapes(t *testing.T) (map[string]string, string) {
 	t.Helper()
 	shapes := map[string]string{}
@@ -60,6 +61,7 @@ func printedShapes(t *testing.T) (map[string]string, string) {
 	walk("cmd", goSource)
 	walk("internal", goSource)
 	walk("action", func(path string) bool { return strings.HasSuffix(path, ".sh") })
+	walk("scripts", func(path string) bool { return filepath.ToSlash(path) == repositoryRoot+"/scripts/install.sh" })
 	return shapes, sources.String()
 }
 

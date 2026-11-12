@@ -1,6 +1,23 @@
 # Troubleshoot a run
 
-Every line Costroid prints starts with `costroid:`. This page lists each one with what it means and what to do. A word in angle brackets stands for a value the line fills in, quotes included.
+Most lines Costroid prints start with `costroid:`, and this page lists each one with what it means and what to do. `costroid doctor` prints its checks as `ok:`, `warn:` and `fail:` lines, which [Checking a repository](#checking-a-repository) lists. `costroid lint` prints each finding after its file and line, and [`docs/lint.md`](lint.md) lists the rules. `costroid policy` and `costroid report --preview` print a verdict and a comment, not a line of this page. A word in angle brackets stands for a value the line fills in, quotes included.
+
+## The install script
+
+`costroid-install.sh`, the one-step install of [`docs/install.md`](install.md#in-one-step). A line here other than the last two ends the script with exit code 1, and nothing is installed.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: cosign is not on PATH, and nothing is installed without its check: install cosign 3 or later, then run this again` | The script checks the release's signature with cosign before it installs anything, and found no `cosign` | Install cosign 3 or later, as [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) shows, then run the script again. Without cosign, [The binary](install.md#the-binary) installs it by hand against `SHA256SUMS` |
+| `costroid: curl is not on PATH` | The script downloads with `curl` | Install curl |
+| `costroid: this copy names no release: download costroid-install.sh from the release you want to install` | The script came from the repository, where its version and commit are empty. The release workflow fills both in the copy it attaches to a release | Download it from the release, as [`docs/install.md`](install.md#in-one-step) shows |
+| `costroid: no release for <system>` | The machine is not Linux or macOS, or not `amd64` or `arm64` | Build it with Go, as [`docs/install.md`](install.md#with-go) shows |
+| `costroid: could not download <file> of v<version>` | github.com did not answer, or the release holds no such file | Run the script again. curl's own line above it says why |
+| `costroid: the signature on SHA256SUMS of v<version> does not verify, so nothing was installed` | cosign refused the signature: Costroid's release workflow did not make it at that tag and commit | Do not install this release. Report it as [`SECURITY.md`](../SECURITY.md) says |
+| `costroid: SHA256SUMS of v<version> holds no line for <binary>` | The release holds no binary for this machine | Build it with Go, as [`docs/install.md`](install.md#with-go) shows |
+| `costroid: <binary> does not match its line in the signed SHA256SUMS of v<version>, so nothing was installed` | The downloaded binary is not the one the signed checksum names | Do not install this binary. Report it as [`SECURITY.md`](../SECURITY.md) says |
+| `costroid: installed v<version> at <directory>/costroid, checked by its signature` | The binary is installed | None |
+| `costroid: <directory> is not on your PATH: add it, or run <directory>/costroid` | The directory the binary went to is not on `PATH` | Add it to `PATH`, or pass another directory as the script's argument |
 
 ## Installing the binary
 
@@ -53,7 +70,7 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: could not read the version of <agent>` | `--version` printed no version | Check the agent's install step |
 | `costroid: <agent> <version> is older than the minimum <version>` | The installed agent is older than the floor | Raise the install step's version, or lower the floor to a version the recipe records |
 | `costroid: the agent's output is in <path> on this runner, not in this log. show-output: true prints it.` | The agent's own stream went to a file on the runner, so the log does not show its reasoning or replies | None. On a private repository, set `show-output: true` to see it |
-| `costroid: run needs <arguments>` | `costroid run` was called without the arguments the line names, from `--budget-usd` and an agent command after `--`. Costroid never assumes a budget | Pass each one the line names |
+| `costroid: run needs <arguments>`, such as `run needs --budget-usd` | `costroid run` was called without the arguments the line names, from `--budget-usd` and an agent command after `--`, so it started no agent. Costroid never assumes a budget | Pass each one the line names: `--budget-usd` with the run's budget in USD, such as `--budget-usd 5`, and the agent's command after `--` |
 | `costroid: no --out was given, so the rows go to costroid-rows.jsonl in the working directory` | `costroid run` names its rows file as the action's `run` stage does. The run's object goes beside it, as `costroid-rows.run.json`. A file of either name is replaced | Pass `--out` to name another file |
 | `costroid: --budget-usd must be above 0` | The budget is zero or negative | Pass a positive amount |
 | `costroid: --credential takes the key's id, never the key: this value reads like a key` | The credential looks like a provider key | Pass the key's id from the provider's console, never the key |
@@ -300,6 +317,7 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | ---- | ------- | --- |
 | `costroid: <error>` | A command could not go on, and exits 125. The error says why | Read the error. `costroid help` lists the commands, and `costroid help <command>` gives one command's flags |
 | `costroid: unknown command <name>` | No such command | Run `costroid help` |
+| `costroid: GITHUB_TOKEN is not set` | `costroid result` reads the check from GitHub with the token in `GITHUB_TOKEN`, and found none. It exits 125. The `pull_result` tool of `costroid mcp` reads the same token | Set a token that can read the repository, such as `export GITHUB_TOKEN="$(gh auth token)"` with the GitHub CLI signed in. Name the repository with `--repo OWNER/NAME`, or set `GITHUB_REPOSITORY` |
 | `costroid: validate takes one path` | `validate` got more than one file | Validate one file at a time |
 | `costroid: lint-recipes needs at least one path` | No file to lint | Name a recipe or a directory |
 | `costroid: <count> files, <count> rejected lines` | What `lint-recipes` checked. It exits 1 when a line was rejected | Fix each line it printed above |
@@ -362,10 +380,11 @@ With `COSTROID_PLATFORM_URL` set in the shell, `doctor` asks Costroid Platform f
 | Secrets | `warn: gh secret list --env <environment> failed, so doctor did not check the secrets of the environment <environment>: <error>` | Check that the environment exists and that `gh` may read its secrets, then run doctor again |
 | Secrets | `warn: <workflow> names an environment by the expression <expression>, which doctor does not resolve, so it did not list that environment's secrets` | Check that every environment the expression can name holds the secrets the job reads. Doctor does not guess an expression's value |
 | | `warn: gh is not on PATH, so doctor did not list the repository's secrets` | Install `gh`, or check the secrets the line names in the repository's settings |
-| | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | Run `gh auth login`, then `costroid doctor` again |
+| | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | When the error says the repository was not found, it is not on GitHub yet or this account cannot read it: push it first, or sign in to an account that can. Otherwise run `gh auth login`. Then run `costroid doctor` again |
 | | `warn: gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: gh exited 1: no git remotes found` | The repository has no remote, so `gh` cannot name it. Add a GitHub remote, or push the repository first |
 | Variables | `warn: the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE` | Set `COSTROID_INGEST_AUDIENCE` to the audience your ledger requires, as [`docs/recipes.md`](recipes.md#send-rows-to-a-ledger) says |
-| Visibility | `warn: <file> runs step-security/harden-runner, which needs a paid plan on a private repository` | Read [Egress in the agent's job](recipes.md#egress-in-the-agents-job), then keep the step or delete it |
+| Visibility | `warn: gh repo view failed, so doctor did not read whether the repository is private: <error>` | The same as for `gh secret list`. Until it reads the visibility, doctor does not check a `harden-runner` step against a private repository |
+| | `warn: <file> runs step-security/harden-runner, which needs a paid plan on a private repository` | Read [Egress in the agent's job](recipes.md#egress-in-the-agents-job), then keep the step or delete it |
 | Costroid Platform | `ok: COSTROID_PLATFORM_TOKEN is not set in this shell, so doctor did not read its scopes or the binding; set it to the integration token to check them` | Nothing: the recipes read the token from the repository's secrets. To check its scopes and the binding, set it in the shell and run `costroid doctor` again |
 | | `fail: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_` | Create one on Costroid Platform, as [`docs/connect.md`](connect.md#one-token-per-owner) says |
 | | `warn: COSTROID_PLATFORM_TOKEN in this shell carries <scopes>, and expires at <time>, and lacks <scopes>` | Create one with `identity:read`, `installations:write` and `rows:write`. `connect` uses the first two and `export` the first and the third |
