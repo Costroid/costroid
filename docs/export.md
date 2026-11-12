@@ -6,9 +6,20 @@ Costroid records what a run cost as FOCUS rows. This page lists every way those 
 
 `costroid run --out rows.jsonl` and `costroid ingest-run --out rows.jsonl` write one JSON object per line. Each line is one FOCUS row: one model request, or one model's whole run where the agent reports no more, for one token class.
 
-The columns are the [row contract `focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3), in FOCUS 1.4. Every amount is a decimal string, and every row names its currency. The `Tags` column carries the [`costroid/` tags](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.2) that join the row to its repository, pull request, commit and CI run.
+The columns are those of [the row contract](#the-row-contract), in FOCUS 1.4. Every amount is a decimal string, and every row names its currency. The `Tags` column carries the `costroid/` tags that join the row to its repository, pull request, commit and CI run.
 
 Any tool that reads newline-delimited JSON reads this file. Load amounts as decimals, never as floating point, and never add two currencies into one figure.
+
+### The row contract
+
+The row and its tags each have a contract, published in [Costroid/costroid-schemas](https://github.com/Costroid/costroid-schemas). `costroid run` and `costroid ingest-run` write rows of [`focus-row/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.5) with tags of [`tags/v0.4`](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.4). `costroid export` sends a batch to Costroid Platform by an integration contract, and each version of that contract names the rows and tags it carries:
+
+| Integration contract | Rows | Tags |
+| -------------------- | ---- | ---- |
+| `integration/v0.3` | `focus-row/v0.5` | `tags/v0.4` |
+| `integration/v0.2` | `focus-row/v0.3` | `tags/v0.2` |
+
+[Costroid Platform](#costroid-platform) says which version `costroid export` sends by.
 
 ## The artifact
 
@@ -37,7 +48,7 @@ curl --header "Authorization: Bearer $TOKEN" \
 
 ## Costroid Platform
 
-`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.3), or by `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.3` first, and names it on standard error. The body is the rows as CSV, in the form [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3) gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
+`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.3), or by `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.3` first, and names it on standard error. The body is the rows as CSV, in the form [the row contract](#the-row-contract) of that version gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
 
 The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` scope, and `identity:read` on GitHub Actions. Elsewhere, a token without `identity:read` still sends, by `integration/v0.2`, and `costroid export` warns that it could not read the platform's contract. Keep it as a secret named `COSTROID_PLATFORM_TOKEN`. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument. [`docs/connect.md`](connect.md) says why one token per owner, with `installations:write` as well, serves both commands.
 
@@ -153,7 +164,7 @@ Every amount is written as the row states it. None is converted, rounded or adde
 | `vantage` | A Vantage custom provider's CSV |
 | `datadog` | A Datadog Custom Costs CSV |
 
-A row's `BilledCost` is 0, because Costroid issues no invoice, and FOCUS 1.4 requires 0 there of anyone who does not invoice the charge. The row's figure is in `EffectiveCost`: the priced figure of a `measured` row, and 0 on a `list_equivalent` row, whose figure is never shown as billed. [`focus-row/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.3#which-cost-column-holds-what) lists each cost column by basis. Vantage and Datadog read their cost from `BilledCost`, so both files carry the row's `EffectiveCost` there.
+A row's `BilledCost` is 0, because Costroid issues no invoice, and FOCUS 1.4 requires 0 there of anyone who does not invoice the charge. The row's figure is in `EffectiveCost`: the priced figure of a `measured` row, and 0 on a `list_equivalent` row, whose figure is never shown as billed. [The row contract](https://github.com/Costroid/costroid-schemas/tree/main/focus-row/v0.5#which-cost-column-holds-what) lists each cost column by basis. Vantage and Datadog read their cost from `BilledCost`, so both files carry the row's `EffectiveCost` there.
 
 Those figures are the same spend the provider bills. If the tool also imports the provider's own bill, do not add the two.
 

@@ -14,7 +14,7 @@ Every row's `Tags` then holds the three tags beside the ones Costroid writes:
 
 ## The keys
 
-The row contract, [`tags/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.3), defines three keys a caller names. `--tag KEY=VALUE` writes the tag `costroid/KEY`.
+[The tag set](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.4#tags-a-caller-names) of [the row contract](export.md#the-row-contract) defines three keys a caller names. `--tag KEY=VALUE` writes the tag `costroid/KEY`.
 
 | Key         | Tag                  | Value                                                                                                         |
 | ----------- | -------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -41,7 +41,7 @@ The comment and `costroid report` do not show the tags.
 
 ## The repository's visibility
 
-`costroid run` and `costroid ingest-run` also write `costroid/repo_visibility` on every row: who can read the repository the run belongs to. No caller names it, and `--tag` does not take it. The row contract, [`tags/v0.4`](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.4), defines it, and it takes one of three values: `public`, `private` or `internal`.
+`costroid run` and `costroid ingest-run` also write `costroid/repo_visibility` on every row: who can read the repository the run belongs to. No caller names it, and `--tag` does not take it. [The tag set](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.4) of [the row contract](export.md#the-row-contract) defines it, and it takes one of three values: `public`, `private` or `internal`.
 
 Costroid reads it from what the CI system already gives the job, and never asks the host:
 
