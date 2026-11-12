@@ -19,6 +19,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Give the action's `run` or `read` step `infrastructure-file`, with `infrastructure-source` and `infrastructure-optional`, and the estimate rides to the report job with the agent's rows. [`recipes/github-claude-code-action-infrastructure.yml`](recipes/github-claude-code-action-infrastructure.yml) runs an estimator before `claude-code-action`.
 - With `--optional`, or `infrastructure-optional: "true"`, a run whose estimator wrote no file, as on a fork's pull request with no secret, does not fail: the comment reads `Infrastructure estimate: not available`, with the reason.
 - Send an estimate row to a ledger: `costroid serve` stores it as its sender states it, shows it in the per-pull-request view as its own total under the label Estimate, and keeps it out of every budget and verdict. It refused such a row before.
+- Send a day's rows to Vantage or to Datadog's Custom Costs once a day: [`recipes/github-vantage-upload.yml`](recipes/github-vantage-upload.yml) and [`recipes/github-datadog-upload.yml`](recipes/github-datadog-upload.yml) read the `costroid-rows` artifacts the repository's runs kept on the UTC day before, leave out a fork's, write the platform's file with `costroid export`, and upload it with your own token, which reaches `curl` on standard input alone. Datadog counts a file sent twice twice, so send each day once. [`docs/export.md`](docs/export.md#send-the-days-file) quotes each platform's API page and says what a second send of a day does.
 
 ### Fixes
 

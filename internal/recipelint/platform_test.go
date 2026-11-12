@@ -16,8 +16,9 @@ const connectRecipe = "github-connect.yml"
 
 // recipesWithoutRows keep no rows of their own, so they have nothing to send:
 // the fork follow-up posts a check from another run's rows, the approval
-// re-posts a check, and the connect recipe binds the owner.
-var recipesWithoutRows = []string{"github-approval.yml", connectRecipe, "github-follow-up.yml"}
+// re-posts a check, the connect recipe binds the owner, and the upload
+// recipes send the rows other runs kept to another tool.
+var recipesWithoutRows = []string{"github-approval.yml", connectRecipe, "github-datadog-upload.yml", "github-follow-up.yml", "github-vantage-upload.yml"}
 
 // workflowFile is the part of a GitHub recipe these tests read.
 type workflowFile struct {

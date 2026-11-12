@@ -1,0 +1,125 @@
+# Sends one UTC day's rows to a Vantage custom provider, once a day. Copy to
+# .github/workflows/costroid-vantage.yml on the default branch, beside the
+# agent's recipe. docs/export.md says where the rows come from, what it needs
+# and what sending a day twice does.
+name: costroid-vantage
+
+on:
+  # GitHub runs a schedule from the default branch only. The job sends the UTC
+  # day before the one it runs on.
+  schedule:
+    - cron: "41 4 * * *"
+  # Sends a day the schedule did not send. Run it once for each day.
+  workflow_dispatch:
+    inputs:
+      day:
+        description: The UTC day to send, as YYYY-MM-DD
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Lists the rows artifacts the day's runs kept, and downloads them.
+      actions: read
+    steps:
+      - uses: Costroid/costroid/action@4b6ede77fc00d7a2196c5ef02472bbf0788aef28 # v1.0.0-alpha.24
+        with:
+          stage: install
+      # The agents' jobs wrote these files. costroid reads them as rows, and no
+      # step runs anything from them.
+      - name: Gather the day's rows
+        id: day
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COSTROID_DAY: ${{ inputs.day }}
+        run: |
+          today=$(date -u +%F)
+          day=${COSTROID_DAY:-$(date -u -d "$today 1 day ago" +%F)}
+          if [[ ! $day =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -u -d "$day" +%F 2>/dev/null)" != "$day" ]; then
+            echo "::error::costroid: the day must be a date written YYYY-MM-DD"
+            exit 1
+          fi
+          if [[ ! $day < $today ]]; then
+            echo "::error::costroid: $day is not over in UTC yet, so its runs may still keep rows"
+            exit 1
+          fi
+          # An artifact lasts 7 days, so each one of a day 6 days ago is still kept.
+          if [[ $day < $(date -u -d "$today 6 days ago" +%F) ]]; then
+            echo "::error::costroid: $day is more than 6 days ago, and some of its artifacts may be gone, so it cannot be sent whole"
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/costroid-day"
+          mkdir -p "$dir/rows"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=costroid-rows&per_page=100" \
+            --jq '.artifacts[] | [.id, .created_at, .expired, .workflow_run.repository_id, .workflow_run.head_repository_id] | @tsv' \
+            > "$dir/artifacts.tsv"
+          kept=0
+          while IFS=$'\t' read -r id created expired repository head; do
+            [[ $created == "${day}T"* ]] || continue
+            if [[ ! $id =~ ^[0-9]+$ || ! $repository =~ ^[0-9]+$ ]]; then
+              echo "::error::costroid: an artifact of $day names no run of this repository, so the day was not sent"
+              exit 1
+            fi
+            if [ "$head" != "$repository" ]; then
+              echo "costroid: left out artifact $id, which a fork's pull request kept"
+              continue
+            fi
+            if [ "$expired" != false ]; then
+              echo "::error::costroid: artifact $id of $day has expired, so the day cannot be sent whole"
+              exit 1
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$dir/$id.zip"
+            status=0
+            unzip -p "$dir/$id.zip" costroid-rows.jsonl > "$dir/rows/$id.jsonl" || status=$?
+            case $status in
+              0) kept=$((kept + 1)) ;;
+              # The run kept no rows file, only the note of why it wrote none.
+              11) rm "$dir/rows/$id.jsonl" ;;
+              *) exit "$status" ;;
+            esac
+          done < "$dir/artifacts.tsv"
+          find "$dir/rows" -name '*.jsonl' -exec cat {} + > "$dir/rows.jsonl"
+          echo "costroid: $kept rows files were kept on $day"
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+      - name: Write the Vantage file
+        env:
+          COSTROID_DAY: ${{ steps.day.outputs.day }}
+        run: |
+          costroid export --rows "$RUNNER_TEMP/costroid-day/rows.jsonl" --format vantage \
+            --out "$RUNNER_TEMP/costroid-upload/costroid-${GITHUB_REPOSITORY//\//-}-$COSTROID_DAY.csv"
+      - name: Send it to Vantage
+        env:
+          COSTROID_DAY: ${{ steps.day.outputs.day }}
+          VANTAGE_API_TOKEN: ${{ secrets.VANTAGE_API_TOKEN }}
+          VANTAGE_INTEGRATION_TOKEN: ${{ secrets.VANTAGE_INTEGRATION_TOKEN }}
+        run: |
+          if [ -z "$VANTAGE_API_TOKEN" ] || [[ ! $VANTAGE_INTEGRATION_TOKEN =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::costroid: set the secrets VANTAGE_API_TOKEN and VANTAGE_INTEGRATION_TOKEN"
+            exit 1
+          fi
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/costroid-upload/*.csv)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "costroid: no rows on $COSTROID_DAY, so nothing was sent"
+            exit 0
+          fi
+          answer="$RUNNER_TEMP/costroid-answer.json"
+          for file in "${files[@]}"; do
+            status=0
+            code=$(printf 'authorization: Bearer %s\n' "$VANTAGE_API_TOKEN" |
+              curl --fail-with-body --silent --show-error --proto '=https' --request POST \
+                --header @- --header 'accept: application/json' --header 'content-type: multipart/form-data' \
+                --form "csv=@$file" --output "$answer" --write-out '%{http_code}' \
+                "https://api.vantage.sh/v2/integrations/$VANTAGE_INTEGRATION_TOKEN/costs.csv") || status=$?
+            if [ "$status" -ne 0 ] || [ "$code" != 201 ]; then
+              echo "::error::costroid: Vantage answered $code to ${file##*/}, and the files after it were not sent"
+              jq -r '.errors[]? | strings' "$answer" 2>/dev/null || true
+              exit 1
+            fi
+            echo "costroid: Vantage took ${file##*/}"
+          done

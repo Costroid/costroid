@@ -190,6 +190,8 @@ The page states: "Note that there is a maximum of 10,000 rows and a file size of
 
 Vantage takes a currency other than USD, and the page states: "Check that currency conversion is also enabled." The file keeps each row's currency.
 
+[Send the day's file](#send-the-days-file) uploads it once a day from a scheduled job.
+
 ### Datadog
 
 Datadog's [Custom Costs page](https://docs.datadoghq.com/cloud_cost_management/setup/custom/), read 2026-11-08, names six required columns and states: "The required fields must appear as columns in your CSV in the order listed above." The file holds them in that order:
@@ -206,6 +208,8 @@ Datadog's [Custom Costs page](https://docs.datadoghq.com/cloud_cost_management/s
 The page states of `BillingCurrency`: "Must be USD." A rows file with a row in another currency is refused whole. The line names each such row by its place and its `x_CostroidRowId`, and no file is written. Write `focus-csv` or `vantage` for those rows instead.
 
 "For a CSV file, add a column per tag." Each tag key becomes a column after the six, named as the key, such as `costroid/repo`. The page also states: "NULL or blank ("") parameter values are not accepted." So a tag gets a column only when every row carries it with a value, and the command names the tags it left out. `costroid/cost_basis` is on every row Costroid writes, so each figure keeps its basis. A value past the page's 1,000 characters, or blank in a required column, refuses the file and names the row.
+
+[Send the day's file](#send-the-days-file) uploads it once a day from a scheduled job.
 
 ### Harness
 
@@ -327,6 +331,76 @@ The file holds the row contract's 36 FOCUS columns, with four the candidate adds
 The candidate gives a cache write no lifetime, and states that "cache retention duration" is not a value of either property. A 5-minute and a 1-hour write are both `Write`, and the custom property `x_CacheWriteLifetime` keeps which it was. The two informational classes count tokens that a billed row already counts, so they carry neither property, and a query that selects `TokenDirection` `Output` counts each token once.
 
 The candidate states that `CredentialId` "MUST NOT contain a *credential* value that authenticates a request (e.g., an API key string, an access token, a password)". A `SubAccountId` that opens with `sk-`, as provider keys do, refuses the file, and the line names the row and never the value. `--credential` refuses the same shape.
+
+### Send the day's file
+
+Two recipes send one UTC day's rows with your own token: [`recipes/github-vantage-upload.yml`](../recipes/github-vantage-upload.yml) to Vantage, and [`recipes/github-datadog-upload.yml`](../recipes/github-datadog-upload.yml) to Datadog. Copy one to `.github/workflows/` on the default branch, beside the agent's recipe. It runs at 04:41 UTC and sends the UTC day before. To send a day the schedule did not send, run it by hand with the input `day`, such as `2026-11-10`. A day that is not over in UTC is refused. No pull request starts either recipe.
+
+The job holds `actions: read` and no other permission. It installs Costroid, gathers the day's rows, writes the platform's file with `costroid export`, and sends it with `curl`. Each secret reaches the send step alone, through its environment. The API token or keys reach `curl` on standard input, so they are never on a command line, and no step prints a secret.
+
+#### The day's rows
+
+A ledger you host keeps every run's rows, and has no export of one day's rows yet. So the rows come from the artifacts. Each agent recipe keeps its run's rows as the artifact `costroid-rows` for 7 days, as [The artifact](#the-artifact) says. The job lists the repository's artifacts of that name, takes each one created on the day, reads `costroid-rows.jsonl` from it, and joins the files into one rows file. Nothing in an artifact runs.
+
+- An artifact belongs to the UTC day it was created on, so each run's rows go out with one day, even when the run crosses midnight.
+- An artifact that a fork's pull request kept is left out, because the fork wrote the job that kept it.
+- A run that kept no rows file adds nothing.
+- An artifact lasts 7 days, so a day more than 6 days ago is refused, and an artifact of the day that has expired stops the job before anything is sent. No day goes out in part.
+
+The agents' jobs wrote these rows, so every figure in the file is the claim [The artifact](#the-artifact) describes.
+
+#### To Vantage
+
+Vantage's [custom providers page](https://docs.vantage.sh/connecting_custom_providers), read 2026-11-12, states: "Use the `token` to upload a CSV file via the `/integrations/{integration_token}/costs.csv` endpoint." Its example posts the file as the form field `csv` to `https://api.vantage.sh/v2`, with the headers `accept: application/json`, `authorization: Bearer <token>` and `content-type: multipart/form-data`. The [API reference for that call](https://docs.vantage.sh/api/integrations/upload-custom-provider-costs), read 2026-11-12, describes `csv` as "CSV file containing custom costs", answers `201` for a file it took, and lists the call under the `write` scope. The recipe sends that request. Any answer but `201` fails the job, and the log prints the `errors` the answer lists.
+
+| Secret | Value |
+| ------ | ----- |
+| `VANTAGE_API_TOKEN` | An API token with the Write scope. Vantage's [authentication page](https://docs.vantage.sh/api/authentication), read 2026-11-12, names a service token as best for "Shared automation, background jobs, CI pipelines, and long-lived integrations" |
+| `VANTAGE_INTEGRATION_TOKEN` | The custom provider's token. The custom providers page states: "On a successful `200` response, a Custom Provider `token` is returned." It is part of the address the job calls |
+
+The day's file is `costroid-<owner>-<repository>-<day>.csv`. Past 10,000 rows or 2,000,000 bytes the export writes more than one file, as [Vantage](#vantage) says, and the job sends each in turn. A refused file stops the job, and the files before it stay sent.
+
+The custom providers page states: "If you upload a file with the same name as an existing import, your new file will overwrite the original file." The reference's example answer names the stored file `costs.csv20240827-15484-pfxe9o`, not the name sent, and neither page says whether an upload through the API keeps its name. So a day sent twice may count twice. Before you send a day again, delete its import. The page states: "If you delete a CSV, the corresponding data will be deleted from the provider."
+
+With the file in hand, from any other job:
+
+```sh
+costroid export --rows rows.jsonl --format vantage --out costs.csv
+printf 'authorization: Bearer %s\n' "$VANTAGE_API_TOKEN" |
+  curl --fail-with-body --silent --show-error --proto '=https' --request POST \
+    --header @- --header 'accept: application/json' --header 'content-type: multipart/form-data' \
+    --form csv=@costs.csv "https://api.vantage.sh/v2/integrations/$VANTAGE_INTEGRATION_TOKEN/costs.csv"
+```
+
+#### To Datadog
+
+Datadog's [Custom Costs page](https://docs.datadoghq.com/cloud_cost_management/setup/custom/), read 2026-11-12, states that you can "upload your CSV and JSON files to Cloud Cost Management on the Custom Costs Files page or programmatically by using the API", and: "To send a file programmatically, use the `PUT api/v2/cost/custom_costs` API endpoint." Its example sends the file as the form field `file` of type `text/json`, with the headers `Content-Type: multipart/form-data`, `DD-API-KEY` and `DD-APPLICATION-KEY`. The [API reference for that call](https://docs.datadoghq.com/api/latest/cloud-cost-management/upload-custom-costs-file/), read 2026-11-12, lists its address for each Datadog site, such as `https://api.datadoghq.eu/api/v2/cost/custom_costs` for `app.datadoghq.eu`, and answers `202` "Accepted". The recipe sends the page's request, with the CSV file under the type the example names. Any answer but `202` fails the job, and the log prints the `errors` the answer lists. The page's examples follow a redirect with `-L`, and the recipe does not, so the keys reach the site's API host alone.
+
+| Kind | Name | Value |
+| ---- | ---- | ----- |
+| Variable | `DD_SITE` | Your site as the reference writes it, such as `datadoghq.com` or `datadoghq.eu`. The job runs only when it is set, and refuses a site the reference does not list |
+| Secret | `DD_API_KEY` | An API key |
+| Secret | `DD_APP_KEY` | An application key. The reference states: "This endpoint requires the `cloud_cost_management_write` permission." |
+
+Datadog takes USD alone, so a day with a row in another currency stops the job at `costroid export`, which names the row, and nothing is sent. The page states: "Cost data appears in Datadog after 24 hours." The reference also takes the query string `ai_provider`, "Whether the uploaded file contains the costs of an AI provider", and does not say what it changes, so the recipe leaves it at its default, `false`.
+
+The page states: "Ensure that you don't upload the same file twice, since the cost will appear as doubled in the product." So every figure of a day counts twice when the day is sent twice: by a re-run of the job, by a manual run for a day the schedule sent, or by a second copy of the recipe. When the send step fails after Datadog may have taken the file, as on a timeout, find the day's file on the Custom Costs Files page before you send the day again, and delete it there or with the reference's [Delete Custom Costs file](https://docs.datadoghq.com/api/latest/cloud-cost-management/delete-custom-costs-file/) call.
+
+With the file in hand, from any other job, once:
+
+```sh
+costroid export --rows rows.jsonl --format datadog --out costs.csv
+printf 'DD-API-KEY: %s\nDD-APPLICATION-KEY: %s\n' "$DD_API_KEY" "$DD_APP_KEY" |
+  curl --fail-with-body --silent --show-error --proto '=https' --request PUT \
+    --header @- --header 'Content-Type: multipart/form-data' \
+    --form 'file=@costs.csv;type=text/json' https://api.datadoghq.com/api/v2/cost/custom_costs
+```
+
+#### To Ternary
+
+Ternary's [Bring Your Own Data page](https://docs.ternary.app/docs/focus), which now answers at `https://docs.ternary.app/docs/bring-your-own-data-byod`, read 2026-11-12, documents an import from a bucket or a BigQuery table that you own, and no call that takes a file: "Ternary checks for updates every four hours and ingests changes automatically." It also states: "Full table rebuild occurs every ingestion cycle. There is no incremental ingestion mode." Its recommended limits name 100 files per integration, which one file per UTC day passes after 100 days.
+
+A write to your bucket goes through your cloud's own credentials, which that page does not cover. LiteLLM's page does not name the fields of the upload URL's answer, as [Ternary](#ternary) says. So no recipe sends a Ternary file.
 
 ## What does not exist yet
 

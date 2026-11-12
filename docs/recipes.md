@@ -145,6 +145,10 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. The
 
 [`recipes/github-connect.yml`](../recipes/github-connect.yml) binds the repository's owner to its Costroid Platform tenant from the default branch, so the agent recipes' `ingest` job can send rows there. [`docs/connect.md`](connect.md) says what it proves and what it binds.
 
+## Vantage and Datadog
+
+[`recipes/github-vantage-upload.yml`](../recipes/github-vantage-upload.yml) and [`recipes/github-datadog-upload.yml`](../recipes/github-datadog-upload.yml) send one UTC day's rows to Vantage or to Datadog's Custom Costs, once a day, with your own token. Each reads the `costroid-rows` artifacts the repository's runs kept that day. Datadog counts a file sent twice twice. [`docs/export.md`](export.md#send-the-days-file) says what each needs and what a second send of a day does.
+
 ## A fork's pull request
 
 The agent's recipes run no agent on a fork's pull request, and the fork's token cannot post the check. [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml) posts it from your repository once the agent's workflow completes. Copy it to `.github/workflows/costroid-follow-up.yml` on the default branch. It needs no secret.

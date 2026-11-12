@@ -1,0 +1,139 @@
+# Sends one UTC day's rows to Datadog's Custom Costs, once a day. Copy to
+# .github/workflows/costroid-datadog.yml on the default branch, beside the
+# agent's recipe. Datadog counts a file sent twice twice, so never run it twice
+# for one day. docs/export.md says where the rows come from and what it needs.
+name: costroid-datadog
+
+on:
+  # GitHub runs a schedule from the default branch only. The job sends the UTC
+  # day before the one it runs on.
+  schedule:
+    - cron: "41 4 * * *"
+  # Sends a day the schedule did not send. Run it once for each day.
+  workflow_dispatch:
+    inputs:
+      day:
+        description: The UTC day to send, as YYYY-MM-DD
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  upload:
+    # The site names the API host, so the job runs only once it is set.
+    if: vars.DD_SITE != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Lists the rows artifacts the day's runs kept, and downloads them.
+      actions: read
+    steps:
+      - uses: Costroid/costroid/action@4b6ede77fc00d7a2196c5ef02472bbf0788aef28 # v1.0.0-alpha.24
+        with:
+          stage: install
+      # The agents' jobs wrote these files. costroid reads them as rows, and no
+      # step runs anything from them.
+      - name: Gather the day's rows
+        id: day
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COSTROID_DAY: ${{ inputs.day }}
+        run: |
+          today=$(date -u +%F)
+          day=${COSTROID_DAY:-$(date -u -d "$today 1 day ago" +%F)}
+          if [[ ! $day =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -u -d "$day" +%F 2>/dev/null)" != "$day" ]; then
+            echo "::error::costroid: the day must be a date written YYYY-MM-DD"
+            exit 1
+          fi
+          if [[ ! $day < $today ]]; then
+            echo "::error::costroid: $day is not over in UTC yet, so its runs may still keep rows"
+            exit 1
+          fi
+          # An artifact lasts 7 days, so each one of a day 6 days ago is still kept.
+          if [[ $day < $(date -u -d "$today 6 days ago" +%F) ]]; then
+            echo "::error::costroid: $day is more than 6 days ago, and some of its artifacts may be gone, so it cannot be sent whole"
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/costroid-day"
+          mkdir -p "$dir/rows"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=costroid-rows&per_page=100" \
+            --jq '.artifacts[] | [.id, .created_at, .expired, .workflow_run.repository_id, .workflow_run.head_repository_id] | @tsv' \
+            > "$dir/artifacts.tsv"
+          kept=0
+          while IFS=$'\t' read -r id created expired repository head; do
+            [[ $created == "${day}T"* ]] || continue
+            if [[ ! $id =~ ^[0-9]+$ || ! $repository =~ ^[0-9]+$ ]]; then
+              echo "::error::costroid: an artifact of $day names no run of this repository, so the day was not sent"
+              exit 1
+            fi
+            if [ "$head" != "$repository" ]; then
+              echo "costroid: left out artifact $id, which a fork's pull request kept"
+              continue
+            fi
+            if [ "$expired" != false ]; then
+              echo "::error::costroid: artifact $id of $day has expired, so the day cannot be sent whole"
+              exit 1
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$dir/$id.zip"
+            status=0
+            unzip -p "$dir/$id.zip" costroid-rows.jsonl > "$dir/rows/$id.jsonl" || status=$?
+            case $status in
+              0) kept=$((kept + 1)) ;;
+              # The run kept no rows file, only the note of why it wrote none.
+              11) rm "$dir/rows/$id.jsonl" ;;
+              *) exit "$status" ;;
+            esac
+          done < "$dir/artifacts.tsv"
+          find "$dir/rows" -name '*.jsonl' -exec cat {} + > "$dir/rows.jsonl"
+          echo "costroid: $kept rows files were kept on $day"
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+      # Datadog takes USD alone, so a row in another currency stops the job
+      # here, and nothing is sent.
+      - name: Write the Datadog file
+        env:
+          COSTROID_DAY: ${{ steps.day.outputs.day }}
+        run: |
+          costroid export --rows "$RUNNER_TEMP/costroid-day/rows.jsonl" --format datadog \
+            --out "$RUNNER_TEMP/costroid-upload/costroid-${GITHUB_REPOSITORY//\//-}-$COSTROID_DAY.csv"
+      - name: Send it to Datadog
+        env:
+          COSTROID_DAY: ${{ steps.day.outputs.day }}
+          DD_SITE: ${{ vars.DD_SITE }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
+        run: |
+          # The sites Datadog's API reference lists for this endpoint.
+          case $DD_SITE in
+            datadoghq.com | us3.datadoghq.com | us5.datadoghq.com | datadoghq.eu | ap1.datadoghq.com | \
+              ap2.datadoghq.com | uk1.datadoghq.com | ddog-gov.com | us2.ddog-gov.com) ;;
+            *)
+              echo "::error::costroid: the variable DD_SITE is not a site Datadog lists for Custom Costs, such as datadoghq.com"
+              exit 1
+              ;;
+          esac
+          if [ -z "$DD_API_KEY" ] || [ -z "$DD_APP_KEY" ]; then
+            echo "::error::costroid: set the secrets DD_API_KEY and DD_APP_KEY"
+            exit 1
+          fi
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/costroid-upload/*.csv)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "costroid: no rows on $COSTROID_DAY, so nothing was sent"
+            exit 0
+          fi
+          answer="$RUNNER_TEMP/costroid-answer.json"
+          for file in "${files[@]}"; do
+            status=0
+            code=$(printf 'DD-API-KEY: %s\nDD-APPLICATION-KEY: %s\n' "$DD_API_KEY" "$DD_APP_KEY" |
+              curl --fail-with-body --silent --show-error --proto '=https' --request PUT \
+                --header @- --header 'Content-Type: multipart/form-data' \
+                --form "file=@$file;type=text/json" --output "$answer" --write-out '%{http_code}' \
+                "https://api.$DD_SITE/api/v2/cost/custom_costs") || status=$?
+            if [ "$status" -ne 0 ] || [ "$code" != 202 ]; then
+              echo "::error::costroid: Datadog answered $code to ${file##*/}"
+              jq -r '.errors[]? | strings' "$answer" 2>/dev/null || true
+              exit 1
+            fi
+            echo "costroid: Datadog took ${file##*/}"
+          done
