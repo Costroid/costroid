@@ -648,6 +648,211 @@ func TestDoctorSendsAnUnreadableGhToSignIn(t *testing.T) {
 	}
 }
 
+// TestDoctorTellsA404FromASignIn runs doctor with a gh that is signed in and
+// answers that the repository is not found, as GitHub does for one not pushed
+// yet. One line says so and sends it to push, and no line says gh auth login.
+// A missing or refused sign-in still says gh auth login on each line, and an
+// error that is neither says to fix what gh says.
+func TestDoctorTellsA404FromASignIn(t *testing.T) {
+	const (
+		notFound = "the repository is not on GitHub yet, or this account cannot read it: push it, then run doctor again"
+		signIn   = "run gh auth login, then doctor again"
+	)
+	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+	for _, test := range []struct {
+		label, message, fix string
+		lines               int
+	}{
+		{"not found", "HTTP 404: Not Found (https://api.github.com/repos/acme/widgets/actions/variables?per_page=100)", notFound, 1},
+		{"no repository of that name", "GraphQL: Could not resolve to a Repository with the name acme/widgets. (repository)", notFound, 1},
+		{"signed out", "To get started with GitHub CLI, please run:  gh auth login", signIn, 3},
+		{"a refused token", "HTTP 401: Bad credentials (https://api.github.com/graphql)", signIn, 3},
+		{"another error", "error connecting to api.github.com", "fix what gh's error says, then run doctor again", 3},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := doctor(context.Background(), root, releaseBuild, fakeGh(t, test.message), nil, &stdout, &stderr); code != 0 {
+				t.Fatalf("exit %d: %s%s", code, stdout.String(), stderr.String())
+			}
+			var failed []string
+			for line := range strings.SplitSeq(stdout.String(), "\n") {
+				if strings.HasPrefix(line, "warn: gh ") {
+					failed = append(failed, line)
+				}
+			}
+			if len(failed) != test.lines {
+				t.Errorf("%d lines say gh failed, want %d:\n%s", len(failed), test.lines, stdout.String())
+			}
+			for _, line := range failed {
+				if !strings.HasSuffix(line, ": gh exited 1: "+test.message+": "+test.fix) {
+					t.Errorf("the line %q does not end with gh's error and the fix %q", line, test.fix)
+				}
+			}
+			if strings.Contains(stdout.String(), signIn) != (test.fix == signIn) {
+				t.Errorf("doctor sends this error to gh auth login: %t, want %t:\n%s", !(test.fix == signIn), test.fix == signIn, stdout.String())
+			}
+		})
+	}
+}
+
+// markingGh puts git and a gh that leaves a mark and fails first on PATH,
+// and returns the mark's path.
+func markingGh(t *testing.T) string {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, mark := t.TempDir(), filepath.Join(t.TempDir(), "gh-ran")
+	writeFile(t, filepath.Join(bin, "gh"), "#!/bin/sh\ntouch "+mark+"\nexit 1\n")
+	if err := os.Chmod(filepath.Join(bin, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return mark
+}
+
+// TestDoctorOutsideARepositorySaysSo runs doctor in a directory no git
+// repository holds. One line fails and says so, doctor checks this machine
+// alone, and it never runs gh. In a repository the line is not printed.
+func TestDoctorOutsideARepositorySaysSo(t *testing.T) {
+	const outside = "fail: this directory is in no git repository, so doctor checked only this machine: run doctor at the root of your repository"
+	inside := gitRepository(t)
+	mark := markingGh(t)
+	directory := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(directory))
+	host := doctorHost{getenv: func(string) string { return "" }, lookPath: exec.LookPath, output: runOutput}
+	var stdout, stderr bytes.Buffer
+	code := doctor(context.Background(), directory, releaseBuild, host, nil, &stdout, &stderr)
+	if code != exitRejected || lineWith(stdout.String(), "fail: ") != outside {
+		t.Fatalf("exit %d, want 1 and %q:\n%s%s", code, outside, stdout.String(), stderr.String())
+	}
+	for _, said := range []string{"warn: gh ", "costroid.yml", "workflow", "init github"} {
+		if strings.Contains(stdout.String(), said) {
+			t.Errorf("outside a repository doctor printed %q:\n%s", said, stdout.String())
+		}
+	}
+	if _, err := os.Stat(mark); !errors.Is(err, os.ErrNotExist) {
+		t.Error("doctor ran gh outside a repository")
+	}
+
+	stdout.Reset()
+	doctor(context.Background(), inside, releaseBuild, host, nil, &stdout, &stderr)
+	if strings.Contains(stdout.String(), "no git repository") {
+		t.Errorf("in a repository doctor says it is in none:\n%s", stdout.String())
+	}
+}
+
+// TestDoctorReadsAGitLabProject runs doctor after costroid init gitlab, with
+// gh on PATH. doctor holds the template to lint-recipes and its pins as it
+// holds a workflow's, names the CI/CD variables it does not read, never runs
+// gh and never sends the project to init github. A pin that names no release
+// fails, and a project with no template is sent to init gitlab.
+func TestDoctorReadsAGitLabProject(t *testing.T) {
+	template := filepath.Join(".gitlab", "costroid.yml")
+	initGitLab := func(t *testing.T, args ...string) string {
+		t.Helper()
+		root := t.TempDir()
+		if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append([]string{"gitlab", "--agent", "claude"}, args...)...); code != 0 {
+			t.Fatalf("init exited %d: %s", code, stderr)
+		}
+		return root
+	}
+	lineOf := func(t *testing.T, path, variable string) string {
+		t.Helper()
+		for index, line := range strings.Split(readFile(t, path), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), variable+":") {
+				return strconv.Itoa(index + 1)
+			}
+		}
+		t.Fatalf("%s sets no %s", path, variable)
+		return ""
+	}
+	neverGitHub := func(t *testing.T, host *fakeHost, stdout string) {
+		t.Helper()
+		for _, command := range host.ran {
+			if strings.HasPrefix(command, "gh ") {
+				t.Errorf("doctor ran %s on a GitLab project", command)
+			}
+		}
+		if strings.Contains(stdout, "init github") || strings.Contains(stdout, ".github/workflows") {
+			t.Errorf("doctor sent a GitLab project to GitHub:\n%s", stdout)
+		}
+	}
+
+	for _, test := range []struct{ label, path string }{
+		{"the template init writes", template},
+		{"a template the pipeline includes", filepath.Join("ci", "costroid.yml")},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := initGitLab(t, "--out", test.path)
+			host := ghHost("", "")
+			code, stdout, stderr := runDoctor(t, root, host)
+			if code != 0 || strings.Contains(stdout, "warn: ") || strings.Contains(stdout, "fail: ") {
+				t.Fatalf("exit %d on what init wrote:\n%s%s", code, stdout, stderr)
+			}
+			shown := filepath.ToSlash(test.path)
+			for _, want := range []string{
+				"ok: costroid " + testRelease,
+				"ok: " + shown + ": costroid lint-recipes finds nothing",
+				"ok: " + shown + ":" + lineOf(t, filepath.Join(root, test.path), "COSTROID_VERSION") + ": Costroid pinned to " + testRelease + " at the commit COSTROID_COMMIT names",
+				"ok: claude 2.1.316 is on PATH",
+				"ok: on GitLab doctor reads no CI/CD variables; the template needs ANTHROPIC_API_KEY scoped to the environment costroid-agent and COSTROID_GITLAB_TOKEN to costroid-report",
+				"costroid: doctor: 0 fail, 0 warn, ",
+			} {
+				if lineWith(stdout, want) == "" {
+					t.Errorf("no line starts %q:\n%s", want, stdout)
+				}
+			}
+			neverGitHub(t, host, stdout)
+		})
+	}
+
+	for _, pin := range []struct{ label, from, to, want string }{
+		{"a branch", "COSTROID_COMMIT: " + testCommit, "COSTROID_COMMIT: main", "COSTROID_COMMIT main is not a full commit SHA: "},
+		{"the zero SHA", "COSTROID_COMMIT: " + testCommit, "COSTROID_COMMIT: " + zeroCommit, "COSTROID_COMMIT is the zero SHA, which names no release: "},
+		{"no release", "COSTROID_VERSION: " + testRelease, "COSTROID_VERSION: latest", "COSTROID_VERSION latest names no release: "},
+	} {
+		t.Run(pin.label, func(t *testing.T) {
+			root := initGitLab(t)
+			path := filepath.Join(root, template)
+			changed := strings.Replace(readFile(t, path), pin.from, pin.to, 1)
+			writeFile(t, path, changed)
+			variable, _, _ := strings.Cut(pin.from, ":")
+			host := ghHost("", "")
+			code, stdout, _ := runDoctor(t, root, host)
+			want := "fail: .gitlab/costroid.yml:" + lineOf(t, path, variable) + ": " + pin.want
+			if code != exitRejected || lineWith(stdout, want) == "" {
+				t.Errorf("exit %d, want 1 and a line that starts %q:\n%s", code, want, stdout)
+			}
+			neverGitHub(t, host, stdout)
+		})
+	}
+
+	t.Run("an older release", func(t *testing.T) {
+		root := initGitLab(t)
+		path := filepath.Join(root, template)
+		writeFile(t, path, strings.Replace(readFile(t, path), "COSTROID_VERSION: "+testRelease, "COSTROID_VERSION: 1.0.0-alpha.9", 1))
+		_, stdout, _ := runDoctor(t, root, ghHost("", ""))
+		if want := "warn: costroid " + testRelease + ", and .gitlab/costroid.yml:" + lineOf(t, path, "COSTROID_VERSION") + " pins 1.0.0-alpha.9: install 1.0.0-alpha.9"; lineWith(stdout, want) == "" {
+			t.Errorf("no line starts %q:\n%s", want, stdout)
+		}
+	})
+
+	t.Run("no template", func(t *testing.T) {
+		root := doctorRepository(t, map[string]string{gitlabCI: "test:\n  script: make test\n"})
+		host := ghHost("", "")
+		_, stdout, _ := runDoctor(t, root, host)
+		if want := "warn: no GitLab template installs Costroid: run costroid init gitlab --agent claude"; lineWith(stdout, "warn: no ") != want {
+			t.Errorf("no line %q:\n%s", want, stdout)
+		}
+		neverGitHub(t, host, stdout)
+	})
+}
+
 // aliasedTrigger moves a workflow's pull_request trigger under an anchor and
 // reads it back through on: *events.
 func aliasedTrigger(t *testing.T, source, trigger string) string {
@@ -905,7 +1110,7 @@ func TestDoctorReadsTheJobsEnvironmentSecrets(t *testing.T) {
 		"held by neither": {environment: inDemo, listing: "OTHER\n",
 			want: "warn: gh secret list names no secret ANTHROPIC_API_KEY in the environment demo or the repository; an organization secret of that name is not listed here: gh secret set ANTHROPIC_API_KEY --env demo, unless the organization already holds it"},
 		"the listing fails": {environment: inDemo, listing: "fail",
-			want: "warn: gh secret list --env demo failed, so doctor did not check the secrets of the environment demo: gh secret list --env demo exited 1: not answered: run gh auth login, then doctor again"},
+			want: "warn: gh secret list --env demo failed, so doctor did not check the secrets of the environment demo: gh secret list --env demo exited 1: not answered: fix what gh's error says, then run doctor again"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := withEnvironment(t, recipe, "agent", check.environment)

@@ -357,18 +357,25 @@ The action's `agent-result` input passes the agent job's result to the report, a
 
 It reads the names of the repository's secrets and variables through `gh secret list` and `gh variable list` when `gh` is on `PATH`, and whether the repository is private through `gh repo view`. It never prints a secret's value, prefix or length, and it never prints a variable's value. Without `gh` it says what it did not check.
 
+On GitLab, `doctor` checks the template that installs Costroid, `.gitlab/costroid.yml` or a local file `.gitlab-ci.yml` includes, in place of the workflows: the rules of `costroid lint-recipes`, and the release and commit it pins. It reads no CI/CD variable and runs no `gh` there. Outside a git repository it checks this machine alone.
+
 `costroid doctor --ci`, run as a step of a GitHub Actions job, adds what only the job sees: the event, whether the pull request's head is a fork, whether the job holds `id-token: write`, and the job's declared permissions.
 
 With `COSTROID_PLATFORM_URL` set in the shell, `doctor` asks Costroid Platform for the scopes of the integration token in `COSTROID_PLATFORM_TOKEN`, through `GET /tokens/current`, and for the binding of the repository's owner, through `GET /identity`. It names the token by that variable alone. It reads the owner from `GITHUB_REPOSITORY_OWNER_ID` or `CI_PROJECT_NAMESPACE_ID` in a CI job, as `costroid connect` does, and through `gh api` elsewhere.
 
 | Check | A `warn` or `fail` line | Fix |
 | ----- | ----------------------- | --- |
+| The directory | `fail: this directory is in no git repository, so doctor checked only this machine` | Run `costroid doctor` at the root of your repository |
 | The binary | `warn: costroid <version>, and <file>:<line> pins <release>` | Install the release the workflow pins, as the [README](../README.md#install) shows |
 | | `warn: costroid <version> is a development build, which belongs to no release` | The same |
 | `costroid.yml` | `fail: costroid.yml: <problem>` | The problem is the one `costroid validate` names. [`docs/configuration.md`](configuration.md) lists each key |
 | The workflows | `warn: no workflow in .github/workflows calls Costroid's action` | Run `costroid init github --agent claude`, or another agent, as [`docs/install.md`](install.md#write-the-workflow) shows |
 | | `warn: no workflow in .github/workflows calls Costroid's action: run costroid init github --agent claude-code-action --existing <file>` | A workflow already runs `claude-code-action`, or `codex-action` with `--agent codex-action`. Run the command the line names: it prints the patch that reports from that workflow, as [`docs/existing-workflow.md`](existing-workflow.md) shows |
 | | `fail: <file>:<line>: high: <rule>: <message>`, `warn: <file>:<line>: medium: <rule>: <message>` | The finding `costroid lint` prints for that workflow. [`docs/lint.md`](lint.md) says what each rule guards |
+| The GitLab template | `warn: no GitLab template installs Costroid` | Run `costroid init gitlab --agent claude`, or `--agent codex`, as [`docs/gitlab.md`](gitlab.md) shows |
+| | `warn: <file>:<line>: <rule>: <message>` | The line `costroid lint-recipes` rejects in the template. [What the recipes hold to](recipes.md#what-the-recipes-hold-to) says what each rule guards |
+| | `fail: <file>:<line>: COSTROID_VERSION <value> names no release`, `fail: <file> sets no COSTROID_VERSION` | Set `COSTROID_VERSION` to a release and `COSTROID_COMMIT` to the full commit SHA its tag names, as `costroid init gitlab` writes them. The template checks the binary it installs against both |
+| | `fail: <file>:<line>: COSTROID_COMMIT <value> is not a full commit SHA`, `fail: <file>:<line>: COSTROID_COMMIT is the zero SHA, which names no release`, `fail: <file> sets no COSTROID_COMMIT` | The same |
 | Costroid's pin | `fail: <file>:<line>: Costroid/costroid/action@<ref> is not a full commit SHA` | Pin the full commit SHA of a release tag, with its version in a comment, as `costroid init` writes it. The action installs only the release its own commit belongs to |
 | | `fail: <file>:<line>: Costroid/costroid/action@<ref> is the zero SHA, which names no release` | The same |
 | | `warn: <file>:<line>: Costroid/costroid/action@<ref> records no release in its comment` | Add the release's tag after the SHA, as a comment `# v<version>` |
@@ -381,8 +388,9 @@ With `COSTROID_PLATFORM_URL` set in the shell, `doctor` asks Costroid Platform f
 | Secrets | `warn: gh secret list --env <environment> failed, so doctor did not check the secrets of the environment <environment>: <error>` | Check that the environment exists and that `gh` may read its secrets, then run doctor again |
 | Secrets | `warn: <workflow> names an environment by the expression <expression>, which doctor does not resolve, so it did not list that environment's secrets` | Check that every environment the expression can name holds the secrets the job reads. Doctor does not guess an expression's value |
 | | `warn: gh is not on PATH, so doctor did not list the repository's secrets` | Install `gh`, or check the secrets the line names in the repository's settings |
-| | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | When the error says the repository was not found, it is not on GitHub yet or this account cannot read it: push it first, or sign in to an account that can. Otherwise run `gh auth login`. Then run `costroid doctor` again |
+| | `warn: gh secret list failed, so doctor did not check the repository's secrets: <error>` | The line ends with the fix for gh's error. Only a missing or refused sign-in, `gh auth login` or `HTTP 401` in the error, takes `gh auth login`. Any other error: fix what it says, then run `costroid doctor` again |
 | | `warn: gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: gh exited 1: no git remotes found` | The repository has no remote, so `gh` cannot name it. Add a GitHub remote, or push the repository first |
+| | `warn: gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: gh exited 1: HTTP 404: Not Found <url>` | GitHub has no repository of that name, or this account cannot read it. The repository is not on GitHub yet, or `gh` is signed in to another account. Push it, or sign in to an account that can read it, then run `costroid doctor` again |
 | Variables | `warn: the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE` | Set `COSTROID_INGEST_AUDIENCE` to the audience your ledger requires, as [`docs/recipes.md`](recipes.md#send-rows-to-a-ledger) says |
 | Visibility | `warn: gh repo view failed, so doctor did not read whether the repository is private: <error>` | The same as for `gh secret list`. Until it reads the visibility, doctor does not check a `harden-runner` step against a private repository |
 | | `warn: <file> runs step-security/harden-runner, which needs a paid plan on a private repository` | Read [Egress in the agent's job](recipes.md#egress-in-the-agents-job), then keep the step or delete it |
@@ -394,7 +402,7 @@ With `COSTROID_PLATFORM_URL` set in the shell, `doctor` asks Costroid Platform f
 | | `warn: <installation> is bound to tenant <tenant>, last proven at <time>, more than 7 days ago, so another tenant's proof can displace it` | The same. A daily run renews the binding |
 | | `warn: <installation> was bound to tenant <tenant> and is <status>, so Costroid Platform refuses its rows with INSTALLATION_NOT_BOUND` | The same |
 | | `ok: tenant <tenant> also holds owner <owner> through the GitHub App installation <id>, proven at <time>` | Nothing for the App. Rows the recipes send name `github-owner:`, which only a job's proof binds, so the line above it is the one that decides whether they are taken |
-| | `warn: doctor did not read the binding, because it could not name the repository's owner: <error>` | Run `doctor` where `gh` can read the repository, or as a step of the connect job |
+| | `warn: doctor did not read the binding, because it could not name the repository's owner: <error>` | Run `doctor` where `gh` can read the repository, or as a step of the connect job. On GitLab, `doctor` reads the owner only in a CI job |
 | The event, with `--ci` | `warn: the event is <event>, and costroid report posts only on pull_request` | Run the report job on `pull_request` |
 | The head, with `--ci` | `warn: the pull request's head is the fork <repository>, which receives no secrets and cannot post the check` | Add [`recipes/github-follow-up.yml`](../recipes/github-follow-up.yml), which posts the check from your repository |
 | The job, with `--ci` | `warn: job <job> of <file> declares no permissions, so it holds the repository's default token` | Declare the permissions the job needs, as the recipes do |

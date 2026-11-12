@@ -37,6 +37,11 @@ warn or fail, the fix. It reads secret names through gh secret list when gh is
 on PATH, and those of the environment a job names through gh secret list
 --env. It never prints a secret's value, prefix or length.
 
+On GitLab it checks the template that installs Costroid, .gitlab/costroid.yml
+or a local file .gitlab-ci.yml includes, and its pins, in place of the
+workflows. It reads no CI/CD variable there and runs no gh. Outside a git
+repository it checks this machine alone, and says so in a fail line.
+
 With COSTROID_PLATFORM_URL set in the shell, doctor asks Costroid Platform for
 the scopes of the integration token in COSTROID_PLATFORM_TOKEN and for the
 binding of the repository's owner. It names the token by that variable alone.
@@ -161,31 +166,69 @@ func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, 
 	return 0
 }
 
-// examine runs every check in the order the table prints them.
+// examine runs every check in the order the table prints them. Outside a git
+// repository it checks this machine alone. On GitLab it reads the templates
+// that install Costroid in place of the workflows, and never runs gh.
 func examine(ctx context.Context, root string, build buildInfo, host doctorHost, ci bool) ([]finding, error) {
+	if outsideRepository(ctx, root, host) {
+		lines := []finding{releaseLine(build, nil, nil), fail("this directory is in no git repository, so doctor checked only this machine", "run doctor at the root of your repository")}
+		return append(lines, machineLines(ctx, root, host, agentsRun(nil, nil))...), nil
+	}
 	flows, err := readWorkflows(root)
 	if err != nil {
 		return nil, err
 	}
-	lines := []finding{releaseLine(build, flows)}
+	templates, err := readGitLabTemplates(root)
+	if err != nil {
+		return nil, err
+	}
+	gitlab := onGitLab(ctx, root, host, flows, templates)
+	lines := []finding{releaseLine(build, flows, templates)}
 	settings, err := configLines(root)
 	if err != nil {
 		return nil, err
 	}
 	lines = append(lines, settings...)
-	lines = append(lines, workflowLines(root, flows)...)
-	agents := agentsRun(flows)
-	for _, agent := range agents {
-		lines = append(lines, agentLine(ctx, root, host, agent))
+	if !gitlab {
+		lines = append(lines, workflowLines(root, flows)...)
 	}
-	lines = append(lines, keyLines(host, agents)...)
-	lines = append(lines, repositoryLines(ctx, root, host, flows)...)
-	lines = append(lines, platformLines(ctx, root, host)...)
+	lines = append(lines, gitlabLines(templates, gitlab)...)
+	agents := agentsRun(flows, templates)
+	lines = append(lines, machineLines(ctx, root, host, agents)...)
+	if gitlab {
+		lines = append(lines, gitlabVariableLines(templates)...)
+	} else {
+		lines = append(lines, repositoryLines(ctx, root, host, flows)...)
+	}
+	lines = append(lines, platformLines(ctx, root, host, gitlab)...)
 	if ci {
 		lines = append(lines, jobLines(root, host)...)
 	}
 	return lines, nil
 }
+
+// machineLines check the agents and the keys on this machine.
+func machineLines(ctx context.Context, root string, host doctorHost, agents []string) []finding {
+	var lines []finding
+	for _, agent := range agents {
+		lines = append(lines, agentLine(ctx, root, host, agent))
+	}
+	return append(lines, keyLines(host, agents)...)
+}
+
+// outsideRepository asks git whether root is in a working tree. Without git
+// on PATH doctor cannot tell, and reads root as a repository.
+func outsideRepository(ctx context.Context, root string, host doctorHost) bool {
+	path, err := host.lookPath("git")
+	if err != nil {
+		return false
+	}
+	_, err = host.output(ctx, root, path, "rev-parse", "--show-toplevel")
+	return err != nil && strings.Contains(err.Error(), notARepository)
+}
+
+// notARepository is what git and gh print outside a working tree.
+const notARepository = "not a git repository"
 
 // workflow is one file under .github/workflows and what doctor reads from it.
 type workflow struct {
@@ -268,18 +311,26 @@ func readWorkflow(name string, source []byte) workflow {
 }
 
 // releaseLine states this binary's release beside the releases the
-// workflows pin.
-func releaseLine(build buildInfo, flows []workflow) finding {
+// workflows and the GitLab templates pin.
+func releaseLine(build buildInfo, flows []workflow, templates []gitlabTemplate) finding {
 	if !releaseVersion.MatchString(build.version) {
 		return warn("costroid "+build.version+" is a development build, which belongs to no release", "install a release, as README.md#install shows")
 	}
 	have := strings.TrimPrefix(build.version, "v")
+	pinsOther := func(path string, line int, release string) finding {
+		return warn(fmt.Sprintf("costroid %s, and %s:%d pins %s", have, path, line, release),
+			"install "+release+", the release the workflow runs, as README.md#install shows")
+	}
 	for _, flow := range flows {
 		for _, pin := range flow.costroid {
 			if pin.release != "" && pin.release != have {
-				return warn(fmt.Sprintf("costroid %s, and %s:%d pins %s", have, flow.path, pin.line, pin.release),
-					"install "+pin.release+", the release the workflow runs, as README.md#install shows")
+				return pinsOther(flow.path, pin.line, pin.release)
 			}
+		}
+	}
+	for _, template := range templates {
+		if release := template.version.value; release != "" && release != have {
+			return pinsOther(template.path, template.version.line, release)
 		}
 	}
 	return ok("costroid %s", have)
@@ -318,8 +369,8 @@ func workflowLines(root string, flows []workflow) []finding {
 		if index := slices.IndexFunc(flows, func(flow workflow) bool { return flow.action != "" }); index >= 0 {
 			fix = existingFix(flows[index])
 		}
-		if _, err := os.Stat(filepath.Join(root, ".gitlab-ci.yml")); err == nil {
-			fix += ", or on GitLab costroid lint-recipes .gitlab/costroid.yml"
+		if _, err := os.Stat(filepath.Join(root, gitlabCI)); err == nil {
+			fix += ", or on GitLab " + gitlabInitFix
 		}
 		return []finding{warn("no workflow in "+defaultWorkflows+" calls Costroid's action", fix)}
 	}
@@ -411,12 +462,18 @@ func joinNames(names []string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
-// agentsRun names the agents the workflows start, or claude when none does.
-func agentsRun(flows []workflow) []string {
+// agentsRun names the agents the workflows and the GitLab templates start, or
+// claude when none does.
+func agentsRun(flows []workflow, templates []gitlabTemplate) []string {
 	var agents []string
 	add := func(agent string) {
 		if !slices.Contains(agents, agent) {
 			agents = append(agents, agent)
+		}
+	}
+	for _, template := range templates {
+		if _, known := gitlabKeys[template.agent]; known {
+			add(template.agent)
 		}
 	}
 	for _, flow := range flows {
@@ -489,12 +546,40 @@ func keyLines(host doctorHost, agents []string) []finding {
 // a GitHub repository from. Every gh read then fails alike.
 const ghNoRemote = "no git remotes found"
 
-// ghFix says what to do about a failed gh read, from gh's own error.
+// ghNotFound are what gh prints when GitHub answers that the repository does
+// not exist, which is also its answer to an account that cannot read it.
+var ghNotFound = []string{"HTTP 404", "Could not resolve to a Repository"}
+
+// ghSignIn are what gh prints when it holds no sign-in, or one GitHub
+// refuses. gh exits 4 when a command needs a sign-in it does not hold.
+var ghSignIn = []string{"gh auth login", "HTTP 401", "gh exited 4:"}
+
+// ghFix says what to do about a failed gh read, from gh's own error. Only a
+// missing or refused sign-in is sent to gh auth login.
 func ghFix(err error) string {
-	if strings.Contains(err.Error(), ghNoRemote) {
+	text := err.Error()
+	switch {
+	case strings.Contains(text, ghNoRemote):
 		return "add a GitHub remote, or push the repository first"
+	case strings.Contains(text, notARepository):
+		return "run doctor at the root of your repository"
+	case containsAny(text, ghNotFound):
+		return "the repository is not on GitHub yet, or this account cannot read it: push it, then run doctor again"
+	case containsAny(text, ghSignIn):
+		return "run gh auth login, then doctor again"
 	}
-	return "run gh auth login, then doctor again"
+	return "fix what gh's error says, then run doctor again"
+}
+
+// ghStops says whether a failed gh read fails every other read alike: the
+// repository has no remote, is not on GitHub, or is no repository.
+func ghStops(err error) bool {
+	text := err.Error()
+	return strings.Contains(text, ghNoRemote) || strings.Contains(text, notARepository) || containsAny(text, ghNotFound)
+}
+
+func containsAny(text string, parts []string) bool {
+	return slices.ContainsFunc(parts, func(part string) bool { return strings.Contains(text, part) })
 }
 
 // repositoryLines read, through gh, what the repository holds: its secrets'
@@ -514,7 +599,7 @@ func repositoryLines(ctx context.Context, root string, host doctorHost, flows []
 			"install gh, or check that the repository's settings hold "+joinNames(needed))}
 	}
 	variables, err := ghNames(ctx, root, host, "variable", "list")
-	if err != nil && strings.Contains(err.Error(), ghNoRemote) {
+	if err != nil && ghStops(err) {
 		return []finding{warn("gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: "+err.Error(), ghFix(err))}
 	}
 	if host.getenv(platformVariable) != "" || slices.Contains(variables, platformVariable) {
@@ -804,8 +889,9 @@ const (
 // platformLines ask Costroid Platform, when COSTROID_PLATFORM_URL is set in
 // this shell, for the scopes of the integration token in
 // COSTROID_PLATFORM_TOKEN and for the binding of the repository's owner. They
-// name the token by its variable alone.
-func platformLines(ctx context.Context, root string, host doctorHost) []finding {
+// name the token by its variable alone. On GitLab, outside its CI job, the
+// owner is not read, since doctor runs no gh there.
+func platformLines(ctx context.Context, root string, host doctorHost, gitlab bool) []finding {
 	address := host.getenv(platformVariable)
 	if address == "" {
 		return nil
@@ -830,7 +916,7 @@ func platformLines(ctx context.Context, root string, host doctorHost) []finding 
 	if !slices.Contains(scopes.Scopes, "identity:read") {
 		return lines
 	}
-	return append(lines, bindingLines(ctx, root, host, target)...)
+	return append(lines, bindingLines(ctx, root, host, target, gitlab)...)
 }
 
 // tokenAnswer is the part of GET /tokens/current that doctor reads. The
@@ -881,11 +967,14 @@ func scopeLine(token tokenAnswer) finding {
 // bindingLines state the binding of the installation a CI job of this
 // repository proves, as GET /identity lists it, and on a line of its own a
 // binding of the same owner made through the GitHub App.
-func bindingLines(ctx context.Context, root string, host doctorHost, target platform) []finding {
-	installation, err := ownerInstallation(ctx, root, host)
+func bindingLines(ctx context.Context, root string, host doctorHost, target platform, gitlab bool) []finding {
+	installation, err := ownerInstallation(ctx, root, host, gitlab)
 	if err != nil {
 		fix := "run doctor where gh can read the repository, or as a step of the connect job"
-		if strings.Contains(err.Error(), ghNoRemote) {
+		switch {
+		case gitlab:
+			fix = "run doctor as a step of the connect job"
+		case ghStops(err):
 			fix = ghFix(err)
 		}
 		return []finding{warn("doctor did not read the binding, because it could not name the repository's owner: "+err.Error(), fix)}
@@ -937,10 +1026,13 @@ var installationStatus = regexp.MustCompile(`^(revoked|displaced)$`)
 // ownerInstallation names the installation a CI job of this repository
 // proves: from the job's own variables in CI, as connect reads them, and
 // elsewhere from the owner's account id that gh reads.
-func ownerInstallation(ctx context.Context, root string, host doctorHost) (string, error) {
+func ownerInstallation(ctx context.Context, root string, host doctorHost, gitlab bool) (string, error) {
 	if host.getenv("GITHUB_ACTIONS") == "true" || host.getenv("GITLAB_CI") == "true" {
 		job, err := connectJob("", host.getenv)
 		return job.installation, err
+	}
+	if gitlab {
+		return "", errors.New("outside its CI job, doctor does not read a GitLab project's owner")
 	}
 	if _, err := host.lookPath("gh"); err != nil {
 		return "", errors.New("gh is not on PATH")
