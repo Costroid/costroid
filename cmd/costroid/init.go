@@ -55,8 +55,10 @@ reads such a workflow and prints a patch that adds a read step after the
 agent's step and a report job that runs on pull requests. It writes nothing.
 On a claude-code-action step, the patch adds --max-budget-usd 5 to claude_args
 when they hold no cap, or the amount in USD --budget-usd names, and gives the
-read step and the report job the cap they hold. docs/existing-workflow.md
-shows the result.
+read step and the report job the cap they hold. On a codex-action step that
+sets no codex-home, the patch adds a step before it that makes one for the
+job under runner.temp, and gives the action that codex-home.
+docs/existing-workflow.md shows the result.
 
 --auth subscription writes the claude-code-action recipe with a Claude
 subscription's token, CLAUDE_CODE_OAUTH_TOKEN, in place of an API key.
@@ -1319,11 +1321,11 @@ type agentStep struct {
 	action                   agentAction
 }
 
-// workflowPatch is what --existing adds to a workflow, and a sentence on the
-// cap it states, empty when the agent's action holds none Costroid reads.
+// workflowPatch is what --existing adds to a workflow, and a sentence on what
+// it adds to the agent's step: the cap it states, or the codex-home it gives.
 type workflowPatch struct {
-	edits   []edit
-	capNote string
+	edits []edit
+	note  string
 }
 
 // addInputs adds post-review after a block's stage line when postReview is
@@ -1385,8 +1387,8 @@ func printExistingPatch(repo repository, flags initFlags, release pin, recipes f
 		fmt.Fprintf(stderr, "costroid: %s exists, and init left it as it is\n", connectWorkflow)
 	}
 	text := "Apply it from the repository's root with git apply. Your job keeps the permissions it has, and the read step asks for nothing more. The report job holds checks: write and pull-requests: write, runs on pull requests alone, and runs nothing the pull request wrote. docs/existing-workflow.md says more."
-	if patch.capNote != "" {
-		text += " " + patch.capNote
+	if patch.note != "" {
+		text += " " + patch.note
 	}
 	fmt.Fprint(stderr, wrap(text, usageWidth))
 	if bytes.Contains(source, []byte("claude_code_oauth_token")) {
@@ -1481,9 +1483,9 @@ func existingEdits(source []byte, lines []string, release pin, flags initFlags) 
 		if err != nil {
 			return workflowPatch{}, err
 		}
-		patch.edits, patch.capNote = held.edits, held.note
+		patch.edits, patch.note = held.edits, held.note
 		if flags.budgetUSD != "" && len(held.edits) == 0 {
-			patch.capNote += fmt.Sprintf(" --budget-usd %s is not used, because init adds a cap only to claude_args it can read that hold none.", flags.budgetUSD)
+			patch.note += fmt.Sprintf(" --budget-usd %s is not used, because init adds a cap only to claude_args it can read that hold none.", flags.budgetUSD)
 		}
 		if readCap, reportCap, err = held.inputs(); err != nil {
 			return workflowPatch{}, err
@@ -1494,7 +1496,12 @@ func existingEdits(source []byte, lines []string, release pin, flags initFlags) 
 		added = append(added, strings.Repeat(" ", step.step.Column-1)+"id: "+stepID)
 	}
 	if step.action.uses == codexAction {
-		read, err := codexReadStep(dash, unit, stepID, step.step, release)
+		home, err := existingHome(lines, step, dash, unit)
+		if err != nil {
+			return workflowPatch{}, err
+		}
+		patch.edits, patch.note = home.edits, home.note
+		read, err := codexReadStep(dash, unit, stepID, home.value, release)
 		if err != nil {
 			return workflowPatch{}, err
 		}
@@ -1865,14 +1872,122 @@ func readStep(dash, unit int, stepID string, release pin) []string {
 	}
 }
 
+// codexHomeDirectory is the codex-home recipes/github-codex-action.yml gives
+// the action, and the --existing patch gives a step that sets none.
+const codexHomeDirectory = "${{ runner.temp }}/codex-home"
+
+// stepEnvironment finds the names of the variables an expression reads from
+// env.
+var stepEnvironment = regexp.MustCompile(`\benv\.([A-Za-z_][A-Za-z0-9_]*)`)
+
+// heldHome is the codex-home the read step reads once the patch applies: the
+// edits that add it, value, and a sentence on what the edits do. A step that
+// sets its own codex-home takes no edits.
+type heldHome struct {
+	edits []edit
+	value string
+	note  string
+}
+
+// existingHome reads the codex-home of an openai/codex-action step. A step that
+// sets none gets the recipe's: the step that makes the directory, before the
+// action's step, and the input. One the read step cannot read is refused.
+func existingHome(lines []string, step agentStep, dash, unit int) (heldHome, error) {
+	withKey, with := mappingPair(step.step, "with")
+	if home := field(with, "codex-home"); home != nil {
+		return statedHome(step, home)
+	}
+	keys := strings.Repeat(" ", step.step.Column-1)
+	input := "codex-home: " + codexHomeDirectory
+	var change edit
+	switch {
+	case withKey == nil:
+		change = edit{at: blockEnd(lines, step.step.Line-1, dash) + 1, lines: []string{keys + "with:", keys + strings.Repeat(" ", unit) + input}}
+	case with.Kind == yaml.ScalarNode && with.Tag == "!!null" && with.Value == "":
+		change = edit{at: blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1, lines: []string{strings.Repeat(" ", withKey.Column-1+unit) + input}}
+	case with.Kind != yaml.MappingNode || with.Style&yaml.FlowStyle != 0:
+		return heldHome{}, errors.New("its openai/codex-action step writes its with in a layout init does not write into: add the codex-home step and input by hand, as docs/existing-workflow.md#on-openaicodex-action shows them")
+	default:
+		change = edit{at: blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1, lines: []string{strings.Repeat(" ", with.Column-1) + input}}
+	}
+	made := edit{at: commentsAbove(lines, step.step.Line-1, dash), lines: makeHomeStep(dash, unit)}
+	if err := readsBackHome([]edit{made, change}, lines, step); err != nil {
+		return heldHome{}, err
+	}
+	return heldHome{
+		edits: []edit{made, change},
+		value: codexHomeDirectory,
+		note:  "The patch gives the openai/codex-action step a codex-home under runner.temp, which a step before it makes for the job, so the read step reads this job's run alone.",
+	}, nil
+}
+
+// statedHome is the codex-home a step sets already, when the read step, a
+// step of its own, can read it: one line of text that reads no variable of
+// the action step's own env.
+func statedHome(step agentStep, home *yaml.Node) (heldHome, error) {
+	refused := errors.New("its openai/codex-action step sets a codex-home the read step cannot read: set it to one directory made for the job under runner.temp, as recipes/github-codex-action.yml does, or leave it out and init adds one, then run init again")
+	if home.Kind != yaml.ScalarNode || strings.TrimSpace(home.Value) == "" || strings.Contains(home.Value, "\n") {
+		return heldHome{}, refused
+	}
+	own := field(step.step, "env")
+	for _, match := range stepEnvironment.FindAllStringSubmatch(home.Value, -1) {
+		if _, set := mappingPair(own, match[1]); set != nil {
+			return heldHome{}, refused
+		}
+	}
+	return heldHome{value: home.Value}, nil
+}
+
+// commentsAbove is the first of the comment lines right above line at, in
+// the indentation of the step's dash, or line at when there are none, so a
+// step added there leaves a step's comment above that step.
+func commentsAbove(lines []string, at, dash int) int {
+	prefix := strings.Repeat(" ", dash) + "#"
+	for at > 0 && strings.HasPrefix(lines[at-1], prefix) {
+		at--
+	}
+	return at
+}
+
+// makeHomeStep is the step of recipes/github-codex-action.yml that makes the
+// codex-home for the job.
+func makeHomeStep(dash, unit int) []string {
+	key := strings.Repeat(" ", dash+2)
+	child := key + strings.Repeat(" ", unit)
+	return []string{
+		strings.Repeat(" ", dash) + "# Costroid reads the run from this directory once the action ends. It is",
+		strings.Repeat(" ", dash) + "# made for this job, so every rollout file in it is this job's.",
+		strings.Repeat(" ", dash) + "- name: Make the Codex home",
+		key + "env:",
+		child + "CODEX_HOME: " + codexHomeDirectory,
+		key + "run: |",
+		child + `mkdir -p "$CODEX_HOME"`,
+		child + `echo 'otel.log_user_prompt=false' >"$CODEX_HOME/config.toml"`,
+	}
+}
+
+// readsBackHome applies the edits that add the codex-home and reads the
+// workflow back: the action's step must hold it.
+func readsBackHome(edits []edit, lines []string, step agentStep) error {
+	failed := errors.New("adding codex-home would not read back: add the codex-home step and input by hand, as docs/existing-workflow.md#on-openaicodex-action shows them")
+	_, jobs, err := workflowJobs([]byte(strings.Join(applyEdits(lines, edits), "\n") + "\n"))
+	if err != nil {
+		return failed
+	}
+	found := agentSteps(jobs, step.action.agent)
+	if len(found) != 1 {
+		return failed
+	}
+	if home := field(field(found[0].step, "with"), "codex-home"); home == nil || home.Value != codexHomeDirectory {
+		return failed
+	}
+	return nil
+}
+
 // codexReadStep reads a codex-action run from the codex-home its step was
 // given, as recipes/github-codex-action.yml does.
-func codexReadStep(dash, unit int, stepID string, step *yaml.Node, release pin) ([]string, error) {
-	home := field(field(step, "with"), "codex-home")
-	if home == nil || home.Kind != yaml.ScalarNode || strings.TrimSpace(home.Value) == "" || strings.Contains(home.Value, "\n") {
-		return nil, errors.New("its openai/codex-action step sets no codex-home, where Costroid reads the run: give the step a directory made for the job under runner.temp, as recipes/github-codex-action.yml does, and run init again")
-	}
-	value, err := yaml.Marshal(home.Value)
+func codexReadStep(dash, unit int, stepID, home string, release pin) ([]string, error) {
+	value, err := yaml.Marshal(home)
 	if err != nil {
 		return nil, fmt.Errorf("write its codex-home: %w", err)
 	}

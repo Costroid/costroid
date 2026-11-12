@@ -25,7 +25,7 @@ The recipes pin `1.0.0-alpha.23`: [install it](docs/install.md).
 
 ## Add it to the workflow you have
 
-Already on `claude-code-action`, or on `openai/codex-action` with a `codex-home`:
+Already on `claude-code-action`, or on `openai/codex-action`:
 
 ```sh
 costroid init github --existing .github/workflows/claude.yml > costroid.patch

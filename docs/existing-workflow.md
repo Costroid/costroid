@@ -1,6 +1,6 @@
 # Report from the workflow you have
 
-A team that already runs `claude-code-action` on its pull requests can add Costroid to that workflow without replacing it. Two blocks do it: a `read` step after your Claude step, and a `report` job that waits for your job. Your step keeps its prompt, its arguments and its review, and no new secret is needed. A workflow that runs `openai/codex-action` takes the same two blocks, with one change [below](#on-openaicodex-action).
+A team that already runs `claude-code-action` on its pull requests can add Costroid to that workflow without replacing it. Two blocks do it: a `read` step after your Claude step, and a `report` job that waits for your job. Your step keeps its prompt, its arguments and its review, and no new secret is needed. A workflow that runs `openai/codex-action` takes the same two blocks, with the changes [below](#on-openaicodex-action).
 
 ## The two blocks
 
@@ -92,15 +92,30 @@ The comment's grade then reads `agent-flag` when the run stopped at that cap, or
 
 ## On `openai/codex-action`
 
-`costroid init github --existing` writes the same two blocks into a workflow that runs `openai/codex-action`. The `read` step reads the run from the step's `codex-home` in place of an execution file, so your step needs a `codex-home` made for the job under `runner.temp`. Without one, `init` stops and says so. It gives the step the id `codex` if it has none, and the `read` step reads:
+`costroid init github --existing` writes the same two blocks into a workflow that runs `openai/codex-action`. The `read` step reads the run from the step's `codex-home` in place of an execution file, so the step needs a `codex-home` made for the job under `runner.temp`.
+
+A step that sets no `codex-home` gets one, as [`recipes/github-codex-action.yml`](../recipes/github-codex-action.yml) has it: the patch adds a step before yours that makes `${{ runner.temp }}/codex-home`, and gives your step that `codex-home`. The new step also writes `otel.log_user_prompt=false` to Codex's config there, so Codex's own telemetry leaves the prompt out. A step that sets its own `codex-home` keeps it, and the `read` step reads that one. A `codex-home` the `read` step cannot read, such as one built from your step's own `env`, makes `init` stop and say so.
+
+`init` gives the step the id `codex` if it has none. On a step that sets only `openai-api-key` and `prompt`, the patch reads:
 
 ```diff
-       - name: Review with Codex
+       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+         with:
+           persist-credentials: false
++      # Costroid reads the run from this directory once the action ends. It is
++      # made for this job, so every rollout file in it is this job's.
++      - name: Make the Codex home
++        env:
++          CODEX_HOME: ${{ runner.temp }}/codex-home
++        run: |
++          mkdir -p "$CODEX_HOME"
++          echo 'otel.log_user_prompt=false' >"$CODEX_HOME/config.toml"
+       - name: Run Codex
          uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
          with:
            openai-api-key: ${{ secrets.OPENAI_API_KEY }}
            prompt: Review this pull request.
-           codex-home: ${{ runner.temp }}/codex-home
++          codex-home: ${{ runner.temp }}/codex-home
 +        id: codex
 +      - name: Read what the run cost
 +        if: always() && steps.codex.outcome != 'skipped'
@@ -110,6 +125,8 @@ The comment's grade then reads `agent-flag` when the run stopped at that cap, or
 +          codex-home: ${{ runner.temp }}/codex-home
 +          billing-account: ${{ github.repository_owner }}
 ```
+
+A test runs `init --existing` on such a workflow and holds this block to the start of the patch it prints, line for line.
 
 The step runs `costroid ingest-run --from codex-home=D --since T`, where `T` is when the job started, so a file an earlier job left in that directory is not read. The `report` job is the one above. `openai/codex-action` holds no cap Costroid can read, so the comment's grade reads `none`. The action takes only an API key, so the rows read `measured`.
 

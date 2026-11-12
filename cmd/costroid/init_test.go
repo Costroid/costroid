@@ -650,6 +650,40 @@ func TestInitExistingMatchesTheDocs(t *testing.T) {
 	}
 }
 
+// TestInitExistingMatchesTheCodexDocs runs init --existing, as the release the
+// page pins, on a codex-action workflow whose step sets only openai-api-key
+// and prompt, and holds the page's diff to the start of the patch's hunk,
+// line for line.
+func TestInitExistingMatchesTheCodexDocs(t *testing.T) {
+	page := readFile(t, "../../docs/existing-workflow.md")
+	_, section, _ := strings.Cut(page, "\n## On `openai/codex-action`\n")
+	section, _, _ = strings.Cut(section, "\n## ")
+	blocks := regexp.MustCompile("(?s)```diff\n(.*?)```").FindAllStringSubmatch(section, -1)
+	if len(blocks) != 1 {
+		t.Fatalf("the Codex section holds %d diff blocks", len(blocks))
+	}
+	docsPin := regexp.MustCompile(regexp.QuoteMeta(costroidActionPath) + `@([0-9a-f]{40}) # v(\S+)`).FindStringSubmatch(blocks[0][1])
+	if docsPin == nil {
+		t.Fatal("the diff pins no release")
+	}
+	root := t.TempDir()
+	name := workflowDir + "/review.yml"
+	writeFile(t, filepath.Join(root, name), stockCodexReview)
+	code, patch, stderr := runInit(t, root, buildInfo{version: docsPin[2], commit: docsPin[1]}, costroid.Recipes, "github", "--existing", name)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	printed := strings.Split(patch, "\n")
+	if len(printed) < 4 || !strings.HasPrefix(printed[2], "@@ ") {
+		t.Fatalf("init printed no hunk:\n%s", patch)
+	}
+	shown := strings.Split(strings.TrimSuffix(blocks[0][1], "\n"), "\n")
+	body := printed[3:]
+	if len(shown) > len(body) || !slices.Equal(shown, body[:len(shown)]) {
+		t.Errorf("the page's diff is not the start of the patch init prints:\n%s", lineDiff(strings.Join(shown, "\n"), strings.Join(body[:min(len(shown), len(body))], "\n")))
+	}
+}
+
 // claudePatchGolden holds what init --existing prints for claude-code-action
 // workflows, as the release before the codex-home step printed it.
 var claudePatchGolden = filepath.Join("testdata", "existing-claude.golden")
@@ -1026,7 +1060,7 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
 		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
 		{"two", map[string]string{"claude.yml": existingReview, "codex.yml": existingCodexReview}, ".github/workflows/claude.yml and .github/workflows/codex.yml each run an agent's action: name the one to report from with --existing"},
-		{"no codex-home", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "          codex-home: ${{ runner.temp }}/codex-home\n", "", 1)}, "sets no codex-home"},
+		{"a codex-home it cannot read", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "codex-home: ${{ runner.temp }}/codex-home\n", "codex-home: [a, b]\n", 1)}, "sets a codex-home the read step cannot read: set it to one directory made for the job under runner.temp"},
 	} {
 		t.Run(refusal.label, func(t *testing.T) {
 			root := t.TempDir()
@@ -1043,6 +1077,146 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stockCodexReview is a review workflow in the shape openai/codex-action's
+// README gives: the action's step sets openai-api-key and prompt, and nothing
+// else.
+const stockCodexReview = `name: Codex pull request review
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  codex:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run Codex
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: Review this pull request.
+`
+
+// lintRecipesRules runs costroid lint-recipes on a workflow and lists what it
+// rejects, each line without its path and line number.
+func lintRecipesRules(t *testing.T, workflow string) []string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "review.yml")
+	writeFile(t, path, workflow)
+	_, _, stderr := execute(t, "lint-recipes", path)
+	var rules []string
+	for line := range strings.SplitSeq(strings.TrimSuffix(stderr, "\n"), "\n") {
+		if _, rest, found := strings.Cut(strings.TrimPrefix(line, path+":"), ": "); found {
+			rules = append(rules, rest)
+		}
+	}
+	return rules
+}
+
+// TestInitExistingAddsCodexHome runs init --existing on codex-action
+// workflows whose step sets no codex-home. git apply --check accepts the
+// patch. The patched workflow makes the directory in a step before the
+// action's, gives the action that codex-home and reads the run from it.
+// costroid lint --strict passes it, and costroid lint-recipes rejects nothing
+// in it that it did not reject before. Taking the added lines out gives the
+// workflow back.
+func TestInitExistingAddsCodexHome(t *testing.T) {
+	name := workflowDir + "/review.yml"
+	for _, test := range []struct{ label, workflow, stepID string }{
+		{"the README's shape", stockCodexReview, "codex"},
+		{"its own id", strings.Replace(stockCodexReview, "        uses: openai/", "        id: run_codex\n        uses: openai/", 1), "run_codex"},
+		{"a key after with", stockCodexReview + "        env:\n          OTEL_RESOURCE_ATTRIBUTES: vcs.change.id=${{ github.event.pull_request.number }}\n", "codex"},
+		{"a comment above the step", strings.Replace(stockCodexReview, "      - name: Run Codex\n", "      # Codex reviews the change.\n      - name: Run Codex\n", 1), "codex"},
+		{"an empty with", strings.Replace(stockCodexReview, "          openai-api-key: ${{ secrets.OPENAI_API_KEY }}\n          prompt: Review this pull request.\n", "", 1), "codex"},
+		{"four spaces", "on:\n    pull_request:\n\njobs:\n    codex:\n        runs-on: ubuntu-24.04\n        permissions:\n            contents: read\n        steps:\n        -   uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13\n            with:\n                openai-api-key: ${{ secrets.OPENAI_API_KEY }}\n                prompt: Review this pull request.\n        -   run: echo reviewed\n", "codex"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			root := t.TempDir()
+			if output, err := exec.Command("git", "init", "--quiet", root).CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v: %s", err, output)
+			}
+			writeFile(t, filepath.Join(root, name), test.workflow)
+			code, patch, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--existing", name)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			check := exec.Command("git", "apply", "--check", "-")
+			check.Dir = root
+			check.Stdin = strings.NewReader(patch)
+			if output, err := check.CombinedOutput(); err != nil {
+				t.Fatalf("git apply --check: %v\n%s\npatch:\n%s", err, output, patch)
+			}
+			if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, "The patch gives the openai/codex-action step a codex-home under runner.temp") {
+				t.Errorf("stderr does not say what the patch adds:\n%s", stderr)
+			}
+			patched := applyPatch(t, name, test.workflow, patch)
+			path := filepath.Join(t.TempDir(), "review.yml")
+			writeFile(t, path, patched)
+			if code, stdout, stderr := execute(t, "lint", "--strict", path); code != 0 {
+				t.Errorf("costroid lint --strict exits %d on the patched workflow:\n%s%s", code, stdout, stderr)
+			}
+			was := lintRecipesRules(t, test.workflow)
+			for _, rule := range lintRecipesRules(t, patched) {
+				if !slices.Contains(was, rule) {
+					t.Errorf("costroid lint-recipes rejects in the patched workflow what it did not before: %s", rule)
+				}
+			}
+
+			document := decodeYAML(t, patched)
+			job := document["jobs"].(map[string]any)["codex"].(map[string]any)
+			steps := job["steps"].([]any)
+			at := slices.IndexFunc(steps, func(step any) bool {
+				uses, _ := step.(map[string]any)["uses"].(string)
+				return strings.HasPrefix(uses, codexAction+"@")
+			})
+			if at < 1 || at+1 >= len(steps) {
+				t.Fatalf("the job's steps: %v", steps)
+			}
+			made, codex, read := steps[at-1].(map[string]any), steps[at].(map[string]any), steps[at+1].(map[string]any)
+			codexWith, readWith := codex["with"].(map[string]any), read["with"].(map[string]any)
+			if made["name"] != "Make the Codex home" || made["env"].(map[string]any)["CODEX_HOME"] != codexHomeDirectory || !strings.Contains(made["run"].(string), `mkdir -p "$CODEX_HOME"`) {
+				t.Errorf("the step before the action's: %v", made)
+			}
+			if codexWith["codex-home"] != codexHomeDirectory || readWith["codex-home"] != codexHomeDirectory || readWith["stage"] != "read" {
+				t.Errorf("the action's step %v, then %v", codex, read)
+			}
+			if codex["id"] != test.stepID || read["if"] != "always() && steps."+test.stepID+".outcome != 'skipped'" {
+				t.Errorf("the read step does not name the action's step %s: %v", test.stepID, read)
+			}
+
+			original := decodeYAML(t, test.workflow)
+			if test.stepID == addedCodexStepID {
+				delete(codex, "id")
+			}
+			delete(codexWith, "codex-home")
+			if len(codexWith) == 0 {
+				codex["with"] = nil
+			}
+			job["steps"] = slices.Delete(steps, at-1, at+2)
+			job["steps"] = slices.Insert(job["steps"].([]any), at-1, any(codex))
+			delete(document["jobs"].(map[string]any), "report")
+			if !reflect.DeepEqual(document, original) {
+				t.Errorf("the patch changed more than the codex-home and the two blocks:\n%s", patched)
+			}
+		})
+	}
+
+	t.Run("a codex-home the step's own env names", func(t *testing.T) {
+		workflow := strings.Replace(stockCodexReview, "          prompt: Review this pull request.\n", "          prompt: Review this pull request.\n          codex-home: ${{ env.HOME_DIR }}\n        env:\n          HOME_DIR: /tmp/codex\n", 1)
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, name), workflow)
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--existing", name)
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "sets a codex-home the read step cannot read: set it to one directory made for the job under runner.temp, as recipes/github-codex-action.yml does, or leave it out and init adds one, then run init again") {
+			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+	})
 }
 
 func TestInitNamesTheBasisForASubscriptionWorkflow(t *testing.T) {
