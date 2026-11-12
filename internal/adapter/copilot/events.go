@@ -202,7 +202,7 @@ func (f *sessionFile) read(line []byte) error {
 	return nil
 }
 
-// ReadEvents reads one session's events.jsonl. Each session.usage_record is
+// readEvents reads one session's events.jsonl. Each session.usage_record is
 // one request. The records' sums for each model must equal the model's
 // totals in session.shutdown, or the file is refused. keyed says the
 // provider variables named the user's own key, which decides the basis of a
@@ -211,12 +211,8 @@ func (f *sessionFile) read(line []byte) error {
 // Copilot's own credits, totalNanoAiu and each model's requests.cost, are
 // its figures in its own units. They reach AgentStated and a warning, never a
 // row, and never become dollars.
-func ReadEvents(events io.Reader, keyed bool) (adapter.Report, error) {
-	report, _, err := readEvents(events, keyed)
-	return report, err
-}
-
-// readEvents is ReadEvents, which also lists the requests that wrote no row.
+//
+// It also lists the requests that wrote no row.
 func readEvents(events io.Reader, keyed bool) (adapter.Report, []unpriced, error) {
 	file, err := readSessionFile(events)
 	if err != nil {
