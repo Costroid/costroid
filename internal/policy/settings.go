@@ -8,7 +8,6 @@ import (
 	"os"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -89,7 +88,7 @@ func ParseSettings(data []byte) (Settings, error) {
 		key, value := mapping.Content[i].Value, mapping.Content[i+1]
 		switch {
 		case slices.Contains(amountKeys, key):
-			amount, err := parseAmount(key, value)
+			amount, err := readAmount(key, value)
 			if err != nil {
 				return Settings{}, err
 			}
@@ -197,20 +196,24 @@ func ParseApproval(data []byte) (ApprovalSettings, error) {
 	return settings, nil
 }
 
-// parseAmount takes a quoted scalar's own text, so 0.1 stays 0.1. A YAML
-// integer is exact, so it is taken too. A number YAML reads as a float is
-// refused, because its text and its value can differ.
-func parseAmount(key string, value *yaml.Node) (decimal.Decimal, error) {
-	if value.Kind == yaml.ScalarNode && value.Tag == "!!int" {
-		var whole uint64
-		if value.Decode(&whole) == nil {
-			return decimal.Parse(strconv.FormatUint(whole, 10))
-		}
+// amountTags are the YAML tags a plain decimal resolves to: 5 is an integer,
+// 2.50 a float and "2.50" a string. Only the node's text is read.
+var amountTags = []string{"!!int", "!!float", "!!str"}
+
+// readAmount reads an amount from its source text, quoted or not, so 2.50
+// stays 2.50 and never passes through a float. Only a plain decimal is read.
+// YAML also reads 0x10, 0o17, 017 and 1_000 as whole numbers and 1e3 as a
+// float, and none of them is written as the figure it stands for: 017 is 15.
+func readAmount(key string, value *yaml.Node) (decimal.Decimal, error) {
+	refused := fmt.Errorf("policy: policy.%s must be a plain decimal of at most %d fractional digits, such as 5, 2.50 or \"2.50\"", key, focus.MaxScale)
+	if value.Kind != yaml.ScalarNode || !slices.Contains(amountTags, value.Tag) || !amountPattern.MatchString(value.Value) {
+		return decimal.Decimal{}, refused
 	}
-	if value.Kind != yaml.ScalarNode || value.Tag != "!!str" || !amountPattern.MatchString(value.Value) {
-		return decimal.Decimal{}, fmt.Errorf("policy: policy.%s must be a whole number or a quoted decimal of at most %d fractional digits, such as 5 or \"5.00\"", key, focus.MaxScale)
+	amount, err := decimal.Parse(value.Value)
+	if err != nil {
+		return decimal.Decimal{}, refused
 	}
-	return decimal.Parse(value.Value)
+	return amount, nil
 }
 
 // parseModels reads policy.models: a list of one or more distinct entries.

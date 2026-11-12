@@ -468,9 +468,9 @@ func TestNoRuleConcludesNeutral(t *testing.T) {
 
 func TestSettingsRefuseWhatTheSchemaRefuses(t *testing.T) {
 	for _, body := range []string{
-		"policy:\n  run_budget_usd: 5.0\n",
+		"policy:\n  run_budget_usd: 0x10\n",
 		"policy:\n  run_budget_usd: -5\n",
-		"policy:\n  run_budget_usd: 0.1\n",
+		"policy:\n  run_budget_usd: 017\n",
 		"policy:\n  pr_budget_usd: 1e3\n",
 		"policy:\n  max_increase_percent: \"12%\"\n",
 		"policy:\n  models: []\n",

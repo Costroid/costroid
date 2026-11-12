@@ -306,9 +306,9 @@ func TestIntegerAmountsAccepted(t *testing.T) {
 			if problems, err := schema.Validate([]byte("policy:\n  " + key + ": 5\n")); err != nil || len(problems) != 0 {
 				t.Errorf("the schema refuses 5: %v, %v", problems, err)
 			}
-			for _, float := range []string{"5.0", "0.5", "1e3", "-5", ".inf"} {
-				if _, err := ParseSettings([]byte("policy:\n  " + key + ": " + float + "\n")); err == nil || !strings.Contains(err.Error(), "a whole number or a quoted decimal") {
-					t.Errorf("%s: %v", float, err)
+			for _, form := range []string{"1e3", "-5", ".inf", "0x10", "017"} {
+				if _, err := ParseSettings([]byte("policy:\n  " + key + ": " + form + "\n")); err == nil || !strings.Contains(err.Error(), "must be a plain decimal") {
+					t.Errorf("%s: %v", form, err)
 				}
 			}
 		})

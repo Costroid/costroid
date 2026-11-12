@@ -24,39 +24,45 @@
       "additionalProperties": false,
       "properties": {
         "run_budget_usd": {
-          "description": "The budget each run is held to, in USD, as a whole number or a quoted decimal. A run over it warns during the warn-only period and fails after it. Rows the agent's job wrote cannot show a run under it, so on that path the rule concludes neutral at best.",
-          "type": ["string", "integer"],
+          "description": "The budget each run is held to, in USD, as a plain decimal such as 5 or 2.50, quoted or not. A run over it warns during the warn-only period and fails after it. Rows the agent's job wrote cannot show a run under it, so on that path the rule concludes neutral at best.",
+          "type": ["string", "number"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "maxLength": 64,
           "minimum": 0
         },
         "max_run_cost_usd": {
-          "description": "A ceiling on one run's cost at list, in USD, as a whole number or a quoted decimal. It is held the same way as the budget.",
-          "type": ["string", "integer"],
+          "description": "A ceiling on one run's cost at list, in USD, as a plain decimal such as 5 or 2.50, quoted or not. It is held the same way as the budget.",
+          "type": ["string", "number"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "maxLength": 64,
           "minimum": 0
         },
         "max_increase_usd": {
-          "description": "How far a run may cost more than the median of this agent's earlier runs, in USD, as a whole number or a quoted decimal. The rule needs 10 or more earlier runs, and until a baseline reaches the check it does not run.",
-          "type": ["string", "integer"],
+          "description": "How far a run may cost more than the median of this agent's earlier runs, in USD, as a plain decimal such as 5 or 2.50, quoted or not. The rule needs 10 or more earlier runs, and until a baseline reaches the check it does not run.",
+          "type": ["string", "number"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "maxLength": 64,
           "minimum": 0
         },
         "max_increase_percent": {
-          "description": "How far a run may cost more than the median of this agent's earlier runs, in percent, as a whole number or a quoted decimal. The rule needs 10 or more earlier runs, and until a baseline reaches the check it does not run.",
-          "type": ["string", "integer"],
+          "description": "How far a run may cost more than the median of this agent's earlier runs, in percent, as a plain decimal such as 5 or 2.50, quoted or not. The rule needs 10 or more earlier runs, and until a baseline reaches the check it does not run.",
+          "type": ["string", "number"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "maxLength": 64,
           "minimum": 0
         },
         "pr_budget_usd": {
-          "description": "The budget a pull request's runs are held to together, in USD, as a whole number or a quoted decimal. The report adds this run to the total of the pull request's earlier runs, read from their costroid check runs. Where that total cannot be read, or may count one report twice, the rule concludes unproven.",
-          "type": ["string", "integer"],
+          "description": "The budget a pull request's runs are held to together, in USD, as a plain decimal such as 5 or 2.50, quoted or not. The report adds this run to the total of the pull request's earlier runs, read from their costroid check runs. Where that total cannot be read, or may count one report twice, the rule concludes unproven.",
+          "type": ["string", "number"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "maxLength": 64,
           "minimum": 0
         },
         "monthly_budget_usd": {
-          "description": "The budget the repository's runs are held to over a calendar month, in USD, as a whole number or a quoted decimal. The month to date comes only from a ledger, and none reaches the check yet, so the rule does not run.",
-          "type": ["string", "integer"],
+          "description": "The budget the repository's runs are held to over a calendar month, in USD, as a plain decimal such as 5 or 2.50, quoted or not. The month to date comes only from a ledger, and none reaches the check yet, so the rule does not run.",
+          "type": ["string", "number"],
           "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$",
+          "maxLength": 64,
           "minimum": 0
         },
         "models": {

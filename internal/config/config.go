@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -55,16 +56,21 @@ func Validate(data []byte) ([]Problem, error) {
 	if err := dropNullSections(document); err != nil {
 		return nil, err
 	}
-	instance, err := jsonValue(document)
-	if err != nil {
-		return []Problem{{Message: err.Error()}}, nil
-	}
-	floats, err := floatAmounts(&root)
+	forms, err := amountForms(&root)
 	if err != nil {
 		return nil, err
 	}
-	floats = append(floats, floatDays(&root)...)
-	return withFloats(problemsOf(schema.Validate(instance)), floats), nil
+	forms = append(forms, floatDays(&root)...)
+	instance, err := jsonValue(document)
+	switch {
+	case err != nil && len(forms) > 0:
+		// An amount such as .inf has no JSON form, and its own sentence says
+		// what the file holds.
+		return withForms(nil, forms), nil
+	case err != nil:
+		return []Problem{{Message: err.Error()}}, nil
+	}
+	return withForms(problemsOf(schema.Validate(instance)), forms), nil
 }
 
 // dropNullSections removes each section the file names with no value, such as
@@ -133,14 +139,18 @@ func floatDays(root *yaml.Node) []Problem {
 }
 
 // amountSentence is the policy's own sentence for an amount it cannot read,
-// so validate refuses a float in the same words.
-const amountSentence = `policy.%s must be a whole number or a quoted decimal of at most %d fractional digits, such as 5 or "5.00"`
+// so validate names it in the same words.
+const amountSentence = `policy.%s must be a plain decimal of at most %d fractional digits, such as 5, 2.50 or "2.50"`
 
-// floatAmounts finds each policy amount whose value YAML reads as a float,
-// such as 5.0 or 1e3, which the policy refuses. JSON has no float type of its
-// own, so the schema reads 5.0 as the integer 5, and only the YAML node still
-// says how the value was written.
-func floatAmounts(root *yaml.Node) ([]Problem, error) {
+// amountTags are the YAML tags a plain decimal resolves to: 5 is an integer,
+// 2.50 a float and "2.50" a string.
+var amountTags = []string{"!!int", "!!float", "!!str"}
+
+// amountForms finds each policy amount the policy cannot read from its text,
+// such as 1e3, 0x10, 017 or 1_000. The schema reads the value a JSON parser
+// would make of it, 1000, 16, 15 or 1000, and only the YAML node still says how
+// it was written. The text is held to the schema's own pattern and length.
+func amountForms(root *yaml.Node) ([]Problem, error) {
 	mapping := valueOf(root.Content[0], "policy")
 	if mapping == nil || mapping.Kind != yaml.MappingNode {
 		return nil, nil
@@ -152,21 +162,33 @@ func floatAmounts(root *yaml.Node) ([]Problem, error) {
 	var problems []Problem
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		key, value := mapping.Content[i].Value, mapping.Content[i+1]
-		if amounts[key] && value.Kind == yaml.ScalarNode && value.Tag == "!!float" {
+		form, ok := amounts[key]
+		if !ok || value.Kind != yaml.ScalarNode || value.Tag == "!!null" {
+			continue
+		}
+		if !slices.Contains(amountTags, value.Tag) || len(value.Value) > form.maxLength || !form.pattern.MatchString(value.Value) {
 			problems = append(problems, Problem{Path: "/policy/" + key, Message: fmt.Sprintf(amountSentence, key, focus.MaxScale)})
 		}
 	}
 	return problems, nil
 }
 
-// amountKeys are the policy keys the schema states as an amount: a quoted
-// decimal or a whole number.
-func amountKeys() (map[string]bool, error) {
+// amountForm is how the schema states an amount's text.
+type amountForm struct {
+	pattern   *regexp.Regexp
+	maxLength int
+}
+
+// amountKeys are the policy keys the schema states as an amount, a decimal
+// quoted or not, each with the pattern and length its text must meet.
+func amountKeys() (map[string]amountForm, error) {
 	var document struct {
 		Properties struct {
 			Policy struct {
 				Properties map[string]struct {
-					Type any `json:"type"`
+					Type      any    `json:"type"`
+					Pattern   string `json:"pattern"`
+					MaxLength int    `json:"maxLength"`
 				} `json:"properties"`
 			} `json:"policy"`
 		} `json:"properties"`
@@ -174,11 +196,17 @@ func amountKeys() (map[string]bool, error) {
 	if err := json.Unmarshal(costroid.ConfigSchema, &document); err != nil {
 		return nil, fmt.Errorf("config: read the schema: %w", err)
 	}
-	keys := map[string]bool{}
+	keys := map[string]amountForm{}
 	for key, property := range document.Properties.Policy.Properties {
-		if types, ok := property.Type.([]any); ok && slices.Contains(types, any("integer")) && slices.Contains(types, any("string")) {
-			keys[key] = true
+		types, ok := property.Type.([]any)
+		if !ok || !slices.Contains(types, any("number")) || !slices.Contains(types, any("string")) {
+			continue
 		}
+		pattern, err := regexp.Compile(property.Pattern)
+		if err != nil || property.Pattern == "" || property.MaxLength == 0 {
+			return nil, fmt.Errorf("config: the schema states policy.%s with no usable pattern and length", key)
+		}
+		keys[key] = amountForm{pattern: pattern, maxLength: property.MaxLength}
 	}
 	return keys, nil
 }
@@ -195,13 +223,13 @@ func valueOf(mapping *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// withFloats replaces what the schema says about a float amount with the
-// policy's sentence.
-func withFloats(problems, floats []Problem) []Problem {
-	for _, float := range floats {
-		problems = slices.DeleteFunc(problems, func(problem Problem) bool { return problem.Path == float.Path })
+// withForms replaces what the schema says about a value written in a form
+// its rule cannot read with that rule's sentence.
+func withForms(problems, forms []Problem) []Problem {
+	for _, form := range forms {
+		problems = slices.DeleteFunc(problems, func(problem Problem) bool { return problem.Path == form.Path })
 	}
-	problems = append(problems, floats...)
+	problems = append(problems, forms...)
 	slices.SortFunc(problems, func(a, b Problem) int { return strings.Compare(a.String(), b.String()) })
 	return problems
 }

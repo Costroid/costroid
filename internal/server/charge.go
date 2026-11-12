@@ -69,9 +69,12 @@ type charge struct {
 	credential  string
 	account     string
 	context     int64
-	class       focus.TokenClass
-	tokens      int64
-	start, end  time.Time
+	// contextUnstated means the row's SkuPriceId states no context tier, so
+	// context is the highest any input could reach.
+	contextUnstated bool
+	class           focus.TokenClass
+	tokens          int64
+	start, end      time.Time
 
 	session      string
 	agent        string
@@ -292,8 +295,15 @@ func (s *Server) applyPrice(priced *focus.Charge, c *charge) error {
 	if price.ResidencyMultiplier != nil {
 		priced.Notes = append(priced.Notes, focus.ResidencyNote(*price.ResidencyMultiplier, c.region))
 	}
+	if c.contextUnstated && price.ContextTierMin != nil {
+		priced.Notes = append(priced.Notes, fmt.Sprintf(noteNoContextTier, *price.ContextTierMin))
+	}
 	return nil
 }
+
+// noteNoContextTier says a row whose SkuPriceId states no context tier took
+// the highest one its model has.
+const noteNoContextTier = "its SkuPriceId states no context tier, so the prices above %d input tokens, the highest tier, apply, which may read high"
 
 func tagsOf(c *charge, joined joinResult) map[string]string {
 	tags := map[string]string{

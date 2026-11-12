@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
@@ -64,7 +65,7 @@ func columnSet(names ...string) map[string]bool {
 var (
 	rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	skuPattern   = regexp.MustCompile(`^([a-z0-9-]+)/(.+)/([a-z0-9_]+)$`)
-	overTier     = regexp.MustCompile(`^over-([0-9]{1,12})$`)
+	contextTier  = regexp.MustCompile(`^(?:all|to-[0-9]{1,12}|over-([0-9]{1,12})(?:-to-[0-9]{1,12})?)$`)
 
 	sourcePattern = regexp.MustCompile(`^[a-z0-9]+([_-][a-z0-9]+)*$`)
 
@@ -210,7 +211,8 @@ func (f rowFields) matching(column string, pattern *regexp.Regexp) (string, erro
 // readSku takes provider, model and class from the row's SkuId, and service
 // tier and context tier from its SkuPriceId. These are usage facts on a par
 // with the token count, and reconciliation checks them the same way. The price
-// the id names is never read, and an id for another model or class is ignored.
+// the id names is never read. An id for another model or class, or of another
+// shape, states no context tier.
 func (f rowFields) readSku(c *charge) error {
 	sku, err := f.text(columnSku)
 	if err != nil {
@@ -235,25 +237,34 @@ func (f rowFields) readSku(c *charge) error {
 	if err != nil {
 		return err
 	}
-	c.serviceTier, c.context = tierOf(priceID, c)
+	var stated bool
+	c.serviceTier, c.context, stated = tierOf(priceID, c)
+	c.contextUnstated = !stated
 	return nil
 }
 
-// tierOf reads provider:model:region:tier:context:class. Anything else prices
-// at the standard tier and the lowest context tier.
-func tierOf(priceID string, c *charge) (string, int64) {
+// tierOf reads provider:model:region:tier:context:class, where context is all,
+// to-<tokens>, over-<tokens> or over-<tokens>-to-<tokens>. An id of another
+// shape, or one naming another model or class, states no context tier: the
+// row prices at the standard tier and the highest context tier, as an entry
+// whose tier is unknown does, and stated is false.
+func tierOf(priceID string, c *charge) (tier string, context int64, stated bool) {
 	parts := strings.Split(priceID, ":")
 	if len(parts) != 6 || parts[0] != c.provider || parts[1] != c.model || parts[5] != string(c.class) {
-		return catalog.TierStandard, 0
+		return catalog.TierStandard, math.MaxInt64, false
 	}
-	var context int64
-	if over := overTier.FindStringSubmatch(parts[4]); over != nil {
-		threshold, err := strconv.ParseInt(over[1], 10, 64)
-		if err == nil {
-			context = threshold + 1
-		}
+	match := contextTier.FindStringSubmatch(parts[4])
+	if match == nil {
+		return parts[3], math.MaxInt64, false
 	}
-	return parts[3], context
+	if match[1] == "" {
+		return parts[3], 0, true
+	}
+	threshold, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil {
+		return parts[3], math.MaxInt64, false
+	}
+	return parts[3], threshold + 1, true
 }
 
 // readRouting takes what row versions 0.2 and 0.3 state outright: the region,

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/policy"
 )
@@ -108,8 +110,9 @@ func TestSchemaAndThePolicyAgree(t *testing.T) {
 		{"policy:\n  max_increase_usd: \"0.5\"\n  max_increase_percent: 25\n", true},
 		{"policy:\n  models: [claude-sonnet-5-5, \"gpt-5*\"]\n", true},
 		{"policy:\n  run_budget_usd: -1\n", false},
-		{"policy:\n  run_budget_usd: 0.5\n", false},
-		{"policy:\n  run_budget_usd: 5.0\n", false},
+		{"policy:\n  run_budget_usd: 0.5\n", true},
+		{"policy:\n  run_budget_usd: 5.0\n", true},
+		{"policy:\n  run_budget_usd: 017\n", false},
 		{"policy:\n  pr_budget_usd: 1e23\n", false},
 		{"policy:\n  models: []\n", false},
 		{"policy:\n  models: [codex, codex]\n", false},
@@ -133,18 +136,19 @@ func TestSchemaAndThePolicyAgree(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesFloatAmount holds validate to the policy's reading of a
-// YAML float: 5.0 and 1e3 are whole in JSON, so the schema alone takes them,
-// and the policy refuses them. Validate names each in the policy's sentence,
-// in place of what the schema says, for every amount key the policy reads.
-func TestValidateRefusesFloatAmount(t *testing.T) {
+// TestValidateRefusesANonDecimalAmount holds validate to the policy's reading
+// of an amount's text: 1e3, 0x10, 017 and 1_000 are whole in JSON, so the
+// schema alone takes them, and the policy refuses them. Validate names each in
+// the policy's sentence, in place of what the schema says, for every amount
+// key the policy reads.
+func TestValidateRefusesANonDecimalAmount(t *testing.T) {
 	for _, tc := range []struct{ key, value string }{
-		{"run_budget_usd", "5.0"},
-		{"max_run_cost_usd", "0.5"},
-		{"pr_budget_usd", "1e3"},
-		{"monthly_budget_usd", "900.00"},
+		{"run_budget_usd", "1e3"},
+		{"max_run_cost_usd", "0x10"},
+		{"pr_budget_usd", "017"},
+		{"monthly_budget_usd", "1_000"},
 		{"max_increase_usd", "1."},
-		{"max_increase_percent", "10.0"},
+		{"max_increase_percent", "+10"},
 	} {
 		body := "policy:\n  " + tc.key + ": " + tc.value + "\n"
 		problems, err := Validate([]byte(body))
@@ -165,16 +169,17 @@ func TestValidateRefusesFloatAmount(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range policy.Keys() {
-		if _, refused := policy.ParseSettings([]byte("policy:\n  " + key + ": 5.0\n")); amounts[key] != (refused != nil && strings.Contains(refused.Error(), "must be a whole number")) {
-			t.Errorf("%s: the schema states it as an amount %t, the policy refuses 5.0 as one: %v", key, amounts[key], refused)
+		_, isAmount := amounts[key]
+		if _, refused := policy.ParseSettings([]byte("policy:\n  " + key + ": 1e3\n")); isAmount != (refused != nil && strings.Contains(refused.Error(), "must be a plain decimal")) {
+			t.Errorf("%s: the schema states it as an amount %t, the policy refuses 1e3 as one: %v", key, isAmount, refused)
 		}
 	}
-	problems, err := Validate([]byte("policy:\n  run_budget_usd: 5.0\n  max_run_cost_usd: 1e3\n  pr_budget_usd: 40\n"))
+	problems, err := Validate([]byte("policy:\n  run_budget_usd: 017\n  max_run_cost_usd: 1e3\n  pr_budget_usd: 2.50\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(problems) != 2 || !strings.HasPrefix(problems[0].Message, "policy.max_run_cost_usd must be a whole number") || !strings.HasPrefix(problems[1].Message, "policy.run_budget_usd must be a whole number") {
-		t.Errorf("two floats beside an integer: %v", problems)
+	if len(problems) != 2 || !strings.HasPrefix(problems[0].Message, "policy.max_run_cost_usd must be a plain decimal") || !strings.HasPrefix(problems[1].Message, "policy.run_budget_usd must be a plain decimal") {
+		t.Errorf("two refused forms beside a decimal: %v", problems)
 	}
 }
 
@@ -292,5 +297,57 @@ func TestNullSectionReadsAsDefaults(t *testing.T) {
 	assertDefaults(t, "policy: &none\napproval: *none\ncomment: *none\n")
 	if problems, err := Validate([]byte("agents:\n")); err != nil || len(problems) == 0 {
 		t.Errorf("validate reads agents with no value, a key that is a list and no section: %v, %v", problems, err)
+	}
+}
+
+// TestAmountFormsAgreeAcrossReaderValidatorAndSchema holds the policy's
+// reader, costroid validate and the published schema to one table of amount
+// literals. The reader and validate agree on every one. The schema reads the
+// literal as a JSON document would carry it: JSON itself has no hex, octal,
+// leading zero, underscore, leading +, infinity or trailing point, and the
+// schema refuses a sign and a string that is not a plain decimal. A JSON
+// number keeps only its value, so the schema takes 1e3 as 1000, -0 as 0 and
+// thirteen fractional digits as a number; validate refuses those by their
+// text, and the schema never refuses an amount the reader takes.
+func TestAmountFormsAgreeAcrossReaderValidatorAndSchema(t *testing.T) {
+	long := "1" + strings.Repeat("0", 64)
+	cases := []struct {
+		literal   string
+		read      bool
+		valueOnly bool
+	}{
+		{"5", true, false}, {"0", true, false}, {"0.5", true, false}, {"2.50", true, false}, {"5.0", true, false},
+		{"0.000000000001", true, false}, {`"2.50"`, true, false}, {`"0"`, true, false}, {long[:64], true, false},
+		{"0x10", false, false}, {"0o17", false, false}, {"017", false, false}, {"00", false, false},
+		{"1_000", false, false}, {"+5", false, false}, {"-5", false, false}, {".inf", false, false},
+		{".nan", false, false}, {"1.", false, false}, {".5", false, false}, {`"017"`, false, false},
+		{`"1e3"`, false, false}, {`"0x10"`, false, false}, {`"-1"`, false, false}, {`"` + long + `"`, false, false},
+		{"1e3", false, true}, {"1E3", false, true}, {"1e-3", false, true}, {"-0", false, true},
+		{"0.1234567890123", false, true}, {long, false, true},
+	}
+	schema, err := compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		body := "policy:\n  run_budget_usd: " + tc.literal + "\n"
+		_, readErr := policy.ParseSettings([]byte(body))
+		problems, err := Validate([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (readErr == nil) != tc.read || (len(problems) == 0) != tc.read {
+			t.Errorf("%s: the reader %v, validate %v, want read %t", tc.literal, readErr, problems, tc.read)
+		}
+		if !tc.read && (len(problems) != 1 || problems[0].Message != strings.TrimPrefix(readErr.Error(), "policy: ")) {
+			t.Errorf("%s: validate says %v, the reader %v", tc.literal, problems, readErr)
+		}
+		schemaTakes := false
+		if instance, err := jsonschema.UnmarshalJSON(strings.NewReader(`{"policy": {"run_budget_usd": ` + tc.literal + `}}`)); err == nil {
+			schemaTakes = schema.Validate(instance) == nil
+		}
+		if want := tc.read || tc.valueOnly; schemaTakes != want {
+			t.Errorf("%s: the schema takes it %t, want %t", tc.literal, schemaTakes, want)
+		}
 	}
 }

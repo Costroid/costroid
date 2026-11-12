@@ -1368,3 +1368,39 @@ func TestTheViewTotalsPerCurrencyAndBasisAndNeverAcrossThem(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// TestARowWithNoContextTierPricesAtTheHighestTier holds that a SkuPriceId
+// stating no context tier, by its shape or by naming another model, prices
+// the row at the highest tier its model has, Claude Haiku 5.5 above 100000
+// input tokens, and that the row says it may read high. Grok 4.7's highest
+// tier on the Cursor sheet ends at 500000 tokens, so its fallback prices
+// such a row. A stated tier, including one bounded on both sides, prices as
+// stated.
+func TestARowWithNoContextTierPricesAtTheHighestTier(t *testing.T) {
+	const note = "its SkuPriceId states no context tier, so the prices above 100000 input tokens, the highest tier, apply, which may read high"
+	for _, tc := range []struct {
+		provider, model, priceID, price string
+		noted                           bool
+	}{
+		{"anthropic", "claude-haiku-5-5", "", "2.5", true},
+		{"anthropic", "claude-haiku-5-5", "not-an-id", "2.5", true},
+		{"anthropic", "claude-haiku-5-5", "anthropic:claude-haiku-5-5:global:standard:above-100000:output", "2.5", true},
+		{"anthropic", "claude-haiku-5-5", "anthropic:claude-opus-5-5:global:standard:to-100000:output", "2.5", true},
+		{"anthropic", "claude-haiku-5-5", "anthropic:claude-haiku-5-5:global:standard:to-100000:output", "0.5", false},
+		{"anthropic", "claude-haiku-5-5", "anthropic:claude-haiku-5-5:global:standard:over-100000:output", "2.5", false},
+		{"cursor", "grok-4.7", "cursor:grok-4.7:global:standard:over-256000-to-500000:output", "12", false},
+		{"cursor", "grok-4.7", "cursor:grok-4.7:global:standard:to-256000:output", "6", false},
+		{"cursor", "grok-4.7", "not-an-id", "150", false},
+	} {
+		w, ledger := memoryWorld(t)
+		r := row("req-1", focus.Output, 100)
+		r["SkuId"] = tc.provider + "/" + tc.model + "/output"
+		r["SkuPriceId"] = tc.priceID
+		tags(r)[focus.TagModel] = tc.model
+		w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+		stored := ledger.only(t, tenantA).Row
+		if stored.ListUnitPrice.String() != tc.price || strings.Contains(stored.ChargeDescription, note) != tc.noted {
+			t.Errorf("%q: %s at %s, %q", tc.priceID, stored.SkuPriceID, stored.ListUnitPrice, stored.ChargeDescription)
+		}
+	}
+}

@@ -9,6 +9,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - A rows entry coarser than one request, whose context tier nothing settles, is priced at the highest tier its input could reach, and its rows say the figure may read high. It was priced at the lowest tier with a note that it may read low. Such figures move up. A Claude Haiku 5.5 run of 143642 input tokens over 8 requests, with no `costUSD` from Claude Code, reads USD 0.044186675 where it read USD 0.008837335. A Codex turn of 272001 input tokens and 1000 output tokens on `gpt-5.6-sol` takes the prices above 272000 tokens. An entry that states no whole input is bounded by its own input tokens. Claude Code's own figure still picks the lower tier when it matches it.
 - A model or tier a sheet does not name, priced in a region with a data residency multiplier, takes the multiplier on the fallback price. Such figures move up: an unnamed model's output reads USD 660 per million tokens on OpenAI `regional`, where it read USD 600, and USD 82.5 on Anthropic `us`, where it read USD 75, so the fallback stays at or above every regional price. A model the sheet prices and a multiplier leaves out keeps its global price.
 - A price a residency multiplier raised names its region in `SkuPriceId`, in place of `global`, as in `anthropic:claude-opus-5-5:us:fast:all:output`. The id of a global row stood beside a multiplied price before. Fallback ids keep their shape.
+- An amount in `costroid.yml` is read only when it is written as a plain decimal. Hex (`0x10`), octal (`0o17`, and a leading zero such as `017`), underscores (`1_000`) and a leading `+` were read as whole numbers, and are now refused, in the policy, in `costroid validate` and in the schema where JSON can tell. A budget of `017` read as USD 15. A refused amount leaves the policy unread, as before.
 
 ### What you can now do
 
@@ -17,6 +18,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Start with two commands that need no key and spend nothing: the README leads with `costroid demo` and `costroid lint`, then names the two recipes to paste with no install. [`docs/README.md`](docs/README.md) lists every page by task.
 - Trace a price to its source: [`docs/catalog.md`](docs/catalog.md) says where the catalog is published, how each price names its page and the day it was read, when a figure takes the fallback tier, and which catalog a binary carries.
 - Run Copilot CLI on a Gemini model: a request Copilot serves on `gemini-*` is priced at Google's sheet, in `costroid run` and in gh-aw's usage files. Google's sheet prices no cache write, so a cache write on a Gemini model counts as uncached input, and the row says so.
+- Write an amount unquoted: `run_budget_usd: 2.50` is read as the decimal 2.50, from its text, never through a float. It was refused, which left every rule unread and the check `neutral`. The schema takes a number for each amount.
 
 ### Fixes
 
@@ -34,6 +36,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - `costroid serve` reads a GenAI span whose cache counts pass its `gen_ai.usage.input_tokens` as one from a sender that leaves the cache out of its input, and notes the reading on each of the request's rows. It refused such a span before.
 - `costroid serve` refuses an `x_CostroidOvershootBound` or a stated spend longer than 64 characters before reading it as a number. A long run of trailing zeros took seconds of CPU per value.
 - A decimal literal is at most 64 characters, and its trailing zeros are cut in time linear in its length. A figure read from a JSON number is refused when its plain form is longer than that.
+- `costroid serve` prices a row whose `SkuPriceId` states no context tier at the highest tier its input could reach, and the row says it may read high: the sheet's top tier, or its fallback when the top tier has an upper bound. It took the lowest tier. A tier bounded on both sides, such as `over-256000-to-500000` on the Cursor sheet, now prices as stated; it also took the lowest tier.
 
 ## 1.0.0-alpha.23 (2026-11-11)
 

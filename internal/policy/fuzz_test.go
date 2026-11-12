@@ -43,6 +43,7 @@ var fuzzConfigs = []string{
 	"policy:\n  run_budget_usd: \"5\"\n  max_run_cost_usd: 4\n  max_increase_usd: \"5\"\n  max_increase_percent: 500\n  pr_budget_usd: 50\n  models: [\"claude-*\"]\n  enforce: true\n",
 	"policy:\n  run_budget_usd: \"0.000000000001\"\n  monthly_budget_usd: 18446744073709551615\n",
 	"policy:\n  run_budget_usd: 5.0\n",
+	"policy:\n  run_budget_usd: 2.50\n  max_run_cost_usd: 017\n  pr_budget_usd: 1_000\n",
 	"policy:\n  models: [codex, codex]\n",
 	"comment:\n  show_cost: false\npolicy:\n  enforce: false\napproval:\n  allow_author: true\n  expires_days: 90\n",
 	"policy: &a [*a]\n",

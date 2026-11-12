@@ -20,12 +20,12 @@ comment:
 | `policy.models` | none | The models a run may use: exact model ids, or prefixes that end in `*`. Unset, the rule does not run |
 | `policy.enforce` | `false` | `true` ends the warn-only period now, so a run over a limit fails the check |
 
-An amount is a whole number, or a quoted decimal of at most 12 fractional digits. A quoted amount stays the decimal it reads as. An unquoted `0.1` is a YAML float, whose text and value can differ, so it is a problem. [`docs/policy.md`](policy.md) says what each rule concludes, which rules need figures the check does not read yet, and when the warn-only period ends.
+An amount is a plain decimal of at most 12 fractional digits, quoted or not: `5`, `2.50` and `"2.50"` read the same. Costroid reads the amount's text, never a float made from it, so `0.1` stays 0.1. Any other way YAML writes a number is a problem: an exponent such as `1e3`, `.inf`, `.nan`, hex such as `0x10`, octal such as `0o17` or `017`, an underscore such as `1_000`, and a sign. A leading zero is octal in YAML, so `017` would read as 15. [`docs/policy.md`](policy.md) says what each rule concludes, which rules need figures the check does not read yet, and when the warn-only period ends.
 
 ```yaml
 policy:
   run_budget_usd: 5
-  max_run_cost_usd: "2.50"
+  max_run_cost_usd: 2.50
   pr_budget_usd: 20
   max_increase_percent: 50
   models:
@@ -37,7 +37,7 @@ policy:
 
 A file that is empty, `~`, `null` or only `---` reads as no file. A section written with no value, such as `approval:` alone or `policy: ~`, reads as that section's defaults. `validate`, the report, `costroid policy` and `costroid approve` read both the same way.
 
-`approval.expires_days` is a whole number of days from 1 to 90. An unquoted `7.0` is a YAML float, so it is a problem, as it is for an amount.
+`approval.expires_days` is a whole number of days from 1 to 90. An unquoted `7.0` is a YAML float, so it is a problem.
 
 The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
 
