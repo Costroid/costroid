@@ -37,7 +37,7 @@ Agents: `copilot`. Models: `claude-haiku-5-5`. 13 rows, catalog `0.3.0`, prices 
 
 </details>
 
-[Your account on costroid.com](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>

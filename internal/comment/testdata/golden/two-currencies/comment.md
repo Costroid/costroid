@@ -41,7 +41,7 @@ Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`, prices read 2026-11
 
 </details>
 
-[Your account on costroid.com](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>

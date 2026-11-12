@@ -7,7 +7,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none.
 
-[Your account on costroid.com](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>

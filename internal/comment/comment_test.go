@@ -706,7 +706,7 @@ func TestFirstLineWithheldWhenShowCostFalse(t *testing.T) {
 func TestAccountLinkCarriesInstallation(t *testing.T) {
 	for _, input := range []Input{realInput(t), docsInput(t)} {
 		body := commentOf(t, input)
-		if !strings.Contains(body, "[Your account on costroid.com](https://app.costroid.com/?installation=github%3A"+exampleInstallation+")") {
+		if !strings.Contains(body, "[Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A"+exampleInstallation+")") {
 			t.Errorf("the account link does not carry the installation:\n%s", body)
 		}
 	}
@@ -739,7 +739,7 @@ func TestGitLabLinkNamesTheNamespaceKind(t *testing.T) {
 }
 
 func TestAccountLinkPointsAtTheAccountPageWithoutAnInstallation(t *testing.T) {
-	line := "[Your account on costroid.com](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)\n"
+	line := "[Costroid Platform (not open yet)](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)\n"
 	unknownHost := realInput(t)
 	unknownHost.AccountHost = "bitbucket"
 	none := realInput(t)

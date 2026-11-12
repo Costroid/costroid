@@ -47,7 +47,7 @@ GitHub lists at most 250 commits of a pull request, so these totals can leave ou
 
 1 check run is left out of these totals: this release cannot read or add up its result object.
 
-[Your account on costroid.com](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>

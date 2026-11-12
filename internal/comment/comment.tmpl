@@ -148,7 +148,7 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{template "facts" .}}
 
 {{range .Lifetime}}{{.}}{{"\n\n"}}{{end -}}
-[Your account on costroid.com]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
+[Costroid Platform (not open yet)]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
 
 <details>
 <summary>{{if .CheckRunID}}Machine block, copied from check run {{.CheckRunID}}{{else if .CheckRuns}}Machine block, the check run was not posted{{else}}Machine block{{end}}</summary>

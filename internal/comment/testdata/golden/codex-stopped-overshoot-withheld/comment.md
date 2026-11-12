@@ -36,7 +36,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
 
 </details>
 
-[Your account on costroid.com](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, the check run was not posted</summary>

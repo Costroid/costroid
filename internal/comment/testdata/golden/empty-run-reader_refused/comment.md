@@ -7,7 +7,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 This report shows no figures. Reason `reader_refused`: the reader refused the agent's stream, so the run wrote no rows. The reader's first error: `claude-code: the execution file ends inside its array`.
 
-[Your account on costroid.com](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>

@@ -39,7 +39,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.1`, pri
 
 </details>
 
-[Your account on costroid.com](https://app.costroid.com/#/pulls?repo=github.com/example/widgets&pr=7) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
+[Costroid Platform (not open yet)](https://app.costroid.com/#/pulls?repo=github.com/example/widgets&pr=7) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>
 <summary>Machine block, copied from check run 16873409921</summary>
