@@ -2,7 +2,11 @@ package main
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -73,7 +77,7 @@ func TestResultCommandSaysWhenNoCheckIsOnTheHead(t *testing.T) {
 	}
 }
 
-func TestResultCommandRefusesWithoutATokenOrAPullRequest(t *testing.T) {
+func TestResultCommandRefusesWithoutAPullRequest(t *testing.T) {
 	reportEnvironment(t, pullRequestEvent())
 	for name, args := range map[string][]string{
 		"no pull request": {"result"},
@@ -83,8 +87,92 @@ func TestResultCommandRefusesWithoutATokenOrAPullRequest(t *testing.T) {
 			t.Errorf("%s: exit %d, stderr %q", name, code, stderr)
 		}
 	}
+}
+
+// TestResultNamesTheFixForAMissingToken runs result with no GITHUB_TOKEN and
+// a gh on PATH that leaves a mark when it runs. result exits 125 with the
+// export line that sets a token, gh auth token as one way to get it, and
+// never runs gh.
+func TestResultNamesTheFixForAMissingToken(t *testing.T) {
+	reportEnvironment(t, pullRequestEvent())
 	t.Setenv("GITHUB_TOKEN", "")
-	if code, _, stderr := execute(t, "result", "--pr", "7"); code != exitFailure || stderr != "costroid: GITHUB_TOKEN is not set\n" {
-		t.Errorf("no token: exit %d, stderr %q", code, stderr)
+	bin, mark := t.TempDir(), filepath.Join(t.TempDir(), "gh-ran")
+	writeFile(t, filepath.Join(bin, "gh"), "#!/bin/sh\ntouch "+mark+"\necho token\n")
+	if err := os.Chmod(filepath.Join(bin, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	code, stdout, stderr := execute(t, "result", "--pr", "7")
+	want := `costroid: GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in` + "\n"
+	if code != exitFailure || stdout != "" || stderr != want {
+		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
+	}
+	if _, err := os.Stat(mark); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("result ran gh for a token")
+	}
+}
+
+// repositoryWithRemotes makes a repository with the remotes given, by name
+// and address, and makes it the working directory.
+func repositoryWithRemotes(t *testing.T, remotes ...[2]string) {
+	t.Helper()
+	root := gitRepository(t)
+	for _, remote := range remotes {
+		runGit(t, root, "remote", "add", remote[0], remote[1])
+	}
+	t.Chdir(root)
+}
+
+// TestResultReadsTheRepositoryFromTheRemote runs result with no --repo and
+// no GITHUB_REPOSITORY, in a repository whose remote names one on GitHub.
+// result asks GitHub for that repository's pull request, prints its newest
+// object, and says on stderr which repository it read and from which remote.
+// A remote that names no GitHub repository, or none at all, is refused with
+// the flag and the variable that name one.
+func TestResultReadsTheRepositoryFromTheRemote(t *testing.T) {
+	_, newest := threeReports(t)
+	t.Setenv("GITHUB_REPOSITORY", "")
+	for _, test := range []struct {
+		label, remote, address, read string
+	}{
+		{"ssh", "origin", "git@github.com:acme/gadgets.git", "acme/gadgets"},
+		{"https, the only remote", "upstream", "https://github.com/acme/tools", "acme/tools"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			stub.Head = headCommit
+			stub.Checks = []scmtest.Check{newest}
+			t.Setenv("GITHUB_REPOSITORY", "")
+			repositoryWithRemotes(t, [2]string{test.remote, test.address})
+			code, stdout, stderr := execute(t, "result", "--pr", "7", "--json")
+			if code != 0 || stdout != checkBlock(t, newest.Text)+"\n" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+			}
+			if want := "costroid: result reads " + test.read + ", the repository the remote " + test.remote + " names\n"; stderr != want {
+				t.Errorf("stderr %q, want %q", stderr, want)
+			}
+			for _, request := range stub.Requests {
+				if !strings.HasPrefix(request, "GET /repos/"+test.read+"/") {
+					t.Errorf("result asked %s", request)
+				}
+			}
+		})
+	}
+	for _, refusal := range []struct {
+		label   string
+		remotes [][2]string
+		want    string
+	}{
+		{"gitlab", [][2]string{{"origin", "git@gitlab.com:acme/gadgets.git"}}, "the remote origin names gitlab.com, and result reads GitHub alone"},
+		{"none", nil, "the repository has no remote"},
+	} {
+		t.Run(refusal.label, func(t *testing.T) {
+			repositoryWithRemotes(t, refusal.remotes...)
+			code, stdout, stderr := execute(t, "result", "--pr", "7")
+			want := "costroid: name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY: " + refusal.want + "\n"
+			if code != exitFailure || stdout != "" || stderr != want {
+				t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
+			}
+		})
 	}
 }

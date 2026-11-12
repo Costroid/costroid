@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/history"
@@ -24,8 +27,11 @@ amounts. --json prints the object whole, byte for byte as the check run
 carries it. docs/agents.md describes the object.
 
 result reads GitHub with GITHUB_TOKEN, and the repository from --repo, else
-GITHUB_REPOSITORY. GITHUB_API_URL names a GitHub Enterprise Server's API.
-GitLab takes no check, so result reads GitHub alone.
+GITHUB_REPOSITORY, else the GitHub repository the git remote origin names, or
+the only remote, which result says on stderr. It never asks gh for a token:
+export GITHUB_TOKEN="$(gh auth token)" sets one with gh signed in.
+GITHUB_API_URL names a GitHub Enterprise Server's API. GitLab takes no check,
+so result reads GitHub alone.
 
 Exit codes of result:
   0                 the object was printed
@@ -35,10 +41,48 @@ Exit codes of result:
 
 var errResultArguments = errors.New("result needs --pr with the pull request's number, and takes no argument")
 
-// resultTarget names the repository result reads, as owner/name. The token
-// is GITHUB_TOKEN's.
+// errNoToken names the fix for a missing GITHUB_TOKEN. result never asks gh
+// for a token itself.
+var errNoToken = errors.New(`GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in`)
+
+// resultTarget names the repository result reads, as owner/name. When it is
+// empty, the repository is the one the git remote names, and said names it
+// on that writer. The token is GITHUB_TOKEN's.
 type resultTarget struct {
 	repository string
+	said       io.Writer
+}
+
+// githubPath is an owner/name a remote's address ends with.
+var githubPath = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+// remoteRepository is the GitHub repository the remote of the working
+// directory's repository names, origin's or the only one's, with that
+// remote's name.
+func remoteRepository() (repository, remote string, err error) {
+	if remote, err = remoteName("."); err != nil {
+		return "", "", err
+	}
+	address, err := gitOutput(".", "remote", "get-url", remote)
+	if err != nil {
+		return "", "", fmt.Errorf("git could not read the remote %s: %w", remote, err)
+	}
+	address = strings.TrimSpace(address)
+	server := remoteServer(address)
+	if !strings.Contains(server, githubHost) {
+		return "", "", fmt.Errorf("the remote %s names %s, and result reads GitHub alone", remote, server)
+	}
+	path := address
+	if parsed, err := url.Parse(address); err == nil && parsed.Host != "" {
+		path = parsed.Path
+	} else if _, after, found := strings.Cut(address, ":"); found {
+		path = after
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	if !githubPath.MatchString(path) {
+		return "", "", fmt.Errorf("the remote %s names no OWNER/NAME on GitHub", remote)
+	}
+	return path, remote, nil
 }
 
 // pullHost is what result needs from GitHub: the pull request's head and the
@@ -66,15 +110,23 @@ func (r resultTarget) newest(ctx context.Context, number int) (history.Posted, e
 
 func (r resultTarget) host() (pullHost, error) {
 	token := os.Getenv("GITHUB_TOKEN")
-	switch {
-	case token == "":
-		return nil, errors.New("GITHUB_TOKEN is not set")
-	case r.repository == "":
-		return nil, errors.New("name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY")
+	if token == "" {
+		return nil, errNoToken
+	}
+	repository := r.repository
+	if repository == "" {
+		found, remote, err := remoteRepository()
+		if err != nil {
+			return nil, fmt.Errorf("name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY: %w", err)
+		}
+		repository = found
+		if r.said != nil {
+			fmt.Fprintf(r.said, "costroid: result reads %s, the repository the remote %s names\n", repository, remote)
+		}
 	}
 	return scm.NewGitHub(scm.GitHubOptions{
 		API:        os.Getenv("GITHUB_API_URL"),
-		Repository: r.repository,
+		Repository: repository,
 		Tokens:     scm.StaticToken(token),
 		Client:     &http.Client{},
 	})
@@ -95,7 +147,7 @@ func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		fmt.Fprintf(stderr, "costroid: %v\n", errResultArguments)
 		return exitFailure
 	}
-	posted, err := resultTarget{repository: *repository}.newest(ctx, *number)
+	posted, err := resultTarget{repository: *repository, said: stderr}.newest(ctx, *number)
 	if errors.Is(err, history.ErrNoCheck) {
 		fmt.Fprintf(stderr, "costroid: pull request %d: %v\n", *number, err)
 		return exitRejected

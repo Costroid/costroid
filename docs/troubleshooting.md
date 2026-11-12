@@ -317,7 +317,8 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | ---- | ------- | --- |
 | `costroid: <error>` | A command could not go on, and exits 125. The error says why | Read the error. `costroid help` lists the commands, and `costroid help <command>` gives one command's flags |
 | `costroid: unknown command <name>` | No such command | Run `costroid help` |
-| `costroid: GITHUB_TOKEN is not set` | `costroid result` reads the check from GitHub with the token in `GITHUB_TOKEN`, and found none. It exits 125. The `pull_result` tool of `costroid mcp` reads the same token | Set a token that can read the repository, such as `export GITHUB_TOKEN="$(gh auth token)"` with the GitHub CLI signed in. Name the repository with `--repo OWNER/NAME`, or set `GITHUB_REPOSITORY` |
+| `costroid: GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in` | `costroid result` reads the check from GitHub with the token in `GITHUB_TOKEN`, and found none. It never asks `gh` for one. It exits 125. The `pull_result` tool of `costroid mcp` reads the same token | Run the export line it prints, with the GitHub CLI signed in, or set another token that can read the repository |
+| `costroid: result reads <owner>/<name>, the repository the remote <remote> names` | Neither `--repo` nor `GITHUB_REPOSITORY` names a repository, so `result` read it from the git remote: `origin`, or the only remote | None, when it is the repository you meant. Otherwise name it with `--repo OWNER/NAME` |
 | `costroid: validate takes one path` | `validate` got more than one file | Validate one file at a time |
 | `costroid: lint-recipes needs at least one path` | No file to lint | Name a recipe or a directory |
 | `costroid: <count> files, <count> rejected lines` | What `lint-recipes` checked. It exits 1 when a line was rejected | Fix each line it printed above |

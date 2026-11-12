@@ -16,7 +16,11 @@ The plugin starts its server as `costroid mcp`, so the `costroid` binary must be
     /plugin marketplace add Costroid/costroid
     /plugin install costroid@costroid
 
-`/costroid:result` reads GitHub with `GITHUB_TOKEN`, and the repository from `GITHUB_REPOSITORY`, in the environment Claude Code starts in.
+`/costroid:result` reads GitHub with `GITHUB_TOKEN`, from the environment Claude Code starts in. The plugin never asks `gh` for a token. With the GitHub CLI signed in, start Claude Code from a shell that ran:
+
+    export GITHUB_TOKEN="$(gh auth token)"
+
+The repository is the one `GITHUB_REPOSITORY` names, as `OWNER/NAME`. Without it, the plugin reads the GitHub repository that the git remote of the directory Claude Code started in names: `origin`, or the only remote.
 
 ## What it reads
 
