@@ -1079,9 +1079,8 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 	}
 }
 
-// stockCodexReview is a review workflow in the shape openai/codex-action's
-// README gives: the action's step sets openai-api-key and prompt, and nothing
-// else.
+// stockCodexReview is a review workflow whose openai/codex-action step sets
+// openai-api-key and prompt, and nothing else.
 const stockCodexReview = `name: Codex pull request review
 
 on:

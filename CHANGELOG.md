@@ -22,6 +22,9 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Write an amount unquoted: `run_budget_usd: 2.50` is read as the decimal 2.50, from its text, never through a float. It was refused, which left every rule unread and the check `neutral`. The schema takes a number for each amount.
 - Read what changed on each release's page: its notes open with that version's section of this changelog, above the install text and the image digest.
 - Pin the Marketplace listing, `Costroid/costroid-action`, to its own commit: the listing's release notes name the commit of its tag and show a job that calls it, and its README gives the `git ls-remote` line that prints it. The listing carries a `SECURITY.md` that sends reports to this repository's private vulnerability reporting.
+- Add Costroid to an `openai/codex-action` workflow whose step sets no `codex-home`, such as one that sets only `openai-api-key` and `prompt`. `costroid init github --existing` gives the step what [`recipes/github-codex-action.yml`](recipes/github-codex-action.yml) has: a step that makes the directory for the job under `runner.temp`, and the `codex-home` input. A `codex-home` the `read` step cannot read is still refused, with what to do.
+- Run `costroid doctor` on a GitLab project. It checks the template that installs Costroid, `.gitlab/costroid.yml` or a local file `.gitlab-ci.yml` includes, against the rules of `costroid lint-recipes`, and the release and commit it pins. It runs no `gh` there and never names `init github`.
+- Run `costroid result`, and the plugin's `/costroid:result`, in a clone with no `GITHUB_REPOSITORY`: the repository is the one the git remote `origin`, or the only remote, names on GitHub, and `result` says which it read.
 
 ### Fixes
 
@@ -44,6 +47,10 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - A release waits for `ci`: a tag on a commit with no successful `ci` run on a push to `main` publishes nothing, and neither does a version with no section in this changelog.
 - The image is pushed by its digest, signed and attested, and only then tagged with its version, so a failed signature leaves no version tag on ghcr.io.
 - The image's binary records the commit it was built from, as the release binaries do, so `costroid init` run from the image pins that commit without reading the tag from github.com.
+- `costroid doctor` tells a repository that is not on GitHub yet, which `gh` answers with a 404, from a missing sign-in. One line says to push the repository. Only a missing or refused sign-in says `run gh auth login`. Outside a git repository, doctor says so in a `fail` line, checks this machine alone and exits 1.
+- `costroid run` refuses a command no adapter reads before it creates a file. It used to leave an empty rows file and a result object with the reason `empty_rows_file`, so the report said the agent printed no usage. The report now finds no rows file, which is what happened.
+- `costroid result` with no `GITHUB_TOKEN` prints the line that sets one, `export GITHUB_TOKEN="$(gh auth token)"`. It never runs `gh` itself.
+- `costroid --help` lists `demo`, `lint`, `init` and `doctor` first, in the order a first reader meets them, and no longer under other commands.
 
 ## 1.0.0-alpha.23 (2026-11-11)
 
