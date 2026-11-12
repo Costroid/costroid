@@ -10,6 +10,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - See the day a catalog's prices were read beside its version: the comment and `costroid version` print `catalog 0.3.0, prices read 2026-11-08`, the date the release's sheets state, and the oldest one when they state several.
 - Start with two commands that need no key and spend nothing: the README leads with `costroid demo` and `costroid lint`, then names the two recipes to paste with no install. [`docs/README.md`](docs/README.md) lists every page by task.
 - Trace a price to its source: [`docs/catalog.md`](docs/catalog.md) says where the catalog is published, how each price names its page and the day it was read, when a figure takes the fallback tier, and which catalog a binary carries.
+- Run Copilot CLI on a Gemini model: a request Copilot serves on `gemini-*` is priced at Google's sheet, in `costroid run` and in gh-aw's usage files. Google's sheet prices no cache write, so a cache write on a Gemini model counts as uncached input, and the row says so.
 
 ### Fixes
 
@@ -21,6 +22,10 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - [`docs/existing-workflow.md`](docs/existing-workflow.md) shows the workflow `init --existing` writes, cap lines included, and no longer contradicts itself on where the cap goes.
 - The `costroid.yml` that `init` writes leaves out `policy.monthly_budget_usd`, which no check reads yet, and names the schema at the release it pins in place of `main`.
 - The troubleshooting page lists every line of `costroid-install.sh`, and `GITHUB_TOKEN is not set`, `gh repo view failed` and `run needs --budget-usd`.
+- OpenCode runs read the grade `none`. The wrapper still stops the run at the cap between steps, but no recorded run has proven that stop, and a grade is claimed only on a recorded stop. Each row's note says so.
+- A Copilot CLI request on a model no sheet prices wrote no row, and the run kept `wrapper-watchdog` though the watch could not count it. The run now reads `none`, and the grade's note and the warning name the model, where the warning said the provider `"copilot"` had no sheet.
+- One map names the provider whose sheet prices a model, from the start of its name, and Copilot CLI, gh-aw and `costroid serve`'s telemetry reader share it. Telemetry no longer refuses `o3`, and Copilot CLI no longer drops `codex-*`.
+- `costroid serve` reads a GenAI span whose cache counts pass its `gen_ai.usage.input_tokens` as one from a sender that leaves the cache out of its input, and notes the reading on each of the request's rows. It refused such a span before.
 
 ## 1.0.0-alpha.23 (2026-11-11)
 
