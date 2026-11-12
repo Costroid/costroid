@@ -68,6 +68,8 @@ const (
 	// all three steps in the GitHub App Manifest flow within one hour."
 	manifestFlowLimit = time.Hour
 	appCallTimeout    = 30 * time.Second
+	// answerLimit bounds the wait for the browser's last answer to be sent.
+	answerLimit = 5 * time.Second
 	// maxConversion bounds the conversion's answer, which holds the key.
 	maxConversion = 64 << 10
 	stateBytes    = 32
@@ -299,7 +301,7 @@ func manifestCode(ctx context.Context, flags appFlags, world appWorld, stdout io
 	flow := &manifestFlow{host: listener.Addr().String(), web: world.web, state: state, action: action, name: flags.name, manifest: string(manifest), codes: codes}
 	server := &http.Server{Handler: flow, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = server.Serve(listener) }()
-	defer server.Close()
+	defer closeAfterAnswer(server)
 	fmt.Fprintf(stdout, "costroid: open %s/ in a browser signed in to GitHub, and create the App there\n", origin)
 	wait, cancel := context.WithTimeout(ctx, manifestFlowLimit)
 	defer cancel()
@@ -308,6 +310,17 @@ func manifestCode(ctx context.Context, flags appFlags, world appWorld, stdout io
 		return code, nil
 	case <-wait.Done():
 		return "", fmt.Errorf("GitHub sent no code back: %w", wait.Err())
+	}
+}
+
+// closeAfterAnswer closes the server once the browser has its last answer.
+// Closing at once could cut the callback's page short, and a browser that
+// retries the request then finds nothing listening.
+func closeAfterAnswer(server *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), answerLimit)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		_ = server.Close()
 	}
 }
 
