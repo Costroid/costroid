@@ -336,6 +336,8 @@ The candidate states that `CredentialId` "MUST NOT contain a *credential* value 
 
 Two recipes send one UTC day's rows with your own token: [`recipes/github-vantage-upload.yml`](../recipes/github-vantage-upload.yml) to Vantage, and [`recipes/github-datadog-upload.yml`](../recipes/github-datadog-upload.yml) to Datadog. Copy one to `.github/workflows/` on the default branch, beside the agent's recipe. It runs at 04:41 UTC and sends the UTC day before. To send a day the schedule did not send, run it by hand with the input `day`, such as `2026-11-10`. A day that is not over in UTC is refused. No pull request starts either recipe.
 
+Neither recipe has been run against its platform yet. Each call is written from the page quoted below, and the scripts are tested against stand-ins for the two APIs. Run it by hand for one day first, and read the file in the platform before you leave the schedule on.
+
 The job holds `actions: read` and no other permission. It installs Costroid, gathers the day's rows, writes the platform's file with `costroid export`, and sends it with `curl`. Each secret reaches the send step alone, through its environment. The API token or keys reach `curl` on standard input, so they are never on a command line, and no step prints a secret.
 
 #### The day's rows
