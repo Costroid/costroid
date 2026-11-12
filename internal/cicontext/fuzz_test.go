@@ -85,30 +85,39 @@ func FuzzReadEvent(f *testing.F) {
 }
 
 // FuzzResourceAttributes merges the run's attributes into the value a job
-// set. Each of Costroid's keys appears once, with its own value escaped, and
-// every pair the job set under another key is kept as it was.
+// set. Each key Costroid sets appears once, with its own value escaped, and
+// every pair the job set under another key is kept as it was. A key of
+// Costroid's that the run has no value for is the job's own, and is kept as
+// the job wrote it, escaped or not.
 func FuzzResourceAttributes(f *testing.F) {
 	f.Add("service.name=agent,vcs.change.id=1", "7", "cicd run;1")
 	f.Add("", "", "")
 	f.Add(",,=,vcs.change.id", "12", "a,b=c%")
+	f.Add("vcs.change.id=a b,vcs.change.id=2", "", "7")
 	f.Fuzz(func(t *testing.T, existing, pullRequest, run string) {
 		c := Context{PullRequest: pullRequest, Head: fuzzHead, Run: run}
 		merged := c.ResourceAttributes(existing)
+		set := map[string]bool{attributeChange: pullRequest != "", attributeHead: true, attributeRun: run != ""}
 		ours := map[string]bool{}
 		for _, pair := range strings.Split(merged, ",") {
 			key, value, _ := strings.Cut(pair, "=")
-			switch strings.TrimSpace(key) {
-			case attributeChange, attributeHead, attributeRun:
-				if ours[key] || strings.ContainsAny(value, "\",;\\ ") || strings.ContainsFunc(value, func(r rune) bool { return r < ' ' || r > '~' }) {
-					t.Fatalf("%s is repeated or unescaped in %q", key, merged)
-				}
-				ours[key] = true
+			key = strings.TrimSpace(key)
+			if !set[key] {
+				continue
+			}
+			if ours[key] || strings.ContainsAny(value, "\",;\\ ") || strings.ContainsFunc(value, func(r rune) bool { return r < ' ' || r > '~' }) {
+				t.Fatalf("%s is repeated or unescaped in %q", key, merged)
+			}
+			ours[key] = true
+		}
+		for key, wanted := range set {
+			if wanted && !ours[key] {
+				t.Fatalf("%s is missing from %q", key, merged)
 			}
 		}
 		for _, pair := range strings.Split(existing, ",") {
 			key, _, _ := strings.Cut(pair, "=")
-			mine := map[string]bool{attributeChange: pullRequest != "", attributeHead: true, attributeRun: run != ""}[strings.TrimSpace(key)]
-			if pair != "" && !mine && !strings.Contains(","+merged+",", ","+pair+",") {
+			if pair != "" && !set[strings.TrimSpace(key)] && !strings.Contains(","+merged+",", ","+pair+",") {
 				t.Fatalf("the job's %q is not kept in %q", pair, merged)
 			}
 		}
