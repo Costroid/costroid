@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ import (
 const (
 	ingestBatchRows = 10_000
 	ingestStreams   = 4
+	// ingestFloor is the bar for one stream on one instance, in rows a second.
+	ingestFloor = 10_000
 )
 
 func ingestWorld(b *testing.B) *world {
@@ -40,7 +43,8 @@ func ingestBody(b *testing.B, stream, batch int) []byte {
 }
 
 // BenchmarkIngestRows posts batches of 10,000 rows through the whole path, one
-// after another: token check, parse, price and one batched write.
+// after another: token check, parse, price and one batched write. It fails
+// under ingestFloor, so a green run is the floor holding.
 func BenchmarkIngestRows(b *testing.B) {
 	w := ingestWorld(b)
 	token := w.token()
@@ -56,7 +60,11 @@ func BenchmarkIngestRows(b *testing.B) {
 		written += time.Since(started)
 	}
 	perBatch := written / time.Duration(batch)
-	b.ReportMetric(ingestBatchRows/perBatch.Seconds(), "rows/s")
+	rate := ingestBatchRows / perBatch.Seconds()
+	b.ReportMetric(rate, "rows/s")
+	if rate < ingestFloor {
+		b.Fatalf("one stream wrote %.0f rows/s with GOMAXPROCS %d, under the floor of %d", rate, runtime.GOMAXPROCS(0), ingestFloor)
+	}
 }
 
 // BenchmarkIngestRowsConcurrently runs four such streams into one tenant on
