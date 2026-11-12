@@ -59,6 +59,8 @@ An agent that sends its own telemetry to the same backend states the same tokens
 
 `costroid serve` reads these spans at `/otlp/v1/traces`: their token counts, `costroid.cost.basis` and `costroid.enforcement_grade`. It reprices every request from its own catalog and never reads the amount. A span carries no provider request id, so a request whose rows the same ledger already took counts twice. Send a run to a ledger one way, its rows or its spans. [`docs/serve.md`](serve.md) says how `serve` reads OTLP.
 
+`serve` reads a span from a sender it has no dialect for as the GenAI convention asks: the cache reads and writes "SHOULD be included in `gen_ai.usage.input_tokens`" ([attribute registry](https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/), semantic conventions v1.41.0, retrieved 2026-11-12). A span whose cache counts pass its input can only come from a sender that leaves them out, as Anthropic's API reports input. `serve` reads that input as uncached and keeps the cache counts, and each of the request's rows says so. Such a sender whose input is above its cache counts cannot be told apart from one that follows the convention, and its figure reads low.
+
 ## Exit codes
 
 | Code | Meaning |

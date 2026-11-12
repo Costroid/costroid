@@ -327,12 +327,12 @@ func TestARecordWithoutTokensYieldsNothing(t *testing.T) {
 
 func TestImpossibleCountsAreRejectedNotClamped(t *testing.T) {
 	cases := map[string]map[string]any{
-		"cache above an inclusive input": {keyInput: 10, keyOutput: 1, keyCacheRead: 20},
-		"reasoning above output":         {keyInput: 10, keyOutput: 1, keyReasoning: 2},
-		"negative":                       {keyInput: "-5", keyOutput: 1},
-		"not a number":                   {keyInput: "many", keyOutput: 1},
-		"past the bound":                 {keyInput: "9000000000000000", keyOutput: 1},
-		"fractional":                     {keyInput: double("10.5"), keyOutput: 1},
+		"cache above a recorded inclusive input": {keyInput: 10, keyOutput: 1, keyCacheRead: 20, keyCodexReasoning: 0},
+		"reasoning above output":                 {keyInput: 10, keyOutput: 1, keyReasoning: 2},
+		"negative":                               {keyInput: "-5", keyOutput: 1},
+		"not a number":                           {keyInput: "many", keyOutput: 1},
+		"past the bound":                         {keyInput: "9000000000000000", keyOutput: 1},
+		"fractional":                             {keyInput: double("10.5"), keyOutput: 1},
 	}
 	for name, span := range cases {
 		t.Run(name, func(t *testing.T) {

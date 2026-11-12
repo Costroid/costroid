@@ -73,6 +73,11 @@ var eventNames = set(eventClaudeRequest, eventClaudeShort, eventCursorRequest)
 // counts. The server logs a warning for each such request.
 const NoteTotalDisagrees = "the agent's total token count is not the sum of its counts, so this figure may read low or high"
 
+// noteExclusiveInput marks a request whose input count is below its cache
+// counts, so its sender excludes them from the input, as Anthropic's API
+// reports it, and not as the GenAI convention asks.
+const noteExclusiveInput = "gen_ai.usage.input_tokens is below the cache reads and writes, so it is read as excluding them, not including them as the GenAI convention asks"
+
 // MaxTokens bounds one class of one request, far above any model's context,
 // so a sum of counts cannot overflow.
 const MaxTokens = 1_000_000_000_000
@@ -100,6 +105,9 @@ type counts struct {
 	cacheWrite, write5m, write1h        int64
 	// inclusive means input already holds cache reads and writes.
 	inclusive bool
+	// exclusiveBelowCache reads an inclusive input as exclusive when the
+	// cache counts pass it, which only a sender that excludes them can state.
+	exclusiveBelowCache bool
 	// subscriptionTTL means an unsplit write on a subscription lasts an hour.
 	subscriptionTTL bool
 	notes           []string
@@ -173,7 +181,9 @@ func readCounts(dialect Dialect, r *record) (counts, bool, bool) {
 	case Gemini:
 		return readGemini(r)
 	}
-	return readStandard(r)
+	c, found, ok := readStandard(r)
+	c.exclusiveBelowCache = dialect == Standard
+	return c, found, ok
 }
 
 func claudeRequestEvent(r *record) bool {
@@ -409,8 +419,9 @@ func standInID(r *record) string {
 }
 
 // applyCounts turns raw figures into disjoint classes. It reports false when
-// the figures cannot be one request, such as cache counts above an inclusive
-// input.
+// the figures cannot be one request, such as cache counts above an input a
+// recorded dialect states as inclusive. On the standard dialect such an input
+// can only exclude the cache, and is read so, with a note.
 func (u *Usage) applyCounts(c counts) bool {
 	written := c.cacheWrite
 	if c.write5m+c.write1h > written {
@@ -419,7 +430,11 @@ func (u *Usage) applyCounts(c counts) bool {
 	uncached := c.input
 	if c.inclusive {
 		uncached = c.input - c.cacheRead - written
-		if uncached < 0 {
+		switch {
+		case uncached < 0 && c.exclusiveBelowCache:
+			uncached = c.input
+			c.notes = append(c.notes, noteExclusiveInput)
+		case uncached < 0:
 			return false
 		}
 	}
