@@ -212,7 +212,7 @@ func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
 	}
 }
 
-var update = flag.Bool("update", false, "rewrite testdata/usage.golden")
+var update = flag.Bool("update", false, "rewrite testdata/usage.golden and testdata/existing-claude.golden")
 
 const maxUsageLines = 16
 

@@ -1,0 +1,250 @@
+== two spaces: exit 0
+-- stdout --
+--- a/.github/workflows/review.yml
++++ b/.github/workflows/review.yml
+@@ -25,3 +25,30 @@
+             Review this pull request.
+ 
+             List the bugs.
++          claude_args: --max-budget-usd 5
++        id: claude
++      - name: Read what the run cost
++        if: always() && steps.claude.outputs.execution_file != ''
++        uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: read
++          execution-file: ${{ steps.claude.outputs.execution_file }}
++          budget-usd: "5"
++          claude-args: --max-budget-usd 5
++          billing-account: ${{ github.repository_owner }}
++
++  report:
++    needs: review
++    if: always() && github.event_name == 'pull_request'
++    runs-on: ubuntu-24.04
++    timeout-minutes: 5
++    permissions:
++      checks: write
++      contents: read
++      pull-requests: write
++    steps:
++      - uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: report
++          budget-usd: "5"
++          agent-result: ${{ needs.review.result }}
+-- stderr --
+costroid: printed a patch for .github/workflows/review.yml, and wrote nothing
+Apply it from the repository's root with git apply. Your job keeps the
+permissions it has, and the read step asks for nothing more. The report job
+holds checks: write and pull-requests: write, runs on pull requests alone, and
+runs nothing the pull request wrote. docs/existing-workflow.md says more. The
+patch adds --max-budget-usd 5 to the claude_args of the claude-code-action step,
+so Claude Code stops a run once its own estimate passes USD 5, and gives the
+read step and the report job that cap. To change the cap, change it in
+claude_args, in claude-args and in both budget-usd inputs.
+== four spaces: exit 0
+-- stdout --
+--- a/.github/workflows/review.yml
++++ b/.github/workflows/review.yml
+@@ -15,4 +15,31 @@
+             with:
+                 anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+                 prompt: Review this pull request.
++                claude_args: --max-budget-usd 2.50
++            id: claude
++        - name: Read what the run cost
++          if: always() && steps.claude.outputs.execution_file != ''
++          uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++          with:
++              stage: read
++              execution-file: ${{ steps.claude.outputs.execution_file }}
++              budget-usd: "2.50"
++              claude-args: --max-budget-usd 2.50
++              billing-account: ${{ github.repository_owner }}
+         -   run: echo reviewed
++
++    report:
++        needs: review
++        if: always() && github.event_name == 'pull_request'
++        runs-on: ubuntu-24.04
++        timeout-minutes: 5
++        permissions:
++            checks: write
++            contents: read
++            pull-requests: write
++        steps:
++            - uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++              with:
++                  stage: report
++                  budget-usd: "2.50"
++                  agent-result: ${{ needs.review.result }}
+-- stderr --
+costroid: printed a patch for .github/workflows/review.yml, and wrote nothing
+Apply it from the repository's root with git apply. Your job keeps the
+permissions it has, and the read step asks for nothing more. The report job
+holds checks: write and pull-requests: write, runs on pull requests alone, and
+runs nothing the pull request wrote. docs/existing-workflow.md says more. The
+patch adds --max-budget-usd 2.50 to the claude_args of the claude-code-action
+step, so Claude Code stops a run once its own estimate passes USD 2.50, and
+gives the read step and the report job that cap. To change the cap, change it in
+claude_args, in claude-args and in both budget-usd inputs.
+== a subscription's token: exit 0
+-- stdout --
+--- a/.github/workflows/review.yml
++++ b/.github/workflows/review.yml
+@@ -23,3 +23,32 @@
+         with:
+           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+           github_token: ${{ github.token }}
++          claude_args: --max-budget-usd 5
++        id: claude
++      - name: Read what the run cost
++        if: always() && steps.claude.outputs.execution_file != ''
++        uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: read
++          post-review: "true"
++          execution-file: ${{ steps.claude.outputs.execution_file }}
++          budget-usd: "5"
++          claude-args: --max-budget-usd 5
++          billing-account: ${{ github.repository_owner }}
++
++  report:
++    needs: claude
++    if: always() && github.event_name == 'pull_request'
++    runs-on: ubuntu-24.04
++    timeout-minutes: 5
++    permissions:
++      checks: write
++      contents: read
++      pull-requests: write
++    steps:
++      - uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: report
++          post-review: "true"
++          budget-usd: "5"
++          agent-result: ${{ needs.claude.result }}
+-- stderr --
+costroid: printed a patch for .github/workflows/review.yml, and wrote nothing
+Apply it from the repository's root with git apply. Your job keeps the
+permissions it has, and the read step asks for nothing more. The report job
+holds checks: write and pull-requests: write, runs on pull requests alone, and
+runs nothing the pull request wrote. docs/existing-workflow.md says more. The
+patch adds --max-budget-usd 5 to the claude_args of the claude-code-action step,
+so Claude Code stops a run once its own estimate passes USD 5, and gives the
+read step and the report job that cap. To change the cap, change it in
+claude_args, in claude-args and in both budget-usd inputs.
+Figures will read List-equivalent, not billed. No subscription run has been
+recorded yet, so that reading is unverified.
+== the platform: exit 0
+-- stdout --
+--- a/.github/workflows/review.yml
++++ b/.github/workflows/review.yml
+@@ -25,3 +25,47 @@
+             Review this pull request.
+ 
+             List the bugs.
++          claude_args: --max-budget-usd 5
++        id: claude
++      - name: Read what the run cost
++        if: always() && steps.claude.outputs.execution_file != ''
++        uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: read
++          post-review: "true"
++          execution-file: ${{ steps.claude.outputs.execution_file }}
++          budget-usd: "5"
++          claude-args: --max-budget-usd 5
++          billing-account: ${{ github.repository_owner }}
++
++  report:
++    needs: review
++    if: always() && github.event_name == 'pull_request'
++    runs-on: ubuntu-24.04
++    timeout-minutes: 5
++    permissions:
++      checks: write
++      contents: read
++      pull-requests: write
++    steps:
++      - uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: report
++          post-review: "true"
++          budget-usd: "5"
++          agent-result: ${{ needs.review.result }}
++
++  ingest:
++    needs: review
++    if: always() && needs.review.result != 'skipped' && vars.COSTROID_PLATFORM_URL != ''
++    runs-on: ubuntu-24.04
++    timeout-minutes: 5
++    permissions:
++      id-token: write
++    steps:
++      - uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: ingest
++          platform-url: ${{ vars.COSTROID_PLATFORM_URL }}
++          installation-id: github-owner:${{ github.repository_owner_id }}
++          platform-token: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+--- /dev/null
++++ b/.github/workflows/costroid-connect.yml
+@@ -0,0 +1,36 @@
++# Binds this repository's owner to its Costroid Platform tenant, so the ingest
++# job of an agent recipe can send rows there. docs/connect.md says what the
++# proof is and what it binds.
++name: costroid-connect
++
++on:
++  # GitHub runs a schedule from the default branch only, so the platform takes
++  # its proof whatever the branch rules are. A binding stays current for 7 days
++  # after its last proof, and a daily run renews it.
++  schedule:
++    - cron: "23 5 * * *"
++  # A push to the default branch binds at once when that branch is protected.
++  push:
++
++permissions: {}
++
++jobs:
++  connect:
++    if: >-
++      vars.COSTROID_PLATFORM_URL != ''
++      && (github.event_name == 'schedule'
++      || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
++    runs-on: ubuntu-24.04
++    timeout-minutes: 5
++    permissions:
++      # The proof is the job's OIDC token, issued for the tenant's audience.
++      id-token: write
++    steps:
++      - uses: Costroid/costroid/action@0123456789abcdef0123456789abcdef01234567 # v1.0.0-alpha.10
++        with:
++          stage: install
++      - name: Bind the owner
++        env:
++          COSTROID_PLATFORM_URL: ${{ vars.COSTROID_PLATFORM_URL }}
++          COSTROID_PLATFORM_TOKEN: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
++        run: costroid connect --platform-url "$COSTROID_PLATFORM_URL"
+-- stderr --
+costroid: printed a patch for .github/workflows/review.yml and .github/workflows/costroid-connect.yml, and wrote nothing
+Apply it from the repository's root with git apply. Your job keeps the
+permissions it has, and the read step asks for nothing more. The report job
+holds checks: write and pull-requests: write, runs on pull requests alone, and
+runs nothing the pull request wrote. docs/existing-workflow.md says more. The
+patch adds --max-budget-usd 5 to the claude_args of the claude-code-action step,
+so Claude Code stops a run once its own estimate passes USD 5, and gives the
+read step and the report job that cap. To change the cap, change it in
+claude_args, in claude-args and in both budget-usd inputs.
+
+The ingest job holds id-token: write and reads the platform's address from a
+repository variable. Set it with:
+  gh variable set COSTROID_PLATFORM_URL --body https://app.costroid.com
+The ingest job sends the rows once the integration token is set as
+COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. The workflow
+costroid-connect.yml binds it from the default branch, on a push when that
+branch is protected and on its daily schedule otherwise. docs/connect.md says
+how.

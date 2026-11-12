@@ -650,6 +650,41 @@ func TestInitExistingMatchesTheDocs(t *testing.T) {
 	}
 }
 
+// claudePatchGolden holds what init --existing prints for claude-code-action
+// workflows, as the release before the codex-home step printed it.
+var claudePatchGolden = filepath.Join("testdata", "existing-claude.golden")
+
+// TestInitExistingLeavesTheClaudePatchAsItWas runs init --existing on four
+// claude-code-action workflows, with and without the flags that add to the
+// patch, and holds what it prints on stdout and stderr to the golden file,
+// byte for byte.
+func TestInitExistingLeavesTheClaudePatchAsItWas(t *testing.T) {
+	var printed strings.Builder
+	for _, test := range []struct {
+		label, workflow string
+		args            []string
+	}{
+		{"two spaces", existingReview, nil},
+		{"four spaces", existingReviewFourSpaces, []string{"--budget-usd", "2.50"}},
+		{"a subscription's token", mentionWorkflow, []string{"--post-review"}},
+		{"the platform", existingReview, []string{"--platform-url", "https://app.costroid.com", "--post-review"}},
+	} {
+		root := t.TempDir()
+		name := workflowDir + "/review.yml"
+		writeFile(t, filepath.Join(root, name), test.workflow)
+		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append([]string{"github", "--existing", name}, test.args...)...)
+		fmt.Fprintf(&printed, "== %s: exit %d\n-- stdout --\n%s-- stderr --\n%s", test.label, code, stdout, stderr)
+	}
+	if *update {
+		if err := os.WriteFile(claudePatchGolden, []byte(printed.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := readFile(t, claudePatchGolden); printed.String() != want {
+		t.Errorf("init --existing prints for claude-code-action other than %s:\n%s", claudePatchGolden, lineDiff(want, printed.String()))
+	}
+}
+
 func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 	for _, refusal := range []struct {
 		args []string
