@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,9 +20,19 @@ const recordingVariable = "COSTROID_RECORDING_DIR"
 
 // scenarios are the runs the recording workflow can record, in its order.
 var scenarios = []string{
-	"action-session", "nested-hook", "codex-subagent", "codex-action", "codex-openai-key",
-	"claude-current", "claude-1h-cache", "claude-budget-stop", "codex-stopped-current",
+	"action-session", "action-subscription", "action-budget-stop", "nested-hook", "codex-subagent",
+	"codex-action", "codex-openai-key", "claude-current", "claude-1h-cache", "claude-budget-stop",
+	"codex-stopped-current", "sdk-claude-ts", "sdk-claude-py", "sdk-codex",
 }
+
+// The one other upload a recording workflow may make: the rows file of a run
+// under Costroid, under a name that starts with rowsArtifact, kept for
+// maxRowsDays at most.
+const (
+	rowsArtifact = "costroid-rows-"
+	rowsPath     = "${{ runner.temp }}/rows.jsonl"
+	maxRowsDays  = 14
+)
 
 type workflow struct {
 	On          map[string]any `yaml:"on"`
@@ -57,9 +68,10 @@ var (
 )
 
 // checkSteps holds both workflows to the same rules: every action pinned to a
-// commit, no permission that writes, and every upload the scrubbed directory
-// alone, kept 3 days.
-func checkSteps(t *testing.T, name string, w workflow) (uploads int) {
+// commit, no permission that writes, every upload of the scrubbed directory
+// alone, kept 3 days, and every other upload the rows file alone, under a
+// name that starts with costroid-rows-, kept 14 days at most.
+func checkSteps(t *testing.T, name string, w workflow) (recordings, rows int) {
 	t.Helper()
 	if fmt.Sprint(w.Permissions) != "map[]" {
 		t.Errorf("%s: the workflow's permissions are %v, want {}", name, w.Permissions)
@@ -77,21 +89,39 @@ func checkSteps(t *testing.T, name string, w workflow) (uploads int) {
 			if !pinnedAction.MatchString(step.Uses) {
 				t.Errorf("%s: %s is not pinned to a commit", name, step.Uses)
 			}
-			if strings.HasPrefix(step.Uses, "actions/upload-artifact@") {
-				uploads++
-				if step.With["path"] != "${{ runner.temp }}/recording" {
-					t.Errorf("%s: an upload's path is %q, not the scrubbed directory", name, step.With["path"])
-				}
-				if step.With["retention-days"] != "3" {
-					t.Errorf("%s: an upload is kept %q days, want 3", name, step.With["retention-days"])
-				}
-				if !strings.HasPrefix(step.With["name"], "recording-") {
-					t.Errorf("%s: an upload is named %q, which make fixture does not download", name, step.With["name"])
-				}
+			if !strings.HasPrefix(step.Uses, "actions/upload-artifact@") {
+				continue
+			}
+			if strings.HasPrefix(step.With["name"], rowsArtifact) {
+				rows++
+				checkRowsUpload(t, name, step.With)
+				continue
+			}
+			recordings++
+			if step.With["path"] != "${{ runner.temp }}/recording" {
+				t.Errorf("%s: an upload's path is %q, not the scrubbed directory", name, step.With["path"])
+			}
+			if step.With["retention-days"] != "3" {
+				t.Errorf("%s: an upload is kept %q days, want 3", name, step.With["retention-days"])
+			}
+			if !strings.HasPrefix(step.With["name"], "recording-") {
+				t.Errorf("%s: an upload is named %q, which make fixture does not download", name, step.With["name"])
 			}
 		}
 	}
-	return uploads
+	return recordings, rows
+}
+
+// checkRowsUpload holds an upload of the rows to the rows file alone, kept
+// from 1 to maxRowsDays days.
+func checkRowsUpload(t *testing.T, name string, with map[string]string) {
+	t.Helper()
+	if with["path"] != rowsPath {
+		t.Errorf("%s: the upload %s holds %q, not the rows file alone", name, with["name"], with["path"])
+	}
+	if days, err := strconv.Atoi(with["retention-days"]); err != nil || days < 1 || days > maxRowsDays {
+		t.Errorf("%s: the upload %s is kept %q days, want 1 to %d", name, with["name"], with["retention-days"], maxRowsDays)
+	}
 }
 
 func TestRecordWorkflowShape(t *testing.T) {
@@ -113,8 +143,8 @@ func TestRecordWorkflowShape(t *testing.T) {
 	if scenario["type"] != "choice" || fmt.Sprint(scenario["options"]) != fmt.Sprint(scenarios) {
 		t.Errorf("record.yml's scenario is %v of %v, want a choice of %v", scenario["type"], scenario["options"], scenarios)
 	}
-	if uploads := checkSteps(t, "record.yml", record); uploads != 1 {
-		t.Errorf("record.yml uploads %d times, want once", uploads)
+	if recordings, rows := checkSteps(t, "record.yml", record); recordings != 1 || rows > 1 {
+		t.Errorf("record.yml makes %d recording uploads and %d rows uploads, want 1 and at most 1", recordings, rows)
 	}
 	for _, name := range scenarios {
 		if data, err := os.ReadFile(filepath.Join(dir, "record", "prompts", name+".txt")); err != nil || len(strings.TrimSpace(string(data))) < minimumPromptLine {
@@ -142,8 +172,8 @@ func TestRecordWorkflowShape(t *testing.T) {
 	if !slices.Equal(matrix, []string{"claude-current", "codex-stopped-current"}) {
 		t.Errorf("canary.yml runs %v, want claude-current and codex-stopped-current", matrix)
 	}
-	if uploads := checkSteps(t, "canary.yml", canary); uploads != 1 {
-		t.Errorf("canary.yml uploads %d times, want once", uploads)
+	if recordings, rows := checkSteps(t, "canary.yml", canary); recordings != 1 || rows > 1 {
+		t.Errorf("canary.yml makes %d recording uploads and %d rows uploads, want 1 and at most 1", recordings, rows)
 	}
 }
 
