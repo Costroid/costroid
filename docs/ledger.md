@@ -4,7 +4,7 @@ The CLI needs no server: `costroid run` and `costroid report` work from a job al
 
 The image is one static binary on a non-root user, with no shell. It runs the service, and every other `costroid` command, from one tag. `docs/serve.md` has what the service does.
 
-The Compose file and the chart still default to the image of the first release. The commands below run `1.0.0-alpha.23`, the release the recipes pin.
+The Compose file and the chart default to `1.0.0-alpha.23`, the release the recipes pin, and the commands below name it.
 
 ## Docker Compose
 
