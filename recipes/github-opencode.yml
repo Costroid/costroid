@@ -1,8 +1,9 @@
 # Runs OpenCode on a pull request under a budget, then reports what it cost.
 # Copy to .github/workflows/costroid.yml. docs/recipes.md lists what it needs.
 # Each push to the pull request runs the agent again, with a budget of USD 5
-# for each run. Costroid stops the run at the cap between steps; its grade
-# reads none until a recorded run proves that stop.
+# for each run. Costroid stops the run at the cap between steps, so one step
+# can pass the cap. Its grade, wrapper-watchdog, rests on a recorded stop that
+# docs/adapters.md describes.
 name: costroid
 
 on:

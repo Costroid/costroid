@@ -18,6 +18,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 
 - An estimate row never raises or satisfies an agent's budget: the policy reads an agent's rows alone, in the report and in the ledger.
 - `costroid lint-recipes` and `costroid lint` name, under `infrastructure-file`, an estimate input of the action that does nothing or fails its step.
+- OpenCode runs read the grade `wrapper-watchdog` again, on a recorded stop: under a USD 0.001 cap, OpenCode 1.19.4 made one step at USD 0.001438275, and the wrapper stopped it before a second step. The wrapper stops OpenCode between steps, so one step can pass the cap; that run passed it by USD 0.000438275, and each row's note says so. A run that calls OpenCode's `task` tool still reads `none`.
 
 ## 1.0.0-alpha.24 (2026-11-12)
 

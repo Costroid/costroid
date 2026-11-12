@@ -17,7 +17,7 @@ import (
 // finishes it.
 func fuzzRead(stream []byte) (adapter.Report, error) {
 	s := &Session{
-		planned:   adapter.Enforcement{Grade: adapter.GradeNone, Note: unprovenNote, Watchdog: true},
+		planned:   adapter.Enforcement{Grade: adapter.GradeWrapperWatchdog, Note: watchedNote, Watchdog: true},
 		model:     model{provider: "anthropic", id: "claude-haiku-5-5"},
 		costBasis: focus.Measured,
 		notify:    make(chan struct{}, 1),
