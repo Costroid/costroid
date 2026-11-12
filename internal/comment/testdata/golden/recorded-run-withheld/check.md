@@ -23,7 +23,7 @@ Amounts are off on this public repository (`comment.show_cost: false`). The rows
 <details>
 <summary>Agents, models and catalog</summary>
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`, prices read 2026-11-08.
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.1`, prices read 2026-11-12.
 
 </details>
 
@@ -32,13 +32,13 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`, pri
 
 | Catalog | Token class |
 | --- | --- |
-| `0.3.0` | `input_uncached` |
-| `0.3.0` | `cache_read` |
-| `0.3.0` | `cache_write_5m` |
-| `0.3.0` | `cache_write_1h` |
-| `0.3.0` | `output` |
-| `0.3.0` | `reasoning_output` |
-| `0.3.0` | `cached_input_reported` |
+| `0.4.1` | `input_uncached` |
+| `0.4.1` | `cache_read` |
+| `0.4.1` | `cache_write_5m` |
+| `0.4.1` | `cache_write_1h` |
+| `0.4.1` | `output` |
+| `0.4.1` | `reasoning_output` |
+| `0.4.1` | `cached_input_reported` |
 
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
@@ -100,7 +100,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
     ],
     "models_omitted": 0,
     "catalog_versions": [
-      "0.3.0"
+      "0.4.1"
     ],
     "fallback_models": [],
     "fallback_models_omitted": 0,

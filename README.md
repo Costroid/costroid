@@ -60,7 +60,7 @@ costroid report --preview --rows rows.jsonl
 
 ```text
 costroid: claude-code, 4 requests
-costroid: 19 rows in rows.jsonl, catalog 0.3.0
+costroid: 19 rows in rows.jsonl, catalog 0.4.1
 costroid: USD 0.001619725 at list, List-equivalent, not billed
 costroid: budget USD 5, agent-flag: client-side estimate, can pass the cap
 costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT

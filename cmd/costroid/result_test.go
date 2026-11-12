@@ -102,7 +102,7 @@ func TestActionOutputsCarryTheRecordedRunsFigures(t *testing.T) {
 	want := map[string]string{
 		"cost": realTotal, "currency": "USD", "cost_basis": "list_equivalent",
 		"tokens_input_uncached": "8", "tokens_cache_read": "15605", "tokens_cache_write": "7945", "tokens_output": "272",
-		"enforcement_grade": "agent-flag", "catalog_version": "0.3.0",
+		"enforcement_grade": "agent-flag", "catalog_version": "0.4.1",
 		"check_run_id": strconv.FormatInt(stub.Checks[0].ID, 10),
 		"conclusion":   "neutral",
 		"result":       compactJSON(t, checkBlock(t, stub.Checks[0].Text)),
@@ -216,7 +216,7 @@ func TestStepSummaryWithholdsAmountsAndTokenCountsOnAPublicRepository(t *testing
 	_, summaryPath := stepFiles(t)
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	summary := readFile(t, summaryPath)
-	for _, want := range []string{"| Basis | Catalog | Attribution | Enforcement |", "| List-equivalent, not billed | `0.3.0` | unattributed | agent-flag:", "Amounts and token counts are off on this public repository"} {
+	for _, want := range []string{"| Basis | Catalog | Attribution | Enforcement |", "| List-equivalent, not billed | `0.4.1` | unattributed | agent-flag:", "Amounts and token counts are off on this public repository"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("no %q in\n%s", want, summary)
 		}
@@ -233,7 +233,7 @@ func TestStepSummaryWithholdsNothingWhereAmountsAreShown(t *testing.T) {
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	summary := readFile(t, summaryPath)
 	table := "| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n" +
-		"| List-equivalent, not billed | `0.3.0` | USD " + realTotal + " | agent-flag: client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |\n"
+		"| List-equivalent, not billed | `0.4.1` | USD " + realTotal + " | agent-flag: client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |\n"
 	if !strings.HasPrefix(summary, "### Costroid\n\n"+table) {
 		t.Errorf("the summary does not lead with the table:\n%s", summary)
 	}
