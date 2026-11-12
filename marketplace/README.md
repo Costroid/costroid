@@ -196,7 +196,13 @@ Your step keeps its prompt and its review, and no new secret is needed. Costroid
 
 ## The commit to pin
 
-The workflows above call `Costroid/costroid/action` at `__RELEASE_COMMIT__`, the commit of Costroid's `__RELEASE_TAG__`. The action installs only the release its own commit belongs to, and checks it by its signature, so it needs no version, no checksum and no account. To call this listing's action, `Costroid/costroid-action`, in their place, pin it to the commit that [its release notes](https://github.com/Costroid/costroid-action/releases) name for `__RELEASE_TAG__`.
+The workflows above call `Costroid/costroid/action` at `__RELEASE_COMMIT__`, the commit of Costroid's `__RELEASE_TAG__`. The action installs only the release its own commit belongs to, and checks it by its signature, so it needs no version, no checksum and no account.
+
+To call this listing's action, `Costroid/costroid-action`, in their place, pin it to the full commit of this listing's tag `__RELEASE_TAG__`, not to Costroid's. [The tag's release notes](https://github.com/Costroid/costroid-action/releases/tag/__RELEASE_TAG__) name that commit and show a step that calls it. This command prints it too, as the first field of its one line:
+
+```sh
+git ls-remote https://github.com/Costroid/costroid-action 'refs/tags/__RELEASE_TAG__^{}'
+```
 
 ## Everything else
 
