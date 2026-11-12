@@ -367,3 +367,92 @@ func TestStatedReadsTheLastDigitTheReportWrote(t *testing.T) {
 		}
 	}
 }
+
+// tinyDayRowsInUS is the ledger usage-tiny-day-us.json matches: the tiny day
+// served in the US, each figure 1.1 times the global one, 0.0004679125 USD
+// at list. Each row's price id names the region given.
+func tinyDayRowsInUS(region string) []row {
+	multiplied := []string{"0.000132", "0.0000279125", "0.000033", "0.000275"}
+	rows := tinyDayRows()
+	for i := range rows {
+		rows[i].list = multiplied[i]
+		rows[i].note = "; list price times 1.1 for data residency in us"
+		rows[i].skuPrice = "anthropic:claude-haiku-5-5:" + region + ":standard:to-100000:" + string(rows[i].class)
+	}
+	return rows
+}
+
+// wantHeldInUS holds a reconciled tiny day in the US to the catalog's US
+// prices below Haiku 5.5's 100,000-token boundary, each proven.
+func wantHeldInUS(t *testing.T, got Row) {
+	t.Helper()
+	if got.State != Matched {
+		t.Fatalf("state %s, notes %q", got.State, got.Notes)
+	}
+	for class, price := range map[focus.TokenClass]string{focus.InputUncached: "0.11", focus.CacheWrite5m: "0.1375", focus.CacheRead: "0.011", focus.Output: "0.55"} {
+		check := priceOf(t, got, class)
+		if !check.Match || check.CatalogUnitPrice.String() != price || check.SkuPriceID != "anthropic:claude-haiku-5-5:us:standard:to-100000:"+string(class) {
+			t.Errorf("%s: %+v, want %s proven", class, check, price)
+		}
+	}
+	if noted(got, "context tiers") {
+		t.Errorf("notes %q", got.Notes)
+	}
+}
+
+// TestOlderRowsWithGlobalIdsReconcileInARegion holds a ledger written up to
+// 1.0.0-alpha.23, whose rows carry the global id beside the US price, to the
+// catalog's US tier: Haiku 5.5 has two context tiers, and the id still says
+// which one the row was priced at.
+func TestOlderRowsWithGlobalIdsReconcileInARegion(t *testing.T) {
+	got := only(t, pass(t, readRows(t, tinyDayRowsInUS(catalog.RegionGlobal), ""), anthropicReplay(t, "usage-tiny-day-us.json", "cost-tiny-day-us.json"), settledNow))
+	wantHeldInUS(t, got)
+}
+
+// TestRegionalIdsReconcile holds the same day, written by a release whose
+// price ids name their region, to the same prices.
+func TestRegionalIdsReconcile(t *testing.T) {
+	got := only(t, pass(t, readRows(t, tinyDayRowsInUS("us"), ""), anthropicReplay(t, "usage-tiny-day-us.json", "cost-tiny-day-us.json"), settledNow))
+	wantHeldInUS(t, got)
+}
+
+// TestAGlobalIdNeverMatchesAnotherTier holds the one way a global id stands
+// for a regional one: the same model, service tier, context tier and class,
+// in the line's own region. A regional id never stands for a global tier.
+func TestAGlobalIdNeverMatchesAnotherTier(t *testing.T) {
+	const tier = "anthropic:claude-haiku-5-5:us:standard:to-100000:output"
+	for _, tc := range []struct {
+		sku, region string
+		names       bool
+	}{
+		{"anthropic:claude-haiku-5-5:global:standard:to-100000:output", "us", true},
+		{tier, "us", true},
+		{"anthropic:claude-haiku-5-5:global:standard:over-100000:output", "us", false},
+		{"anthropic:claude-haiku-5-5:global:batch:to-100000:output", "us", false},
+		{"anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached", "us", false},
+		{"anthropic:claude-sonnet-5:global:standard:to-100000:output", "us", false},
+		{"anthropic:claude-haiku-5-5:global:standard:to-100000:output", "eu", false},
+		{"anthropic:claude-haiku-5-5:eu:standard:to-100000:output", "us", false},
+		{"anthropic:claude-haiku-5-5:global:standard:to-100000:output", catalog.RegionGlobal, false},
+		{"anthropic:fallback:output", "us", false},
+	} {
+		if got := namesTier(tc.sku, tier, tc.region); got != tc.names {
+			t.Errorf("%s in %s names %s: %t", tc.sku, tc.region, tier, got)
+		}
+	}
+	const global = "anthropic:claude-haiku-5-5:global:standard:to-100000:output"
+	if namesTier(tier, global, "us") || namesTier(tier, global, catalog.RegionGlobal) {
+		t.Errorf("the regional id %s names the global tier %s", tier, global)
+	}
+	tiers := []catalog.Price{
+		{SkuPriceID: tier, ListUnitPrice: decimal.MustParse("0.55")},
+		{SkuPriceID: "anthropic:claude-haiku-5-5:us:standard:over-100000:output", ListUnitPrice: decimal.MustParse("2.75")},
+	}
+	held, ok := heldTo(tiers, []string{"anthropic:claude-haiku-5-5:global:standard:over-100000:output"}, "us")
+	if !ok || held.ListUnitPrice.String() != "2.75" {
+		t.Errorf("an older id above the boundary was held to %+v, %t", held, ok)
+	}
+	if _, ok := heldTo(tiers, []string{global, "anthropic:claude-haiku-5-5:global:standard:over-100000:output"}, "us"); ok {
+		t.Error("rows at both tiers were held to one price")
+	}
+}

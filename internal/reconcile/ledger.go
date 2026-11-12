@@ -25,6 +25,7 @@ const (
 	residencyNote       = "for data residency in "
 
 	skuPriceFields = 6
+	skuPriceRegion = 2
 	skuPriceTier   = 3
 
 	// A gateway key's id is the SHA-256 of the key in lower-case hex.

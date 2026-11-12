@@ -230,7 +230,7 @@ func (w walker) prove(line priceKey, figure *lineFigure, group *ledgerGroup, usa
 	if err != nil {
 		return nil, "", err
 	}
-	price, held := heldTo(tiers, group.skus[line])
+	price, held := heldTo(tiers, group.skus[line], line.region)
 	if !held {
 		return nil, fmt.Sprintf("the catalog prices %s at %d context tiers, and the report does not say which the tokens fell in, so its price is not proven", name, len(tiers)), nil
 	}
@@ -330,14 +330,14 @@ func (w walker) contextTiers(line priceKey) ([]catalog.Price, error) {
 }
 
 // heldTo picks the one price a line is held to: the only tier, or the one
-// tier the ledger priced the class at.
-func heldTo(tiers []catalog.Price, skus []string) (catalog.Price, bool) {
+// tier the ledger priced the class at in the line's region.
+func heldTo(tiers []catalog.Price, skus []string, region string) (catalog.Price, bool) {
 	if len(tiers) == 1 {
 		return tiers[0], true
 	}
 	var named []catalog.Price
 	for _, tier := range tiers {
-		if slices.Contains(skus, tier.SkuPriceID) {
+		if slices.ContainsFunc(skus, func(sku string) bool { return namesTier(sku, tier.SkuPriceID, region) }) {
 			named = append(named, tier)
 		}
 	}
@@ -345,6 +345,25 @@ func heldTo(tiers []catalog.Price, skus []string) (catalog.Price, bool) {
 		return catalog.Price{}, false
 	}
 	return named[0], true
+}
+
+// namesTier says whether a ledger row's price id names a catalog tier's. Up to
+// 1.0.0-alpha.23, a price raised for data residency kept the id of its global
+// row, so a global id also names the same tier's id in the line's own region:
+// every release applied the multiplier there, so the row was charged that
+// regional price. Only the region field may differ, and only that way: a
+// regional id never names a global tier or another region's.
+func namesTier(sku, tier, region string) bool {
+	if sku == tier {
+		return true
+	}
+	stated, catalogued := strings.Split(sku, ":"), strings.Split(tier, ":")
+	if len(stated) < skuPriceFields || len(stated) != len(catalogued) || region == catalog.RegionGlobal ||
+		stated[skuPriceRegion] != catalog.RegionGlobal || catalogued[skuPriceRegion] != region {
+		return false
+	}
+	stated[skuPriceRegion] = region
+	return slices.Equal(stated, catalogued)
 }
 
 // impliedPrice is list over tokens per million tokens, rounded to

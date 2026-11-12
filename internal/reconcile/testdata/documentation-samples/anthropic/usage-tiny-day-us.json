@@ -1,0 +1,29 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-10-14T00:00:00Z",
+      "ending_at": "2026-10-15T00:00:00Z",
+      "group": {
+        "api_key_id": "apikey_01ExampleCi",
+        "model": "claude-haiku-5-5",
+        "service_tier": "standard",
+        "inference_geo": "us",
+        "speed": "standard"
+      },
+      "usage": {
+        "uncached_input_tokens": 1200,
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 0,
+          "ephemeral_5m_input_tokens": 203
+        },
+        "cache_read_input_tokens": 3000,
+        "output_tokens": 500,
+        "total_tokens": 4903,
+        "requests": 3
+      }
+    }
+  ],
+  "has_more": false,
+  "next_page": null,
+  "data_refreshed_at": "2026-10-15T08:00:00Z"
+}

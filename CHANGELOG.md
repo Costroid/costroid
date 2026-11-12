@@ -36,6 +36,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - `costroid serve` reads a GenAI span whose cache counts pass its `gen_ai.usage.input_tokens` as one from a sender that leaves the cache out of its input, and notes the reading on each of the request's rows. It refused such a span before.
 - `costroid serve` refuses an `x_CostroidOvershootBound` or a stated spend longer than 64 characters before reading it as a number. A long run of trailing zeros took seconds of CPU per value.
 - A decimal literal is at most 64 characters, and its trailing zeros are cut in time linear in its length. A figure read from a JSON number is refused when its plain form is longer than that.
+- `costroid reconcile` proves the price of a row written by 1.0.0-alpha.23 or earlier in a data residency region, on a model with several context tiers. Such a row carries the global price id beside the regional price, and it read "not proven" once regional ids named their region. A global id now names the same tier's id in the row's own region, and only that.
 - `costroid serve` prices a row whose `SkuPriceId` states no context tier at the highest tier its input could reach, and the row says it may read high: the sheet's top tier, or its fallback when the top tier has an upper bound. It took the lowest tier. A tier bounded on both sides, such as `over-256000-to-500000` on the Cursor sheet, now prices as stated; it also took the lowest tier.
 
 ## 1.0.0-alpha.23 (2026-11-11)
