@@ -46,7 +46,7 @@ sed -e 's/prt_fixture_0/prt_fixture_1/g' -e 's/msg_fixture_0001/msg_fixture_0002
 // step and before a second is printed: one step, four rows, USD 0.001438275
 // Measured, the figure OpenCode stated for it, and over the cap by USD
 // 0.000438275, the step that crossed it. The run reads wrapper-watchdog, and
-// the grade's note states that limit with these figures.
+// the grade's note states that limit.
 func TestOpenCodeRecordedStopHoldsTheCap(t *testing.T) {
 	var manifest struct {
 		Recorded bool   `json:"recorded"`
@@ -166,7 +166,7 @@ func TestOpenCodeRecordedStopHoldsTheCap(t *testing.T) {
 	if result.Enforcement.Grade != adapter.GradeWrapperWatchdog || !result.Enforcement.Watchdog {
 		t.Errorf("the run earned %+v", result.Enforcement)
 	}
-	for _, said := range []string{"between steps", "one step can pass it", "USD " + want.String(), "USD " + budget.String() + " cap", "USD " + over.String()} {
+	for _, said := range []string{"between steps", "one step can pass it"} {
 		if !strings.Contains(note, said) {
 			t.Errorf("the grade's note %q does not say %q", note, said)
 		}

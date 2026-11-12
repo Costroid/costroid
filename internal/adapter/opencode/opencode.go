@@ -39,7 +39,7 @@ const (
 	// watchedNote is the grade's note. OpenCode reports a step's tokens only
 	// when the step ends, so the step that crosses the cap is paid in full.
 	// The figures are the recorded stop under testdata/1.19.4/stop.
-	watchedNote = "wrapper-watchdog: priced from each step OpenCode reports, with a stop at the cap between steps, so one step can pass it: a recorded step of USD 0.001438275 passed a USD 0.001 cap by USD 0.000438275"
+	watchedNote = "wrapper-watchdog: priced from each step OpenCode reports, with a stop at the cap between steps, so one step can pass it"
 
 	// StatedUnit is the unit of OpenCode's own price for a step, and of its
 	// figure for the run, AgentStated.
