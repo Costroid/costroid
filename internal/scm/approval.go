@@ -91,12 +91,6 @@ type Approval struct {
 	ReviewID int64
 }
 
-// Holds reports whether the approval still binds the pull request's head. A
-// new push moves the head, and the approval lapses.
-func (a Approval) Holds(head string) bool {
-	return a.HeadSHA == head
-}
-
 // Approve verifies one approval against the host. Any error refuses it.
 func Approve(ctx context.Context, host Host, request ApprovalRequest, now time.Time) (Approval, error) {
 	pull, err := host.PullRequest(ctx, request.PullRequest)

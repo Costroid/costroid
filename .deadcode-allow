@@ -6,5 +6,3 @@
 # The catalog's Sigstore bundles, catalog.Signatures, are a variable, which
 # deadcode does not judge. Only tests read them until the binary verifies the
 # catalog against Sigstore's trusted root.
-
-2026-11-08 internal/scm.Approval.Holds the GitHub App's webhook route, on the approve button

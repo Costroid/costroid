@@ -93,18 +93,16 @@ func TestAnApprovalOfAnOlderCommitIsRefused(t *testing.T) {
 	}
 }
 
-func TestAnApprovalLapsesOnANewPush(t *testing.T) {
+// An approval names the head it was given on, and the comment and the check
+// apply it to that commit alone, so a push leaves it behind.
+func TestAnApprovalNamesTheHeadItApproved(t *testing.T) {
 	stub, host := approvalStub(t)
 	approval, err := scm.Approve(context.Background(), host, request(), newClock().now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !approval.Holds(stub.Head) {
-		t.Error("the approval does not hold its own head")
-	}
-	stub.Head = movedSHA
-	if approval.Holds(stub.Head) {
-		t.Error("the approval held across a push")
+	if approval.HeadSHA != stub.Head || approval.PullRequest != request().PullRequest {
+		t.Errorf("the approval names pull request %d at %s, want %d at %s", approval.PullRequest, approval.HeadSHA, request().PullRequest, stub.Head)
 	}
 }
 
