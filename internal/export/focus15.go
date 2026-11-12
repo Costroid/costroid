@@ -70,11 +70,9 @@ type skuPriceDetails struct {
 // class, and a cache write's lifetime. An informational class repeats tokens
 // a billed class counts, so it carries neither property and no query that
 // selects them counts its tokens twice. A class this version does not know
-// carries none.
+// carries none either.
 func tokenProperties(class focus.TokenClass) skuPriceDetails {
 	switch {
-	case class.Informational():
-		return skuPriceDetails{}
 	case class == focus.InputUncached:
 		return skuPriceDetails{TokenDirection: "Input", TokenCacheAction: "Uncached"}
 	case class == focus.CacheRead:
