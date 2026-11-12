@@ -213,6 +213,13 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	if err != nil {
 		return runFlags{}, err
 	}
+	// A command no adapter reads is refused before the rows file exists, so
+	// no empty file is left to read as a run that printed no usage.
+	if *agent == "" {
+		if _, err := run.AgentFor(set.Args()); err != nil {
+			return runFlags{}, err
+		}
+	}
 	if *out == "" {
 		*out = defaultRowsFile
 		fmt.Fprintf(stderr, "costroid: no --out was given, so the rows go to %s in the working directory\n", defaultRowsFile)

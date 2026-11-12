@@ -193,6 +193,35 @@ func TestRunRefusesAMissingOrZeroBudget(t *testing.T) {
 	}
 }
 
+// TestRefusedRunLeavesNoMisleadingRowsFile runs a command no adapter reads.
+// run refuses it before it creates a file: no rows file and no result object
+// is left, at the default path or at --out, and run never says where rows
+// went. The report then finds no rows file, and never says the agent printed
+// no usage.
+func TestRefusedRunLeavesNoMisleadingRowsFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, args := range [][]string{
+		{"run", "--budget-usd", "5", "--", "echo", "hi"},
+		{"run", "--budget-usd", "5", "--out", "rows.jsonl", "--json", "--", "echo", "hi"},
+	} {
+		code, stdout, stderr := execute(t, args...)
+		if code != exitFailure || stdout != "" || stderr != "costroid: run: no adapter for \"echo\": costroid runs claude-code, claude-code-sdk, codex, codex-sdk, opencode and copilot; --agent names the one the command starts\n" {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
+		}
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Errorf("the refused runs left %s", entry.Name())
+	}
+	_, _, stderr := execute(t, "report", "--preview", "--rows", defaultRowsFile)
+	if !strings.Contains(stderr, "no rows file at "+defaultRowsFile) || strings.Contains(stderr, "no usage") {
+		t.Errorf("report --preview after the refused run: %q", stderr)
+	}
+}
+
 func TestTheEgressCommandIsDispatched(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := dispatch(context.Background(), []string{"egress", "--help"}, nil, &stdout, &stderr); code != 0 {
