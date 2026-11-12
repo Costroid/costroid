@@ -10,6 +10,7 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - A model or tier a sheet does not name, priced in a region with a data residency multiplier, takes the multiplier on the fallback price. Such figures move up: an unnamed model's output reads USD 660 per million tokens on OpenAI `regional`, where it read USD 600, and USD 82.5 on Anthropic `us`, where it read USD 75, so the fallback stays at or above every regional price. A model the sheet prices and a multiplier leaves out keeps its global price.
 - A price a residency multiplier raised names its region in `SkuPriceId`, in place of `global`, as in `anthropic:claude-opus-5-5:us:fast:all:output`. The id of a global row stood beside a multiplied price before. Fallback ids keep their shape.
 - An amount in `costroid.yml` is read only when it is written as a plain decimal. Hex (`0x10`), octal (`0o17`, and a leading zero such as `017`), underscores (`1_000`) and a leading `+` were read as whole numbers, and are now refused, in the policy, in `costroid validate` and in the schema where JSON can tell. A budget of `017` read as USD 15. A refused amount leaves the policy unread, as before.
+- The Helm chart and the Compose file run the release the recipes pin by default, no longer 1.0.0-alpha.1. Each release moves that default. To stay on another release, set `image.tag` in the chart or `COSTROID_IMAGE` for Compose.
 
 ### What you can now do
 
@@ -19,6 +20,8 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - Trace a price to its source: [`docs/catalog.md`](docs/catalog.md) says where the catalog is published, how each price names its page and the day it was read, when a figure takes the fallback tier, and which catalog a binary carries.
 - Run Copilot CLI on a Gemini model: a request Copilot serves on `gemini-*` is priced at Google's sheet, in `costroid run` and in gh-aw's usage files. Google's sheet prices no cache write, so a cache write on a Gemini model counts as uncached input, and the row says so.
 - Write an amount unquoted: `run_budget_usd: 2.50` is read as the decimal 2.50, from its text, never through a float. It was refused, which left every rule unread and the check `neutral`. The schema takes a number for each amount.
+- Read what changed on each release's page: its notes open with that version's section of this changelog, above the install text and the image digest.
+- Pin the Marketplace listing, `Costroid/costroid-action`, to its own commit: the listing's release notes name the commit of its tag and show a job that calls it, and its README gives the `git ls-remote` line that prints it. The listing carries a `SECURITY.md` that sends reports to this repository's private vulnerability reporting.
 
 ### Fixes
 
@@ -38,6 +41,9 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - A decimal literal is at most 64 characters, and its trailing zeros are cut in time linear in its length. A figure read from a JSON number is refused when its plain form is longer than that.
 - `costroid reconcile` proves the price of a row written by 1.0.0-alpha.23 or earlier in a data residency region, on a model with several context tiers. Such a row carries the global price id beside the regional price, and it read "not proven" once regional ids named their region. A global id now names the same tier's id in the row's own region, and only that.
 - `costroid serve` prices a row whose `SkuPriceId` states no context tier at the highest tier its input could reach, and the row says it may read high: the sheet's top tier, or its fallback when the top tier has an upper bound. It took the lowest tier. A tier bounded on both sides, such as `over-256000-to-500000` on the Cursor sheet, now prices as stated; it also took the lowest tier.
+- A release waits for `ci`: a tag on a commit with no successful `ci` run on a push to `main` publishes nothing, and neither does a version with no section in this changelog.
+- The image is pushed by its digest, signed and attested, and only then tagged with its version, so a failed signature leaves no version tag on ghcr.io.
+- The image's binary records the commit it was built from, as the release binaries do, so `costroid init` run from the image pins that commit without reading the tag from github.com.
 
 ## 1.0.0-alpha.23 (2026-11-11)
 
