@@ -489,8 +489,14 @@ func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 	}
 }
 
+// warnAccount says the rows name no billing account: as a warning in CI, and
+// as a note on a run outside CI.
 func warnAccount(w io.Writer, account accountFlags) {
-	if *account.billing == "" {
+	switch {
+	case *account.billing != "":
+	case cicontext.Detect(os.Getenv) == cicontext.NoSystem:
+		fmt.Fprintf(w, "costroid: note: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
+	default:
 		fmt.Fprintf(w, "costroid: warning: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
 	}
 }

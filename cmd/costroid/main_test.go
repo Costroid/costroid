@@ -165,6 +165,40 @@ func TestBillingAccountComesFromTheFlagThenTheVariableAndWarnsOnlyWhenAbsent(t *
 	}
 }
 
+// TestUnknownBillingAccountIsAWarningInCIAndANoteOutside holds the line for
+// rows with no billing account to a warning where a CI system is detected,
+// and to one note on a run outside CI.
+func TestUnknownBillingAccountIsAWarningInCIAndANoteOutside(t *testing.T) {
+	const (
+		warning = "costroid: warning: BillingAccountId reads unknown: pass --billing-account or set " + billingAccountVariable + "\n"
+		note    = "costroid: note: BillingAccountId reads unknown: pass --billing-account or set " + billingAccountVariable + "\n"
+	)
+	for name, check := range map[string]struct {
+		system string
+		want   string
+	}{
+		"outside CI":     {"", note},
+		"GitHub Actions": {"GITHUB_ACTIONS", warning},
+		"GitLab CI":      {"GITLAB_CI", warning},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claude := replayClaude(t)
+			t.Setenv(billingAccountVariable, "")
+			if check.system != "" {
+				t.Setenv(check.system, "true")
+			}
+			out := filepath.Join(t.TempDir(), "rows.jsonl")
+			code, _, stderr := execute(t, "run", "--budget-usd", "5", "--out", out, "--", claude, "-p", "work")
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if strings.Count(stderr, "BillingAccountId reads unknown") != 1 || !strings.Contains(stderr, check.want) {
+				t.Errorf("stderr does not hold %q once:\n%s", check.want, stderr)
+			}
+		})
+	}
+}
+
 func TestBillingAccountPastTheContractsLimitIsRefused(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "rows.jsonl")
 	code, _, stderr := execute(t, "run", "--budget-usd", "1", "--out", out, "--billing-account", strings.Repeat("a", maxAccount+1), "--", "claude", "-p", "x")

@@ -64,7 +64,7 @@ costroid: claude-code, 4 requests
 costroid: 19 rows in rows.jsonl, catalog 0.4.1
 costroid: USD 0.001619725 at list, List-equivalent, not billed
 costroid: budget USD 5, agent-flag: client-side estimate, can pass the cap
-costroid: warning: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT
+costroid: note: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT
 ```
 
 Each row is one request's token class, such as `"SkuMeter":"input_uncached"`.
