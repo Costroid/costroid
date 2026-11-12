@@ -76,7 +76,7 @@ costroid init gitlab --agent codex
 
 It holds the recipe to the rules of `costroid lint-recipes` before it writes it, and it refuses to replace a file unless you pass `--force`. Then it prints what each push to a pull request can spend, and the commands that are left: the secret, a branch, a commit and a pull request, then the label a first contributor's pull request needs. It runs none of them.
 
-On GitHub, `--pr` runs them up to the pull request, and prints each command before it runs it. It sets the key as a repository secret, read from the environment variable `--key-env` names or from a prompt that does not echo it, and never prints it. Then it commits on the branch `try-costroid`, pushes, opens the pull request, watches its run and prints the URL of Costroid's comment. It stops at the first command that fails. `--pr` is on `main` and in no release yet.
+On GitHub, `--pr` runs them up to the pull request, and prints each command before it runs it. It sets the key as a repository secret, read from the environment variable `--key-env` names or from a prompt that does not echo it, and never prints it. Then it commits on the branch `try-costroid`, pushes, opens the pull request, watches its run and prints the URL of Costroid's comment. It stops at the first command that fails.
 
 A binary built from a checkout with `make build` belongs to no release, so `init` refuses rather than pin a commit that was never released. On GitHub, `--action-ref` names the commit to pin instead.
 
