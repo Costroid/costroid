@@ -56,6 +56,7 @@ One page per task, in the order a team meets them.
 ## Verify a release
 
 - [`verify.md`](verify.md): check a release's checksum, signature, image and provenance.
+- [`performance.md`](performance.md): the performance bars, how each is measured and its last reading.
 
 ## When something fails
 
