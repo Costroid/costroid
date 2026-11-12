@@ -72,6 +72,28 @@ jobs:
       - name: Time the per-PR view on one million rows
         run: make bench-view
 
+  # The start bars are stated for two cores. The timing runs pinned to two of
+  # the runner's cores, and the job fails when the pin does not give it two.
+  bench-start:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Require two cores for the timing
+        run: |
+          pinned=$(taskset -c 0,1 nproc)
+          echo "The runner has $(nproc --all) cores. The timing runs on $pinned of them."
+          test "$pinned" -eq 2
+      - name: Time costroid --version and costroid policy
+        run: taskset -c 0,1 make bench-start
+
   # TestDemoRecipesMatchRelease reads a checkout of Costroid/costroid-demo
   # beside this repository and skips without one, so this job checks the demo
   # out there. The demo is public and read at its default branch, pinned by
