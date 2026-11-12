@@ -12,6 +12,11 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - An amount in `costroid.yml` is read only when it is written as a plain decimal. Hex (`0x10`), octal (`0o17`, and a leading zero such as `017`), underscores (`1_000`) and a leading `+` were read as whole numbers, and are now refused, in the policy, in `costroid validate` and in the schema where JSON can tell. A budget of `017` read as USD 15. A refused amount leaves the policy unread, as before.
 - The Helm chart and the Compose file run the release the recipes pin by default, no longer 1.0.0-alpha.1. Each release moves that default. To stay on another release, set `image.tag` in the chart or `COSTROID_IMAGE` for Compose.
 
+### Security
+
+- A holder of an ingest token could stall a self-hosted `costroid serve` with one long number: a decimal with tens of thousands of trailing zeros took seconds of CPU for each value, and a row could carry one. `costroid serve` now refuses an `x_CostroidOvershootBound` or a stated spend longer than 64 characters before reading it as a number. A self-hosted `serve` should move to this release.
+- A decimal literal is at most 64 characters, and its trailing zeros are cut in time linear in its length. A figure read from a JSON number is refused when its plain form is longer than that.
+
 ### What you can now do
 
 - Read where a run stands against its budget in the verdict line: `Run budget: unverified rows cannot satisfy a budget. The run cost USD 0.0391529 of the USD 5 budget.` When the check is neutral only because the agent's own job wrote the rows, the line says so, states what a run over budget concludes, and links [`docs/policy.md`](docs/policy.md), which says what lets a budget pass. With no rule set, it names `policy.run_budget_usd`.
@@ -46,8 +51,6 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - A Copilot CLI request on a model no sheet prices wrote no row, and the run kept `wrapper-watchdog` though the watch could not count it. The run now reads `none`, and the grade's note and the warning name the model, where the warning said the provider `"copilot"` had no sheet.
 - One map names the provider whose sheet prices a model, from the start of its name, and Copilot CLI, gh-aw and `costroid serve`'s telemetry reader share it. Telemetry no longer refuses `o3`, and Copilot CLI no longer drops `codex-*`.
 - `costroid serve` reads a GenAI span whose cache counts pass its `gen_ai.usage.input_tokens` as one from a sender that leaves the cache out of its input, and notes the reading on each of the request's rows. It refused such a span before.
-- `costroid serve` refuses an `x_CostroidOvershootBound` or a stated spend longer than 64 characters before reading it as a number. A long run of trailing zeros took seconds of CPU per value.
-- A decimal literal is at most 64 characters, and its trailing zeros are cut in time linear in its length. A figure read from a JSON number is refused when its plain form is longer than that.
 - `costroid reconcile` proves the price of a row written by 1.0.0-alpha.23 or earlier in a data residency region, on a model with several context tiers. Such a row carries the global price id beside the regional price, and it read "not proven" once regional ids named their region. A global id now names the same tier's id in the row's own region, and only that.
 - `costroid serve` prices a row whose `SkuPriceId` states no context tier at the highest tier its input could reach, and the row says it may read high: the sheet's top tier, or its fallback when the top tier has an upper bound. It took the lowest tier. A tier bounded on both sides, such as `over-256000-to-500000` on the Cursor sheet, now prices as stated; it also took the lowest tier.
 - A release waits for `ci`: a tag on a commit with no successful `ci` run on a push to `main` publishes nothing, and neither does a version with no section in this changelog.
