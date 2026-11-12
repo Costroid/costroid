@@ -1,0 +1,1285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.10/result.schema.json",
+  "title": "Costroid result object, version 0.10",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, the recorded run a report shows in place of the pull request's own, the infrastructure estimates a workflow added beside the agent's rows, apart from the figures, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it. An object that states no estimate is written as version 0.9.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.result/0.10"
+    },
+    "check_run_id": {
+      "description": "The check run that carries this object. The report creates the check run, then writes this id into the check run's object. Absent when no check run was created or that second write failed, and in what costroid run prints.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "conclusion": {
+      "description": "The check's conclusion. Null in what costroid run prints, because no check has concluded.",
+      "enum": [
+        "success",
+        "neutral",
+        "failure",
+        null
+      ]
+    },
+    "state": {
+      "description": "What the rows file gave the report.",
+      "enum": [
+        "reported",
+        "no_rows",
+        "rows_unreadable"
+      ]
+    },
+    "reason": {
+      "$ref": "#/$defs/reason"
+    },
+    "reason_line": {
+      "description": "The line of the rows file that is not a valid row. Only with the reason invalid_row.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_reason": {
+      "$ref": "#/$defs/runReason"
+    },
+    "reader_error": {
+      "description": "The reader's first error line, beside the run reason reader_refused. Every character outside the allowlist is replaced by ?, and the line is cut at 160 bytes.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9 .,:;()'=_/+?-]{1,160}$"
+    },
+    "agent_error": {
+      "description": "The class of error the agent ended with, read from its own result fields and never from its text. Null when the agent ended without one, or the run stated none. It can sit beside figures, because an agent can fail after some requests.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/agentError"
+        }
+      ]
+    },
+    "agent_skipped": {
+      "description": "Whether the CI system said the agent's job was skipped. Null when the report was not told the job's result.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ci_run": {
+      "description": "The CI run that wrote the object, as the environment states it. A claim, never verified. Null when the environment names no run.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/ciRun"
+        }
+      ]
+    },
+    "rows_sha256": {
+      "description": "The SHA-256 of the rows the report read, an estimate's rows included: each row's x_CostroidRowId, sorted, each followed by a line feed. Lower-case hex. Null when the rows file holds no rows, or a row names no x_CostroidRowId of 64 lower-case hex digits. Two objects with the same digest report the same rows.",
+      "$ref": "#/$defs/nullableDigest"
+    },
+    "rows_file_sha256": {
+      "description": "The SHA-256 of the rows file, byte for byte, as the report read it. Lower-case hex. Null when the report could not read the file to its end.",
+      "$ref": "#/$defs/nullableDigest"
+    },
+    "head_sha": {
+      "description": "The head commit, lower case. Empty when the environment named none.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}([0-9a-f]{24})?)?$"
+    },
+    "amounts": {
+      "description": "Whether this copy carries amounts and token counts. The check run's block and what both commands print always do. A comment's copy withholds them under comment.show_cost false on a public repository.",
+      "enum": [
+        "shown",
+        "withheld"
+      ]
+    },
+    "rows": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "run_identity": {
+      "$ref": "#/$defs/runIdentity"
+    },
+    "figures": {
+      "description": "One figure per currency, basis and pair of grades, the weakest enforcement grade first. No figure spans two currencies or two bases, and nothing sums across them.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/figure"
+      }
+    },
+    "figures_omitted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cap": {
+      "description": "The cap the run was given, as the report was told it. Null when the report was not told it, or when amounts are withheld. It is not the policy's budget: policy.results names that limit as limit_usd.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/cap"
+        }
+      ]
+    },
+    "data": {
+      "$ref": "#/$defs/data"
+    },
+    "estimates": {
+      "description": "The figures of the estimate rows: rows that state a cost source, name no agent and state the basis estimate, as costroid ingest-run --from focus writes them from a workflow's own FOCUS cost file. One entry per currency, source and charge period, then the estimate a workflow named that was not available. They stand apart from figures, cap, lifetime and policy, and nothing adds them to any of those, or one currency to another. A version 0.10 object states at least one entry.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 21,
+      "items": {
+        "$ref": "#/$defs/estimate"
+      },
+      "contains": {
+        "type": "object",
+        "required": [
+          "reason"
+        ]
+      },
+      "minContains": 0,
+      "maxContains": 1
+    },
+    "estimates_omitted": {
+      "description": "The estimate figures past the first 20, left out.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
+    },
+    "lifetime": {
+      "description": "The pull request's total at list, this run included, as the comment states it: one figure per currency and basis. Null off a pull request, when the earlier reports could not be read, and when amounts are withheld.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/lifetime"
+        }
+      ]
+    },
+    "agent_stated": {
+      "description": "The agent's own figure for the run, in the agent's own unit, as the agent stated it. Costroid never converts it and never adds it to an amount. Null when the agent stated none, and in a copy that withholds amounts.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/agentStated"
+        }
+      ]
+    },
+    "recorded": {
+      "description": "The recorded run whose rows the figures are, in place of the pull request's own: the CI run that wrote them and the day it was recorded. Null on a report on the pull request's own rows. A copy that withholds amounts states it too.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/recorded"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "conclusion",
+    "state",
+    "head_sha",
+    "amounts",
+    "rows",
+    "run_identity",
+    "figures",
+    "figures_omitted",
+    "cap",
+    "data",
+    "agent_error",
+    "agent_skipped",
+    "ci_run",
+    "rows_sha256",
+    "rows_file_sha256",
+    "lifetime",
+    "agent_stated",
+    "recorded",
+    "estimates",
+    "estimates_omitted"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "reported"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "figures": {
+            "type": "array",
+            "minItems": 1
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "reason"
+              ]
+            },
+            {
+              "required": [
+                "reason_line"
+              ]
+            },
+            {
+              "required": [
+                "run_reason"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "const": 0
+          },
+          "figures": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "not": {
+              "const": "reported"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rows_sha256": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "reader_error"
+        ]
+      },
+      "then": {
+        "required": [
+          "run_reason"
+        ],
+        "properties": {
+          "run_reason": {
+            "const": "reader_refused"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "run_reason"
+        ],
+        "properties": {
+          "run_reason": {
+            "const": "agent_error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "agent_error": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "agent_error"
+        ],
+        "properties": {
+          "agent_error": {
+            "type": "object"
+          },
+          "state": {
+            "not": {
+              "const": "reported"
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "run_reason"
+        ],
+        "properties": {
+          "run_reason": {
+            "const": "agent_error"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "agent_skipped"
+        ],
+        "properties": {
+          "agent_skipped": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "const": "agent_skipped"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "const": "agent_skipped"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "agent_skipped": {
+            "const": true
+          }
+        },
+        "not": {
+          "required": [
+            "run_reason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "reason_line"
+        ]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "const": "invalid_row"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "amounts": {
+            "const": "shown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "figures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "list_cost",
+                "tokens"
+              ]
+            }
+          },
+          "estimates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "reason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "list_cost"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "cap": {
+            "type": "null"
+          },
+          "figures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "list_cost"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tokens"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "lifetime": {
+            "type": "null"
+          },
+          "agent_stated": {
+            "type": "null"
+          },
+          "estimates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "not": {
+                "required": [
+                  "list_cost"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "description": "A non-negative decimal string. Never a JSON number and never scientific notation.",
+      "type": "string",
+      "pattern": "^[0-9]{1,26}(\\.[0-9]{1,12})?$"
+    },
+    "zero": {
+      "type": "string",
+      "pattern": "^0(\\.0{1,12})?$"
+    },
+    "nullableDecimal": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/decimal"
+        }
+      ]
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "costBasis": {
+      "description": "What the figure is. One value for each accuracy label.",
+      "enum": [
+        "measured",
+        "list_equivalent",
+        "estimate",
+        "billed",
+        "derived"
+      ]
+    },
+    "attributionGrade": {
+      "enum": [
+        "exact",
+        "windowed",
+        "unattributed"
+      ]
+    },
+    "enforcementGrade": {
+      "description": "What held the run to its cap.",
+      "enum": [
+        "gateway-precheck",
+        "agent-flag",
+        "wrapper-watchdog",
+        "provider",
+        "none"
+      ]
+    },
+    "runIdentity": {
+      "description": "Whether the run identity was verified from the CI system's token. A rows file the agent's own job wrote is unverified.",
+      "enum": [
+        "token_verified",
+        "unverified"
+      ]
+    },
+    "reason": {
+      "description": "Why the report shows no figures. The list is closed.",
+      "enum": [
+        "no_rows_file",
+        "empty_rows_file",
+        "rows_path_not_a_file",
+        "rows_file_unread",
+        "invalid_row",
+        "fork_no_rows",
+        "agent_skipped"
+      ]
+    },
+    "runReason": {
+      "description": "Why the run wrote no rows, as costroid run or costroid ingest-run stated it, or artifact_refused, which the report states when it refuses the artifact that carried the rows. Present only when one was stated. The list is closed.",
+      "enum": [
+        "no_usage",
+        "concurrent_run",
+        "reader_refused",
+        "agent_error",
+        "artifact_refused"
+      ]
+    },
+    "agentError": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "The list is closed. unknown is an error the agent stated in no class this list names.",
+          "enum": [
+            "authentication_failed",
+            "billing_error",
+            "rate_limit",
+            "invalid_request",
+            "server_error",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "additionalProperties": false
+    },
+    "ciRun": {
+      "description": "GitHub Actions' GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT. Other CI systems state none in this version.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "id",
+        "attempt"
+      ],
+      "additionalProperties": false
+    },
+    "recorded": {
+      "description": "A run recorded earlier. run_id is the CI run that wrote the rows, GITHUB_RUN_ID on GitHub Actions, and date the day it was recorded.",
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "date": {
+          "description": "YYYY-MM-DD.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+        }
+      },
+      "required": [
+        "run_id",
+        "date"
+      ],
+      "additionalProperties": false
+    },
+    "tokenClass": {
+      "enum": [
+        "input_uncached",
+        "cache_read",
+        "cache_write_5m",
+        "cache_write_30m",
+        "cache_write_1h",
+        "cache_write_12h",
+        "output",
+        "reasoning_output",
+        "cached_input_reported"
+      ]
+    },
+    "figure": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "list_cost": {
+          "$ref": "#/$defs/decimal"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/costBasis"
+        },
+        "attribution_grade": {
+          "$ref": "#/$defs/attributionGrade"
+        },
+        "enforcement_grade": {
+          "$ref": "#/$defs/enforcementGrade"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fallback_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "description": "Token counts by class, every class the figure's rows name. reasoning_output and cached_input_reported repeat tokens that output and cache_read count.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/tokenClass"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/decimal"
+          }
+        }
+      },
+      "required": [
+        "currency",
+        "cost_basis",
+        "attribution_grade",
+        "enforcement_grade",
+        "rows",
+        "fallback_rows"
+      ],
+      "additionalProperties": false
+    },
+    "cap": {
+      "description": "The cap beside the one figure it holds: the figures in its currency, when they share one basis. cost and the fields after it are null when no such figure exists.",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "const": "USD"
+        },
+        "amount": {
+          "$ref": "#/$defs/decimal"
+        },
+        "enforcement_grade": {
+          "description": "The weakest enforcement grade of the figures. Null with no figures.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/enforcementGrade"
+            }
+          ]
+        },
+        "cost": {
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "cost_basis": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/costBasis"
+            }
+          ]
+        },
+        "remainder": {
+          "description": "amount minus cost, 0 when cost is above amount.",
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "overshoot": {
+          "description": "cost minus amount, 0 when cost is within amount.",
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "overshoot_tokens": {
+          "description": "The billed tokens of the request that took cost past amount and of every request that ended after it, in the order the requests ended. Null when the rows hold too many requests to keep.",
+          "$ref": "#/$defs/nullableDecimal"
+        }
+      },
+      "required": [
+        "currency",
+        "amount",
+        "enforcement_grade",
+        "cost",
+        "cost_basis",
+        "remainder",
+        "overshoot",
+        "overshoot_tokens"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "cost": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cost_basis": {
+            "type": "null"
+          },
+          "remainder": {
+            "type": "null"
+          },
+          "overshoot": {
+            "type": "null"
+          },
+          "overshoot_tokens": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "cost_basis": {
+            "type": "string"
+          },
+          "remainder": {
+            "type": "string"
+          },
+          "overshoot": {
+            "type": "string"
+          }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "remainder": {
+                "$ref": "#/$defs/zero"
+              }
+            }
+          },
+          {
+            "properties": {
+              "overshoot": {
+                "$ref": "#/$defs/zero"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "data": {
+      "description": "Strings that originated in the pull request. Each passed an allowlist, and one that failed it reads not-shown.",
+      "type": "object",
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/names"
+        },
+        "models": {
+          "$ref": "#/$defs/names"
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "catalog_versions": {
+          "$ref": "#/$defs/names"
+        },
+        "fallback_models": {
+          "$ref": "#/$defs/names"
+        },
+        "fallback_models_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback_price_ids": {
+          "$ref": "#/$defs/names"
+        },
+        "fallback_price_ids_omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "agents",
+        "models",
+        "models_omitted",
+        "catalog_versions",
+        "fallback_models",
+        "fallback_models_omitted",
+        "fallback_price_ids",
+        "fallback_price_ids_omitted"
+      ],
+      "additionalProperties": false
+    },
+    "names": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$"
+      }
+    },
+    "policy": {
+      "description": "The policy's verdict, present when a policy ran. docs/policy.md states each field. The comment's copy drops limit_usd, cost_usd and baseline_usd when it withholds amounts.",
+      "type": "object",
+      "properties": {
+        "conclusion": {
+          "enum": [
+            "success",
+            "neutral",
+            "failure"
+          ]
+        },
+        "trust": {
+          "enum": [
+            "unverified",
+            "token_verified"
+          ]
+        },
+        "pack_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "config_ref": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "config": {
+          "enum": [
+            "found",
+            "absent",
+            "invalid",
+            "unread"
+          ]
+        },
+        "config_from_base": {
+          "type": "boolean"
+        },
+        "evaluated_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "warn_only": {
+          "type": "object",
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "reason": {
+              "enum": [
+                "in_period",
+                "ended",
+                "enforced",
+                "not_on_base",
+                "start_unknown"
+              ]
+            },
+            "started": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            },
+            "ends": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            }
+          },
+          "required": [
+            "active",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "enum": [
+                  "run_budget",
+                  "run_cost_threshold",
+                  "run_increase",
+                  "run_increase_percent",
+                  "pr_budget",
+                  "monthly_budget",
+                  "model_allowlist",
+                  "attribution"
+                ]
+              },
+              "outcome": {
+                "enum": [
+                  "pass",
+                  "warn",
+                  "fail",
+                  "unproven"
+                ]
+              },
+              "reason": {
+                "enum": [
+                  "over_limit",
+                  "within_limit",
+                  "no_rows",
+                  "unverified_rows",
+                  "unattributed_rows",
+                  "other_currency",
+                  "joinable_rows",
+                  "over_baseline",
+                  "no_baseline",
+                  "no_lifetime",
+                  "repeat_possible",
+                  "no_ledger",
+                  "model_outside_allowlist",
+                  "unreadable_model",
+                  "models_on_allowlist",
+                  "unmeasured_spend",
+                  "no_run_rows"
+                ]
+              },
+              "held_by_warn_only": {
+                "const": true
+              },
+              "limit_usd": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "limit_percent": {
+                "description": "The increase over the baseline a run may reach, in percent. Only under run_increase_percent.",
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "cost_usd": {
+                "description": "The run's cost in USD, and under pr_budget the pull request's total, this run included.",
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "baseline_usd": {
+                "description": "The median of the agent's earlier runs, in USD, that the increase rules compare the run with.",
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+              },
+              "models": {
+                "description": "The models outside policy.models, sorted, at most 10. Only under model_allowlist.",
+                "$ref": "#/$defs/names"
+              }
+            },
+            "required": [
+              "rule",
+              "outcome",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "joinable_rows": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "conclusion",
+        "trust",
+        "pack_sha256",
+        "config_sha256",
+        "config",
+        "config_from_base",
+        "evaluated_at",
+        "warn_only",
+        "results",
+        "joinable_rows"
+      ],
+      "additionalProperties": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableDigest": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/digest"
+        }
+      ]
+    },
+    "lifetime": {
+      "description": "The lines the comment states under the figures. Figures with the same currency and basis are added up over the reports on every commit of the pull request; nothing is added across a currency or a basis.",
+      "type": "object",
+      "properties": {
+        "figures": {
+          "description": "At most 10, sorted by currency, then by basis.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/lifetimeFigure"
+          }
+        },
+        "figures_omitted": {
+          "description": "The totals past the first 10, left out.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "capped": {
+          "description": "True when the host listed as many commits of the pull request as it lists, 250 on GitHub, so a later commit can be missing from the figures.",
+          "type": "boolean"
+        },
+        "unread": {
+          "description": "The check runs left out because their result object could not be read or added up.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "figures",
+        "figures_omitted",
+        "capped",
+        "unread"
+      ],
+      "additionalProperties": false
+    },
+    "lifetimeFigure": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/costBasis"
+        },
+        "list_cost": {
+          "$ref": "#/$defs/decimal"
+        },
+        "reports": {
+          "description": "The reports in the sum. Reports with the same rows_sha256 count once.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "may_repeat": {
+          "description": "True when the sum holds two or more reports and one of them states no rows_sha256, so a report over the same rows can be counted twice.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "currency",
+        "cost_basis",
+        "list_cost",
+        "reports",
+        "may_repeat"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "reports": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "may_repeat": {
+            "const": false
+          }
+        }
+      }
+    },
+    "agentStated": {
+      "description": "A figure the agent stated about its own run, in the one unit that agent states it in. gh-aw states its AI credits: the last ai_credits_total of the agent job's records and of the threat detection job's, added up in gh-aw's own unit. OpenCode states its own price for each step, part.cost, from its own price list, added up in USD. Copilot CLI states totalNanoAiu, in nano-AI units, as it wrote it, 0 included.",
+      "type": "object",
+      "properties": {
+        "unit": {
+          "description": "The agent's own unit. AIC is gh-aw's AI credits, USD is OpenCode's own price, and nano-AIU is Copilot CLI's nano-AI units.",
+          "enum": [
+            "AIC",
+            "USD",
+            "nano-AIU"
+          ]
+        },
+        "quantity": {
+          "$ref": "#/$defs/statedQuantity"
+        },
+        "source": {
+          "description": "The agent that stated the figure. Each agent states it in one unit.",
+          "enum": [
+            "gh-aw",
+            "opencode",
+            "copilot"
+          ]
+        }
+      },
+      "required": [
+        "unit",
+        "quantity",
+        "source"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "gh-aw"
+            },
+            "unit": {
+              "const": "AIC"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "opencode"
+            },
+            "unit": {
+              "const": "USD"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "const": "copilot"
+            },
+            "unit": {
+              "const": "nano-AIU"
+            }
+          }
+        }
+      ]
+    },
+    "statedQuantity": {
+      "description": "A non-negative decimal string, every digit the agent wrote kept. Never a JSON number and never scientific notation.",
+      "type": "string",
+      "pattern": "^[0-9]{1,26}(\\.[0-9]{1,32})?$"
+    },
+    "instant": {
+      "description": "A UTC instant to the second, as FOCUS writes a charge period's bounds.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
+    },
+    "estimate": {
+      "description": "A figure, or an estimate that was not available. An entry with a reason is the second.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/estimateFigure"
+        },
+        {
+          "$ref": "#/$defs/estimateNotAvailable"
+        }
+      ]
+    },
+    "estimateFigure": {
+      "description": "The exact sum of ListCost over the estimate rows that share a currency, a source and a charge period: rows that state a cost source, name no agent and state the basis estimate, as ingest-run --from focus writes them.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The rows' costroid/cost_source, as the comment names it. not-shown when it fails the allowlist.",
+          "$ref": "#/$defs/name"
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "charge_period_start": {
+          "$ref": "#/$defs/instant"
+        },
+        "charge_period_end": {
+          "description": "Exclusive, and after charge_period_start.",
+          "$ref": "#/$defs/instant"
+        },
+        "cost_basis": {
+          "description": "Always estimate. A figure of another basis is no estimate, and this array never holds one.",
+          "const": "estimate"
+        },
+        "list_cost": {
+          "$ref": "#/$defs/decimal"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "source",
+        "currency",
+        "charge_period_start",
+        "charge_period_end",
+        "cost_basis",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "estimateNotAvailable": {
+      "description": "An estimate the workflow named, with ingest-run --optional, that was not there.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The source the estimate would have come from.",
+          "$ref": "#/$defs/name"
+        },
+        "reason": {
+          "description": "Why it was not available. The list is closed. no_file: the file was not there, because the step that writes it did not run or wrote nothing, as on a fork's pull request that gets no secret.",
+          "enum": [
+            "no_file"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$"
+    }
+  }
+}

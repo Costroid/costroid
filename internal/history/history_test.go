@@ -361,7 +361,7 @@ func TestLifetimeLeavesOutWhatItCannotAddUp(t *testing.T) {
 	posted(stub, secondCommit, text)
 	for _, unread := range []string{
 		withSchema(text, "costroid.result/0.2"),
-		withSchema(text, "costroid.result/0.10"),
+		withSchema(text, "costroid.result/0.11"),
 		strings.Replace(text, `"amounts": "shown"`, `"amounts": "withheld"`, 1),
 		strings.Replace(text, `"figures_omitted": 0`, `"figures_omitted": 1`, 1),
 		strings.Replace(text, `"currency": "USD"`, `"currency": "usd"`, 1),
@@ -442,4 +442,54 @@ func requestsWith(stub *scmtest.Stub, part string) []string {
 		}
 	}
 	return found
+}
+
+// estimatedText is the check run text this release posts for the figures
+// beside an infrastructure estimate of USD 1000 and EUR 25.488. Every figure
+// is synthetic.
+func estimatedText(t *testing.T, head string, figures ...comment.Figure) string {
+	t.Helper()
+	december := comment.Period{Start: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}
+	output, err := comment.Check(comment.Input{State: comment.Reported, HeadSHA: head, Ledger: comment.Ledger{
+		Rows: len(figures), Figures: figures,
+		Infrastructure: comment.Infrastructure{Figures: []comment.InfrastructureFigure{
+			{Currency: "EUR", Basis: "estimate", Source: "infrastructure", Period: december, Cost: decimal.MustParse("25.488"), Rows: 1},
+			{Currency: "USD", Basis: "estimate", Source: "infrastructure", Period: december, Cost: decimal.MustParse("1000"), Rows: 1},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output.Text
+}
+
+// TestOlderResultsStillRead adds up the reports of each version from 0.6 to
+// 0.10 that a pull request's check runs carry, and reads the newest check
+// run's object whatever its version. An estimate in a result/v0.10 object is
+// never added to the pull request's total or to the policy's earlier spend,
+// even in USD.
+func TestOlderResultsStillRead(t *testing.T) {
+	commits := []string{recordedCommit, secondCommit, thirdCommit, "4d9f1e2a63b57c8ad2e4f6081a2c3d4e5f6a7b8c", "5e0a2f3b74c68d9be3f5071a2b3d4e5f6a7b8c9d"}
+	estimated := estimatedText(t, commits[4], figure("USD", "measured", "0.1"))
+	if !strings.Contains(estimated, `"schema": "costroid.result/0.10"`) || !strings.Contains(estimated, `"list_cost": "1000"`) {
+		t.Fatalf("the object states no estimate:\n%s", estimated)
+	}
+	stub := scmtest.New(t)
+	pullWith(stub, commits...)
+	for index, version := range []string{"0.6", "0.7", "0.8", "0.9"} {
+		posted(stub, commits[index], withSchema(checkText(t, figure("USD", "measured", "0.1")), "costroid.result/"+version))
+	}
+	posted(stub, commits[4], estimated)
+	totals := readWith(t, stub, commits[4], digestedReport(t, otherDigest, figure("USD", "measured", "0.5")))
+	assertFigures(t, totals.Lifetime.Figures, want{"USD", "measured", "1", 6, true})
+	if totals.Lifetime.Unread != 0 || totals.Earlier.USD.String() != "0.5" || totals.Earlier.OtherCurrency {
+		t.Errorf("unread %d, earlier %+v: an estimate was added, or a version was not read", totals.Lifetime.Unread, totals.Earlier)
+	}
+	newest, err := history.Newest(context.Background(), adapter(t, stub), commits[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newest.Object != strings.TrimSuffix(strings.TrimPrefix(estimated, "```json\n"), "\n```") || len(newest.Block.Estimates) != 2 {
+		t.Errorf("the newest object reads %d estimates:\n%s", len(newest.Block.Estimates), newest.Object)
+	}
 }

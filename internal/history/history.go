@@ -33,7 +33,7 @@ const (
 var schemas = append([]string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5"}, digestSchemas...)
 
 // digestSchemas are the result objects that state the digest of their rows.
-var digestSchemas = []string{"costroid.result/0.6", "costroid.result/0.7", "costroid.result/0.8", "costroid.result/0.9"}
+var digestSchemas = []string{"costroid.result/0.6", "costroid.result/0.7", "costroid.result/0.8", "costroid.result/0.9", "costroid.result/0.10"}
 
 // usd is the one currency the policy's pull request budget is held in.
 const usd = "USD"
@@ -68,7 +68,8 @@ type Totals struct {
 // The digest of the rows is read from a result/v0.6 or later object only. An
 // older object states none, so it counts once per check run. The agent's own
 // figure in a result/v0.7 or later object is never added, even in USD: it is
-// the agent's claim, not Costroid's.
+// the agent's claim, not Costroid's. Nor is an estimate in a result/v0.10
+// object: it is not an agent's spend.
 func Parse(object []byte) (Report, error) {
 	var block comment.Block
 	if err := json.Unmarshal(object, &block); err != nil {

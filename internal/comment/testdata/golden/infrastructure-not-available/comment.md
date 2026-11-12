@@ -48,7 +48,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.1`, pri
 
 ```json
 {
-  "schema": "costroid.result/0.9",
+  "schema": "costroid.result/0.10",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",
@@ -111,6 +111,13 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.1`, pri
   "lifetime": null,
   "agent_stated": null,
   "recorded": null,
+  "estimates": [
+    {
+      "source": "infrastructure",
+      "reason": "no_file"
+    }
+  ],
+  "estimates_omitted": 0,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",

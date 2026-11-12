@@ -113,7 +113,13 @@ The agent figure and these infrastructure figures are not added together, and no
 </details>
 ```
 
-Each currency stands alone, and none is converted. A comment whose amounts are withheld names each figure's currency, period and source without its amount. The check run's machine block, `costroid.result/0.9`, carries the agent's figures alone: it holds no infrastructure figure and no note of an estimate that was not there.
+Each currency stands alone, and none is converted. A comment whose amounts are withheld names each figure's currency, period and source without its amount.
+
+The check run's machine block states the same figures in `estimates`, apart from the agent's `figures`, as [`result/v0.10`](https://github.com/Costroid/costroid-schemas/tree/main/result/v0.10) defines them: one entry per currency, source and period at the basis `estimate`, with its amount, its rows and its period's two instants. The agent's figures, the cap, the pull request's total and the verdict read the agent's rows alone, as they do without an estimate. The comment's copy of the block leaves the amounts out where the comment withholds them. A report with no estimate and no note writes `costroid.result/0.9`, the object it wrote before, byte for byte. The block's `rows_sha256` and `rows_file_sha256` digest every row of the rows file, the estimate's rows included.
+
+```json
+{"source": "infrastructure", "currency": "EUR", "charge_period_start": "2026-12-01T00:00:00Z", "charge_period_end": "2027-01-01T00:00:00Z", "cost_basis": "estimate", "list_cost": "25.488", "rows": 1}
+```
 
 A rows file with no estimate row gives the same comment, byte for byte, as before this command existed.
 
@@ -188,11 +194,11 @@ The command leaves a note beside the rows file, `costroid-rows.infrastructure.js
 Infrastructure estimate: not available (the step that writes it did not run or wrote nothing, as on a fork's pull request that gets no secret).
 ```
 
-The note holds a reason from a closed list and the source, and nothing else. The run's result object cannot carry it: its schema, `costroid.result/0.9`, admits no other field. A later command that reads the file removes the note. In the GitLab template, add `costroid-rows.infrastructure.json` to the agent job's `artifacts` beside the other two files.
+The note holds a reason from a closed list and the source, and nothing else. The run's result object beside the rows does not carry it. The report's machine block states it as the last entry of `estimates`, `{"source": "infrastructure", "reason": "no_file"}`, with no amount. A later command that reads the file removes the note. The GitLab template keeps `costroid-rows.infrastructure.json` in the agent job's `artifacts`, beside the other two files.
 
 ## Where the rows go
 
-`costroid export` sends them with the agent's rows, and [`docs/export.md`](export.md) describes it. A ledger behind `costroid serve` stores an estimate row as its sender states it: its `ListCost` is the estimate and is never priced from the catalog, it names no agent, and its join is the CI token's, as for an agent's row. The per-pull-request view states it as its own total, under the label Estimate, and no budget and no verdict reads it. A row that names an agent or a model beside the basis `estimate` is refused.
+`costroid export` sends them with the agent's rows, and [`docs/export.md`](export.md) describes it. A ledger behind `costroid serve` stores an estimate row as its sender states it: its `ListCost` is the estimate and is never priced from the catalog, it names no agent, and its join is the CI token's, as for an agent's row. The per-pull-request view states it as its own total, under the label Estimate, and no budget and no verdict reads it. A row that names an agent or a model beside the basis `estimate` is refused, and so is an estimate whose period starts more than a year after the ledger's clock.
 
 ## When the file is refused
 

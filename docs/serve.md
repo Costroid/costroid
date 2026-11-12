@@ -179,6 +179,18 @@ A cache write prices at its own class, and `cache_write_30m` and `cache_write_12
 
 A provider with no catalog sheet is refused. It is never stored at zero. An unknown model of a known provider falls to the sheet's non-zero fallback tier, and the row says so.
 
+## Estimate rows
+
+A row whose `costroid/cost_basis` tag reads `estimate` is an infrastructure estimate: a figure from the customer's own estimator, which `costroid ingest-run --from focus` adds to the rows file after the agent's rows. [`docs/infrastructure.md`](infrastructure.md) describes the file.
+
+The service stores such a row as its sender states it and never prices it. Its `ListCost` is the estimate, a decimal of 0 or more with at most 12 fractional digits, in the row's `BillingCurrency`. `BilledCost`, `EffectiveCost`, `ContractedCost`, `ContractedUnitPrice` and `ListUnitPrice` are not read, and each one is counted under `client_cost`. The stored row has `BilledCost` and `EffectiveCost` 0, `costroid/enforcement_grade` `none`, and no agent and no model. Its join is the CI token's, as for an agent's row: the token decides its repository, run, pull request, `run_identity` and `attribution_grade`.
+
+An estimate states a period that has not happened, so its charge period may start after the service's clock, up to one year after it: an estimator states the month ahead, and a plan at most the year ahead. An estimate that starts later rejects the request with `ROW_INVALID`. Every other row may start at most 5 minutes after the clock.
+
+A row that names an agent or a model beside the basis `estimate` rejects the request with `ROW_INVALID`, and nothing is stored. So does a negative estimate.
+
+In `GET /v1/pulls/{pr}`, an estimate's lines carry `cost_basis` `estimate` and the label `Estimate`, and `totals` states them as one figure per currency, apart from the agent's. `budget` never reads them, whatever their grade, and neither does `POST /v1/pulls/{pr}/verdict`. An estimate never raises a budget's spend and never satisfies a budget.
+
 ## What each issuer's token says
 
 Every fact here was read on 2026-11-01 from the page named beside it.

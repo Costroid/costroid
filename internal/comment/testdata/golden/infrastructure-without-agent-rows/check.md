@@ -28,7 +28,7 @@ The agent figure and these infrastructure figures are not added together.
 
 ```json
 {
-  "schema": "costroid.result/0.9",
+  "schema": "costroid.result/0.10",
   "conclusion": "neutral",
   "state": "no_rows",
   "reason": "empty_rows_file",
@@ -56,6 +56,18 @@ The agent figure and these infrastructure figures are not added together.
   },
   "lifetime": null,
   "agent_stated": null,
-  "recorded": null
+  "recorded": null,
+  "estimates": [
+    {
+      "source": "infrastructure",
+      "currency": "EUR",
+      "charge_period_start": "2026-12-01T00:00:00Z",
+      "charge_period_end": "2027-01-01T00:00:00Z",
+      "cost_basis": "estimate",
+      "list_cost": "35.008",
+      "rows": 2
+    }
+  ],
+  "estimates_omitted": 0
 }
 ```

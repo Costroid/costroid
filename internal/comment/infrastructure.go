@@ -214,15 +214,19 @@ const (
 	apartLine           = "The agent figure and these infrastructure figures are not added together."
 	apartCurrenciesLine = "The agent figure and these infrastructure figures are not added together, and no currency is added to another."
 	notStatedCell       = "not stated"
-	// withheldLine says where withheld infrastructure amounts are kept: the
-	// machine block carries an agent's figures alone.
-	withheldLine = "The rows carry their amounts, and the machine block carries none of them."
+	// withheldLine says where withheld infrastructure amounts are kept, as the
+	// withheld trace says it of token counts: in the rows, and on GitHub in
+	// the check run's machine block. The comment's copy of the block states
+	// each estimate without its amount.
+	withheldLine          = "The rows carry their amounts."
+	withheldLineCheckRuns = "The rows carry their amounts, and so does the check run's machine block."
 )
 
 // view lays out the section, nil when no row is outside an agent's. Withheld,
 // it names each figure's basis, currency, period and source without its
-// amount.
-func (i Infrastructure) view(shown bool) *infrastructureView {
+// amount, and says where the amounts are: checkRuns is false on GitLab, which
+// has no check run.
+func (i Infrastructure) view(shown, checkRuns bool) *infrastructureView {
 	if len(i.Figures) == 0 {
 		return nil
 	}
@@ -240,7 +244,11 @@ func (i Infrastructure) view(shown bool) *infrastructureView {
 		section.Apart = apartCurrenciesLine
 	}
 	if !shown {
-		section.Apart += " " + withheldLine
+		withheld := withheldLine
+		if checkRuns {
+			withheld = withheldLineCheckRuns
+		}
+		section.Apart += " " + withheld
 	}
 	for _, row := range i.Rows {
 		cells := infrastructureRowView{Resource: notStatedCell, Service: notStatedCell, Period: row.Period.String()}

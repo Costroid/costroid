@@ -35,9 +35,11 @@ const (
 	// CheckName is the one check run's name.
 	CheckName = "costroid"
 
-	// schema names the result object's contract, result/v0.9 in
-	// Costroid/costroid-schemas.
-	schema = "costroid.result/0.9"
+	// schema names the result object's contract, result/v0.10 in
+	// Costroid/costroid-schemas. An object that states no estimate is written
+	// as result/v0.9 instead, which it then is byte for byte, so a reader of
+	// 0.9 reads it as before.
+	schema = "costroid.result/0.10"
 	// artifactIdentity is what a figure read from a rows file can claim. The
 	// agent's job wrote the file, tags included, so a row that reads
 	// token_verified proves nothing here and the label does not depend on it.
@@ -258,7 +260,8 @@ type Input struct {
 	Recorded *Recorded
 	// EstimateUnavailable is the note ingest-run --optional left beside the
 	// rows when the estimate it was given was not there, nil when it left
-	// none. Its reason is from a closed list. The machine block omits it.
+	// none. Its reason is from a closed list. The machine block states it
+	// among its estimates.
 	EstimateUnavailable *focusfile.Unavailable
 }
 
@@ -587,7 +590,7 @@ func (i Input) view() view {
 		CheckRunID:     i.CheckRunID,
 	}
 	result.CapLine = i.capLine()
-	result.Infrastructure = i.Ledger.Infrastructure.view(shown)
+	result.Infrastructure = i.Ledger.Infrastructure.view(shown, result.CheckRuns)
 	result.EstimateUnavailable = i.estimateUnavailable()
 	result.Details, result.DetailsSummary = i.details(shown, result.CapLine)
 	result.Reconciliations = reconciliationLines(i.Reconciliations)

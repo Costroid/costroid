@@ -246,7 +246,7 @@ func TestResultV09FilledFieldsMatchTheSchema(t *testing.T) {
 	if block.AgentStated == nil || *block.AgentStated != (BlockAgentStated{Unit: "AIC", Quantity: "4.830000000000001", Source: "gh-aw"}) {
 		t.Errorf("agent_stated %+v, want gh-aw's credits with every digit", block.AgentStated)
 	}
-	filled, err := json.Marshal(block)
+	filled, err := json.Marshal(blockV09{Block: block})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestResultV09FilledFieldsMatchTheSchema(t *testing.T) {
 			return b
 		},
 	} {
-		refused, err := json.Marshal(change(block))
+		refused, err := json.Marshal(blockV09{Block: change(block)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -389,8 +389,9 @@ func TestNewPolicyRulesValidateAgainstV09(t *testing.T) {
 	}
 }
 
-// TestResultV09BlockFieldsMatchTheSchema holds Block to the copied schema in
-// both directions, so neither gains a field the other lacks.
+// TestResultV09BlockFieldsMatchTheSchema holds Block, without the fields
+// result/v0.10 added, to the copied schema in both directions, so neither
+// gains a field the other lacks.
 func TestResultV09BlockFieldsMatchTheSchema(t *testing.T) {
 	data, err := os.ReadFile(resultSchemaPath)
 	if err != nil {
@@ -410,14 +411,8 @@ func TestResultV09BlockFieldsMatchTheSchema(t *testing.T) {
 	for name := range document.Properties {
 		fromSchema = append(fromSchema, name)
 	}
-	var fromBlock []string
-	blockType := reflect.TypeFor[Block]()
-	for index := range blockType.NumField() {
-		name, _, _ := strings.Cut(blockType.Field(index).Tag.Get("json"), ",")
-		fromBlock = append(fromBlock, name)
-	}
+	fromBlock := slices.DeleteFunc(blockKeys(), func(key string) bool { return key == "estimates" || key == "estimates_omitted" })
 	slices.Sort(fromSchema)
-	slices.Sort(fromBlock)
 	if !slices.Equal(fromSchema, fromBlock) {
 		t.Errorf("Block's keys %v, the schema's %v", fromBlock, fromSchema)
 	}
@@ -427,8 +422,8 @@ func TestResultV09BlockFieldsMatchTheSchema(t *testing.T) {
 	if err := json.Unmarshal(document.Properties["schema"], &constant); err != nil {
 		t.Fatal(err)
 	}
-	if constant.Const != schema {
-		t.Errorf("the schema names %q, Block emits %q", constant.Const, schema)
+	if constant.Const != schemaV09 {
+		t.Errorf("the schema names %q, Block emits %q without an estimate", constant.Const, schemaV09)
 	}
 }
 

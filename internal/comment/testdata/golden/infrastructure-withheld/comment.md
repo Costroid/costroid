@@ -15,7 +15,7 @@ Infrastructure, estimated, in EUR for 2026-12, from `infrastructure`.
 
 Infrastructure, estimated, in USD for 2026-12, from `infrastructure`.
 
-The agent figure and these infrastructure figures are not added together, and no currency is added to another. The rows carry their amounts, and the machine block carries none of them.
+The agent figure and these infrastructure figures are not added together, and no currency is added to another. The rows carry their amounts, and so does the check run's machine block.
 
 <details>
 <summary>Infrastructure rows</summary>
@@ -62,7 +62,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
 
 ```json
 {
-  "schema": "costroid.result/0.9",
+  "schema": "costroid.result/0.10",
   "check_run_id": 16873409921,
   "conclusion": "neutral",
   "state": "reported",
@@ -106,6 +106,25 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
   "lifetime": null,
   "agent_stated": null,
   "recorded": null,
+  "estimates": [
+    {
+      "source": "infrastructure",
+      "currency": "EUR",
+      "charge_period_start": "2026-12-01T00:00:00Z",
+      "charge_period_end": "2027-01-01T00:00:00Z",
+      "cost_basis": "estimate",
+      "rows": 1
+    },
+    {
+      "source": "infrastructure",
+      "currency": "USD",
+      "charge_period_start": "2026-12-01T00:00:00Z",
+      "charge_period_end": "2027-01-01T00:00:00Z",
+      "cost_basis": "estimate",
+      "rows": 1
+    }
+  ],
+  "estimates_omitted": 0,
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",

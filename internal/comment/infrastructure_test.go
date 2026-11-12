@@ -146,27 +146,8 @@ func TestCommentWithoutInfrastructureRowsIsUnchanged(t *testing.T) {
 	if compared < 50 {
 		t.Errorf("compared %d goldens, fewer than the 50 the states held before the section", compared)
 	}
-	if ledger := realLedger(t); len(ledger.Infrastructure.Figures) != 0 || ledger.Infrastructure.view(true) != nil {
+	if ledger := realLedger(t); len(ledger.Infrastructure.Figures) != 0 || ledger.Infrastructure.view(true, true) != nil {
 		t.Error("the agent's rows read as infrastructure")
-	}
-}
-
-func TestTheMachineBlockCarriesNoInfrastructureFigure(t *testing.T) {
-	plain := realInput(t)
-	estimated := withEstimate(t, plain, twoCurrencies)
-	for _, amounts := range []Amounts{AmountsShown, AmountsOff} {
-		plain.Amounts, estimated.Amounts = amounts, amounts
-		want, err := Result(plain)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := Result(estimated)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Errorf("the rows outside an agent's changed the result object:\n%s", got)
-		}
 	}
 }
 

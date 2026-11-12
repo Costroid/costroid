@@ -70,6 +70,9 @@ variables:
       - costroid-rows.jsonl
       # The run's result object, so the report can say why a run wrote no rows.
       - costroid-rows.run.json
+      # The note costroid ingest-run --optional leaves when an infrastructure
+      # estimate's file was not there, so the report can say so.
+      - costroid-rows.infrastructure.json
 
 costroid:claude:
   extends: .costroid-agent

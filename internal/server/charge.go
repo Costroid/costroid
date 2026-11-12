@@ -35,6 +35,11 @@ const (
 
 	// futureSkew is how far ahead of this server's clock a charge may start.
 	futureSkew = 5 * time.Minute
+	// estimateHorizonYears is how far ahead of this server's clock an
+	// estimate's charge period may start. An estimate states a period that has
+	// not happened: an estimator states the month ahead, and a plan states at
+	// most a year ahead.
+	estimateHorizonYears = 1
 )
 
 // The tag convention's value patterns, version 0.2.
@@ -356,6 +361,23 @@ func overshootOf(c *charge, joined joinResult) *decimal.Decimal {
 	return nil
 }
 
+// checkStart refuses a charge that starts after this server's clock. A row
+// that measures, bills or prices a run reports what has happened, so it may
+// start no later than futureSkew ahead. An estimate states a period that has
+// not happened, so it may start up to estimateHorizonYears ahead.
+func checkStart(c *charge, now time.Time) error {
+	if c.estimate == nil {
+		if c.start.After(now.Add(futureSkew)) {
+			return refuse(http.StatusUnprocessableEntity, codeInvalidRow, "A row's charge period starts in the future.")
+		}
+		return nil
+	}
+	if c.start.After(now.AddDate(estimateHorizonYears, 0, 0).Add(futureSkew)) {
+		return refuse(http.StatusUnprocessableEntity, codeInvalidRow, "An estimate's charge period starts more than a year ahead, and an estimate may start at most a year ahead.")
+	}
+	return nil
+}
+
 // write checks every charge's join, prices it and stores the batch. One bad
 // row fails the whole request, so a retry is whole too.
 func (s *Server) write(r *http.Request, who caller, charges []charge, drops map[string]int64) (store.Receipt, error) {
@@ -367,8 +389,8 @@ func (s *Server) write(r *http.Request, who caller, charges []charge, drops map[
 	records := make([]store.Record, len(charges))
 	err = fanout.Each(len(charges), func(_, i int) error {
 		c := &charges[i]
-		if c.start.After(now.Add(futureSkew)) {
-			return refuse(http.StatusUnprocessableEntity, codeInvalidRow, "A row's charge period starts in the future.")
+		if err := checkStart(c, now); err != nil {
+			return err
 		}
 		joined, err := s.join(c, who, proven)
 		if err != nil {

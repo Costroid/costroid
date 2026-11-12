@@ -12,6 +12,8 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/copilot"
 	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/adapter/opencode"
+	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 )
@@ -59,8 +61,30 @@ type Block struct {
 	// the pull request's own, null on a report on the pull request's rows.
 	// A withheld copy states it too: it is no amount.
 	Recorded *BlockRecorded `json:"recorded"`
+	// Estimates are the figures of the rows that are not an agent's, and an
+	// estimate the workflow named that was not available. They stand apart
+	// from Figures and are never added to them. EstimatesOmitted counts the
+	// figures left out past the first maxFigures. A result/0.9 object holds
+	// neither.
+	Estimates        []BlockEstimate `json:"estimates"`
+	EstimatesOmitted int             `json:"estimates_omitted"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
+}
+
+// BlockEstimate is one entry of a result/0.10 object's estimates. A figure
+// names its source, currency, charge period, basis and rows, and its amount
+// when amounts are shown. An estimate that was not available names its
+// source and Reason alone.
+type BlockEstimate struct {
+	Source            Data   `json:"source"`
+	Currency          string `json:"currency,omitempty"`
+	ChargePeriodStart string `json:"charge_period_start,omitempty"`
+	ChargePeriodEnd   string `json:"charge_period_end,omitempty"`
+	CostBasis         string `json:"cost_basis,omitempty"`
+	ListCost          string `json:"list_cost,omitempty"`
+	Rows              int    `json:"rows,omitempty"`
+	Reason            string `json:"reason,omitempty"`
 }
 
 // BlockLifetime is the pull request's total, one figure per currency and
@@ -241,11 +265,41 @@ func (i Input) block() (string, error) {
 		}
 	}
 	block.Policy = blockVerdict(i.Verdict, shown)
-	encoded, err := json.MarshalIndent(block, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("comment: encode block: %w", err)
+	block.Estimates = i.blockEstimates(shown)
+	block.EstimatesOmitted = i.Ledger.Infrastructure.FiguresOmitted
+	if len(block.Estimates) == 0 {
+		block.Schema = schemaV09
 	}
-	return string(encoded), nil
+	return block.encode()
+}
+
+// blockEstimates are the estimate figures the comment's infrastructure
+// section states, in its order, then the estimate it says was not available.
+// A figure at another basis is no estimate, and result/v0.10 holds none.
+// Withheld, a figure carries no amount, as an agent's figure carries none.
+func (i Input) blockEstimates(shown bool) []BlockEstimate {
+	var estimates []BlockEstimate
+	for _, figure := range i.Ledger.Infrastructure.Figures {
+		if figure.Basis != focusfile.Basis {
+			continue
+		}
+		estimate := BlockEstimate{
+			Source:            figure.Source,
+			Currency:          figure.Currency,
+			ChargePeriodStart: figure.Period.Start.Format(focus.InstantLayout),
+			ChargePeriodEnd:   figure.Period.End.Format(focus.InstantLayout),
+			CostBasis:         figure.Basis,
+			Rows:              figure.Rows,
+		}
+		if shown {
+			estimate.ListCost = figure.Cost.String()
+		}
+		estimates = append(estimates, estimate)
+	}
+	if i.estimateUnavailable() != "" {
+		estimates = append(estimates, BlockEstimate{Source: Clean(i.EstimateUnavailable.Source), Reason: i.EstimateUnavailable.Reason})
+	}
+	return estimates
 }
 
 func (i Input) blockRecorded() *BlockRecorded {
@@ -270,12 +324,13 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
 }
 
-// The versions before the one this release writes. A pull request whose
-// newest check a release that wrote one of them posted can still be approved,
-// so ParseResult reads them. 0.8 holds every field of the current version, and
-// an agent_stated from gh-aw alone. 0.7 holds no recorded either, 0.6 holds no
-// agent_stated, and 0.5 holds none of rows_sha256, rows_file_sha256 and
-// lifetime as well.
+// The versions before result/0.10. This release writes 0.9 for an object that
+// states no estimate, and a pull request whose newest check a release that
+// wrote an older one posted can still be approved, so ParseResult reads them
+// all. 0.9 holds every field of 0.10 but estimates and estimates_omitted. 0.8
+// holds an agent_stated from gh-aw alone. 0.7 holds no recorded either, 0.6
+// holds no agent_stated, and 0.5 holds none of rows_sha256, rows_file_sha256
+// and lifetime as well.
 const (
 	schemaV05 = "costroid.result/0.5"
 	schemaV06 = "costroid.result/0.6"
@@ -284,32 +339,49 @@ const (
 	schemaV09 = "costroid.result/0.9"
 )
 
-// readSchemas are the versions ParseResult reads.
-var readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schema}
+var (
+	// readSchemas are the versions ParseResult reads, oldest first.
+	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema}
+	// writtenSchemas are the versions this release writes.
+	writtenSchemas = []string{schemaV09, schema}
+)
 
-// blockV07 is a Block as costroid.result/0.7 holds it. Its field hides the
-// Block's field of the same name, which 0.7 does not hold, and stays nil, so
-// the object leaves it out.
+// blockV09 is a Block as costroid.result/0.9 and 0.8 hold it. Its fields hide
+// the Block's fields of the same name, which 0.9 does not hold, and stay nil,
+// so the object leaves them out.
+type blockV09 struct {
+	Block
+	Estimates        *struct{} `json:"estimates,omitempty"`
+	EstimatesOmitted *struct{} `json:"estimates_omitted,omitempty"`
+}
+
+// blockV07 is a Block as costroid.result/0.7 holds it, as blockV09 is.
 type blockV07 struct {
 	Block
-	Recorded *struct{} `json:"recorded,omitempty"`
+	Recorded         *struct{} `json:"recorded,omitempty"`
+	Estimates        *struct{} `json:"estimates,omitempty"`
+	EstimatesOmitted *struct{} `json:"estimates_omitted,omitempty"`
 }
 
-// blockV06 is a Block as costroid.result/0.6 holds it, as blockV07 is.
+// blockV06 is a Block as costroid.result/0.6 holds it, as blockV09 is.
 type blockV06 struct {
 	Block
-	AgentStated *struct{} `json:"agent_stated,omitempty"`
-	Recorded    *struct{} `json:"recorded,omitempty"`
+	AgentStated      *struct{} `json:"agent_stated,omitempty"`
+	Recorded         *struct{} `json:"recorded,omitempty"`
+	Estimates        *struct{} `json:"estimates,omitempty"`
+	EstimatesOmitted *struct{} `json:"estimates_omitted,omitempty"`
 }
 
-// blockV05 is a Block as costroid.result/0.5 holds it, as blockV07 is.
+// blockV05 is a Block as costroid.result/0.5 holds it, as blockV09 is.
 type blockV05 struct {
 	Block
-	RowsSHA256     *struct{} `json:"rows_sha256,omitempty"`
-	RowsFileSHA256 *struct{} `json:"rows_file_sha256,omitempty"`
-	Lifetime       *struct{} `json:"lifetime,omitempty"`
-	AgentStated    *struct{} `json:"agent_stated,omitempty"`
-	Recorded       *struct{} `json:"recorded,omitempty"`
+	RowsSHA256       *struct{} `json:"rows_sha256,omitempty"`
+	RowsFileSHA256   *struct{} `json:"rows_file_sha256,omitempty"`
+	Lifetime         *struct{} `json:"lifetime,omitempty"`
+	AgentStated      *struct{} `json:"agent_stated,omitempty"`
+	Recorded         *struct{} `json:"recorded,omitempty"`
+	Estimates        *struct{} `json:"estimates,omitempty"`
+	EstimatesOmitted *struct{} `json:"estimates_omitted,omitempty"`
 }
 
 // encode writes the object as its own version lays it out.
@@ -322,6 +394,8 @@ func (b Block) encode() (string, error) {
 		object = blockV06{Block: b}
 	case schemaV07:
 		object = blockV07{Block: b}
+	case schemaV08, schemaV09:
+		object = blockV09{Block: b}
 	}
 	encoded, err := json.MarshalIndent(object, "", "  ")
 	if err != nil {
@@ -413,14 +487,18 @@ func ParseResult(text string) (Block, error) {
 	if !slices.Contains(readSchemas, block.Schema) {
 		return Block{}, fmt.Errorf("comment: the result object's schema is %q, and this release reads %s", string(Clean(block.Schema)), strings.Join(readSchemas[:len(readSchemas)-1], ", ")+" and "+readSchemas[len(readSchemas)-1])
 	}
+	written := strings.Join(writtenSchemas, " and ")
 	if added, ok := newerValue(object, block); ok {
-		return Block{}, fmt.Errorf("comment: the result object holds %s, which only %s defines, so it is not one %s holds, and this release writes %s", added.name, added.version, block.Schema, schema)
+		return Block{}, fmt.Errorf("comment: the result object holds %s, which only %s defines, so it is not one %s holds, and this release writes %s", added.name, added.version, block.Schema, written)
+	}
+	if block.Schema == schema && len(block.Estimates) == 0 {
+		return Block{}, fmt.Errorf("comment: the result object states no estimate, and a release writes %s only for an object that states one", schema)
 	}
 	if again, err := block.encode(); err == nil && again == object {
 		return block, nil
 	}
-	if block.Schema != schema {
-		return Block{}, fmt.Errorf("comment: the result object is not one %s holds, and this release writes %s", block.Schema, schema)
+	if !slices.Contains(writtenSchemas, block.Schema) {
+		return Block{}, fmt.Errorf("comment: the result object is not one %s holds, and this release writes %s", block.Schema, written)
 	}
 	return Block{}, errors.New("comment: the result object is not one this release writes")
 }
@@ -448,7 +526,7 @@ var (
 	// present in every object of that version, null or not.
 	fieldsAdded = []addedValue{
 		{"rows_sha256", schemaV06}, {"rows_file_sha256", schemaV06}, {"lifetime", schemaV06}, {"agent_stated", schemaV07},
-		{"recorded", schemaV08},
+		{"recorded", schemaV08}, {"estimates", schema}, {"estimates_omitted", schema},
 	}
 )
 
