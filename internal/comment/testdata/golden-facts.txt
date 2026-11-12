@@ -1,0 +1,1454 @@
+agent-error-beside-figures	0
+agent-error-beside-figures	0.0000008
+agent-error-beside-figures	0.000136
+agent-error-beside-figures	0.00015605
+agent-error-beside-figures	0.000436875
+agent-error-beside-figures	0.00089
+agent-error-beside-figures	0.001619725
+agent-error-beside-figures	0.01
+agent-error-beside-figures	0.1
+agent-error-beside-figures	0.125
+agent-error-beside-figures	0.2
+agent-error-beside-figures	0.5
+agent-error-beside-figures	1,000,000
+agent-error-beside-figures	121
+agent-error-beside-figures	15605
+agent-error-beside-figures	19
+agent-error-beside-figures	272
+agent-error-beside-figures	3495
+agent-error-beside-figures	4.998380275
+agent-error-beside-figures	4450
+agent-error-beside-figures	5
+agent-error-beside-figures	8
+agent-error-beside-figures	List-equivalent, not billed
+agent-error-beside-figures	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+agent-error-beside-figures	Run budget: unverified rows cannot satisfy a budget.
+agent-error-beside-figures	USD 0
+agent-error-beside-figures	USD 0.0000008
+agent-error-beside-figures	USD 0.000136
+agent-error-beside-figures	USD 0.00015605
+agent-error-beside-figures	USD 0.000436875
+agent-error-beside-figures	USD 0.00089
+agent-error-beside-figures	USD 0.001619725
+agent-error-beside-figures	USD 0.01
+agent-error-beside-figures	USD 0.1
+agent-error-beside-figures	USD 0.125
+agent-error-beside-figures	USD 0.2
+agent-error-beside-figures	USD 0.5
+agent-error-beside-figures	USD 4.998380275
+agent-error-beside-figures	USD 5
+agent-error-beside-figures	](https://app.costroid.com/?installation=github%3A58120394)
+agent-error-beside-figures	](https://docs.costroid.com/export)
+agent-error-beside-figures	](https://github.com/example/widgets/actions/runs/19203384756)
+agent-error-beside-figures	`0.3.0`
+agent-error-beside-figures	`9f2c6e1`
+agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+agent-error-beside-figures	`anthropic:informational:cached_input_reported`
+agent-error-beside-figures	`anthropic:informational:reasoning_output`
+agent-error-beside-figures	`cache_read`
+agent-error-beside-figures	`cache_write_1h`
+agent-error-beside-figures	`cache_write_5m`
+agent-error-beside-figures	`cached_input_reported`
+agent-error-beside-figures	`claude-code`
+agent-error-beside-figures	`claude-haiku-5-5`
+agent-error-beside-figures	`costroid.yml`
+agent-error-beside-figures	`input_uncached`
+agent-error-beside-figures	`output`
+agent-error-beside-figures	`policy.run_budget_usd`
+agent-error-beside-figures	`rate_limit`
+agent-error-beside-figures	`reasoning_output`
+agent-error-beside-figures	| agent-flag: client-side estimate, can pass the cap |
+agent-error-beside-figures	| unattributed |
+codex-stopped-overshoot	0
+codex-stopped-overshoot	0.001
+codex-stopped-overshoot	0.00128
+codex-stopped-overshoot	0.0045056
+codex-stopped-overshoot	0.022528
+codex-stopped-overshoot	0.0273136
+codex-stopped-overshoot	0.0283136
+codex-stopped-overshoot	0.4
+codex-stopped-overshoot	1,000,000
+codex-stopped-overshoot	11264
+codex-stopped-overshoot	16960
+codex-stopped-overshoot	20
+codex-stopped-overshoot	4
+codex-stopped-overshoot	5632
+codex-stopped-overshoot	64
+codex-stopped-overshoot	Measured
+codex-stopped-overshoot	USD 0
+codex-stopped-overshoot	USD 0.001
+codex-stopped-overshoot	USD 0.00128
+codex-stopped-overshoot	USD 0.0045056
+codex-stopped-overshoot	USD 0.022528
+codex-stopped-overshoot	USD 0.0273136
+codex-stopped-overshoot	USD 0.0283136
+codex-stopped-overshoot	USD 0.4
+codex-stopped-overshoot	USD 20
+codex-stopped-overshoot	USD 4
+codex-stopped-overshoot	](https://costroid.com/account/)
+codex-stopped-overshoot	](https://docs.costroid.com/export)
+codex-stopped-overshoot	](https://github.com/example/widgets/actions/runs/19203384756)
+codex-stopped-overshoot	`0.1.0`
+codex-stopped-overshoot	`9f2c6e1`
+codex-stopped-overshoot	`cache_read`
+codex-stopped-overshoot	`cached_input_reported`
+codex-stopped-overshoot	`codex`
+codex-stopped-overshoot	`gpt-5.6-sol`
+codex-stopped-overshoot	`input_uncached`
+codex-stopped-overshoot	`openai/gpt-5.6-sol/cached_input_reported/informational`
+codex-stopped-overshoot	`openai:gpt-5.6-sol:global:standard:to-272000:cache_read`
+codex-stopped-overshoot	`openai:gpt-5.6-sol:global:standard:to-272000:input_uncached`
+codex-stopped-overshoot	`openai:gpt-5.6-sol:global:standard:to-272000:output`
+codex-stopped-overshoot	`output`
+codex-stopped-overshoot	| unattributed |
+codex-stopped-overshoot	| wrapper-watchdog: the wrapper stops the process at the cap |
+codex-stopped-overshoot-withheld	4
+codex-stopped-overshoot-withheld	Measured
+codex-stopped-overshoot-withheld	](https://costroid.com/account/)
+codex-stopped-overshoot-withheld	](https://docs.costroid.com/export)
+codex-stopped-overshoot-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+codex-stopped-overshoot-withheld	`0.1.0`
+codex-stopped-overshoot-withheld	`9f2c6e1`
+codex-stopped-overshoot-withheld	`cache_read`
+codex-stopped-overshoot-withheld	`cached_input_reported`
+codex-stopped-overshoot-withheld	`codex`
+codex-stopped-overshoot-withheld	`comment.show_cost: false`
+codex-stopped-overshoot-withheld	`gpt-5.6-sol`
+codex-stopped-overshoot-withheld	`input_uncached`
+codex-stopped-overshoot-withheld	`output`
+codex-stopped-overshoot-withheld	| unattributed |
+codex-stopped-overshoot-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+copilot-stated-nano-aiu	0
+copilot-stated-nano-aiu	0.0000008
+copilot-stated-nano-aiu	0.0001145
+copilot-stated-nano-aiu	0.00043418
+copilot-stated-nano-aiu	0.00274475
+copilot-stated-nano-aiu	0.00329423
+copilot-stated-nano-aiu	0.01
+copilot-stated-nano-aiu	0.1
+copilot-stated-nano-aiu	0.125
+copilot-stated-nano-aiu	0.5
+copilot-stated-nano-aiu	1,000,000
+copilot-stated-nano-aiu	13
+copilot-stated-nano-aiu	21958
+copilot-stated-nano-aiu	229
+copilot-stated-nano-aiu	43418
+copilot-stated-nano-aiu	8
+copilot-stated-nano-aiu	Measured
+copilot-stated-nano-aiu	USD 0
+copilot-stated-nano-aiu	USD 0.0000008
+copilot-stated-nano-aiu	USD 0.0001145
+copilot-stated-nano-aiu	USD 0.00043418
+copilot-stated-nano-aiu	USD 0.00274475
+copilot-stated-nano-aiu	USD 0.00329423
+copilot-stated-nano-aiu	USD 0.01
+copilot-stated-nano-aiu	USD 0.1
+copilot-stated-nano-aiu	USD 0.125
+copilot-stated-nano-aiu	USD 0.5
+copilot-stated-nano-aiu	](https://app.costroid.com/?installation=github%3A58120394)
+copilot-stated-nano-aiu	](https://docs.costroid.com/export)
+copilot-stated-nano-aiu	](https://github.com/example/widgets/actions/runs/19203384756)
+copilot-stated-nano-aiu	`0.3.0`
+copilot-stated-nano-aiu	`9f2c6e1`
+copilot-stated-nano-aiu	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+copilot-stated-nano-aiu	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+copilot-stated-nano-aiu	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+copilot-stated-nano-aiu	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+copilot-stated-nano-aiu	`anthropic:informational:cached_input_reported`
+copilot-stated-nano-aiu	`cache_read`
+copilot-stated-nano-aiu	`cache_write_5m`
+copilot-stated-nano-aiu	`cached_input_reported`
+copilot-stated-nano-aiu	`claude-haiku-5-5`
+copilot-stated-nano-aiu	`copilot`
+copilot-stated-nano-aiu	`input_uncached`
+copilot-stated-nano-aiu	`output`
+copilot-stated-nano-aiu	| unattributed |
+copilot-stated-nano-aiu	| wrapper-watchdog: the wrapper stops the process at the cap |
+copilot-stated-nano-aiu-withheld	13
+copilot-stated-nano-aiu-withheld	Measured
+copilot-stated-nano-aiu-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+copilot-stated-nano-aiu-withheld	](https://docs.costroid.com/export)
+copilot-stated-nano-aiu-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+copilot-stated-nano-aiu-withheld	`0.3.0`
+copilot-stated-nano-aiu-withheld	`9f2c6e1`
+copilot-stated-nano-aiu-withheld	`cache_read`
+copilot-stated-nano-aiu-withheld	`cache_write_5m`
+copilot-stated-nano-aiu-withheld	`cached_input_reported`
+copilot-stated-nano-aiu-withheld	`claude-haiku-5-5`
+copilot-stated-nano-aiu-withheld	`comment.show_cost: false`
+copilot-stated-nano-aiu-withheld	`copilot`
+copilot-stated-nano-aiu-withheld	`input_uncached`
+copilot-stated-nano-aiu-withheld	`output`
+copilot-stated-nano-aiu-withheld	| unattributed |
+copilot-stated-nano-aiu-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+empty-run-agent_error	](https://app.costroid.com/?installation=github%3A58120394)
+empty-run-agent_error	](https://docs.costroid.com/export)
+empty-run-agent_error	](https://github.com/example/widgets/actions/runs/19203384756)
+empty-run-agent_error	`9f2c6e1`
+empty-run-agent_error	`agent_error`
+empty-run-agent_error	`authentication_failed`
+empty-run-concurrent_run	](https://app.costroid.com/?installation=github%3A58120394)
+empty-run-concurrent_run	](https://docs.costroid.com/export)
+empty-run-concurrent_run	](https://github.com/example/widgets/actions/runs/19203384756)
+empty-run-concurrent_run	`9f2c6e1`
+empty-run-concurrent_run	`concurrent_run`
+empty-run-no_usage	](https://app.costroid.com/?installation=github%3A58120394)
+empty-run-no_usage	](https://docs.costroid.com/export)
+empty-run-no_usage	](https://github.com/example/widgets/actions/runs/19203384756)
+empty-run-no_usage	`9f2c6e1`
+empty-run-no_usage	`no_usage`
+empty-run-reader_refused	](https://app.costroid.com/?installation=github%3A58120394)
+empty-run-reader_refused	](https://docs.costroid.com/export)
+empty-run-reader_refused	](https://github.com/example/widgets/actions/runs/19203384756)
+empty-run-reader_refused	`9f2c6e1`
+empty-run-reader_refused	`claude-code: the execution file ends inside its array`
+empty-run-reader_refused	`reader_refused`
+fail-shown	0
+fail-shown	0.0000008
+fail-shown	0.000136
+fail-shown	0.00015605
+fail-shown	0.000436875
+fail-shown	0.00089
+fail-shown	0.001
+fail-shown	0.001619725
+fail-shown	0.01
+fail-shown	0.1
+fail-shown	0.125
+fail-shown	0.2
+fail-shown	0.5
+fail-shown	1,000,000
+fail-shown	121
+fail-shown	15605
+fail-shown	19
+fail-shown	272
+fail-shown	3495
+fail-shown	4.998380275
+fail-shown	4450
+fail-shown	5
+fail-shown	8
+fail-shown	List-equivalent, not billed
+fail-shown	Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`.
+fail-shown	Run budget: USD 0.001619725 is over the USD 0.001 budget.
+fail-shown	USD 0
+fail-shown	USD 0.0000008
+fail-shown	USD 0.000136
+fail-shown	USD 0.00015605
+fail-shown	USD 0.000436875
+fail-shown	USD 0.00089
+fail-shown	USD 0.001
+fail-shown	USD 0.001619725
+fail-shown	USD 0.01
+fail-shown	USD 0.1
+fail-shown	USD 0.125
+fail-shown	USD 0.2
+fail-shown	USD 0.5
+fail-shown	USD 4.998380275
+fail-shown	USD 5
+fail-shown	](https://app.costroid.com/?installation=github%3A58120394)
+fail-shown	](https://docs.costroid.com/export)
+fail-shown	](https://github.com/example/widgets/actions/runs/19203384756)
+fail-shown	`0.3.0`
+fail-shown	`9f2c6e1`
+fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+fail-shown	`anthropic:informational:cached_input_reported`
+fail-shown	`anthropic:informational:reasoning_output`
+fail-shown	`cache_read`
+fail-shown	`cache_write_1h`
+fail-shown	`cache_write_5m`
+fail-shown	`cached_input_reported`
+fail-shown	`claude-code`
+fail-shown	`claude-haiku-5-5`
+fail-shown	`costroid.yml`
+fail-shown	`input_uncached`
+fail-shown	`output`
+fail-shown	`policy.run_budget_usd`
+fail-shown	`reasoning_output`
+fail-shown	| agent-flag: client-side estimate, can pass the cap |
+fail-shown	| unattributed |
+fail-withheld	19
+fail-withheld	List-equivalent, not billed
+fail-withheld	Run budget: the run is over the budget.
+fail-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+fail-withheld	](https://docs.costroid.com/export)
+fail-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+fail-withheld	`0.3.0`
+fail-withheld	`9f2c6e1`
+fail-withheld	`cache_read`
+fail-withheld	`cache_write_1h`
+fail-withheld	`cache_write_5m`
+fail-withheld	`cached_input_reported`
+fail-withheld	`claude-code`
+fail-withheld	`claude-haiku-5-5`
+fail-withheld	`comment.show_cost: false`
+fail-withheld	`costroid.yml`
+fail-withheld	`input_uncached`
+fail-withheld	`output`
+fail-withheld	`reasoning_output`
+fail-withheld	| agent-flag: client-side estimate, can pass the cap |
+fail-withheld	| unattributed |
+fallback-price	0.1
+fallback-price	1,000,000
+fallback-price	1000000
+fallback-price	175.1
+fallback-price	180
+fallback-price	180.1
+fallback-price	2
+fallback-price	5
+fallback-price	Measured
+fallback-price	USD 0.1
+fallback-price	USD 175.1
+fallback-price	USD 180
+fallback-price	USD 180.1
+fallback-price	USD 5
+fallback-price	](https://app.costroid.com/?installation=github%3A58120394)
+fallback-price	](https://docs.costroid.com/export)
+fallback-price	](https://github.com/example/widgets/actions/runs/19203384756)
+fallback-price	`0.1.0`
+fallback-price	`9f2c6e1`
+fallback-price	`codex`
+fallback-price	`gpt-5.5`
+fallback-price	`gpt-9-preview`
+fallback-price	`openai:fallback:output`
+fallback-price	`openai:gpt-5.5:global:standard:output`
+fallback-price	`output`
+fallback-price	| unattributed |
+fallback-price	| wrapper-watchdog: the wrapper stops the process at the cap |
+fallback-price-withheld	2
+fallback-price-withheld	Measured
+fallback-price-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+fallback-price-withheld	](https://docs.costroid.com/export)
+fallback-price-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+fallback-price-withheld	`0.1.0`
+fallback-price-withheld	`9f2c6e1`
+fallback-price-withheld	`codex`
+fallback-price-withheld	`comment.show_cost: false`
+fallback-price-withheld	`gpt-5.5`
+fallback-price-withheld	`gpt-9-preview`
+fallback-price-withheld	`openai:fallback:output`
+fallback-price-withheld	`output`
+fallback-price-withheld	| unattributed |
+fallback-price-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+figures-omitted	0.1
+figures-omitted	1,000,000
+figures-omitted	1000000
+figures-omitted	20
+figures-omitted	23
+figures-omitted	3
+figures-omitted	5
+figures-omitted	Measured
+figures-omitted	USD 5
+figures-omitted	XAA 0.1
+figures-omitted	XAB 0.1
+figures-omitted	XAC 0.1
+figures-omitted	XAD 0.1
+figures-omitted	XAE 0.1
+figures-omitted	XAF 0.1
+figures-omitted	XAG 0.1
+figures-omitted	XAH 0.1
+figures-omitted	XAI 0.1
+figures-omitted	XAJ 0.1
+figures-omitted	XAK 0.1
+figures-omitted	XAL 0.1
+figures-omitted	XAM 0.1
+figures-omitted	XAN 0.1
+figures-omitted	XAO 0.1
+figures-omitted	XAP 0.1
+figures-omitted	XAQ 0.1
+figures-omitted	XAR 0.1
+figures-omitted	XAS 0.1
+figures-omitted	XAT 0.1
+figures-omitted	](https://app.costroid.com/?installation=github%3A58120394)
+figures-omitted	](https://docs.costroid.com/export)
+figures-omitted	](https://github.com/example/widgets/actions/runs/19203384756)
+figures-omitted	`0.1.0`
+figures-omitted	`9f2c6e1`
+figures-omitted	`codex`
+figures-omitted	`gpt-5.5`
+figures-omitted	`openai:gpt-5.5:global:standard:output`
+figures-omitted	`output`
+figures-omitted	| unattributed |
+figures-omitted	| wrapper-watchdog: the wrapper stops the process at the cap |
+figures-omitted-withheld	23
+figures-omitted-withheld	3
+figures-omitted-withheld	Measured
+figures-omitted-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+figures-omitted-withheld	](https://docs.costroid.com/export)
+figures-omitted-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+figures-omitted-withheld	`0.1.0`
+figures-omitted-withheld	`9f2c6e1`
+figures-omitted-withheld	`codex`
+figures-omitted-withheld	`comment.show_cost: false`
+figures-omitted-withheld	`gpt-5.5`
+figures-omitted-withheld	`output`
+figures-omitted-withheld	| unattributed |
+figures-omitted-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+gh-aw-stated-credits	0
+gh-aw-stated-credits	0.000006
+gh-aw-stated-credits	0.000031
+gh-aw-stated-credits	0.004922
+gh-aw-stated-credits	0.005926
+gh-aw-stated-credits	0.00693
+gh-aw-stated-credits	0.031925
+gh-aw-stated-credits	0.04974
+gh-aw-stated-credits	0.1
+gh-aw-stated-credits	0.2
+gh-aw-stated-credits	0.5
+gh-aw-stated-credits	1,000,000
+gh-aw-stated-credits	10
+gh-aw-stated-credits	12
+gh-aw-stated-credits	12770
+gh-aw-stated-credits	15
+gh-aw-stated-credits	2
+gh-aw-stated-credits	2.5
+gh-aw-stated-credits	24610
+gh-aw-stated-credits	2963
+gh-aw-stated-credits	310
+gh-aw-stated-credits	64
+gh-aw-stated-credits	693
+gh-aw-stated-credits	7.47
+gh-aw-stated-credits	Measured
+gh-aw-stated-credits	USD 0
+gh-aw-stated-credits	USD 0.000006
+gh-aw-stated-credits	USD 0.000031
+gh-aw-stated-credits	USD 0.004922
+gh-aw-stated-credits	USD 0.005926
+gh-aw-stated-credits	USD 0.00693
+gh-aw-stated-credits	USD 0.031925
+gh-aw-stated-credits	USD 0.04974
+gh-aw-stated-credits	USD 0.1
+gh-aw-stated-credits	USD 0.2
+gh-aw-stated-credits	USD 0.5
+gh-aw-stated-credits	USD 10
+gh-aw-stated-credits	USD 2
+gh-aw-stated-credits	USD 2.5
+gh-aw-stated-credits	](https://app.costroid.com/?installation=github%3A58120394)
+gh-aw-stated-credits	](https://docs.costroid.com/export)
+gh-aw-stated-credits	](https://github.com/example/widgets/actions/runs/19203384756)
+gh-aw-stated-credits	`0.1.0`
+gh-aw-stated-credits	`9f2c6e1`
+gh-aw-stated-credits	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+gh-aw-stated-credits	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+gh-aw-stated-credits	`anthropic:claude-sonnet-5:global:standard:all:cache_read`
+gh-aw-stated-credits	`anthropic:claude-sonnet-5:global:standard:all:cache_write_5m`
+gh-aw-stated-credits	`anthropic:claude-sonnet-5:global:standard:all:input_uncached`
+gh-aw-stated-credits	`anthropic:claude-sonnet-5:global:standard:all:output`
+gh-aw-stated-credits	`anthropic:informational:reasoning_output`
+gh-aw-stated-credits	`cache_read`
+gh-aw-stated-credits	`cache_write_5m`
+gh-aw-stated-credits	`claude-haiku-5-5`
+gh-aw-stated-credits	`claude-sonnet-5`
+gh-aw-stated-credits	`gh-aw`
+gh-aw-stated-credits	`input_uncached`
+gh-aw-stated-credits	`output`
+gh-aw-stated-credits	`reasoning_output`
+gh-aw-stated-credits	| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |
+gh-aw-stated-credits	| unattributed |
+gh-aw-stated-credits-withheld	15
+gh-aw-stated-credits-withheld	Measured
+gh-aw-stated-credits-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+gh-aw-stated-credits-withheld	](https://docs.costroid.com/export)
+gh-aw-stated-credits-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+gh-aw-stated-credits-withheld	`0.1.0`
+gh-aw-stated-credits-withheld	`9f2c6e1`
+gh-aw-stated-credits-withheld	`cache_read`
+gh-aw-stated-credits-withheld	`cache_write_5m`
+gh-aw-stated-credits-withheld	`claude-haiku-5-5`
+gh-aw-stated-credits-withheld	`claude-sonnet-5`
+gh-aw-stated-credits-withheld	`comment.show_cost: false`
+gh-aw-stated-credits-withheld	`gh-aw`
+gh-aw-stated-credits-withheld	`input_uncached`
+gh-aw-stated-credits-withheld	`output`
+gh-aw-stated-credits-withheld	`reasoning_output`
+gh-aw-stated-credits-withheld	| none: nothing held the run to a budget |
+gh-aw-stated-credits-withheld	| unattributed |
+gitlab-note	0
+gitlab-note	0.0000008
+gitlab-note	0.000136
+gitlab-note	0.00015605
+gitlab-note	0.000436875
+gitlab-note	0.00089
+gitlab-note	0.001619725
+gitlab-note	0.01
+gitlab-note	0.1
+gitlab-note	0.125
+gitlab-note	0.2
+gitlab-note	0.5
+gitlab-note	1,000,000
+gitlab-note	121
+gitlab-note	15605
+gitlab-note	19
+gitlab-note	272
+gitlab-note	3495
+gitlab-note	4.998380275
+gitlab-note	4450
+gitlab-note	5
+gitlab-note	8
+gitlab-note	List-equivalent, not billed
+gitlab-note	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+gitlab-note	Run budget: unverified rows cannot satisfy a budget.
+gitlab-note	USD 0
+gitlab-note	USD 0.0000008
+gitlab-note	USD 0.000136
+gitlab-note	USD 0.00015605
+gitlab-note	USD 0.000436875
+gitlab-note	USD 0.00089
+gitlab-note	USD 0.001619725
+gitlab-note	USD 0.01
+gitlab-note	USD 0.1
+gitlab-note	USD 0.125
+gitlab-note	USD 0.2
+gitlab-note	USD 0.5
+gitlab-note	USD 4.998380275
+gitlab-note	USD 5
+gitlab-note	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
+gitlab-note	](https://docs.costroid.com/export)
+gitlab-note	](https://github.com/example/widgets/actions/runs/19203384756)
+gitlab-note	`0.3.0`
+gitlab-note	`9f2c6e1`
+gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+gitlab-note	`anthropic:informational:cached_input_reported`
+gitlab-note	`anthropic:informational:reasoning_output`
+gitlab-note	`cache_read`
+gitlab-note	`cache_write_1h`
+gitlab-note	`cache_write_5m`
+gitlab-note	`cached_input_reported`
+gitlab-note	`claude-code`
+gitlab-note	`claude-haiku-5-5`
+gitlab-note	`costroid.yml`
+gitlab-note	`input_uncached`
+gitlab-note	`output`
+gitlab-note	`policy.run_budget_usd`
+gitlab-note	`reasoning_output`
+gitlab-note	| agent-flag: client-side estimate, can pass the cap |
+gitlab-note	| unattributed |
+gitlab-note-withheld	19
+gitlab-note-withheld	List-equivalent, not billed
+gitlab-note-withheld	Run budget: unverified rows cannot satisfy a budget.
+gitlab-note-withheld	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
+gitlab-note-withheld	](https://docs.costroid.com/export)
+gitlab-note-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+gitlab-note-withheld	`0.3.0`
+gitlab-note-withheld	`9f2c6e1`
+gitlab-note-withheld	`cache_read`
+gitlab-note-withheld	`cache_write_1h`
+gitlab-note-withheld	`cache_write_5m`
+gitlab-note-withheld	`cached_input_reported`
+gitlab-note-withheld	`claude-code`
+gitlab-note-withheld	`claude-haiku-5-5`
+gitlab-note-withheld	`comment.show_cost: false`
+gitlab-note-withheld	`costroid.yml`
+gitlab-note-withheld	`input_uncached`
+gitlab-note-withheld	`output`
+gitlab-note-withheld	`reasoning_output`
+gitlab-note-withheld	| agent-flag: client-side estimate, can pass the cap |
+gitlab-note-withheld	| unattributed |
+lifetime	0
+lifetime	0.0000008
+lifetime	0.000136
+lifetime	0.00015605
+lifetime	0.000436875
+lifetime	0.00089
+lifetime	0.001619725
+lifetime	0.00323945
+lifetime	0.01
+lifetime	0.1
+lifetime	0.125
+lifetime	0.2
+lifetime	0.25
+lifetime	0.5
+lifetime	1
+lifetime	1,000,000
+lifetime	121
+lifetime	15605
+lifetime	19
+lifetime	2
+lifetime	250
+lifetime	272
+lifetime	3495
+lifetime	4.998380275
+lifetime	4450
+lifetime	5
+lifetime	8
+lifetime	EUR 0.25
+lifetime	List-equivalent, not billed
+lifetime	Measured
+lifetime	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+lifetime	Run budget: unverified rows cannot satisfy a budget.
+lifetime	USD 0
+lifetime	USD 0.0000008
+lifetime	USD 0.000136
+lifetime	USD 0.00015605
+lifetime	USD 0.000436875
+lifetime	USD 0.00089
+lifetime	USD 0.001619725
+lifetime	USD 0.00323945
+lifetime	USD 0.01
+lifetime	USD 0.1
+lifetime	USD 0.125
+lifetime	USD 0.2
+lifetime	USD 0.5
+lifetime	USD 4.998380275
+lifetime	USD 5
+lifetime	](https://app.costroid.com/?installation=github%3A58120394)
+lifetime	](https://docs.costroid.com/export)
+lifetime	](https://github.com/example/widgets/actions/runs/19203384756)
+lifetime	`0.3.0`
+lifetime	`9f2c6e1`
+lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+lifetime	`anthropic:informational:cached_input_reported`
+lifetime	`anthropic:informational:reasoning_output`
+lifetime	`cache_read`
+lifetime	`cache_write_1h`
+lifetime	`cache_write_5m`
+lifetime	`cached_input_reported`
+lifetime	`claude-code`
+lifetime	`claude-haiku-5-5`
+lifetime	`costroid.yml`
+lifetime	`input_uncached`
+lifetime	`output`
+lifetime	`policy.run_budget_usd`
+lifetime	`reasoning_output`
+lifetime	| agent-flag: client-side estimate, can pass the cap |
+lifetime	| unattributed |
+lifetime-withheld	19
+lifetime-withheld	List-equivalent, not billed
+lifetime-withheld	Run budget: unverified rows cannot satisfy a budget.
+lifetime-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+lifetime-withheld	](https://docs.costroid.com/export)
+lifetime-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+lifetime-withheld	`0.3.0`
+lifetime-withheld	`9f2c6e1`
+lifetime-withheld	`cache_read`
+lifetime-withheld	`cache_write_1h`
+lifetime-withheld	`cache_write_5m`
+lifetime-withheld	`cached_input_reported`
+lifetime-withheld	`claude-code`
+lifetime-withheld	`claude-haiku-5-5`
+lifetime-withheld	`comment.show_cost: false`
+lifetime-withheld	`costroid.yml`
+lifetime-withheld	`input_uncached`
+lifetime-withheld	`output`
+lifetime-withheld	`reasoning_output`
+lifetime-withheld	| agent-flag: client-side estimate, can pass the cap |
+lifetime-withheld	| unattributed |
+neutral-shown	0
+neutral-shown	0.0000008
+neutral-shown	0.000136
+neutral-shown	0.00015605
+neutral-shown	0.000436875
+neutral-shown	0.00089
+neutral-shown	0.001619725
+neutral-shown	0.01
+neutral-shown	0.1
+neutral-shown	0.125
+neutral-shown	0.2
+neutral-shown	0.5
+neutral-shown	1,000,000
+neutral-shown	121
+neutral-shown	15605
+neutral-shown	19
+neutral-shown	272
+neutral-shown	3495
+neutral-shown	4.998380275
+neutral-shown	4450
+neutral-shown	5
+neutral-shown	8
+neutral-shown	List-equivalent, not billed
+neutral-shown	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+neutral-shown	Run budget: unverified rows cannot satisfy a budget.
+neutral-shown	USD 0
+neutral-shown	USD 0.0000008
+neutral-shown	USD 0.000136
+neutral-shown	USD 0.00015605
+neutral-shown	USD 0.000436875
+neutral-shown	USD 0.00089
+neutral-shown	USD 0.001619725
+neutral-shown	USD 0.01
+neutral-shown	USD 0.1
+neutral-shown	USD 0.125
+neutral-shown	USD 0.2
+neutral-shown	USD 0.5
+neutral-shown	USD 4.998380275
+neutral-shown	USD 5
+neutral-shown	](https://app.costroid.com/?installation=github%3A58120394)
+neutral-shown	](https://docs.costroid.com/export)
+neutral-shown	](https://github.com/example/widgets/actions/runs/19203384756)
+neutral-shown	`0.3.0`
+neutral-shown	`9f2c6e1`
+neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+neutral-shown	`anthropic:informational:cached_input_reported`
+neutral-shown	`anthropic:informational:reasoning_output`
+neutral-shown	`cache_read`
+neutral-shown	`cache_write_1h`
+neutral-shown	`cache_write_5m`
+neutral-shown	`cached_input_reported`
+neutral-shown	`claude-code`
+neutral-shown	`claude-haiku-5-5`
+neutral-shown	`costroid.yml`
+neutral-shown	`input_uncached`
+neutral-shown	`output`
+neutral-shown	`policy.run_budget_usd`
+neutral-shown	`reasoning_output`
+neutral-shown	| agent-flag: client-side estimate, can pass the cap |
+neutral-shown	| unattributed |
+neutral-withheld	19
+neutral-withheld	List-equivalent, not billed
+neutral-withheld	Run budget: unverified rows cannot satisfy a budget.
+neutral-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+neutral-withheld	](https://docs.costroid.com/export)
+neutral-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+neutral-withheld	`0.3.0`
+neutral-withheld	`9f2c6e1`
+neutral-withheld	`cache_read`
+neutral-withheld	`cache_write_1h`
+neutral-withheld	`cache_write_5m`
+neutral-withheld	`cached_input_reported`
+neutral-withheld	`claude-code`
+neutral-withheld	`claude-haiku-5-5`
+neutral-withheld	`comment.show_cost: false`
+neutral-withheld	`costroid.yml`
+neutral-withheld	`input_uncached`
+neutral-withheld	`output`
+neutral-withheld	`reasoning_output`
+neutral-withheld	| agent-flag: client-side estimate, can pass the cap |
+neutral-withheld	| unattributed |
+no-cap-held	0.1
+no-cap-held	1
+no-cap-held	1,000,000
+no-cap-held	1000000
+no-cap-held	Measured
+no-cap-held	USD 0.1
+no-cap-held	](https://costroid.com/account/)
+no-cap-held	](https://docs.costroid.com/export)
+no-cap-held	](https://github.com/example/widgets/actions/runs/19203384756)
+no-cap-held	`0.1.0`
+no-cap-held	`9f2c6e1`
+no-cap-held	`codex`
+no-cap-held	`costroid.yml`
+no-cap-held	`gpt-5.5`
+no-cap-held	`openai:gpt-5.5:global:standard:output`
+no-cap-held	`output`
+no-cap-held	| none: nothing held the run to a budget |
+no-cap-held	| unattributed |
+no-figures-agent_skipped	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-agent_skipped	](https://docs.costroid.com/export)
+no-figures-agent_skipped	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-agent_skipped	`9f2c6e1`
+no-figures-agent_skipped	`costroid-agent`
+no-figures-empty_rows_file	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-empty_rows_file	](https://docs.costroid.com/export)
+no-figures-empty_rows_file	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-empty_rows_file	`9f2c6e1`
+no-figures-fork_no_rows	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-fork_no_rows	](https://docs.costroid.com/export)
+no-figures-fork_no_rows	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-fork_no_rows	`9f2c6e1`
+no-figures-invalid_row	3
+no-figures-invalid_row	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-invalid_row	](https://docs.costroid.com/export)
+no-figures-invalid_row	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-invalid_row	`9f2c6e1`
+no-figures-no_rows_file	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-no_rows_file	](https://docs.costroid.com/export)
+no-figures-no_rows_file	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-no_rows_file	`9f2c6e1`
+no-figures-rows_file_unread	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-rows_file_unread	](https://docs.costroid.com/export)
+no-figures-rows_file_unread	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-rows_file_unread	`9f2c6e1`
+no-figures-rows_path_not_a_file	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-rows_path_not_a_file	](https://docs.costroid.com/export)
+no-figures-rows_path_not_a_file	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-rows_path_not_a_file	`9f2c6e1`
+opencode-stated-usd	0.0000006
+opencode-stated-usd	0.0000765
+opencode-stated-usd	0.00010532
+opencode-stated-usd	0.00135075
+opencode-stated-usd	0.00153317
+opencode-stated-usd	0.01
+opencode-stated-usd	0.1
+opencode-stated-usd	0.125
+opencode-stated-usd	0.5
+opencode-stated-usd	1,000,000
+opencode-stated-usd	10532
+opencode-stated-usd	10806
+opencode-stated-usd	153
+opencode-stated-usd	6
+opencode-stated-usd	7
+opencode-stated-usd	Measured
+opencode-stated-usd	USD 0.0000006
+opencode-stated-usd	USD 0.0000765
+opencode-stated-usd	USD 0.00010532
+opencode-stated-usd	USD 0.00135075
+opencode-stated-usd	USD 0.00153317
+opencode-stated-usd	USD 0.01
+opencode-stated-usd	USD 0.1
+opencode-stated-usd	USD 0.125
+opencode-stated-usd	USD 0.5
+opencode-stated-usd	](https://app.costroid.com/?installation=github%3A58120394)
+opencode-stated-usd	](https://docs.costroid.com/export)
+opencode-stated-usd	](https://github.com/example/widgets/actions/runs/19203384756)
+opencode-stated-usd	`0.3.0`
+opencode-stated-usd	`9f2c6e1`
+opencode-stated-usd	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+opencode-stated-usd	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+opencode-stated-usd	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+opencode-stated-usd	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+opencode-stated-usd	`cache_read`
+opencode-stated-usd	`cache_write_5m`
+opencode-stated-usd	`claude-haiku-5-5`
+opencode-stated-usd	`input_uncached`
+opencode-stated-usd	`opencode`
+opencode-stated-usd	`output`
+opencode-stated-usd	| unattributed |
+opencode-stated-usd	| wrapper-watchdog: the wrapper stops the process at the cap |
+opencode-stated-usd-withheld	7
+opencode-stated-usd-withheld	Measured
+opencode-stated-usd-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+opencode-stated-usd-withheld	](https://docs.costroid.com/export)
+opencode-stated-usd-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+opencode-stated-usd-withheld	`0.3.0`
+opencode-stated-usd-withheld	`9f2c6e1`
+opencode-stated-usd-withheld	`cache_read`
+opencode-stated-usd-withheld	`cache_write_5m`
+opencode-stated-usd-withheld	`claude-haiku-5-5`
+opencode-stated-usd-withheld	`comment.show_cost: false`
+opencode-stated-usd-withheld	`input_uncached`
+opencode-stated-usd-withheld	`opencode`
+opencode-stated-usd-withheld	`output`
+opencode-stated-usd-withheld	| unattributed |
+opencode-stated-usd-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+pass-shown	0.1
+pass-shown	1
+pass-shown	1,000,000
+pass-shown	1000000
+pass-shown	4.9
+pass-shown	5
+pass-shown	Measured
+pass-shown	Run budget: USD 0.1 is within the USD 5 budget.
+pass-shown	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+pass-shown	USD 0.1
+pass-shown	USD 4.9
+pass-shown	USD 5
+pass-shown	](https://app.costroid.com/?installation=github%3A58120394)
+pass-shown	](https://docs.costroid.com/export)
+pass-shown	](https://github.com/example/widgets/actions/runs/19203384756)
+pass-shown	`0.1.0`
+pass-shown	`9f2c6e1`
+pass-shown	`codex`
+pass-shown	`costroid.yml`
+pass-shown	`gpt-5.5`
+pass-shown	`openai:gpt-5.5:global:standard:output`
+pass-shown	`output`
+pass-shown	`policy.run_budget_usd`
+pass-shown	| unattributed |
+pass-shown	| wrapper-watchdog: the wrapper stops the process at the cap |
+pass-withheld	1
+pass-withheld	Measured
+pass-withheld	Run budget: the run is within the budget.
+pass-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pass-withheld	](https://docs.costroid.com/export)
+pass-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pass-withheld	`0.1.0`
+pass-withheld	`9f2c6e1`
+pass-withheld	`codex`
+pass-withheld	`comment.show_cost: false`
+pass-withheld	`costroid.yml`
+pass-withheld	`gpt-5.5`
+pass-withheld	`output`
+pass-withheld	| unattributed |
+pass-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+platform-pull	0
+platform-pull	0.0000008
+platform-pull	0.000136
+platform-pull	0.00015605
+platform-pull	0.000436875
+platform-pull	0.00089
+platform-pull	0.001619725
+platform-pull	0.01
+platform-pull	0.1
+platform-pull	0.125
+platform-pull	0.2
+platform-pull	0.5
+platform-pull	1,000,000
+platform-pull	121
+platform-pull	15605
+platform-pull	19
+platform-pull	272
+platform-pull	3495
+platform-pull	4.998380275
+platform-pull	4450
+platform-pull	5
+platform-pull	8
+platform-pull	List-equivalent, not billed
+platform-pull	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+platform-pull	Run budget: unverified rows cannot satisfy a budget.
+platform-pull	USD 0
+platform-pull	USD 0.0000008
+platform-pull	USD 0.000136
+platform-pull	USD 0.00015605
+platform-pull	USD 0.000436875
+platform-pull	USD 0.00089
+platform-pull	USD 0.001619725
+platform-pull	USD 0.01
+platform-pull	USD 0.1
+platform-pull	USD 0.125
+platform-pull	USD 0.2
+platform-pull	USD 0.5
+platform-pull	USD 4.998380275
+platform-pull	USD 5
+platform-pull	](https://app.costroid.com/#/pulls?repo=github.com/example/widgets&pr=7)
+platform-pull	](https://docs.costroid.com/export)
+platform-pull	](https://github.com/example/widgets/actions/runs/19203384756)
+platform-pull	`0.3.0`
+platform-pull	`9f2c6e1`
+platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+platform-pull	`anthropic:informational:cached_input_reported`
+platform-pull	`anthropic:informational:reasoning_output`
+platform-pull	`cache_read`
+platform-pull	`cache_write_1h`
+platform-pull	`cache_write_5m`
+platform-pull	`cached_input_reported`
+platform-pull	`claude-code`
+platform-pull	`claude-haiku-5-5`
+platform-pull	`costroid.yml`
+platform-pull	`input_uncached`
+platform-pull	`output`
+platform-pull	`policy.run_budget_usd`
+platform-pull	`reasoning_output`
+platform-pull	| agent-flag: client-side estimate, can pass the cap |
+platform-pull	| unattributed |
+policy-budget-no-cap	0
+policy-budget-no-cap	0.0000008
+policy-budget-no-cap	0.000136
+policy-budget-no-cap	0.00015605
+policy-budget-no-cap	0.000436875
+policy-budget-no-cap	0.00089
+policy-budget-no-cap	0.001619725
+policy-budget-no-cap	0.01
+policy-budget-no-cap	0.1
+policy-budget-no-cap	0.125
+policy-budget-no-cap	0.2
+policy-budget-no-cap	0.5
+policy-budget-no-cap	1,000,000
+policy-budget-no-cap	121
+policy-budget-no-cap	15605
+policy-budget-no-cap	19
+policy-budget-no-cap	272
+policy-budget-no-cap	3495
+policy-budget-no-cap	4450
+policy-budget-no-cap	5
+policy-budget-no-cap	8
+policy-budget-no-cap	List-equivalent, not billed
+policy-budget-no-cap	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+policy-budget-no-cap	Run budget: unverified rows cannot satisfy a budget.
+policy-budget-no-cap	USD 0
+policy-budget-no-cap	USD 0.0000008
+policy-budget-no-cap	USD 0.000136
+policy-budget-no-cap	USD 0.00015605
+policy-budget-no-cap	USD 0.000436875
+policy-budget-no-cap	USD 0.00089
+policy-budget-no-cap	USD 0.001619725
+policy-budget-no-cap	USD 0.01
+policy-budget-no-cap	USD 0.1
+policy-budget-no-cap	USD 0.125
+policy-budget-no-cap	USD 0.2
+policy-budget-no-cap	USD 0.5
+policy-budget-no-cap	USD 5
+policy-budget-no-cap	](https://app.costroid.com/?installation=github%3A58120394)
+policy-budget-no-cap	](https://docs.costroid.com/export)
+policy-budget-no-cap	](https://github.com/example/widgets/actions/runs/19203384756)
+policy-budget-no-cap	`0.3.0`
+policy-budget-no-cap	`9f2c6e1`
+policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+policy-budget-no-cap	`anthropic:informational:cached_input_reported`
+policy-budget-no-cap	`anthropic:informational:reasoning_output`
+policy-budget-no-cap	`cache_read`
+policy-budget-no-cap	`cache_write_1h`
+policy-budget-no-cap	`cache_write_5m`
+policy-budget-no-cap	`cached_input_reported`
+policy-budget-no-cap	`claude-code`
+policy-budget-no-cap	`claude-haiku-5-5`
+policy-budget-no-cap	`costroid.yml`
+policy-budget-no-cap	`input_uncached`
+policy-budget-no-cap	`output`
+policy-budget-no-cap	`policy.run_budget_usd`
+policy-budget-no-cap	`reasoning_output`
+policy-budget-no-cap	| agent-flag: client-side estimate, can pass the cap |
+policy-budget-no-cap	| unattributed |
+preview-config-invalid	0.05
+preview-config-invalid	0.1
+preview-config-invalid	1
+preview-config-invalid	1,000,000
+preview-config-invalid	1000000
+preview-config-invalid	Measured
+preview-config-invalid	USD 0.05
+preview-config-invalid	USD 0.1
+preview-config-invalid	](https://costroid.com/account/)
+preview-config-invalid	](https://docs.costroid.com/export)
+preview-config-invalid	](https://github.com/example/widgets/actions/runs/19203384756)
+preview-config-invalid	`0.1.0`
+preview-config-invalid	`9f2c6e1`
+preview-config-invalid	`codex`
+preview-config-invalid	`costroid validate`
+preview-config-invalid	`costroid.yml`
+preview-config-invalid	`gpt-5.5`
+preview-config-invalid	`openai:gpt-5.5:global:standard:output`
+preview-config-invalid	`output`
+preview-config-invalid	| none: nothing held the run to a budget |
+preview-config-invalid	| unattributed |
+preview-no-cap-held	0.05
+preview-no-cap-held	0.1
+preview-no-cap-held	1
+preview-no-cap-held	1,000,000
+preview-no-cap-held	1000000
+preview-no-cap-held	Measured
+preview-no-cap-held	USD 0.05
+preview-no-cap-held	USD 0.1
+preview-no-cap-held	](https://costroid.com/account/)
+preview-no-cap-held	](https://docs.costroid.com/export)
+preview-no-cap-held	](https://github.com/example/widgets/actions/runs/19203384756)
+preview-no-cap-held	`0.1.0`
+preview-no-cap-held	`9f2c6e1`
+preview-no-cap-held	`codex`
+preview-no-cap-held	`costroid.yml`
+preview-no-cap-held	`gpt-5.5`
+preview-no-cap-held	`openai:gpt-5.5:global:standard:output`
+preview-no-cap-held	`output`
+preview-no-cap-held	| none: nothing held the run to a budget |
+preview-no-cap-held	| unattributed |
+reconciliation	0
+reconciliation	0.0000008
+reconciliation	0.000136
+reconciliation	0.00015605
+reconciliation	0.000436875
+reconciliation	0.00089
+reconciliation	0.001619725
+reconciliation	0.01
+reconciliation	0.1
+reconciliation	0.125
+reconciliation	0.2
+reconciliation	0.5
+reconciliation	1%
+reconciliation	1,000,000
+reconciliation	121
+reconciliation	15605
+reconciliation	19
+reconciliation	2026-11-05
+reconciliation	272
+reconciliation	3495
+reconciliation	4.998380275
+reconciliation	4450
+reconciliation	5
+reconciliation	8
+reconciliation	List-equivalent, not billed
+reconciliation	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+reconciliation	Run budget: unverified rows cannot satisfy a budget.
+reconciliation	USD 0
+reconciliation	USD 0.0000008
+reconciliation	USD 0.000136
+reconciliation	USD 0.00015605
+reconciliation	USD 0.000436875
+reconciliation	USD 0.00089
+reconciliation	USD 0.001619725
+reconciliation	USD 0.01
+reconciliation	USD 0.1
+reconciliation	USD 0.125
+reconciliation	USD 0.2
+reconciliation	USD 0.5
+reconciliation	USD 4.998380275
+reconciliation	USD 5
+reconciliation	](https://app.costroid.com/?installation=github%3A58120394)
+reconciliation	](https://docs.costroid.com/export)
+reconciliation	](https://github.com/example/widgets/actions/runs/19203384756)
+reconciliation	`0.3.0`
+reconciliation	`9f2c6e1`
+reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+reconciliation	`anthropic:informational:cached_input_reported`
+reconciliation	`anthropic:informational:reasoning_output`
+reconciliation	`apikey_01Example`
+reconciliation	`apikey_02Example`
+reconciliation	`apikey_03Example`
+reconciliation	`cache_read`
+reconciliation	`cache_write_1h`
+reconciliation	`cache_write_5m`
+reconciliation	`cached_input_reported`
+reconciliation	`claude-code`
+reconciliation	`claude-haiku-5-5`
+reconciliation	`costroid.yml`
+reconciliation	`input_uncached`
+reconciliation	`output`
+reconciliation	`policy.run_budget_usd`
+reconciliation	`reasoning_output`
+reconciliation	| agent-flag: client-side estimate, can pass the cap |
+reconciliation	| unattributed |
+reconciliation-withheld	1%
+reconciliation-withheld	19
+reconciliation-withheld	2026-11-05
+reconciliation-withheld	List-equivalent, not billed
+reconciliation-withheld	Run budget: unverified rows cannot satisfy a budget.
+reconciliation-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+reconciliation-withheld	](https://docs.costroid.com/export)
+reconciliation-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+reconciliation-withheld	`0.3.0`
+reconciliation-withheld	`9f2c6e1`
+reconciliation-withheld	`apikey_01Example`
+reconciliation-withheld	`apikey_02Example`
+reconciliation-withheld	`apikey_03Example`
+reconciliation-withheld	`cache_read`
+reconciliation-withheld	`cache_write_1h`
+reconciliation-withheld	`cache_write_5m`
+reconciliation-withheld	`cached_input_reported`
+reconciliation-withheld	`claude-code`
+reconciliation-withheld	`claude-haiku-5-5`
+reconciliation-withheld	`comment.show_cost: false`
+reconciliation-withheld	`costroid.yml`
+reconciliation-withheld	`input_uncached`
+reconciliation-withheld	`output`
+reconciliation-withheld	`reasoning_output`
+reconciliation-withheld	| agent-flag: client-side estimate, can pass the cap |
+reconciliation-withheld	| unattributed |
+recorded-run	0
+recorded-run	0.0000008
+recorded-run	0.000136
+recorded-run	0.00015605
+recorded-run	0.000436875
+recorded-run	0.00089
+recorded-run	0.001619725
+recorded-run	0.01
+recorded-run	0.1
+recorded-run	0.125
+recorded-run	0.2
+recorded-run	0.5
+recorded-run	1,000,000
+recorded-run	121
+recorded-run	15605
+recorded-run	19
+recorded-run	2026-11-07
+recorded-run	272
+recorded-run	3495
+recorded-run	4.998380275
+recorded-run	42368537950
+recorded-run	4450
+recorded-run	5
+recorded-run	8
+recorded-run	List-equivalent, not billed
+recorded-run	Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+recorded-run	Run budget: unverified rows cannot satisfy a budget.
+recorded-run	USD 0
+recorded-run	USD 0.0000008
+recorded-run	USD 0.000136
+recorded-run	USD 0.00015605
+recorded-run	USD 0.000436875
+recorded-run	USD 0.00089
+recorded-run	USD 0.001619725
+recorded-run	USD 0.01
+recorded-run	USD 0.1
+recorded-run	USD 0.125
+recorded-run	USD 0.2
+recorded-run	USD 0.5
+recorded-run	USD 4.998380275
+recorded-run	USD 5
+recorded-run	](https://app.costroid.com/?installation=github%3A58120394)
+recorded-run	](https://docs.costroid.com/export)
+recorded-run	](https://github.com/example/widgets/actions/runs/19203384756)
+recorded-run	`0.3.0`
+recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+recorded-run	`anthropic:informational:cached_input_reported`
+recorded-run	`anthropic:informational:reasoning_output`
+recorded-run	`cache_read`
+recorded-run	`cache_write_1h`
+recorded-run	`cache_write_5m`
+recorded-run	`cached_input_reported`
+recorded-run	`claude-code`
+recorded-run	`claude-haiku-5-5`
+recorded-run	`costroid.yml`
+recorded-run	`input_uncached`
+recorded-run	`output`
+recorded-run	`policy.run_budget_usd`
+recorded-run	`reasoning_output`
+recorded-run	| agent-flag: client-side estimate, can pass the cap |
+recorded-run	| unattributed |
+recorded-run-withheld	19
+recorded-run-withheld	2026-11-07
+recorded-run-withheld	42368537950
+recorded-run-withheld	List-equivalent, not billed
+recorded-run-withheld	Run budget: unverified rows cannot satisfy a budget.
+recorded-run-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+recorded-run-withheld	](https://docs.costroid.com/export)
+recorded-run-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+recorded-run-withheld	`0.3.0`
+recorded-run-withheld	`cache_read`
+recorded-run-withheld	`cache_write_1h`
+recorded-run-withheld	`cache_write_5m`
+recorded-run-withheld	`cached_input_reported`
+recorded-run-withheld	`claude-code`
+recorded-run-withheld	`claude-haiku-5-5`
+recorded-run-withheld	`comment.show_cost: false`
+recorded-run-withheld	`costroid.yml`
+recorded-run-withheld	`input_uncached`
+recorded-run-withheld	`output`
+recorded-run-withheld	`reasoning_output`
+recorded-run-withheld	| agent-flag: client-side estimate, can pass the cap |
+recorded-run-withheld	| unattributed |
+subscription	0
+subscription	0.000008
+subscription	0.000009
+subscription	0.00012
+subscription	0.00184
+subscription	0.0028899
+subscription	0.025364
+subscription	0.0302309
+subscription	0.1
+subscription	0.5
+subscription	1,000,000
+subscription	10
+subscription	12
+subscription	1200
+subscription	18
+subscription	184
+subscription	2
+subscription	28899
+subscription	4
+subscription	6341
+subscription	List-equivalent, not billed
+subscription	USD 0
+subscription	USD 0.000008
+subscription	USD 0.000009
+subscription	USD 0.00012
+subscription	USD 0.00184
+subscription	USD 0.0028899
+subscription	USD 0.025364
+subscription	USD 0.0302309
+subscription	USD 0.1
+subscription	USD 0.5
+subscription	USD 10
+subscription	USD 2
+subscription	USD 4
+subscription	](https://app.costroid.com/?installation=github%3A58120394)
+subscription	](https://docs.costroid.com/export)
+subscription	](https://github.com/example/widgets/actions/runs/19203384756)
+subscription	`0.3.0`
+subscription	`9f2c6e1`
+subscription	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+subscription	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+subscription	`anthropic:claude-sonnet-5-5:global:standard:all:cache_read`
+subscription	`anthropic:claude-sonnet-5-5:global:standard:all:cache_write_1h`
+subscription	`anthropic:claude-sonnet-5-5:global:standard:all:input_uncached`
+subscription	`anthropic:claude-sonnet-5-5:global:standard:all:output`
+subscription	`anthropic:informational:cached_input_reported`
+subscription	`cache_read`
+subscription	`cache_write_1h`
+subscription	`cached_input_reported`
+subscription	`claude-code`
+subscription	`claude-haiku-5-5`
+subscription	`claude-sonnet-5-5`
+subscription	`input_uncached`
+subscription	`output`
+subscription	| none: nothing held the run to a budget |
+subscription	| unattributed |
+subscription-withheld	12
+subscription-withheld	List-equivalent, not billed
+subscription-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+subscription-withheld	](https://docs.costroid.com/export)
+subscription-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+subscription-withheld	`0.3.0`
+subscription-withheld	`9f2c6e1`
+subscription-withheld	`cache_read`
+subscription-withheld	`cache_write_1h`
+subscription-withheld	`cached_input_reported`
+subscription-withheld	`claude-code`
+subscription-withheld	`claude-haiku-5-5`
+subscription-withheld	`claude-sonnet-5-5`
+subscription-withheld	`comment.show_cost: false`
+subscription-withheld	`input_uncached`
+subscription-withheld	`output`
+subscription-withheld	| none: nothing held the run to a budget |
+subscription-withheld	| unattributed |
+two-currencies	0.1
+two-currencies	1,000,000
+two-currencies	1000000
+two-currencies	2
+two-currencies	4.9
+two-currencies	5
+two-currencies	EUR 0.1
+two-currencies	Measured
+two-currencies	USD 0.1
+two-currencies	USD 4.9
+two-currencies	USD 5
+two-currencies	](https://app.costroid.com/?installation=github%3A58120394)
+two-currencies	](https://docs.costroid.com/export)
+two-currencies	](https://github.com/example/widgets/actions/runs/19203384756)
+two-currencies	`0.1.0`
+two-currencies	`9f2c6e1`
+two-currencies	`codex`
+two-currencies	`gpt-5.5`
+two-currencies	`openai:gpt-5.5:global:standard:output`
+two-currencies	`output`
+two-currencies	| unattributed |
+two-currencies	| wrapper-watchdog: the wrapper stops the process at the cap |
+two-currencies-withheld	2
+two-currencies-withheld	Measured
+two-currencies-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+two-currencies-withheld	](https://docs.costroid.com/export)
+two-currencies-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+two-currencies-withheld	`0.1.0`
+two-currencies-withheld	`9f2c6e1`
+two-currencies-withheld	`codex`
+two-currencies-withheld	`comment.show_cost: false`
+two-currencies-withheld	`gpt-5.5`
+two-currencies-withheld	`output`
+two-currencies-withheld	| unattributed |
+two-currencies-withheld	| wrapper-watchdog: the wrapper stops the process at the cap |
+warn-shown	0
+warn-shown	0.0000008
+warn-shown	0.000136
+warn-shown	0.00015605
+warn-shown	0.000436875
+warn-shown	0.00089
+warn-shown	0.001
+warn-shown	0.001619725
+warn-shown	0.01
+warn-shown	0.1
+warn-shown	0.125
+warn-shown	0.2
+warn-shown	0.5
+warn-shown	1,000,000
+warn-shown	121
+warn-shown	15605
+warn-shown	19
+warn-shown	2026-11-09
+warn-shown	272
+warn-shown	3495
+warn-shown	4.998380275
+warn-shown	4450
+warn-shown	5
+warn-shown	7
+warn-shown	8
+warn-shown	List-equivalent, not billed
+warn-shown	Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`.
+warn-shown	Run budget: USD 0.001619725 is over the USD 0.001 budget.
+warn-shown	USD 0
+warn-shown	USD 0.0000008
+warn-shown	USD 0.000136
+warn-shown	USD 0.00015605
+warn-shown	USD 0.000436875
+warn-shown	USD 0.00089
+warn-shown	USD 0.001
+warn-shown	USD 0.001619725
+warn-shown	USD 0.01
+warn-shown	USD 0.1
+warn-shown	USD 0.125
+warn-shown	USD 0.2
+warn-shown	USD 0.5
+warn-shown	USD 4.998380275
+warn-shown	USD 5
+warn-shown	](https://app.costroid.com/?installation=github%3A58120394)
+warn-shown	](https://docs.costroid.com/export)
+warn-shown	](https://github.com/example/widgets/actions/runs/19203384756)
+warn-shown	`0.3.0`
+warn-shown	`9f2c6e1`
+warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+warn-shown	`anthropic:informational:cached_input_reported`
+warn-shown	`anthropic:informational:reasoning_output`
+warn-shown	`cache_read`
+warn-shown	`cache_write_1h`
+warn-shown	`cache_write_5m`
+warn-shown	`cached_input_reported`
+warn-shown	`claude-code`
+warn-shown	`claude-haiku-5-5`
+warn-shown	`costroid.yml`
+warn-shown	`enforce: true`
+warn-shown	`input_uncached`
+warn-shown	`output`
+warn-shown	`policy.run_budget_usd`
+warn-shown	`policy`
+warn-shown	`reasoning_output`
+warn-shown	| agent-flag: client-side estimate, can pass the cap |
+warn-shown	| unattributed |
+warn-withheld	19
+warn-withheld	2026-11-09
+warn-withheld	7
+warn-withheld	List-equivalent, not billed
+warn-withheld	Run budget: the run is over the budget.
+warn-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+warn-withheld	](https://docs.costroid.com/export)
+warn-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+warn-withheld	`0.3.0`
+warn-withheld	`9f2c6e1`
+warn-withheld	`cache_read`
+warn-withheld	`cache_write_1h`
+warn-withheld	`cache_write_5m`
+warn-withheld	`cached_input_reported`
+warn-withheld	`claude-code`
+warn-withheld	`claude-haiku-5-5`
+warn-withheld	`comment.show_cost: false`
+warn-withheld	`costroid.yml`
+warn-withheld	`enforce: true`
+warn-withheld	`input_uncached`
+warn-withheld	`output`
+warn-withheld	`policy`
+warn-withheld	`reasoning_output`
+warn-withheld	| agent-flag: client-side estimate, can pass the cap |
+warn-withheld	| unattributed |
+withheld-unsettled	19
+withheld-unsettled	List-equivalent, not billed
+withheld-unsettled	Run budget: unverified rows cannot satisfy a budget.
+withheld-unsettled	](https://app.costroid.com/?installation=github%3A58120394)
+withheld-unsettled	](https://docs.costroid.com/export)
+withheld-unsettled	](https://github.com/example/widgets/actions/runs/19203384756)
+withheld-unsettled	`0.3.0`
+withheld-unsettled	`9f2c6e1`
+withheld-unsettled	`cache_read`
+withheld-unsettled	`cache_write_1h`
+withheld-unsettled	`cache_write_5m`
+withheld-unsettled	`cached_input_reported`
+withheld-unsettled	`claude-code`
+withheld-unsettled	`claude-haiku-5-5`
+withheld-unsettled	`comment.show_cost`
+withheld-unsettled	`costroid.yml`
+withheld-unsettled	`input_uncached`
+withheld-unsettled	`output`
+withheld-unsettled	`reasoning_output`
+withheld-unsettled	| agent-flag: client-side estimate, can pass the cap |
+withheld-unsettled	| unattributed |
