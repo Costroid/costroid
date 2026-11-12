@@ -1,23 +1,28 @@
 <!-- costroid:comment -->
 ### Costroid
 
-This run cost USD 0.0391529 at list (Measured). Nothing held it to a budget.
+This run cost USD 0.0391529 at list (Measured). No cap held it.
 
-**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. The run cost USD 0.0391529 of the USD 5 budget. The verdict is neutral because the agent's own job wrote the rows. Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Cost | Basis | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| USD 0.0391529 | Measured | unattributed | none: nothing held the run to a budget |
+| USD 0.0391529 | Measured | unattributed | none: no cap held the run |
 
 Unverified: the agent's job wrote these figures.
+
+<details>
+<summary>Cap, budget, agents, models and catalog</summary>
 
 No cap held this run: its enforcement grade is none.
 
 Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, catalog `0.3.0`.
+Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+</details>
 
 <details>
 <summary>How USD 0.0391529 was computed</summary>

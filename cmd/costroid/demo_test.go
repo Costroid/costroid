@@ -39,11 +39,11 @@ func TestDemoRendersForATerminal(t *testing.T) {
 	if len(lines) > 45 {
 		t.Errorf("the demo prints %d lines", len(lines))
 	}
-	if want := "Costroid\n\nThis run cost USD " + demoTotal + " at list (Measured). Nothing held it to a budget.\n\nVerdict: neutral."; !strings.HasPrefix(stdout, want) {
+	if want := "Costroid\n\nThis run cost USD " + demoTotal + " at list (Measured). No cap held it.\n\nVerdict: neutral."; !strings.HasPrefix(stdout, want) {
 		t.Errorf("the demo does not open on the first line and the verdict:\n%s", stdout)
 	}
 	header := "Cost           Basis     Attribution   Enforcement"
-	row := "USD " + demoTotal + "  Measured  unattributed  none: nothing held the run to a budget"
+	row := "USD " + demoTotal + "  Measured  unattributed  none: no cap held the run"
 	if !strings.Contains(stdout, "\n"+header+"\n"+row+"\n") {
 		t.Errorf("no aligned cost table in\n%s", stdout)
 	}
@@ -75,7 +75,7 @@ func TestDemoMarkdownKeepsTheComment(t *testing.T) {
 	if want := readFile(t, docsExample); stdout != want {
 		t.Errorf("costroid demo --markdown does not print %s:\n%s", docsExample, stdout)
 	}
-	if !strings.Contains(stdout, "This run cost USD "+demoTotal+" at list (Measured). Nothing held it to a budget.") {
+	if !strings.Contains(stdout, "This run cost USD "+demoTotal+" at list (Measured). No cap held it.") {
 		t.Errorf("the demo does not open on the recorded run's figure:\n%s", stdout)
 	}
 	for _, state := range demoStates {
@@ -98,9 +98,9 @@ func TestDemoMarkdownKeepsTheComment(t *testing.T) {
 // terminal shows it and as the check run's object states it.
 func TestDemoStateShowsEachState(t *testing.T) {
 	for state, want := range map[string][]string{
-		demoNeutral: {"Verdict: neutral.", "Nothing held it to a budget.", "No cap held this run", `"conclusion": "neutral"`},
+		demoNeutral: {"Verdict: neutral.", "No cap held it.", "No cap held this run", `"conclusion": "neutral"`},
 		demoCapped: {
-			"This run cost USD 0.0283136 at list (Measured). Held by wrapper-watchdog",
+			"This run cost USD 0.0283136 at list (Measured). Cap: USD 0.001 (wrapper-watchdog",
 			"Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap).\nCost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.",
 			`"overshoot": "0.0273136"`,
 		},
@@ -224,7 +224,7 @@ func TestPreviewPrintsTheCommentWithoutAHost(t *testing.T) {
 
 func assertPreview(t *testing.T, stdout string) {
 	t.Helper()
-	if !strings.HasPrefix(stdout, comment.Marker+"\n### Costroid\n\nThis run cost USD "+demoTotal+" at list (Measured). Nothing held it to a budget.\n\n**Verdict: neutral.**") {
+	if !strings.HasPrefix(stdout, comment.Marker+"\n### Costroid\n\nThis run cost USD "+demoTotal+" at list (Measured). No cap held it.\n\n**Verdict: neutral.**") {
 		t.Errorf("the preview does not open as the comment does:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "```json\n{\n  \"schema\": \"costroid.result/0.9\"") {

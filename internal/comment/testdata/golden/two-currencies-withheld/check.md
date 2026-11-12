@@ -19,7 +19,12 @@ Unverified: the agent's job wrote these figures.
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
-Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`.
+<details>
+<summary>Agents, models and catalog</summary>
+
+Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>Token classes behind line 1</summary>

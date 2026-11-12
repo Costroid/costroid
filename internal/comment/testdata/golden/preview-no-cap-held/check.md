@@ -4,21 +4,26 @@ Verdict: neutral
 
 # Summary
 
-This run cost USD 0.1 at list (Measured). Nothing held it to a budget.
+This run cost USD 0.1 at list (Measured). No cap held it.
 
-**Verdict: neutral.** No rule applied: `costroid.yml` in this directory sets no budget and no threshold.
+**Verdict: neutral.** No rule applied: `costroid.yml` in this directory sets no budget and no threshold. Set `policy.run_budget_usd` to hold each run to a budget.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Cost | Basis | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| USD 0.1 | Measured | unattributed | none: nothing held the run to a budget |
+| USD 0.1 | Measured | unattributed | none: no cap held the run |
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 No cap held this run: its enforcement grade is none. Cap: USD 0.05, which nothing enforced. Cost: USD 0.1, Measured. Over the cap by USD 0.05 and 1000000 tokens.
 
-Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`.
+Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>How USD 0.1 was computed</summary>

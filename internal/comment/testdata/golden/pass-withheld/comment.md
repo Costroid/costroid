@@ -11,11 +11,16 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | --- | --- | --- |
 | Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
 
-Unverified: the agent's job wrote these figures.
+Verified: a ledger checked the rows the verdict read against the job's OIDC token.
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
-Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`.
+<details>
+<summary>Agents, models and catalog</summary>
+
+Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>Token classes behind line 1</summary>

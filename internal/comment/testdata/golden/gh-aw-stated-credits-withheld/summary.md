@@ -2,7 +2,7 @@
 
 | Basis | Catalog | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| Measured | `0.1.0` | unattributed | none: nothing held the run to a budget |
+| Measured | `0.1.0` | unattributed | none: no cap held the run |
 
 Unverified: the agent's job wrote these figures.
 

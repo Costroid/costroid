@@ -467,7 +467,7 @@ gh-aw-stated-credits-withheld	`gh-aw`
 gh-aw-stated-credits-withheld	`input_uncached`
 gh-aw-stated-credits-withheld	`output`
 gh-aw-stated-credits-withheld	`reasoning_output`
-gh-aw-stated-credits-withheld	| none: nothing held the run to a budget |
+gh-aw-stated-credits-withheld	| none: no cap held the run |
 gh-aw-stated-credits-withheld	| unattributed |
 gitlab-note	0
 gitlab-note	0.0000008
@@ -748,7 +748,7 @@ no-cap-held	`costroid.yml`
 no-cap-held	`gpt-5.5`
 no-cap-held	`openai:gpt-5.5:global:standard:output`
 no-cap-held	`output`
-no-cap-held	| none: nothing held the run to a budget |
+no-cap-held	| none: no cap held the run |
 no-cap-held	| unattributed |
 no-figures-agent_skipped	](https://app.costroid.com/?installation=github%3A58120394)
 no-figures-agent_skipped	](https://docs.costroid.com/export)
@@ -1023,7 +1023,7 @@ preview-config-invalid	`costroid.yml`
 preview-config-invalid	`gpt-5.5`
 preview-config-invalid	`openai:gpt-5.5:global:standard:output`
 preview-config-invalid	`output`
-preview-config-invalid	| none: nothing held the run to a budget |
+preview-config-invalid	| none: no cap held the run |
 preview-config-invalid	| unattributed |
 preview-no-cap-held	0.05
 preview-no-cap-held	0.1
@@ -1043,7 +1043,7 @@ preview-no-cap-held	`costroid.yml`
 preview-no-cap-held	`gpt-5.5`
 preview-no-cap-held	`openai:gpt-5.5:global:standard:output`
 preview-no-cap-held	`output`
-preview-no-cap-held	| none: nothing held the run to a budget |
+preview-no-cap-held	| none: no cap held the run |
 preview-no-cap-held	| unattributed |
 reconciliation	0
 reconciliation	0.0000008
@@ -1281,7 +1281,7 @@ subscription	`claude-haiku-5-5`
 subscription	`claude-sonnet-5-5`
 subscription	`input_uncached`
 subscription	`output`
-subscription	| none: nothing held the run to a budget |
+subscription	| none: no cap held the run |
 subscription	| unattributed |
 subscription-withheld	12
 subscription-withheld	List-equivalent, not billed
@@ -1299,7 +1299,7 @@ subscription-withheld	`claude-sonnet-5-5`
 subscription-withheld	`comment.show_cost: false`
 subscription-withheld	`input_uncached`
 subscription-withheld	`output`
-subscription-withheld	| none: nothing held the run to a budget |
+subscription-withheld	| none: no cap held the run |
 subscription-withheld	| unattributed |
 two-currencies	0.1
 two-currencies	1,000,000

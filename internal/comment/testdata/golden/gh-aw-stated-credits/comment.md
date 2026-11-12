@@ -1,7 +1,7 @@
 <!-- costroid:comment -->
 ### Costroid
 
-This run cost USD 0.04974 at list (Measured). Nothing held it to a budget.
+This run cost USD 0.04974 at list (Measured). No cap held it.
 
 **Verdict: neutral.** No policy ran on this change.
 
@@ -15,9 +15,14 @@ gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 No cap held this run: its enforcement grade is none.
 
-Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog `0.1.0`.
+Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>How USD 0.04974 was computed</summary>

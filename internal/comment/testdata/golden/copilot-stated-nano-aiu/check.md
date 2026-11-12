@@ -18,9 +18,14 @@ Copilot CLI stated 0 nano-AI units for this run, which Costroid never converts t
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 Cap: held by wrapper-watchdog (the wrapper stops the process at the cap). The rows do not record its amount, and the report was not given it.
 
-Agents: `copilot`. Models: `claude-haiku-5-5`. 13 rows, catalog `0.3.0`.
+Agents: `copilot`. Models: `claude-haiku-5-5`. 13 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+</details>
 
 <details>
 <summary>How USD 0.00329423 was computed</summary>

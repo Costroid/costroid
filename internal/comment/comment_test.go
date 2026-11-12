@@ -637,13 +637,21 @@ func TestFirstLineStatesTheFigureWithItsBasis(t *testing.T) {
 		line, _, _ := strings.Cut(strings.TrimPrefix(body, Marker+"\n### Costroid\n\n"), "\n")
 		return line
 	}
-	if got, want := first(commentOf(t, docsInput(t))), "This run cost USD "+demoTotal+" at list (Measured). Nothing held it to a budget."; got != want {
+	if got, want := first(commentOf(t, docsInput(t))), "This run cost USD "+demoTotal+" at list (Measured). No cap held it."; got != want {
 		t.Errorf("first line %q, want %q", got, want)
 	}
-	if got, want := first(commentOf(t, realInput(t))), "This run cost USD "+realTotal+" at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap."; got != want {
+	if got, want := first(commentOf(t, realInput(t))), "This run cost USD "+realTotal+" at list (List-equivalent, not billed). Cap: USD 5 (agent-flag: client-side estimate, can pass the cap)."; got != want {
 		t.Errorf("first line %q, want %q", got, want)
 	}
-	if !strings.Contains(commentOf(t, realInput(t)), "can pass the cap.\n\n**Verdict: neutral.**") {
+	noCapGiven := realInput(t)
+	noCapGiven.Budget = nil
+	if got, want := first(commentOf(t, noCapGiven)), "This run cost USD "+realTotal+" at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap."; got != want {
+		t.Errorf("first line %q, want %q", got, want)
+	}
+	if got, want := first(commentOf(t, capInput(codexStoppedLedger(t), "0.001"))), "This run cost USD 0.0283136 at list (Measured). Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Over the cap by USD 0.0273136 and 16960 tokens."; got != want {
+		t.Errorf("first line %q, want %q", got, want)
+	}
+	if !strings.Contains(commentOf(t, realInput(t)), "can pass the cap).\n\n**Verdict: neutral.**") {
 		t.Error("the verdict does not follow the first line")
 	}
 	output, err := Check(realInput(t))
@@ -659,7 +667,7 @@ func TestFirstLineStatesTheFigureWithItsBasis(t *testing.T) {
 	input := realInput(t)
 	input.Budget = nil
 	input.Ledger = ledgerOf(t, sampleFields(), euro, measured)
-	want := "This run cost EUR 0.2 at list (Measured), USD 0.1 at list (Measured) and USD 0.1 at list (Measured). Nothing held it to a budget."
+	want := "This run cost EUR 0.2 at list (Measured), USD 0.1 at list (Measured) and USD 0.1 at list (Measured). No cap held it."
 	if got := first(commentOf(t, input)); got != want {
 		t.Errorf("first line %q, want %q", got, want)
 	}
@@ -675,7 +683,7 @@ func TestFirstLineWithheldWhenShowCostFalse(t *testing.T) {
 		input := docsInput(t)
 		input.Amounts = amounts
 		body := commentOf(t, input)
-		want := Marker + "\n### Costroid\n\nThis run was priced at list (Measured). Nothing held it to a budget.\n\n**Verdict: neutral.**"
+		want := Marker + "\n### Costroid\n\nThis run was priced at list (Measured). No cap held it.\n\n**Verdict: neutral.**"
 		if !strings.HasPrefix(body, want) {
 			t.Errorf("amounts %d:\n%s", amounts, body)
 		}

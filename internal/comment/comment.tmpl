@@ -39,29 +39,29 @@
 {{.AgentStated}}
 
 {{end -}}
-Unverified: the agent's job wrote these figures.
+{{.TrustLine}}
 
 {{if .FiguresOmitted -}}
 {{.FiguresOmitted}} more lines are left out of this table.
 
 {{end -}}
-{{if .ShowAmounts -}}
-{{.CapLine}}
-{{- range .LimitLines}}
-
-{{.}}
-{{- end}}
-{{- else if .AmountsOff -}}
+{{if .AmountsOff -}}
 Amounts are off on this public repository (`comment.show_cost: false`). {{if .CheckRuns}}The rows and the check run's machine block carry them.{{else}}The rows carry them.{{end}}
-{{- else -}}
+
+{{else if not .ShowAmounts -}}
 Amounts are withheld, because `comment.show_cost` or the repository's visibility could not be read. {{if .CheckRuns}}The rows and the check run's machine block carry them.{{else}}The rows carry them.{{end}}
-{{- end}}
-{{- range .Reconciliations}}
 
+{{end -}}
+{{range .Reconciliations -}}
 {{.}}
-{{- end}}
 
-{{if .Agents}}Agents: {{.Agents}}. {{end}}{{if .Models}}Models: {{.Models}}{{if .ModelsOmitted}} and {{.ModelsOmitted}} more{{end}}. {{end}}{{.Rows}} {{if eq .Rows 1}}row{{else}}rows{{end}}{{if .Catalogs}}, catalog {{.Catalogs}}{{end}}.
+{{end -}}
+<details>
+<summary>{{.DetailsSummary}}</summary>
+{{range .Details}}
+{{.}}
+{{end}}
+</details>
 {{- range .Traces}}
 
 {{template "trace" .}}
@@ -144,7 +144,7 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.AgentError}}
 
 {{end -}}
-Unverified: the agent's job wrote these figures.
+{{.TrustLine}}
 
 {{if .FiguresOmitted -}}
 {{.FiguresOmitted}} more lines are left out of this table.

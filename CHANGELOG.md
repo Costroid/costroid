@@ -2,6 +2,19 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## Unreleased
+
+### What you can now do
+
+- Read where a run stands against its budget in the verdict line: `Run budget: unverified rows cannot satisfy a budget. The run cost USD 0.0391529 of the USD 5 budget.` When the check is neutral only because the agent's own job wrote the rows, the line says so, states what a run over budget concludes, and links [`docs/policy.md`](docs/policy.md), which says what lets a budget pass. With no rule set, it names `policy.run_budget_usd`.
+- See the day a catalog's prices were read beside its version: the comment and `costroid version` print `catalog 0.3.0, prices read 2026-11-08`, the date the release's sheets state, and the oldest one when they state several.
+
+### Fixes
+
+- The comment's first line names the cap that held the run, `Cap: USD 5 (agent-flag: ...)`, and over the cap says by how much. A run nothing held reads `No cap held it.`, and its table cell `none: no cap held the run`, so a cap is never called a budget.
+- `Unverified: the agent's job wrote these figures.` is printed from the verdict's trust, the one the machine block's `policy.trust` states. Rows a ledger checked against the job's OIDC token read `Verified: a ledger checked the rows the verdict read against the job's OIDC token.`
+- Each thing is said once above the fold: the first line, the verdict line, the table and the run line. The cap against the cost, the policy's limits and where they are set, and the agents, models, rows and catalog sit in one folded block. Warnings, failure reasons, agent errors, withheld-amounts notices, reconciliations and an agent's own figure stay above it. The check run's summary and the GitLab note carry the same text. The machine block is unchanged.
+
 ## 1.0.0-alpha.23 (2026-11-11)
 
 ### Added

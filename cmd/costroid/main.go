@@ -80,7 +80,11 @@ func versionCommand(_ context.Context, _ []string, std stdio) int {
 		fmt.Fprintf(std.stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
-	fmt.Fprintf(std.stdout, "costroid %s, catalog %s\n", version, pinned.Version())
+	line := fmt.Sprintf("costroid %s, catalog %s", version, pinned.Version())
+	if day, known := catalog.PricesRead(pinned.Version()); known {
+		line += ", prices read " + day
+	}
+	fmt.Fprintln(std.stdout, line)
 	return 0
 }
 

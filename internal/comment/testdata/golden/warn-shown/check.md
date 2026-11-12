@@ -4,7 +4,7 @@ Verdict: neutral
 
 # Summary
 
-This run cost USD 0.001619725 at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+This run cost USD 0.001619725 at list (List-equivalent, not billed). Cap: USD 5 (agent-flag: client-side estimate, can pass the cap).
 
 **Verdict: neutral.** Run budget: USD 0.001619725 is over the USD 0.001 budget. Warn-only until 2026-11-09 09:00 UTC: for 7 days from the commit that added this workflow to the base branch, a rule that fails warns. Add `enforce: true` under `policy` in `costroid.yml` to enforce now. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
@@ -16,11 +16,16 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, budget, agents, models and catalog</summary>
+
 Cap: USD 5 (agent-flag: client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
 
 Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+</details>
 
 <details>
 <summary>How USD 0.001619725 was computed</summary>

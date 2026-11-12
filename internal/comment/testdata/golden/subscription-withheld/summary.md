@@ -2,7 +2,7 @@
 
 | Basis | Catalog | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | `0.3.0` | unattributed | none: nothing held the run to a budget |
+| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | `0.3.0` | unattributed | none: no cap held the run |
 
 Unverified: the agent's job wrote these figures.
 

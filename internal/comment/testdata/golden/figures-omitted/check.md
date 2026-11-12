@@ -4,7 +4,7 @@ Verdict: neutral
 
 # Summary
 
-This run cost XAA 0.1 at list (Measured), XAB 0.1 at list (Measured), XAC 0.1 at list (Measured) and 20 more. Held by wrapper-watchdog: the wrapper stops the process at the cap.
+This run cost XAA 0.1 at list (Measured), XAB 0.1 at list (Measured), XAC 0.1 at list (Measured) and 20 more. Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap).
 
 **Verdict: neutral.** No policy ran on this change.
 
@@ -37,9 +37,14 @@ Unverified: the agent's job wrote these figures.
 
 3 more lines are left out of this table.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). The figures above are not one USD figure of one basis, so none is compared with the cap.
 
-Agents: `codex`. Models: `gpt-5.5`. 23 rows, catalog `0.1.0`.
+Agents: `codex`. Models: `gpt-5.5`. 23 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>How XAA 0.1 was computed</summary>

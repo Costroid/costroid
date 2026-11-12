@@ -1,7 +1,7 @@
 <!-- costroid:comment -->
 ### Costroid
 
-This run was priced at list (Measured). Nothing held it to a budget.
+This run was priced at list (Measured). No cap held it.
 
 **Verdict: neutral.** No policy ran on this change.
 
@@ -9,13 +9,18 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Basis | Attribution | Enforcement |
 | --- | --- | --- |
-| Measured | unattributed | none: nothing held the run to a budget |
+| Measured | unattributed | none: no cap held the run |
 
 Unverified: the agent's job wrote these figures.
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
-Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog `0.1.0`.
+<details>
+<summary>Agents, models and catalog</summary>
+
+Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>Token classes behind line 1</summary>

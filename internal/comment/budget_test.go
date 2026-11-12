@@ -193,19 +193,23 @@ func TestPolicyBudgetBesideNoCap(t *testing.T) {
 				fields.enforcement = grade
 				input.Ledger = ledgerOf(t, fields)
 				name := fmt.Sprintf("grade %s, cap %v, policy %v", grade, budget != nil, verdict != nil)
-				assertNoContradiction(t, name, visiblePart(commentOf(t, input)), grade, verdict != nil)
+				assertNoContradiction(t, name, commentOf(t, input), grade, verdict != nil)
 			}
 		}
 	}
 }
 
-func assertNoContradiction(t *testing.T, name, text, grade string, policyBudget bool) {
+// assertNoContradiction reads a comment, folds opened. The line that names the
+// policy's budget and its setting is folded; nothing a reader sees first says
+// that nothing held the run to a budget the verdict checks.
+func assertNoContradiction(t *testing.T, name, body, grade string, policyBudget bool) {
 	t.Helper()
+	text := readable(body)
 	budgetLine := "Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`."
 	if strings.Contains(text, budgetLine) != policyBudget {
 		t.Errorf("%s: the policy's budget line is %v:\n%s", name, !policyBudget, text)
 	}
-	if regexp.MustCompile(`(?i)budget: not|no budget|not recorded`).MatchString(text) {
+	if regexp.MustCompile(`(?i)budget: not|no budget|not recorded|held (it|the run) to a budget`).MatchString(text) {
 		t.Errorf("%s: a budget reads as missing:\n%s", name, text)
 	}
 	if strings.Contains(text, "never the cap") && grade == "none" {

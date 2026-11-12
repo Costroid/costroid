@@ -20,6 +20,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/ghaw"
+	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
@@ -121,7 +122,7 @@ const (
 var enforcementOrder = []string{"none", "provider", "agent-flag", "wrapper-watchdog", "gateway-precheck"}
 
 var enforcementNotes = map[string]string{
-	"none":             "nothing held the run to a budget",
+	"none":             "no cap held the run",
 	"provider":         "only the vendor's budget applies",
 	"agent-flag":       "client-side estimate, can pass the cap",
 	"wrapper-watchdog": "the wrapper stops the process at the cap",
@@ -525,23 +526,23 @@ type view struct {
 	ShowAmounts bool
 	AmountsOff  bool
 	CapLine     string
-	// LimitLines state each limit the policy checked, apart from the cap.
-	LimitLines []string
+	// TrustLine says who vouched for the rows, from the verdict's trust.
+	TrustLine string
 	// Reconciliations are closed sentences, one per credential.
 	Reconciliations []string
 	Lines           []figureLine
 	FiguresOmitted  int
 	Fallback        string
-	Traces          []traceBlock
-	Agents          string
-	Models          string
-	ModelsOmitted   int
-	Catalogs        string
-	Rows            int
-	AccountURL      string
-	ExportURL       string
-	CheckRunID      *int64
-	Block           string
+	// Details are the lines folded under the table: the cap against the
+	// cost, each limit the policy checked and where it is set, and the run's
+	// agents, models, rows and catalogs. DetailsSummary names what they hold.
+	Details        []string
+	DetailsSummary string
+	Traces         []traceBlock
+	AccountURL     string
+	ExportURL      string
+	CheckRunID     *int64
+	Block          string
 }
 
 // fallbackMark sits in the first cell of a figure the fallback tier priced in
@@ -566,22 +567,16 @@ func (i Input) view() view {
 		AgentStated:    i.agentStatedLine(shown),
 		ShowAmounts:    shown,
 		AmountsOff:     i.Amounts == AmountsOff,
+		TrustLine:      i.trustLine(),
 		FiguresOmitted: i.Ledger.FiguresOmitted,
 		Fallback:       fallbackSentence(i.Ledger),
-		Agents:         spans(i.Ledger.Agents),
-		Models:         spans(i.Ledger.Models),
-		ModelsOmitted:  i.Ledger.ModelsOmitted,
-		Catalogs:       spans(i.Ledger.Catalogs),
-		Rows:           i.Ledger.Rows,
 		AccountURL:     i.accountLink(),
 		CheckRuns:      i.AccountHost != AccountGitLab,
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}
 	result.CapLine = i.capLine()
-	if shown {
-		result.LimitLines = limitLines(i.Verdict, weakestGrade(i.Ledger.Figures))
-	}
+	result.Details, result.DetailsSummary = i.details(shown, result.CapLine)
 	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
 		line := figureLine{
@@ -680,13 +675,96 @@ func grouped(digits string) string {
 	return out.String()
 }
 
+// The lines that say who vouched for the rows. Rows a ledger checked against
+// the job's token read verified only when the verdict says so: a tag inside
+// the rows file proves nothing, because the agent's job wrote it.
+const (
+	unverifiedLine = "Unverified: the agent's job wrote these figures."
+	verifiedLine   = "Verified: a ledger checked the rows the verdict read against the job's OIDC token."
+)
+
+// trustLine reads the trust the verdict, and so the machine block's
+// policy.trust, states. With no verdict the rows are the rows file's, which
+// the agent's job wrote.
+func (i Input) trustLine() string {
+	if i.Verdict != nil && i.Verdict.Trust == policy.TokenVerified {
+		return verifiedLine
+	}
+	return unverifiedLine
+}
+
+// details are the lines a reader opens for: the cap against the cost, each
+// limit the policy checked, and the run's agents, models, rows and catalogs.
+// Each repeats a cell of the table or explains one, so they are folded. The
+// summary names what they hold.
+func (i Input) details(shown bool, capLine string) ([]string, string) {
+	var lines, holds []string
+	if shown && capLine != "" {
+		lines, holds = append(lines, capLine), append(holds, "cap")
+	}
+	if shown {
+		limits, nouns := limitLines(i.Verdict, weakestGrade(i.Ledger.Figures))
+		lines = append(lines, limits...)
+		for _, noun := range nouns {
+			if !slices.Contains(holds, noun) {
+				holds = append(holds, noun)
+			}
+		}
+	}
+	var run []string
+	if len(i.Ledger.Agents) > 0 {
+		run, holds = append(run, "Agents: "+spans(i.Ledger.Agents)+"."), append(holds, "agents")
+	}
+	if len(i.Ledger.Models) > 0 {
+		run, holds = append(run, "Models: "+spans(i.Ledger.Models)+more(i.Ledger.ModelsOmitted)+"."), append(holds, "models")
+	}
+	rows := fmt.Sprintf("%d %s", i.Ledger.Rows, plural(i.Ledger.Rows, "row", "rows"))
+	if len(i.Ledger.Catalogs) > 0 {
+		rows, holds = rows+", "+catalogPhrase(i.Ledger.Catalogs), append(holds, "catalog")
+	}
+	lines = append(lines, strings.Join(append(run, rows+"."), " "))
+	if len(holds) == 0 {
+		holds = append(holds, "rows")
+	}
+	summary := listed(holds, 0)
+	return lines, strings.ToUpper(summary[:1]) + summary[1:]
+}
+
+// catalogPhrase names the rows' catalogs, each with the day its prices were
+// read when the binary carries that release.
+func catalogPhrase(catalogs []Data) string {
+	dated := func(name Data) (string, string) {
+		day, known := catalog.PricesRead(string(name))
+		if !known {
+			return name.Code(), ""
+		}
+		return name.Code(), "prices read " + day
+	}
+	if len(catalogs) == 1 {
+		name, day := dated(catalogs[0])
+		if day == "" {
+			return "catalog " + name
+		}
+		return "catalog " + name + ", " + day
+	}
+	names := make([]string, len(catalogs))
+	for index, entry := range catalogs {
+		name, day := dated(entry)
+		names[index] = name
+		if day != "" {
+			names[index] += " (" + day + ")"
+		}
+	}
+	return "catalogs " + listed(names, 0)
+}
+
 // firstFigures is how many figures the first line names. The table names
 // every figure.
 const firstFigures = 3
 
-// firstLine states what the run cost, at which basis, and what held it to a
-// cap, so the figure reads before the verdict. Withheld, it states the basis
-// and the grade without an amount.
+// firstLine states what the run cost, at which basis, and the cap that held
+// it or that none did, so the figure reads before the verdict. Withheld, it
+// states the basis and the grade without an amount.
 func (i Input) firstLine(shown bool) string {
 	if i.State != Reported || len(i.Ledger.Figures) == 0 {
 		return ""
@@ -710,6 +788,9 @@ func (i Input) firstLine(shown bool) string {
 		}
 		line = "This run was priced " + listed(clauses, 0) + "."
 	}
+	if check := i.capCheck(); shown && check != nil {
+		return line + " " + check.heading()
+	}
 	return line + " " + heldSentence(weakestGrade(i.Ledger.Figures))
 }
 
@@ -724,10 +805,11 @@ func figureNote(figure Figure, stated *adapter.Stated, shown bool) string {
 	return enforcementNotes[figure.Enforcement]
 }
 
-// heldSentence says what held the run to its cap, by the weakest grade.
+// heldSentence says what held the run to its cap, by the weakest grade. A cap
+// is never called a budget: the budget is the policy's.
 func heldSentence(grade string) string {
 	if grade == "none" {
-		return "Nothing held it to a budget."
+		return "No cap held it."
 	}
 	return fmt.Sprintf("Held by %s: %s.", grade, enforcementNotes[grade])
 }

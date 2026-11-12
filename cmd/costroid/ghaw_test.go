@@ -321,7 +321,7 @@ func TestGhAwFollowUpNamesTheRefusedArtifact(t *testing.T) {
 func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 	clearCI(t)
 	const capped = "| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
-	const plain = "| none: nothing held the run to a budget |"
+	const plain = "| none: no cap held the run |"
 	artifact := copyArtifact(t, "")
 	for _, stated := range []bool{true, false} {
 		if !stated {
@@ -355,7 +355,7 @@ func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
 	clearCI(t)
 	const capped = "| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
-	const plain = "| none: nothing held the run to a budget |"
+	const plain = "| none: no cap held the run |"
 	for _, info := range []bool{true, false} {
 		out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
 		code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, recordedGhAw, info), "usage"), "--out", out)

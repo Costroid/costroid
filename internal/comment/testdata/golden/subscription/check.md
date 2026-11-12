@@ -4,7 +4,7 @@ Verdict: neutral
 
 # Summary
 
-This run cost USD 0.0302309 at list (List-equivalent, not billed). Nothing held it to a budget.
+This run cost USD 0.0302309 at list (List-equivalent, not billed). No cap held it.
 
 **Verdict: neutral.** No policy ran on this change.
 
@@ -12,13 +12,18 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Cost | Basis | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| USD 0.0302309; subscription: list-equivalent, no provider report to reconcile | List-equivalent, not billed | unattributed | none: nothing held the run to a budget |
+| USD 0.0302309; subscription: list-equivalent, no provider report to reconcile | List-equivalent, not billed | unattributed | none: no cap held the run |
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 No cap held this run: its enforcement grade is none.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-sonnet-5-5`. 12 rows, catalog `0.3.0`.
+Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-sonnet-5-5`. 12 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+</details>
 
 <details>
 <summary>How USD 0.0302309 was computed</summary>

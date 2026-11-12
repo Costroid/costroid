@@ -2,6 +2,7 @@ package comment
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,34 +54,30 @@ func (i Input) configRead() string {
 
 // verdictLine opens with the approval when one turns the check neutral.
 func (i Input) verdictLine(shown bool) string {
-	line := verdictLine(i.Verdict, shown, i.lifetimeBases(), i.configRead())
+	if i.Verdict == nil {
+		return "No policy ran on this change."
+	}
+	line := strings.Join(verdictSentences(*i.Verdict, shown, i.lifetimeBases(), i.configRead(), true), " ")
 	if i.approved() {
 		return approvalLine(*i.Approval) + " " + line
 	}
 	return line
 }
 
-// verdictLine is built from the verdict's closed fields and its amounts, so
-// no text from the pull request reaches it. config names the costroid.yml
-// the verdict read.
-func verdictLine(verdict *policy.Verdict, shown bool, bases []string, config string) string {
-	if verdict == nil {
-		return "No policy ran on this change."
-	}
-	return strings.Join(verdictSentences(*verdict, shown, bases, config), " ")
-}
-
 // VerdictSentences says what the policy found, one sentence per fact, in the
 // words the comment uses. shown says whether amounts may be printed. It reads
-// no lifetime, so a pull request's total is said to add every basis.
+// no lifetime, so a pull request's total is said to add every basis. It
+// carries no link, so a terminal can print it.
 func VerdictSentences(verdict policy.Verdict, shown bool) []string {
-	return verdictSentences(verdict, shown, nil, baseBranchConfig)
+	return verdictSentences(verdict, shown, nil, baseBranchConfig, false)
 }
 
-// verdictSentences names the bases the pull request's total adds, in
-// basisOrder, or every basis when bases is empty, and config as the
-// costroid.yml the verdict read.
-func verdictSentences(verdict policy.Verdict, shown bool, bases []string, config string) []string {
+// verdictSentences is built from the verdict's closed fields and its amounts,
+// so no text from the pull request reaches it. It names the bases the pull
+// request's total adds, in basisOrder, or every basis when bases is empty,
+// and config as the costroid.yml the verdict read. linked adds the sentences
+// that say why a verdict on the agent's own rows is neutral, with their link.
+func verdictSentences(verdict policy.Verdict, shown bool, bases []string, config string, linked bool) []string {
 	var sentences []string
 	switch verdict.Config {
 	case policy.ConfigInvalid:
@@ -94,7 +91,10 @@ func verdictSentences(verdict policy.Verdict, shown bool, bases []string, config
 		held = held || result.HeldByWarnOnly
 	}
 	if len(sentences) == 0 {
-		sentences = append(sentences, "No rule applied: "+config+" sets no budget and no threshold.")
+		sentences = append(sentences, "No rule applied: "+config+" sets no budget and no threshold. "+setBudget)
+	}
+	if linked {
+		sentences = append(sentences, trustSentences(verdict)...)
 	}
 	if held {
 		sentences = append(sentences, warnOnlySentence(verdict.WarnOnly))
@@ -132,9 +132,9 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 		}
 		return fmt.Sprintf("%s: the run is within the %s.", label, noun)
 	case policy.ReasonUnverifiedRows:
-		return label + ": unverified rows cannot satisfy a budget."
+		return label + ": unverified rows cannot satisfy a budget." + standing(result, shown, bases)
 	case policy.ReasonUnattributedRows:
-		return label + ": unattributed rows cannot satisfy a budget."
+		return label + ": unattributed rows cannot satisfy a budget." + standing(result, shown, bases)
 	case policy.ReasonNoRows:
 		return label + ": this check read no rows, so it cannot pass."
 	case policy.ReasonOtherCurrency:
@@ -147,6 +147,76 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 		rows = "row names"
 	}
 	return fmt.Sprintf("%s: %d %s a credential, a pull request and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.", label, joinable, rows)
+}
+
+// budgetRules are the rules that hold a figure to a USD budget or threshold.
+var budgetRules = []string{policy.RuleRunBudget, policy.RuleRunCostThreshold, policy.RulePullRequestBudget}
+
+// standing says where a budget rule's figure stands against its limit, when
+// the rows kept the rule from passing although the figure was within it. It
+// is empty for any other rule, and for a rule that held no figure. The pack
+// reaches these reasons only after it found the figure not over the limit.
+func standing(result policy.Result, shown bool, bases []string) string {
+	if !slices.Contains(budgetRules, result.Rule) || result.CostUSD == "" || result.LimitUSD == "" {
+		return ""
+	}
+	noun := limitNouns[result.Rule]
+	switch {
+	case result.Rule == policy.RulePullRequestBudget && shown:
+		return fmt.Sprintf(" This pull request's runs cost USD %s of the USD %s budget. %s", result.CostUSD, result.LimitUSD, totalBases(bases))
+	case result.Rule == policy.RulePullRequestBudget:
+		return " This pull request's runs are within the budget. " + totalBases(bases)
+	case shown:
+		return fmt.Sprintf(" The run cost USD %s of the USD %s %s.", result.CostUSD, result.LimitUSD, noun)
+	}
+	return fmt.Sprintf(" The run is within the %s.", noun)
+}
+
+// policyPage says what lets a rule pass, on each trust path.
+const policyPage = "https://docs.costroid.com/policy"
+
+// setBudget names the key that sets a run budget.
+const setBudget = "Set `policy.run_budget_usd` to hold each run to a budget."
+
+// onAgentRows reports a neutral verdict that only the agent's own rows kept
+// from success: each rule that ran passed, or was within its limit on rows
+// the agent's job wrote. budget says one of those is a budget rule.
+func onAgentRows(verdict policy.Verdict) (neutral, budget bool) {
+	if verdict.Conclusion != policy.Neutral {
+		return false, false
+	}
+	for _, result := range verdict.Results {
+		switch {
+		case result.Outcome == policy.Pass:
+		case result.Outcome == policy.Unproven && result.Reason == policy.ReasonUnverifiedRows:
+			neutral = true
+			budget = budget || slices.Contains(budgetRules, result.Rule)
+		default:
+			return false, false
+		}
+	}
+	return neutral, budget
+}
+
+// trustSentences say that a verdict is neutral because the agent's own job
+// wrote the rows, what a budget broken on them concludes, and which page says
+// what lets a rule pass. They are empty for any other verdict.
+func trustSentences(verdict policy.Verdict) []string {
+	neutral, budget := onAgentRows(verdict)
+	if !neutral {
+		return nil
+	}
+	sentences := []string{"The verdict is neutral because the agent's own job wrote the rows."}
+	rule := "rule"
+	if budget {
+		rule = "budget"
+		over := "Over budget, the rule would fail."
+		if verdict.WarnOnly.Active {
+			over = "Over budget, the rule would warn until the warn-only period ends, then fail."
+		}
+		sentences = append(sentences, over)
+	}
+	return append(sentences, "[The policy page]("+policyPage+") says what lets a "+rule+" pass.")
 }
 
 // allowlistSentence names the models off the list as code spans, each through

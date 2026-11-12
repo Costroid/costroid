@@ -15,9 +15,14 @@ OpenCode stated USD 0.00153317 for this run by its own prices, which Costroid ne
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 Cap: held by wrapper-watchdog (the wrapper stops the process at the cap). The rows do not record its amount, and the report was not given it.
 
-Agents: `opencode`. Models: `claude-haiku-5-5`. 7 rows, catalog `0.3.0`.
+Agents: `opencode`. Models: `claude-haiku-5-5`. 7 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+</details>
 
 <details>
 <summary>How USD 0.00153317 was computed</summary>

@@ -1,7 +1,7 @@
 <!-- costroid:comment -->
 ### Costroid
 
-This run cost USD 180.1 at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.
+This run cost USD 180.1 at list (Measured). Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). Over the cap by USD 175.1 and 1000000 tokens.
 
 **Verdict: neutral.** No policy ran on this change.
 
@@ -15,9 +15,14 @@ Fallback price: `gpt-9-preview` is not in catalog `0.1.0` for the tier and token
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 180.1, Measured. Over the cap by USD 175.1 and 1000000 tokens.
 
-Agents: `codex`. Models: `gpt-5.5`, `gpt-9-preview`. 2 rows, catalog `0.1.0`.
+Agents: `codex`. Models: `gpt-5.5`, `gpt-9-preview`. 2 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>How USD 180.1 was computed</summary>

@@ -1,7 +1,7 @@
 <!-- costroid:comment -->
 ### Costroid
 
-This run cost USD 0.0283136 at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.
+This run cost USD 0.0283136 at list (Measured). Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Over the cap by USD 0.0273136 and 16960 tokens.
 
 **Verdict: neutral.** No policy ran on this change.
 
@@ -13,9 +13,14 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 Unverified: the agent's job wrote these figures.
 
+<details>
+<summary>Cap, agents, models and catalog</summary>
+
 Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.
 
-Agents: `codex`. Models: `gpt-5.6-sol`. 4 rows, catalog `0.1.0`.
+Agents: `codex`. Models: `gpt-5.6-sol`. 4 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>How USD 0.0283136 was computed</summary>

@@ -4,7 +4,7 @@ Verdict: success
 
 # Summary
 
-This run cost USD 0.1 at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.
+This run cost USD 0.1 at list (Measured). Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap).
 
 **Verdict: success.** Run budget: USD 0.1 is within the USD 5 budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
@@ -14,13 +14,18 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | --- | --- | --- | --- |
 | USD 0.1 | Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
 
-Unverified: the agent's job wrote these figures.
+Verified: a ledger checked the rows the verdict read against the job's OIDC token.
+
+<details>
+<summary>Cap, budget, agents, models and catalog</summary>
 
 Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.1, Measured. Under the cap by USD 4.9.
 
 Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
 
-Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`.
+Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>
 
 <details>
 <summary>How USD 0.1 was computed</summary>

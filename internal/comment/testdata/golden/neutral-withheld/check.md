@@ -6,7 +6,7 @@ Verdict: neutral
 
 This run was priced at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
 
-**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. The run is within the budget. The verdict is neutral because the agent's own job wrote the rows. Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
@@ -18,7 +18,12 @@ Unverified: the agent's job wrote these figures.
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`.
+<details>
+<summary>Agents, models and catalog</summary>
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+</details>
 
 <details>
 <summary>Token classes behind line 1</summary>

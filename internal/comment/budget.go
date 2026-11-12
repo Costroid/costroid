@@ -124,11 +124,27 @@ func (c *capCheck) line(preview bool) string {
 		}
 		return noCap + fmt.Sprintf(" Cap: %s %s, which nothing enforced.", budgetCurrency, c.amount) + c.spent()
 	}
-	held := fmt.Sprintf("Cap: %s %s (%s: %s).", budgetCurrency, c.amount, c.grade, enforcementNotes[c.grade])
 	if !c.compared {
-		return held + " The figures above are not one " + budgetCurrency + " figure of one basis, so none is compared with the cap."
+		return c.held() + " The figures above are not one " + budgetCurrency + " figure of one basis, so none is compared with the cap."
 	}
-	return held + c.spent()
+	return c.held() + c.spent()
+}
+
+// held names the cap and the grade that held the run to it.
+func (c *capCheck) held() string {
+	return fmt.Sprintf("Cap: %s %s (%s: %s).", budgetCurrency, c.amount, c.grade, enforcementNotes[c.grade])
+}
+
+// heading is what the first line says of a cap a grade held: the cap, and
+// how far the run went over it. A run nothing held states no cap there.
+func (c *capCheck) heading() string {
+	if c.grade == "none" {
+		return heldSentence(c.grade)
+	}
+	if c.compared && c.overshoot.Sign() > 0 {
+		return c.held() + " " + c.over()
+	}
+	return c.held()
 }
 
 // spent states the cost and how far under or over the cap it is.
@@ -137,11 +153,17 @@ func (c *capCheck) spent() string {
 	if c.overshoot.Sign() == 0 {
 		return spent + fmt.Sprintf(" Under the cap by %s %s.", budgetCurrency, c.remainder)
 	}
-	over := fmt.Sprintf(" Over the cap by %s %s", budgetCurrency, c.overshoot)
+	return spent + " " + c.over()
+}
+
+// over states how far the run went over the cap, in its currency and, when
+// the rows tell, in tokens.
+func (c *capCheck) over() string {
+	over := fmt.Sprintf("Over the cap by %s %s", budgetCurrency, c.overshoot)
 	if c.overshootTokens != nil {
 		over += fmt.Sprintf(" and %s tokens", c.overshootTokens)
 	}
-	return spent + over + "."
+	return over + "."
 }
 
 // Reconciliation is the last reconciliation of one credential's day.
@@ -182,13 +204,13 @@ var limitSettings = map[string]string{
 }
 
 // limitLines state each limit the policy checked and the setting it came
-// from, so a policy's budget is never read as the run's cap. A run that a cap
-// held is told the verdict does not check that cap.
-func limitLines(verdict *policy.Verdict, grade string) []string {
+// from, so a policy's budget is never read as the run's cap, and name each
+// line's kind of limit. A run that a cap held is told the verdict does not
+// check that cap.
+func limitLines(verdict *policy.Verdict, grade string) (lines, nouns []string) {
 	if verdict == nil {
-		return nil
+		return nil, nil
 	}
-	var lines []string
 	for _, result := range verdict.Results {
 		setting, budgetRule := limitSettings[result.Rule]
 		if !budgetRule || result.LimitUSD == "" {
@@ -198,7 +220,7 @@ func limitLines(verdict *policy.Verdict, grade string) []string {
 		if grade != "none" {
 			line += fmt.Sprintf(" The verdict checks this %s, never the cap.", limitNouns[result.Rule])
 		}
-		lines = append(lines, line)
+		lines, nouns = append(lines, line), append(nouns, limitNouns[result.Rule])
 	}
-	return lines
+	return lines, nouns
 }
