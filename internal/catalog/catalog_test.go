@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -222,7 +223,8 @@ func TestTierTheSheetDoesNotNameFallsBackRatherThanBorrowingStandard(t *testing.
 // sheet prices at the fast tier only through its prompt_cache multiplier is
 // the fast input price times that multiplier, under a price id that names the
 // fast tier and the class, and that the multiplier a narrower row states for
-// the model wins over the general one. Data residency stacks on top.
+// the model wins over the general one. Data residency stacks on top, and the
+// price id then names the region.
 func TestFastModeCacheReadComposesTheMultiplier(t *testing.T) {
 	cases := []struct {
 		model      string
@@ -245,7 +247,7 @@ func TestFastModeCacheReadComposesTheMultiplier(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sku := "anthropic:" + tc.model + ":global:fast:all:" + string(tc.class)
+		sku := "anthropic:" + tc.model + ":" + tc.region + ":fast:all:" + string(tc.class)
 		if got.Fallback || got.ListUnitPrice.String() != tc.price || got.SkuPriceID != sku ||
 			got.CacheMultiplier == nil || got.CacheMultiplier.SkuPriceID != tc.multiplier {
 			t.Errorf("%s %s in %s: %+v, multiplier %+v", tc.model, tc.class, tc.region, got, got.CacheMultiplier)
@@ -408,6 +410,93 @@ func TestFallbackBoundsEveryPrice(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Error("no price was checked")
+	}
+}
+
+// TestFallbackBoundsEveryRegionalPrice holds the fallback rule in every region
+// and service tier a sheet of the newest embedded release names: a model the
+// sheet does not name, and a named model at a tier it does not name, price at
+// or above every price, stated or composed, of the same class in the same
+// region. A price a residency multiplier raised names its region in its id.
+func TestFallbackBoundsEveryRegionalPrice(t *testing.T) {
+	versions := embeddedVersions(t)
+	newest := versions[len(versions)-1]
+	c := embedded(t, newest)
+	checked, regional := 0, 0
+	for provider, s := range c.sheets {
+		regions := []string{RegionGlobal}
+		for _, r := range s.Rows {
+			if r.RowType == "multiplier" && r.ModifierKind == "data_residency" && !slices.Contains(regions, r.RegionID) {
+				regions = append(regions, r.RegionID)
+			}
+		}
+		for i := range s.Rows {
+			r := &s.Rows[i]
+			if r.RowType != "unit_price" {
+				continue
+			}
+			classes := []focus.TokenClass{focus.TokenClass(r.TokenClass)}
+			if r.TokenClass == string(focus.InputUncached) {
+				classes = append(classes, focus.CacheRead, focus.CacheWrite5m, focus.CacheWrite1h, focus.CacheWrite30m)
+			}
+			for _, region := range regions {
+				for _, class := range classes {
+					q := Query{Provider: provider, Model: r.ModelID, Class: class, ServiceTier: r.ServiceTier, Region: region,
+						ContextInputTokens: insideTier(r), At: firstDay(t, r)}
+					named, err := c.Lookup(q)
+					if errors.Is(err, ErrNoPrice) {
+						continue
+					}
+					if err != nil {
+						t.Fatalf("%s %s %s: %v", r.SkuPriceID, class, region, err)
+					}
+					if named.Fallback {
+						continue
+					}
+					if named.ResidencyMultiplier != nil {
+						regional++
+						if fields := strings.Split(named.SkuPriceID, ":"); fields[2] != region {
+							t.Errorf("%s: a price raised for %s is named %s", r.SkuPriceID, region, named.SkuPriceID)
+						}
+					}
+					unnamedModel, unnamedTier := q, q
+					unnamedModel.Model = "a-model-no-sheet-names"
+					unnamedTier.ServiceTier = "a-tier-no-sheet-names"
+					for _, other := range []Query{unnamedModel, unnamedTier} {
+						bound, err := c.Lookup(other)
+						if errors.Is(err, ErrNoPrice) {
+							continue
+						}
+						if err != nil || !bound.Fallback {
+							t.Fatalf("%s %s %s at %s: %+v %v", provider, other.Model, class, other.ServiceTier, bound, err)
+						}
+						checked++
+						if named.ListUnitPrice.Cmp(bound.ListUnitPrice) > 0 {
+							t.Errorf("%s: %s %s in %s at %s passes the fallback of %s for %s at %s", newest, named.SkuPriceID, class, region,
+								named.ListUnitPrice, bound.ListUnitPrice, other.Model, other.ServiceTier)
+						}
+					}
+				}
+			}
+		}
+	}
+	if checked == 0 || regional == 0 {
+		t.Errorf("checked %d bounds, %d of them on a regional price", checked, regional)
+	}
+	for _, tc := range []struct {
+		provider, model, region, price string
+	}{
+		{"openai", "a-model-no-sheet-names", "regional", "660"},
+		{"openai", "a-model-no-sheet-names", RegionGlobal, "600"},
+		{"anthropic", "a-model-no-sheet-names", "us", "82.5"},
+		{"anthropic", "claude-opus-4-1-20250805", "us", "75"},
+	} {
+		q := query(tc.provider, tc.model, focus.Output)
+		q.ServiceTier, q.Region = "a-tier-no-sheet-names", tc.region
+		got, err := pinned(t).Lookup(q)
+		if err != nil || !got.Fallback || got.ListUnitPrice.String() != tc.price {
+			t.Errorf("%s %s output in %s: %+v %v, want the fallback at %s", tc.provider, tc.model, tc.region, got, err, tc.price)
+		}
 	}
 }
 

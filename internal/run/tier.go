@@ -26,9 +26,9 @@ const figureParts = 9
 // any one request. The agent's own figure does: it is the entry's tokens at
 // the prices of the tier its requests were billed in. The tier whose figure
 // it matches prices the entry, and the sum is kept only when it selects that
-// tier. When neither matches, or the agent states no figure, no input is
-// kept, the lowest tier prices the entry, and the note says the tier is
-// unknown and the figure may read low.
+// tier. When neither matches, or the agent states no figure, the sum is kept:
+// the tier it selects is the highest any request could reach, it prices the
+// entry, and the note says the tier is unknown and the figure may read high.
 func (b rowBuilder) withContextTier(request adapter.Request) (adapter.Request, error) {
 	evidence := request.TierEvidence
 	if evidence == nil {
@@ -52,16 +52,14 @@ func (b rowBuilder) withContextTier(request adapter.Request) (adapter.Request, e
 	var note string
 	switch {
 	case stated == nil:
-		note = fmt.Sprintf("%s; %s states no figure for it, so its context tier is unknown, and the prices up to %d input tokens apply, which may read low", head, evidence.Agent, low.top)
-		request.ContextInputTokens = 0
+		note = fmt.Sprintf("%s; %s states no figure for it, so its context tier is unknown, and the prices above %d input tokens apply, which may read high", head, evidence.Agent, *high.floor)
 	case sameFigure(*stated, low.total):
 		note = fmt.Sprintf("%s; %s's own figure for it, USD %s, is its tokens at the prices up to %d input tokens, so that tier prices them", head, evidence.Agent, stated, low.top)
 		request.ContextInputTokens = 0
 	case sameFigure(*stated, high.total):
 		note = fmt.Sprintf("%s; %s's own figure for it, USD %s, is its tokens at the prices above %d input tokens, so that tier prices them", head, evidence.Agent, stated, *high.floor)
 	default:
-		note = fmt.Sprintf("%s; %s's own figure for it, USD %s, is its tokens at neither tier's prices, so its context tier is unknown, and the prices up to %d input tokens apply, which may read low", head, evidence.Agent, stated, low.top)
-		request.ContextInputTokens = 0
+		note = fmt.Sprintf("%s; %s's own figure for it, USD %s, is its tokens at neither tier's prices, so its context tier is unknown, and the prices above %d input tokens apply, which may read high", head, evidence.Agent, stated, *high.floor)
 	}
 	if request.Note != "" {
 		note = request.Note + "; " + note

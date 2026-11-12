@@ -183,7 +183,7 @@ func (c *Catalog) Lookup(q Query) (Price, error) {
 	for i := range s.Rows {
 		candidate := &s.Rows[i]
 		if candidate.RowType == "fallback" && candidate.TokenClass == string(q.Class) && s.holdsOn(candidate, q.At) {
-			return fallback(candidate)
+			return s.fallback(candidate, q)
 		}
 	}
 	return Price{}, fmt.Errorf("%w: %s %s %s", ErrNoPrice, q.Provider, q.Model, q.Class)
@@ -301,11 +301,26 @@ func (s *sheet) priced(r *row, q Query, cache *Multiplier) (Price, error) {
 	if err != nil || factor == nil {
 		return answer, err
 	}
+	answer.SkuPriceID = inRegion(answer.SkuPriceID, q.Region)
 	answer.ListUnitPrice = price.Mul(*factor)
 	answer.ResidencyMultiplier = factor
 	return answer, nil
 }
 
+// inRegion names a price served in a region: the unit price id with the
+// region in place of global, so the id beside a multiplied price is not the
+// id of the global price.
+func inRegion(id, region string) string {
+	fields := strings.Split(id, ":")
+	if len(fields) < 6 || fields[2] != RegionGlobal {
+		return id
+	}
+	fields[2] = region
+	return strings.Join(fields, ":")
+}
+
+// residency is the data_residency multiplier for the query's model in its
+// region, nil when none applies.
 func (s *sheet) residency(q Query) (*decimal.Decimal, error) {
 	for i := range s.Rows {
 		r := &s.Rows[i]
@@ -324,16 +339,60 @@ func (s *sheet) residency(q Query) (*decimal.Decimal, error) {
 	return nil, nil
 }
 
-func fallback(r *row) (Price, error) {
+// fallbackResidency is the multiplier a fallback price takes in the query's
+// region: the largest data_residency multiplier for the region, so the
+// fallback bounds every regional price as it bounds every global one. A
+// multiplier that names its models is skipped only for a model the sheet
+// prices and the multiplier leaves out, whose regional price is its global one.
+func (s *sheet) fallbackResidency(q Query) (*decimal.Decimal, error) {
+	if q.Region == "" || q.Region == RegionGlobal {
+		return nil, nil
+	}
+	named := s.names(q.Model)
+	var largest *decimal.Decimal
+	for i := range s.Rows {
+		r := &s.Rows[i]
+		if r.RowType != "multiplier" || r.ModifierKind != "data_residency" || r.RegionID != q.Region {
+			continue
+		}
+		if named && len(r.AppliesToModels) > 0 && !slices.Contains(r.AppliesToModels, q.Model) {
+			continue
+		}
+		factor, err := decimal.Parse(r.Multiplier)
+		if err != nil {
+			return nil, fmt.Errorf("catalog: %s: %w", r.SkuPriceID, err)
+		}
+		if largest == nil || factor.Cmp(*largest) > 0 {
+			largest = &factor
+		}
+	}
+	return largest, nil
+}
+
+// names says whether any unit_price row of the sheet prices the model.
+func (s *sheet) names(model string) bool {
+	return slices.ContainsFunc(s.Rows, func(r row) bool { return r.RowType == "unit_price" && r.ModelID == model })
+}
+
+// fallback answers from the sheet's fallback row for the class, times the
+// region's residency multiplier when the query names a region.
+func (s *sheet) fallback(r *row, q Query) (Price, error) {
 	price, err := decimal.Parse(r.ListUnitPrice)
 	if err != nil {
 		return Price{}, fmt.Errorf("catalog: %s: %w", r.SkuPriceID, err)
 	}
-	return Price{
+	answer := Price{
 		SkuPriceID:    r.SkuPriceID,
 		ListUnitPrice: price,
 		PricingUnit:   r.PricingUnit,
 		Fallback:      true,
 		FallbackBasis: r.FallbackBasis,
-	}, nil
+	}
+	factor, err := s.fallbackResidency(q)
+	if err != nil || factor == nil {
+		return answer, err
+	}
+	answer.ListUnitPrice = price.Mul(*factor)
+	answer.ResidencyMultiplier = factor
+	return answer, nil
 }

@@ -168,13 +168,13 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 		charge.Notes = []string{focus.NoteInformational}
 	} else {
 		start, _ := focus.ChargePeriod(request.Start, request.End)
-		price, err := b.price(request, catalog.Query{
+		price, err := b.catalog.Lookup(catalog.Query{
 			Provider:           request.Provider,
 			Model:              request.Model,
 			Class:              count.Class,
 			ServiceTier:        request.ServiceTier,
 			Region:             request.Region,
-			ContextInputTokens: request.ContextInputTokens,
+			ContextInputTokens: reach(request),
 			At:                 start,
 		})
 		if err != nil {
@@ -198,19 +198,19 @@ func (b rowBuilder) row(report adapter.Report, request adapter.Request, count ad
 	return focus.NewRow(charge), nil
 }
 
-// price looks up one class. A request's own input selects its context tier.
-// The input of an entry coarser than a request is a sum over its requests: at
-// or below the lowest tier's top it shows every request in that tier, and past
-// it it shows no one request past the boundary, so the lowest tier prices the
-// entry. An entry with tier evidence keeps a sum past the boundary only when
-// the agent's own figure puts its tokens in that tier, so its input stands.
-func (b rowBuilder) price(request adapter.Request, query catalog.Query) (catalog.Price, error) {
-	price, err := b.catalog.Lookup(query)
-	if err != nil || price.ContextTierMin == nil || request.Grain == adapter.PerRequest || request.TierEvidence != nil {
-		return price, err
+// reach is the input that selects an entry's context tier: the most any one
+// request in it could hold. A request's own input is exact. The input of an
+// entry coarser than a request is a sum over its requests, which none of them
+// can pass, so the tier it selects is the highest any of them could reach, and
+// prices the entry. A coarse entry that states no whole input is bounded the
+// same way by its own input tokens. An entry with tier evidence has its input
+// read by withContextTier.
+func reach(request adapter.Request) int64 {
+	if request.Grain == adapter.PerRequest || request.ContextInputTokens != 0 || request.TierEvidence != nil {
+		return request.ContextInputTokens
 	}
-	query.ContextInputTokens = 0
-	return b.catalog.Lookup(query)
+	tokens := request.Tokens
+	return tokens.InputUncached + tokens.CacheRead + tokens.CacheWrite5m + tokens.CacheWrite1h + tokens.CacheWrite30m
 }
 
 // credentialID is the gateway key's id when the run holds one: a credential the
@@ -243,28 +243,30 @@ func priceNotes(price catalog.Price, request adapter.Request, class focus.TokenC
 }
 
 // tierNote says how far the context tier of an entry coarser than a request
-// holds. The entry's whole input bounds each request's in it: at or below the
-// matched tier's top, every request is in that tier. Past that top the sum
-// says nothing about any one request, so the lowest tier prices the entry and
-// the note says its tier is unknown and the figure may read low. An entry
-// with tier evidence keeps an input past a floor only when the agent's own
-// figure puts its tokens in that tier, and keeps none when the figure puts
-// them in the lowest tier or in neither; its own note says which, so this one
-// says nothing. An entry with input and no stated whole input has an unknown
-// tier.
+// holds. The entry's input bounds each request's in it: at or below the
+// matched tier's top, every request is in that tier. Past the lowest tier the
+// sum says nothing about any one request, so the tier it selects, the highest
+// any request could reach, prices the entry, and the note says its tier is
+// unknown and the figure may read high. An entry with tier evidence keeps an
+// input past a floor only when the agent's own figure puts its tokens in that
+// tier or puts them in no tier, and keeps none when the figure puts them in
+// the lowest tier; its own note says which, so this one says nothing.
 func tierNote(price catalog.Price, request adapter.Request) string {
-	tokens := request.Tokens
+	if request.Grain == adapter.PerRequest || request.TierEvidence != nil && (request.ContextInputTokens == 0 || price.ContextTierMin != nil) {
+		return ""
+	}
+	input, stated := reach(request), request.ContextInputTokens != 0
 	switch {
-	case request.Grain == adapter.PerRequest:
+	case input == 0:
 		return ""
-	case request.TierEvidence != nil && (request.ContextInputTokens == 0 || price.ContextTierMin != nil):
-		return ""
-	case request.ContextInputTokens == 0 && tokens.InputUncached+tokens.CacheRead+tokens.CacheWrite5m+tokens.CacheWrite1h+tokens.CacheWrite30m > 0:
-		return fmt.Sprintf("one %s's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read low", request.Grain)
-	case price.ContextTierMax != nil && request.ContextInputTokens > *price.ContextTierMax:
-		return fmt.Sprintf("one %s's input of %d tokens is a sum over its requests and passes the %d-token context tier boundary, and its requests' own inputs are unknown, so its context tier is unknown, and the prices up to %d input tokens apply, which may read low", request.Grain, request.ContextInputTokens, *price.ContextTierMax, *price.ContextTierMax)
+	case price.ContextTierMin != nil && stated:
+		return fmt.Sprintf("one %s's input of %d tokens is a sum over its requests and passes the %d-token context tier boundary, and its requests' own inputs are unknown, so its context tier is unknown, and the prices above %d input tokens apply, which may read high", request.Grain, input, *price.ContextTierMin, *price.ContextTierMin)
+	case price.ContextTierMin != nil:
+		return fmt.Sprintf("one %s's total, and its source states no whole input, so its context tier is unknown, and the prices above %d input tokens, the most its %d input tokens could reach, apply, which may read high", request.Grain, *price.ContextTierMin, input)
+	case price.ContextTierMax != nil && stated:
+		return fmt.Sprintf("one %s's input of %d tokens is within the %d-token context tier, so each of its requests is too", request.Grain, input, *price.ContextTierMax)
 	case price.ContextTierMax != nil:
-		return fmt.Sprintf("one %s's input of %d tokens is within the %d-token context tier, so each of its requests is too", request.Grain, request.ContextInputTokens, *price.ContextTierMax)
+		return fmt.Sprintf("one %s's total, and its source states no whole input, but its %d input tokens are within the %d-token context tier, so each of its requests is too", request.Grain, input, *price.ContextTierMax)
 	}
 	return ""
 }

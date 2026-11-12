@@ -4,6 +4,12 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 
 ## 1.0.0-alpha.24 (2026-11-12)
 
+### Breaking changes
+
+- A rows entry coarser than one request, whose context tier nothing settles, is priced at the highest tier its input could reach, and its rows say the figure may read high. It was priced at the lowest tier with a note that it may read low. Such figures move up. A Claude Haiku 5.5 run of 143642 input tokens over 8 requests, with no `costUSD` from Claude Code, reads USD 0.044186675 where it read USD 0.008837335. A Codex turn of 272001 input tokens and 1000 output tokens on `gpt-5.6-sol` takes the prices above 272000 tokens. An entry that states no whole input is bounded by its own input tokens. Claude Code's own figure still picks the lower tier when it matches it.
+- A model or tier a sheet does not name, priced in a region with a data residency multiplier, takes the multiplier on the fallback price. Such figures move up: an unnamed model's output reads USD 660 per million tokens on OpenAI `regional`, where it read USD 600, and USD 82.5 on Anthropic `us`, where it read USD 75, so the fallback stays at or above every regional price. A model the sheet prices and a multiplier leaves out keeps its global price.
+- A price a residency multiplier raised names its region in `SkuPriceId`, in place of `global`, as in `anthropic:claude-opus-5-5:us:fast:all:output`. The id of a global row stood beside a multiplied price before. Fallback ids keep their shape.
+
 ### What you can now do
 
 - Read where a run stands against its budget in the verdict line: `Run budget: unverified rows cannot satisfy a budget. The run cost USD 0.0391529 of the USD 5 budget.` When the check is neutral only because the agent's own job wrote the rows, the line says so, states what a run over budget concludes, and links [`docs/policy.md`](docs/policy.md), which says what lets a budget pass. With no rule set, it names `policy.run_budget_usd`.
@@ -26,6 +32,8 @@ Each release is dated by its tag, in UTC. Every release so far is a pre-release.
 - A Copilot CLI request on a model no sheet prices wrote no row, and the run kept `wrapper-watchdog` though the watch could not count it. The run now reads `none`, and the grade's note and the warning name the model, where the warning said the provider `"copilot"` had no sheet.
 - One map names the provider whose sheet prices a model, from the start of its name, and Copilot CLI, gh-aw and `costroid serve`'s telemetry reader share it. Telemetry no longer refuses `o3`, and Copilot CLI no longer drops `codex-*`.
 - `costroid serve` reads a GenAI span whose cache counts pass its `gen_ai.usage.input_tokens` as one from a sender that leaves the cache out of its input, and notes the reading on each of the request's rows. It refused such a span before.
+- `costroid serve` refuses an `x_CostroidOvershootBound` or a stated spend longer than 64 characters before reading it as a number. A long run of trailing zeros took seconds of CPU per value.
+- A decimal literal is at most 64 characters, and its trailing zeros are cut in time linear in its length. A figure read from a JSON number is refused when its plain form is longer than that.
 
 ## 1.0.0-alpha.23 (2026-11-11)
 

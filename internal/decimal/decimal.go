@@ -20,17 +20,34 @@ type Decimal struct {
 	scale       int
 }
 
-// Parse reads a plain decimal string. It refuses signs, exponents and blanks.
+// MaxLength bounds the text Parse reads. A ledger amount is numeric(38, 12),
+// at most 39 characters as text, and a row's figures are shorter still, so
+// 64 characters hold every figure a caller sends with room to spare.
+const MaxLength = 64
+
+// Parse reads a plain decimal string of at most MaxLength characters. It
+// refuses signs, exponents and blanks.
 func Parse(text string) (Decimal, error) {
+	if len(text) > MaxLength {
+		return Decimal{}, fmt.Errorf("decimal: a literal of %d characters is longer than %d", len(text), MaxLength)
+	}
+	return parse(text)
+}
+
+// parse reads a plain decimal string of any length. Trailing fractional zeros
+// are cut from the text before the integer is built, so the work is linear in
+// the text's length, never one big-integer division per zero.
+func parse(text string) (Decimal, error) {
 	if !literal.MatchString(text) {
 		return Decimal{}, fmt.Errorf("decimal: %q is not a plain non-negative decimal", text)
 	}
 	whole, fraction, _ := strings.Cut(text, ".")
+	fraction = strings.TrimRight(fraction, "0")
 	coefficient, ok := new(big.Int).SetString(whole+fraction, 10)
 	if !ok {
 		return Decimal{}, fmt.Errorf("decimal: %q has no integer form", text)
 	}
-	return Decimal{coefficient: coefficient, scale: len(fraction)}.normal(), nil
+	return Decimal{coefficient: coefficient, scale: len(fraction)}, nil
 }
 
 // maxExponent bounds a number's scientific notation. Anything larger is not a
@@ -40,6 +57,7 @@ const maxExponent = 64
 // ParseNumber reads a figure another program wrote as a JSON number, exactly.
 // Unlike Parse it takes a leading minus and an exponent, as in -0.25 or
 // 1.2e-05, because a provider's report or a gateway's float can carry either.
+// Its value, written plainly, holds to Parse's bound, so Parse reads it back.
 func ParseNumber(text string) (Decimal, error) {
 	digits, negative := strings.CutPrefix(text, "-")
 	mantissa, exponent, scientific := strings.Cut(strings.ToLower(digits), "e")
@@ -53,6 +71,9 @@ func ParseNumber(text string) (Decimal, error) {
 			return Decimal{}, fmt.Errorf("decimal: the exponent of %q is out of range", text)
 		}
 		value = value.shift(shift)
+	}
+	if printed := value.String(); len(printed) > MaxLength {
+		return Decimal{}, fmt.Errorf("decimal: %q is longer than %d characters in plain notation", text, MaxLength)
 	}
 	if negative {
 		return Decimal{}.Sub(value), nil

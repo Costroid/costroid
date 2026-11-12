@@ -643,6 +643,24 @@ func TestAGatewayGradeNeedsItsBound(t *testing.T) {
 	}
 }
 
+// TestIngestRefusesALongOvershootBound sends a bound that fills most of a row's
+// size limit, and the longest one the row contract takes.
+func TestIngestRefusesALongOvershootBound(t *testing.T) {
+	w, ledger := memoryWorld(t)
+	r := row("req-1", focus.Output, 100)
+	tags(r)[focus.TagEnforcementGrade] = "gateway-precheck"
+	r["x_CostroidOvershootBound"] = "1." + strings.Repeat("0", maxRowBytes-4096)
+	got := w.rows(w.token(), lines(t, r)).want(t, http.StatusUnprocessableEntity)
+	if got.code(t) != codeInvalidRow || !strings.Contains(string(got.body), "x_CostroidOvershootBound is past the contract's limit") || len(ledger.rows) != 0 {
+		t.Fatalf("%s", got.body)
+	}
+	r["x_CostroidOvershootBound"] = "4." + strings.Repeat("0", decimal.MaxLength-2)
+	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
+	if stored := ledger.only(t, tenantA).Row.OvershootBound; stored == nil || stored.String() != "4" {
+		t.Fatalf("bound %v", stored)
+	}
+}
+
 func TestContentInARowIsDroppedAndCounted(t *testing.T) {
 	w, ledger := memoryWorld(t)
 	r := row("req-1", focus.Output, 100)

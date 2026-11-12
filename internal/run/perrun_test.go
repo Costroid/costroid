@@ -105,17 +105,17 @@ func wantEveryRowAt(t *testing.T, rows map[string]map[string]any, context string
 // standardGlobal is a stream message's routing as Claude Code states it.
 const standardGlobal = `{"service_tier":"standard","speed":"standard","inference_geo":"global"}`
 
-// TestPerModelGrainNeverTakesTheLongTierFromASum holds a claude-code-action
-// run's shape, read from the result's per-model totals: Claude Haiku 5.5
-// over 8 requests, 143642 input tokens in all, no request past 100000. Its
-// sum passes the 100000-token boundary, and says nothing about any one
-// request. Claude Code's own figure, USD 0.008837335, is these tokens at the
-// prices up to 100000 input tokens, so that tier prices every row, and the
-// rows come to that figure; the tier above would read USD 0.044186675. With
-// no figure, or one that matches neither tier, the lowest tier prices the
-// rows, which say the tier is unknown and may read low. A sum within the
-// lowest tier needs no figure.
-func TestPerModelGrainNeverTakesTheLongTierFromASum(t *testing.T) {
+// TestPerModelGrainTakesItsContextTierFromClaudeCodesFigure holds a
+// claude-code-action run's shape, read from the result's per-model totals:
+// Claude Haiku 5.5 over 8 requests, 143642 input tokens in all, no request
+// past 100000. Its sum passes the 100000-token boundary, and says nothing
+// about any one request. Claude Code's own figure, USD 0.008837335, is these
+// tokens at the prices up to 100000 input tokens, so that tier prices every
+// row, and the rows come to that figure. With no figure, or one that matches
+// neither tier, the tier the sum selects, the highest any request could
+// reach, prices the rows at USD 0.044186675, and they say the tier is unknown
+// and may read high. A sum within the lowest tier needs no figure.
+func TestPerModelGrainTakesItsContextTierFromClaudeCodesFigure(t *testing.T) {
 	const totals = `"inputTokens":1231,"cacheReadInputTokens":122736,"cacheCreationInputTokens":19675,` +
 		`"cacheCreationEphemeral5mInputTokens":19675,"outputTokens":10055`
 	turns := make([]string, 8)
@@ -125,14 +125,15 @@ func TestPerModelGrainNeverTakesTheLongTierFromASum(t *testing.T) {
 	const sum = "this model's input of 143642 tokens is a sum over its requests, which selects no context tier"
 	cases := []struct {
 		name, cost, figure string
+		context, total     string
 		notes              []string
 	}{
-		{"its own figure", `,"costUSD":0.008837335`, "0.008837335", []string{sum,
+		{"its own figure", `,"costUSD":0.008837335`, "0.008837335", "to-100000", "0.008837335", []string{sum,
 			"Claude Code's own figure for it, USD 0.008837335, is its tokens at the prices up to 100000 input tokens, so that tier prices them"}},
-		{"no figure", ``, "", []string{sum,
-			"Claude Code states no figure for it, so its context tier is unknown, and the prices up to 100000 input tokens apply, which may read low"}},
-		{"a figure of neither tier", `,"costUSD":0.0089`, "0.0089", []string{sum,
-			"Claude Code's own figure for it, USD 0.0089, is its tokens at neither tier's prices, so its context tier is unknown, and the prices up to 100000 input tokens apply, which may read low"}},
+		{"no figure", ``, "", "over-100000", "0.044186675", []string{sum,
+			"Claude Code states no figure for it, so its context tier is unknown, and the prices above 100000 input tokens apply, which may read high"}},
+		{"a figure of neither tier", `,"costUSD":0.0089`, "0.0089", "over-100000", "0.044186675", []string{sum,
+			"Claude Code's own figure for it, USD 0.0089, is its tokens at neither tier's prices, so its context tier is unknown, and the prices above 100000 input tokens apply, which may read high"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,9 +145,9 @@ func TestPerModelGrainNeverTakesTheLongTierFromASum(t *testing.T) {
 			if len(rows) != 5 {
 				t.Fatalf("%d rows", len(rows))
 			}
-			wantEveryRowAt(t, rows, "to-100000", tc.notes...)
-			if total := rowsTotal(t, rows); total.String() != "0.008837335" {
-				t.Errorf("the rows come to USD %s, not Claude Code's own 0.008837335", total)
+			wantEveryRowAt(t, rows, tc.context, tc.notes...)
+			if total := rowsTotal(t, rows); total.String() != tc.total {
+				t.Errorf("the rows come to USD %s, not %s", total, tc.total)
 			}
 		})
 	}
@@ -222,12 +223,12 @@ func TestPerRunGrainKeepsFastModeSeenOnTheStream(t *testing.T) {
 	// claude-opus-5-5 fast is USD 8 input and 40 output per million; a fast
 	// cache read is 8 times the model's 0.05 read multiplier; US residency
 	// multiplies each by 1.1.
-	wantRow(t, rows, "claude-opus-5-5 input_uncached", "anthropic:claude-opus-5-5:global:fast:all:input_uncached", "8.8",
+	wantRow(t, rows, "claude-opus-5-5 input_uncached", "anthropic:claude-opus-5-5:us:fast:all:input_uncached", "8.8",
 		"fast mode shows on some of this model's stream messages, so the fast tier prices all of them, an upper bound",
 		"data residency in us shows on some of this model's stream messages, so it prices all of them, an upper bound",
 		"list price times 1.1 for data residency in us")
-	wantRow(t, rows, "claude-opus-5-5 output", "anthropic:claude-opus-5-5:global:fast:all:output", "44")
-	wantRow(t, rows, "claude-opus-5-5 cache_read", "anthropic:claude-opus-5-5:global:fast:all:cache_read", "0.44",
+	wantRow(t, rows, "claude-opus-5-5 output", "anthropic:claude-opus-5-5:us:fast:all:output", "44")
+	wantRow(t, rows, "claude-opus-5-5 cache_read", "anthropic:claude-opus-5-5:us:fast:all:cache_read", "0.44",
 		"input price times 0.05 for cache_read, by anthropic:multiplier:prompt-cache-read-claude-opus-5-5")
 	if row := rows["claude-opus-5-5 cache_read"]; strings.Contains(row["ChargeDescription"].(string), "fallback") {
 		t.Errorf("a fast cache read took the fallback: %v", row["ChargeDescription"])
@@ -236,7 +237,7 @@ func TestPerRunGrainKeepsFastModeSeenOnTheStream(t *testing.T) {
 		"no stream message states this model's service tier or region, so the standard tier and global price it")
 
 	_, rows = perRunRows(t, assistantLine("claude-opus-5-5", fastUS), resultLine(`"claude-opus-5-5":{"inputTokens":1000,"outputTokens":100}`))
-	wantRow(t, rows, "claude-opus-5-5 input_uncached", "anthropic:claude-opus-5-5:global:fast:all:input_uncached", "8.8")
+	wantRow(t, rows, "claude-opus-5-5 input_uncached", "anthropic:claude-opus-5-5:us:fast:all:input_uncached", "8.8")
 	if description := rows["claude-opus-5-5 input_uncached"]["ChargeDescription"].(string); strings.Contains(description, "upper bound") ||
 		strings.Contains(description, "no stream message") {
 		t.Errorf("a run every message of which stated fast mode in us says otherwise: %q", description)
@@ -244,16 +245,20 @@ func TestPerRunGrainKeepsFastModeSeenOnTheStream(t *testing.T) {
 }
 
 // TestCoarseRowWithNoStatedInputSaysItsContextTierIsUnknown holds that an
-// entry coarser than a request, with input tokens and no whole input stated,
-// says its context tier is unknown, and that one with no input does not.
+// entry coarser than a request, with no whole input stated, is bounded by its
+// own input tokens: past the lowest tier it says its context tier is unknown
+// and may read high, within it it says each request is too, and with no input
+// it says neither.
 func TestCoarseRowWithNoStatedInputSaysItsContextTierIsUnknown(t *testing.T) {
-	const unknown = "one turn's total, and its source states no whole input, so its context tier is unknown and the lowest tier prices it, which may read low"
+	const unknown = "one turn's total, and its source states no whole input, so its context tier is unknown, and the prices above 100000 input tokens, the most its 150000 input tokens could reach, apply, which may read high"
+	const within = "one turn's total, and its source states no whole input, but its 50000 input tokens are within the 100000-token context tier, so each of its requests is too"
 	cases := map[string]struct {
 		tokens adapter.Tokens
-		says   bool
+		says   string
 	}{
-		"with input":   {adapter.Tokens{InputUncached: 150000, Output: 10}, true},
-		"output alone": {adapter.Tokens{Output: 10}, false},
+		"with input":      {adapter.Tokens{InputUncached: 150000, Output: 10}, unknown},
+		"within the tier": {adapter.Tokens{InputUncached: 50000, Output: 10}, within},
+		"output alone":    {adapter.Tokens{Output: 10}, ""},
 	}
 	for name, tc := range cases {
 		request := haikuRequest("turn", tc.tokens)
@@ -263,8 +268,11 @@ func TestCoarseRowWithNoStatedInputSaysItsContextTierIsUnknown(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, row := range parseRows(t, written.Bytes()) {
-			if said := strings.Contains(row["ChargeDescription"].(string), unknown); said != tc.says {
-				t.Errorf("%s, %s: %q", name, row["SkuMeter"], row["ChargeDescription"])
+			description := row["ChargeDescription"].(string)
+			for _, note := range []string{unknown, within} {
+				if said := strings.Contains(description, note); said != (note == tc.says) {
+					t.Errorf("%s, %s: %q", name, row["SkuMeter"], description)
+				}
 			}
 		}
 	}

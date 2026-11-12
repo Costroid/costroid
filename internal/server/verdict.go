@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 const (
 	// maxSpendLength bounds a stated spend, as the row contract bounds an
 	// amount.
-	maxSpendLength = 64
+	maxSpendLength = decimal.MaxLength
 	// maxConfigBytes bounds the costroid.yml a verdict request carries.
 	maxConfigBytes = 64 << 10
 	// maxMeasuredPullRequests bounds the stated count of measured pull
@@ -104,8 +105,11 @@ func (s *Server) readSpend(w http.ResponseWriter, r *http.Request, who caller) (
 	if err := decoder.Decode(&stated); err != nil || stated.Currency != "USD" {
 		return statedSpend{}, refuse(http.StatusBadRequest, codeMalformed, "The body is not a spend attestation in USD.")
 	}
+	if len(stated.Spend) > maxSpendLength {
+		return statedSpend{}, refuse(http.StatusBadRequest, codeMalformed, fmt.Sprintf("spend is longer than %d characters.", maxSpendLength))
+	}
 	usd, err := decimal.Parse(stated.Spend)
-	if err != nil || len(stated.Spend) > maxSpendLength || usd.Sign() < 0 || usd.Scale() > focus.MaxScale {
+	if err != nil || usd.Sign() < 0 || usd.Scale() > focus.MaxScale {
 		return statedSpend{}, refuse(http.StatusBadRequest, codeMalformed, "spend is not a decimal of at most 12 fractional digits, zero or more.")
 	}
 	for _, pair := range []struct{ key, stated, token string }{

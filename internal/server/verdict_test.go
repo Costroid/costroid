@@ -413,6 +413,23 @@ func TestASpendAttestationIsTheClosingJobsOwn(t *testing.T) {
 	}
 }
 
+// TestSpendAttestationRefusesALongAmountBeforeParsing sends a megabyte of
+// trailing zeros, which the body bound lets through, and the longest spend
+// the contract takes.
+func TestSpendAttestationRefusesALongAmountBeforeParsing(t *testing.T) {
+	w := spendWorld(t, true)
+	keyID := gateway.KeyID(fixturesKey)
+	got := w.attestSpend(w.closeToken(), keyID, fixturesSpend("1."+strings.Repeat("0", 1<<20)))
+	if got.status != http.StatusBadRequest || got.code(t) != codeMalformed || !strings.Contains(string(got.body), "spend is longer than 64 characters.") {
+		t.Fatalf("%d %s", got.status, got.body)
+	}
+	ledger, _ := w.server.Spend.(*spendLedger)
+	if len(ledger.spend) != 0 {
+		t.Fatalf("a refused attestation was kept: %v", ledger.spend)
+	}
+	w.attestSpend(w.closeToken(), keyID, fixturesSpend("2."+strings.Repeat("0", decimal.MaxLength-2))).want(t, http.StatusNoContent)
+}
+
 func TestAVerdictReadsItsOwnRepositoryAndAWellFormedRequest(t *testing.T) {
 	w := spendWorld(t, false)
 	path := "/v1/pulls/" + acmePull + "/verdict?repo="

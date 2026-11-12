@@ -2,7 +2,10 @@ package decimal
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRefusesWhatARowMustNotCarry(t *testing.T) {
@@ -92,5 +95,50 @@ func TestParseExponent(t *testing.T) {
 		if _, err := ParseNumber(in); err == nil {
 			t.Errorf("ParseNumber(%q) was accepted", in)
 		}
+	}
+}
+
+func TestParseRefusesALongLiteral(t *testing.T) {
+	longest := "1." + strings.Repeat("0", MaxLength-3) + "1"
+	if got, err := Parse(longest); err != nil || got.Scale() != MaxLength-2 {
+		t.Errorf("Parse refused a literal of %d characters: %v", len(longest), err)
+	}
+	for _, text := range []string{longest + "0", "1" + strings.Repeat("0", MaxLength), "1." + strings.Repeat("0", 1<<20)} {
+		if _, err := Parse(text); err == nil {
+			t.Errorf("Parse accepted a literal of %d characters", len(text))
+		}
+	}
+	if _, err := ParseNumber("1e64"); err == nil {
+		t.Error("ParseNumber accepted a value whose plain form is 65 characters")
+	}
+	if got, err := ParseNumber("1e63"); err != nil || len(got.String()) != MaxLength {
+		t.Errorf("ParseNumber(1e63) = %s, %v", got, err)
+	}
+}
+
+// TestParseIsLinearInTrailingZeros reads a megabyte of trailing zeros with the
+// unbounded reader Parse wraps. One big-integer division per zero would take
+// minutes on it, so the deadline only catches work that grows faster than the
+// text.
+func TestParseIsLinearInTrailingZeros(t *testing.T) {
+	text := "1." + strings.Repeat("0", 1<<20)
+	done := make(chan error, 1)
+	go func() {
+		got, err := parse(text)
+		if err == nil && (got.String() != "1" || got.Scale() != 0) {
+			err = fmt.Errorf("read as %s at scale %d", got, got.Scale())
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a megabyte of trailing zeros took over 10 seconds to read")
+	}
+	if got := MustParse("2." + strings.Repeat("0", MaxLength-2)); got.String() != "2" || got.Scale() != 0 {
+		t.Errorf("the longest literal of trailing zeros read as %s at scale %d", got, got.Scale())
 	}
 }

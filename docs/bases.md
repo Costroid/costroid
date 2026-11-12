@@ -24,7 +24,7 @@ The token counts come from the agent's own stream or files, read as [`docs/adapt
 
 The amount is the tokens times the catalog's list price. A contract discount, a commitment or a credit makes your bill differ. `costroid reconcile` compares the list amount with the provider's cost report within 10% and splits the difference into named causes.
 
-A run read as one set of rows per model sums each model's requests, so the sum never selects a long-context tier. Claude Code's own figure for the model chooses the tier. When nothing shows the tier, the rows say so, and the amount may read low. [`docs/adapters.md`](adapters.md#claude-code) has the rule.
+A run read as one set of rows per model sums each model's requests, so the sum never selects a long-context tier. Claude Code's own figure for the model chooses the tier. When nothing shows the tier, the highest tier the sum could reach prices the rows, they say so, and the amount may read high. [`docs/adapters.md`](adapters.md#claude-code) has the rule.
 
 ## List-equivalent
 

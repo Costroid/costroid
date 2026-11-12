@@ -195,3 +195,52 @@ func TestModelOutsideAllowlistWritesUnknownModel(t *testing.T) {
 		t.Error("the caller's report was changed")
 	}
 }
+
+// TestUnknownTierPricesAtTheHigherTier holds the fallback rule for context
+// tiers: an entry coarser than a request whose tier no evidence settles is
+// priced at the highest tier its input could reach, and each row says it may
+// read high. Claude Haiku 5.5 states two tiers, split at 100000 input tokens.
+// The entry's 150000 input tokens and 10 output tokens come to USD 0.075025
+// at the prices above the boundary and USD 0.015005 at those below it.
+func TestUnknownTierPricesAtTheHigherTier(t *testing.T) {
+	neither := decimal.MustParse("0.2")
+	cases := map[string]func(*adapter.Request){
+		"a stated sum past the boundary": func(r *adapter.Request) { r.ContextInputTokens = 150000 },
+		"no stated input":                func(*adapter.Request) {},
+		"no figure from the agent": func(r *adapter.Request) {
+			r.ContextInputTokens = 150000
+			r.TierEvidence = &adapter.TierEvidence{Agent: "Claude Code"}
+		},
+		"a figure of neither tier": func(r *adapter.Request) {
+			r.ContextInputTokens = 150000
+			r.TierEvidence = &adapter.TierEvidence{Agent: "Claude Code", USD: &neither}
+		},
+	}
+	c := pinned(t)
+	for name, state := range cases {
+		t.Run(name, func(t *testing.T) {
+			request := haikuRequest("entry", adapter.Tokens{InputUncached: 150000, Output: 10})
+			request.Grain = adapter.PerTurn
+			state(&request)
+			var written bytes.Buffer
+			result, err := Record(Options{Rows: &written, Catalog: c}, "codex", adapter.Report{CostBasis: focus.Measured, Requests: []adapter.Request{request}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows := parseRows(t, written.Bytes())
+			if len(rows) != 2 {
+				t.Fatalf("%d rows", len(rows))
+			}
+			for _, row := range rows {
+				sku, _ := row["SkuPriceId"].(string)
+				description, _ := row["ChargeDescription"].(string)
+				if !strings.Contains(sku, ":over-100000:") || !strings.Contains(description, "which may read high") || strings.Contains(description, "may read low") {
+					t.Errorf("%s: %s, %q", row["SkuMeter"], sku, description)
+				}
+			}
+			if err := checkListTotal(result.ListTotal, "0.075025"); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}

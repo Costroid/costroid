@@ -37,34 +37,36 @@ func sheetPrice(t *testing.T, c *catalog.Catalog, class focus.TokenClass, input 
 	return price
 }
 
-// TestCodexTurnSumNeverTakesTheLongTier runs an unwatched Codex turn on each
-// side of the sheet's context tier boundary, 272000 input tokens on the pinned
-// gpt-5.6-sol sheet, with 1000 output tokens. The boundary comes from the
-// sheet. A turn's input is a sum over its requests, and the stream states no
-// request's own. At the boundary every request is in the lowest tier, and the
-// row says so. Past it no single request is shown past the boundary, so the
-// lowest tier still prices the turn, and the row says the tier is unknown and
-// the figure may read low, never an upper bound.
-func TestCodexTurnSumNeverTakesTheLongTier(t *testing.T) {
+// TestCodexTurnSumPastTheBoundaryTakesTheLongTier runs an unwatched Codex
+// turn on each side of the sheet's context tier boundary, 272000 input tokens
+// on the pinned gpt-5.6-sol sheet, with 1000 output tokens. The boundary comes
+// from the sheet. A turn's input is a sum over its requests, and the stream
+// states no request's own. At the boundary every request is in the lowest
+// tier, and the row says so. Past it any one request could be past the
+// boundary, so the tier above prices the turn, and the row says the tier is
+// unknown and the figure may read high, never that it is an upper bound.
+func TestCodexTurnSumPastTheBoundaryTakesTheLongTier(t *testing.T) {
 	c := pinned(t)
 	inputPrice, outputPrice := sheetPrice(t, c, focus.InputUncached, 1), sheetPrice(t, c, focus.Output, 1)
 	if inputPrice.ContextTierMax == nil {
 		t.Fatal("the sheet states no context tier for gpt-5.6-sol")
 	}
 	boundary := *inputPrice.ContextTierMax
-	if above := sheetPrice(t, c, focus.InputUncached, boundary+1); above.SkuPriceID == inputPrice.SkuPriceID {
+	inputAbove, outputAbove := sheetPrice(t, c, focus.InputUncached, boundary+1), sheetPrice(t, c, focus.Output, boundary+1)
+	if inputAbove.SkuPriceID == inputPrice.SkuPriceID {
 		t.Fatalf("the sheet prices %d input tokens in the lowest tier", boundary+1)
 	}
 	for name, tc := range map[string]struct {
-		input int64
-		says  string
+		tokens        int64
+		input, output catalog.Price
+		says          string
 	}{
-		"at the boundary": {boundary, fmt.Sprintf("one turn's input of %d tokens is within the %d-token context tier, so each of its requests is too", boundary, boundary)},
-		"past the boundary": {boundary + 1, fmt.Sprintf("one turn's input of %d tokens is a sum over its requests and passes the %d-token context tier boundary, "+
-			"and its requests' own inputs are unknown, so its context tier is unknown, and the prices up to %d input tokens apply, which may read low", boundary+1, boundary, boundary)},
+		"at the boundary": {boundary, inputPrice, outputPrice, fmt.Sprintf("one turn's input of %d tokens is within the %d-token context tier, so each of its requests is too", boundary, boundary)},
+		"past the boundary": {boundary + 1, inputAbove, outputAbove, fmt.Sprintf("one turn's input of %d tokens is a sum over its requests and passes the %d-token context tier boundary, "+
+			"and its requests' own inputs are unknown, so its context tier is unknown, and the prices above %d input tokens apply, which may read high", boundary+1, boundary, boundary)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(fakeStreamInput, strconv.FormatInt(tc.input, 10))
+			t.Setenv(fakeStreamInput, strconv.FormatInt(tc.tokens, 10))
 			got, _ := codexRun(t, "one-turn", "1", "--ephemeral")
 			if got.err != nil {
 				t.Fatal(got.err)
@@ -73,9 +75,9 @@ func TestCodexTurnSumNeverTakesTheLongTier(t *testing.T) {
 				t.Fatalf("%+v, %d rows", got.result.Enforcement, len(got.rows))
 			}
 			for _, row := range got.rows {
-				want := inputPrice.SkuPriceID
+				want := tc.input.SkuPriceID
 				if row["SkuMeter"] == string(focus.Output) {
-					want = outputPrice.SkuPriceID
+					want = tc.output.SkuPriceID
 				}
 				if row["SkuPriceId"] != want {
 					t.Errorf("%v priced at %v, want %s", row["SkuMeter"], row["SkuPriceId"], want)
@@ -85,8 +87,8 @@ func TestCodexTurnSumNeverTakesTheLongTier(t *testing.T) {
 					t.Errorf("the row does not say %q: %q", tc.says, text)
 				}
 			}
-			want := inputPrice.ListUnitPrice.Mul(decimal.FromInt(tc.input).DivPow10(6)).
-				Add(outputPrice.ListUnitPrice.Mul(decimal.FromInt(1000).DivPow10(6)))
+			want := tc.input.ListUnitPrice.Mul(decimal.FromInt(tc.tokens).DivPow10(6)).
+				Add(tc.output.ListUnitPrice.Mul(decimal.FromInt(1000).DivPow10(6)))
 			if err := checkListTotal(got.result.ListTotal, want.String()); err != nil {
 				t.Error(err)
 			}

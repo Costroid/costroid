@@ -481,6 +481,9 @@ func (f rowFields) readOvershoot(c *charge) error {
 	if err != nil || text == "" {
 		return err
 	}
+	if len(text) > decimal.MaxLength {
+		return invalidRow(f.line, columnOvershoot+" is past the contract's limit")
+	}
 	bound, err := decimal.Parse(text)
 	if err != nil || bound.Scale() > focus.MaxScale {
 		return invalidRow(f.line, "x_CostroidOvershootBound is not a decimal")
