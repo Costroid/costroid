@@ -61,9 +61,9 @@ func embedded(t *testing.T, version string) *Catalog {
 }
 
 // TestEmbeddedReleaseCarriesTheFiveSheets holds that a run prices with
-// release 0.4.1 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
-// sheets, and that releases 0.3.0, 0.2.0 and 0.1.0, embedded beside it, still
-// parse on their own with five sheets, three and two.
+// release 0.4.2 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
+// sheets, and that releases 0.4.1, 0.3.0, 0.2.0 and 0.1.0, embedded beside
+// it, still parse on their own with five sheets, five, three and two.
 func TestEmbeddedReleaseCarriesTheFiveSheets(t *testing.T) {
 	five := map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "github-copilot": "GitHub", "cursor": "Cursor"}
 	releases := []struct {
@@ -71,12 +71,13 @@ func TestEmbeddedReleaseCarriesTheFiveSheets(t *testing.T) {
 		version   string
 		providers map[string]string
 	}{
-		{pinned(t), "0.4.1", five},
+		{pinned(t), "0.4.2", five},
+		{embedded(t, "0.4.1"), "0.4.1", five},
 		{embedded(t, "0.3.0"), "0.3.0", five},
 		{embedded(t, "0.2.0"), "0.2.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}},
 		{embedded(t, "0.1.0"), "0.1.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI"}},
 	}
-	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0", "0.4.1"}) {
+	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0", "0.4.1", "0.4.2"}) {
 		t.Errorf("the binary carries releases %v", versions)
 	}
 	for _, release := range releases {
@@ -913,6 +914,122 @@ func TestAPromotionThatEndsFallsToTheFallback(t *testing.T) {
 		}
 		if rows == 0 {
 			t.Errorf("the %s sheet prices no %s", end.provider, end.model)
+		}
+	}
+}
+
+// TestGemini4HydrogenPricesAtItsOwnRows holds Gemini 4 Hydrogen to its own
+// rows of the default release on each sheet that prices it, in USD per million
+// tokens of input, output and cache read: Google standard 1.50, 7.50 and
+// 0.075; batch and flex 0.75, 3.75 and 0.0375; priority 2.70, 13.50 and
+// 0.135; contributor 0.75, 3.75 and 0.0375; GitHub Copilot and Cursor 1.50,
+// 7.50 and 0.075. None is the fallback. Release 0.4.1 named no Gemini 4
+// Hydrogen, and priced it at each sheet's fallback, on Google 7.20 input,
+// 36.00 output and 0.72 cache read.
+func TestGemini4HydrogenPricesAtItsOwnRows(t *testing.T) {
+	type prices struct{ input, output, cacheRead string }
+	cases := []struct {
+		provider, tier string
+		prices
+	}{
+		{ProviderGoogle, TierStandard, prices{"1.50", "7.50", "0.075"}},
+		{ProviderGoogle, "batch", prices{"0.75", "3.75", "0.0375"}},
+		{ProviderGoogle, "flex", prices{"0.75", "3.75", "0.0375"}},
+		{ProviderGoogle, "priority", prices{"2.70", "13.50", "0.135"}},
+		{ProviderGoogle, "contributor", prices{"0.75", "3.75", "0.0375"}},
+		{"github-copilot", TierStandard, prices{"1.50", "7.50", "0.075"}},
+		{"cursor", TierStandard, prices{"1.50", "7.50", "0.075"}},
+	}
+	c := pinned(t)
+	before := embedded(t, "0.4.1")
+	for _, tc := range cases {
+		for class, price := range map[focus.TokenClass]string{focus.InputUncached: tc.input, focus.Output: tc.output, focus.CacheRead: tc.cacheRead} {
+			q := query(tc.provider, "gemini-4-hydrogen", class)
+			q.ServiceTier, q.At = tc.tier, time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := tc.provider + ":gemini-4-hydrogen:global:" + tc.tier + ":all:" + string(class)
+			if got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("%s %s %s: %s at %s, fallback %t; want %s at %s", tc.provider, tc.tier, class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+			}
+			old, err := before.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !old.Fallback || old.SkuPriceID != tc.provider+":fallback:"+string(class) {
+				t.Errorf("release 0.4.1 %s %s %s: %s at %s, fallback %t; want the fallback", tc.provider, tc.tier, class, old.SkuPriceID, old.ListUnitPrice, old.Fallback)
+			}
+		}
+	}
+	for class, price := range map[focus.TokenClass]string{focus.InputUncached: "7.20", focus.Output: "36.00", focus.CacheRead: "0.72"} {
+		got, err := before.Lookup(query(ProviderGoogle, "gemini-4-hydrogen", class))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Fallback || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+			t.Errorf("release 0.4.1 google %s: %s at %s, fallback %t; want the fallback at %s", class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, price)
+		}
+	}
+}
+
+// TestAnEndedTierFallsToTheFallback holds the Contributor tier Google's page
+// stopped listing for Gemini 3.8 Flash, Gemini 3.5 Flash-Lite and Gemini 3.1
+// Pro Preview, which release 0.4.1 priced and 0.4.2 does not. A Contributor
+// request on 2026-11-13 prices at the model's own Contributor row from 0.4.1,
+// in USD per million tokens: 3.8 Flash 0.375 input, 1.875 output and 0.0375
+// cache read; 3.5 Flash-Lite 0.15, 1.25 and 0.015; 3.1 Pro Preview up to
+// 200,000 input tokens 1.00, 6.00 and 0.10. From 0.4.2 the same request
+// prices at Google's fallback, 7.20, 36.00 and 0.72, marked as a fallback
+// with its basis, and not at another tier's row of the model, so a run's row
+// carries the fallback note. Gemini 4 Argon, whose Contributor tier the page
+// still lists, prices at its own Contributor row in both releases.
+func TestAnEndedTierFallsToTheFallback(t *testing.T) {
+	type prices struct{ input, output, cacheRead string }
+	ended := []struct {
+		model, context string
+		prices
+	}{
+		{"gemini-3.8-flash", "all", prices{"0.375", "1.875", "0.0375"}},
+		{"gemini-3.5-flash-lite", "all", prices{"0.15", "1.25", "0.015"}},
+		{"gemini-3.1-pro-preview", "to-200000", prices{"1.00", "6.00", "0.10"}},
+	}
+	fallback := prices{"7.20", "36.00", "0.72"}
+	day := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	before, after := embedded(t, "0.4.1"), pinned(t)
+	lookup := func(c *Catalog, model string, class focus.TokenClass) Price {
+		t.Helper()
+		q := query(ProviderGoogle, model, class)
+		q.ServiceTier, q.At = "contributor", day
+		got, err := c.Lookup(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	byClass := func(p prices) map[focus.TokenClass]string {
+		return map[focus.TokenClass]string{focus.InputUncached: p.input, focus.Output: p.output, focus.CacheRead: p.cacheRead}
+	}
+	for _, tc := range ended {
+		fallbacks := byClass(fallback)
+		for class, price := range byClass(tc.prices) {
+			id := "google:" + tc.model + ":global:contributor:" + tc.context + ":" + string(class)
+			if got := lookup(before, tc.model, class); got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("release 0.4.1 %s contributor %s: %s at %s, fallback %t; want %s at %s", tc.model, class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+			}
+			got := lookup(after, tc.model, class)
+			if id := "google:fallback:" + string(class); !got.Fallback || got.FallbackBasis == "" || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(fallbacks[class])) != 0 {
+				t.Errorf("release 0.4.2 %s contributor %s: %s at %s, fallback %t, basis %q; want %s at %s, marked as a fallback", tc.model, class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, got.FallbackBasis, id, fallbacks[class])
+			}
+		}
+	}
+	for class, price := range byClass(prices{"1.00", "5.00", "0.05"}) {
+		id := "google:gemini-4-argon:global:contributor:all:" + string(class)
+		for _, c := range []*Catalog{before, after} {
+			if got := lookup(c, "gemini-4-argon", class); got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("release %s gemini-4-argon contributor %s: %s at %s, fallback %t; want %s at %s", c.Version(), class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+			}
 		}
 	}
 }

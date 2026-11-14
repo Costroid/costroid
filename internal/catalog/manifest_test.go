@@ -95,7 +95,7 @@ func holdSheetsTo(t *testing.T, version string, digests map[string]string) []str
 
 // signedReleases are the embedded releases whose SHA256SUMS the catalog's
 // release workflow signed, each with the workflow run that signed it.
-var signedReleases = map[string]string{"0.3.0": "42444947345", "0.4.1": "43199895270"}
+var signedReleases = map[string]string{"0.3.0": "42444947345", "0.4.1": "43199895270", "0.4.2": "43630562434"}
 
 const (
 	catalogRepository = "https://github.com/Costroid/costroid-catalog"

@@ -5,13 +5,13 @@ package catalogdata
 import "embed"
 
 // Version is the release a run prices with.
-const Version = "0.4.1"
+const Version = "0.4.2"
 
 // Sheets holds one directory per release, named for its version, with one
 // dated file per provider. From 0.2.0, a release directory also holds
 // SHA256SUMS, the catalog's manifest of the release's sheets.
 //
-//go:embed 0.1.0/*.json 0.2.0/*.json 0.2.0/SHA256SUMS 0.3.0/*-2026-11-08.json 0.3.0/SHA256SUMS 0.4.1/*-2026-11-12.json 0.4.1/SHA256SUMS
+//go:embed 0.1.0/*.json 0.2.0/*.json 0.2.0/SHA256SUMS 0.3.0/*-2026-11-08.json 0.3.0/SHA256SUMS 0.4.1/*-2026-11-12.json 0.4.1/SHA256SUMS 0.4.2/*-2026-11-14.json 0.4.2/SHA256SUMS
 var Sheets embed.FS
 
 // Signatures holds, from 0.3.0, the Sigstore bundle the catalog's release
@@ -20,5 +20,5 @@ var Sheets embed.FS
 // release is parsed from every JSON file in its directory. Only tests read it,
 // and no command does, so the linker leaves it out of the binary.
 //
-//go:embed 0.3.0/SHA256SUMS.sigstore.json 0.4.1/SHA256SUMS.sigstore.json
+//go:embed 0.3.0/SHA256SUMS.sigstore.json 0.4.1/SHA256SUMS.sigstore.json 0.4.2/SHA256SUMS.sigstore.json
 var Signatures embed.FS
