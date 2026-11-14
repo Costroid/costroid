@@ -14,7 +14,7 @@ agent-error-beside-figures	1,000,000
 agent-error-beside-figures	121
 agent-error-beside-figures	15605
 agent-error-beside-figures	19
-agent-error-beside-figures	2026-11-12
+agent-error-beside-figures	2026-11-14
 agent-error-beside-figures	272
 agent-error-beside-figures	3495
 agent-error-beside-figures	4.998380275
@@ -41,7 +41,7 @@ agent-error-beside-figures	USD 5
 agent-error-beside-figures	](https://app.costroid.com/?installation=github%3A58120394)
 agent-error-beside-figures	](https://docs.costroid.com/export)
 agent-error-beside-figures	](https://github.com/example/widgets/actions/runs/19203384756)
-agent-error-beside-figures	`0.4.1`
+agent-error-beside-figures	`0.4.2`
 agent-error-beside-figures	`9f2c6e1`
 agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 agent-error-beside-figures	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -225,7 +225,7 @@ fail-shown	1,000,000
 fail-shown	121
 fail-shown	15605
 fail-shown	19
-fail-shown	2026-11-12
+fail-shown	2026-11-14
 fail-shown	272
 fail-shown	3495
 fail-shown	4.998380275
@@ -253,7 +253,7 @@ fail-shown	USD 5
 fail-shown	](https://app.costroid.com/?installation=github%3A58120394)
 fail-shown	](https://docs.costroid.com/export)
 fail-shown	](https://github.com/example/widgets/actions/runs/19203384756)
-fail-shown	`0.4.1`
+fail-shown	`0.4.2`
 fail-shown	`9f2c6e1`
 fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 fail-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -276,13 +276,13 @@ fail-shown	`reasoning_output`
 fail-shown	| agent-flag: client-side estimate, can pass the cap |
 fail-shown	| unattributed |
 fail-withheld	19
-fail-withheld	2026-11-12
+fail-withheld	2026-11-14
 fail-withheld	List-equivalent, not billed
 fail-withheld	Run budget: the run is over the budget.
 fail-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 fail-withheld	](https://docs.costroid.com/export)
 fail-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-fail-withheld	`0.4.1`
+fail-withheld	`0.4.2`
 fail-withheld	`9f2c6e1`
 fail-withheld	`cache_read`
 fail-withheld	`cache_write_1h`
@@ -488,7 +488,7 @@ gitlab-note	1,000,000
 gitlab-note	121
 gitlab-note	15605
 gitlab-note	19
-gitlab-note	2026-11-12
+gitlab-note	2026-11-14
 gitlab-note	272
 gitlab-note	3495
 gitlab-note	4.998380275
@@ -515,7 +515,7 @@ gitlab-note	USD 5
 gitlab-note	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
 gitlab-note	](https://docs.costroid.com/export)
 gitlab-note	](https://github.com/example/widgets/actions/runs/19203384756)
-gitlab-note	`0.4.1`
+gitlab-note	`0.4.2`
 gitlab-note	`9f2c6e1`
 gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 gitlab-note	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -538,13 +538,13 @@ gitlab-note	`reasoning_output`
 gitlab-note	| agent-flag: client-side estimate, can pass the cap |
 gitlab-note	| unattributed |
 gitlab-note-withheld	19
-gitlab-note-withheld	2026-11-12
+gitlab-note-withheld	2026-11-14
 gitlab-note-withheld	List-equivalent, not billed
 gitlab-note-withheld	Run budget: unverified rows cannot satisfy a budget.
 gitlab-note-withheld	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
 gitlab-note-withheld	](https://docs.costroid.com/export)
 gitlab-note-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-gitlab-note-withheld	`0.4.1`
+gitlab-note-withheld	`0.4.2`
 gitlab-note-withheld	`9f2c6e1`
 gitlab-note-withheld	`cache_read`
 gitlab-note-withheld	`cache_write_1h`
@@ -576,7 +576,7 @@ infrastructure	1000
 infrastructure	121
 infrastructure	15605
 infrastructure	19
-infrastructure	2026-11-12
+infrastructure	2026-11-14
 infrastructure	2026-12
 infrastructure	25.488
 infrastructure	272
@@ -608,7 +608,7 @@ infrastructure	](https://app.costroid.com/?installation=github%3A58120394)
 infrastructure	](https://docs.costroid.com/export)
 infrastructure	](https://docs.costroid.com/policy)
 infrastructure	](https://github.com/example/widgets/actions/runs/19203384756)
-infrastructure	`0.4.1`
+infrastructure	`0.4.2`
 infrastructure	`9f2c6e1`
 infrastructure	`Amazon EC2`
 infrastructure	`Compute Engine`
@@ -651,7 +651,7 @@ infrastructure-not-available	1,000,000
 infrastructure-not-available	121
 infrastructure-not-available	15605
 infrastructure-not-available	19
-infrastructure-not-available	2026-11-12
+infrastructure-not-available	2026-11-14
 infrastructure-not-available	272
 infrastructure-not-available	3495
 infrastructure-not-available	4.998380275
@@ -679,7 +679,7 @@ infrastructure-not-available	](https://app.costroid.com/?installation=github%3A5
 infrastructure-not-available	](https://docs.costroid.com/export)
 infrastructure-not-available	](https://docs.costroid.com/policy)
 infrastructure-not-available	](https://github.com/example/widgets/actions/runs/19203384756)
-infrastructure-not-available	`0.4.1`
+infrastructure-not-available	`0.4.2`
 infrastructure-not-available	`9f2c6e1`
 infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 infrastructure-not-available	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -702,7 +702,7 @@ infrastructure-not-available	`reasoning_output`
 infrastructure-not-available	| agent-flag: client-side estimate, can pass the cap |
 infrastructure-not-available	| unattributed |
 infrastructure-withheld	19
-infrastructure-withheld	2026-11-12
+infrastructure-withheld	2026-11-14
 infrastructure-withheld	2026-12
 infrastructure-withheld	List-equivalent, not billed
 infrastructure-withheld	Run budget: unverified rows cannot satisfy a budget.
@@ -710,7 +710,7 @@ infrastructure-withheld	](https://app.costroid.com/?installation=github%3A581203
 infrastructure-withheld	](https://docs.costroid.com/export)
 infrastructure-withheld	](https://docs.costroid.com/policy)
 infrastructure-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-infrastructure-withheld	`0.4.1`
+infrastructure-withheld	`0.4.2`
 infrastructure-withheld	`9f2c6e1`
 infrastructure-withheld	`Amazon EC2`
 infrastructure-withheld	`Compute Engine`
@@ -766,7 +766,7 @@ lifetime	121
 lifetime	15605
 lifetime	19
 lifetime	2
-lifetime	2026-11-12
+lifetime	2026-11-14
 lifetime	250
 lifetime	272
 lifetime	3495
@@ -797,7 +797,7 @@ lifetime	USD 5
 lifetime	](https://app.costroid.com/?installation=github%3A58120394)
 lifetime	](https://docs.costroid.com/export)
 lifetime	](https://github.com/example/widgets/actions/runs/19203384756)
-lifetime	`0.4.1`
+lifetime	`0.4.2`
 lifetime	`9f2c6e1`
 lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 lifetime	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -820,13 +820,13 @@ lifetime	`reasoning_output`
 lifetime	| agent-flag: client-side estimate, can pass the cap |
 lifetime	| unattributed |
 lifetime-withheld	19
-lifetime-withheld	2026-11-12
+lifetime-withheld	2026-11-14
 lifetime-withheld	List-equivalent, not billed
 lifetime-withheld	Run budget: unverified rows cannot satisfy a budget.
 lifetime-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 lifetime-withheld	](https://docs.costroid.com/export)
 lifetime-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-lifetime-withheld	`0.4.1`
+lifetime-withheld	`0.4.2`
 lifetime-withheld	`9f2c6e1`
 lifetime-withheld	`cache_read`
 lifetime-withheld	`cache_write_1h`
@@ -857,7 +857,7 @@ neutral-shown	1,000,000
 neutral-shown	121
 neutral-shown	15605
 neutral-shown	19
-neutral-shown	2026-11-12
+neutral-shown	2026-11-14
 neutral-shown	272
 neutral-shown	3495
 neutral-shown	4.998380275
@@ -884,7 +884,7 @@ neutral-shown	USD 5
 neutral-shown	](https://app.costroid.com/?installation=github%3A58120394)
 neutral-shown	](https://docs.costroid.com/export)
 neutral-shown	](https://github.com/example/widgets/actions/runs/19203384756)
-neutral-shown	`0.4.1`
+neutral-shown	`0.4.2`
 neutral-shown	`9f2c6e1`
 neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 neutral-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -907,13 +907,13 @@ neutral-shown	`reasoning_output`
 neutral-shown	| agent-flag: client-side estimate, can pass the cap |
 neutral-shown	| unattributed |
 neutral-withheld	19
-neutral-withheld	2026-11-12
+neutral-withheld	2026-11-14
 neutral-withheld	List-equivalent, not billed
 neutral-withheld	Run budget: unverified rows cannot satisfy a budget.
 neutral-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 neutral-withheld	](https://docs.costroid.com/export)
 neutral-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-neutral-withheld	`0.4.1`
+neutral-withheld	`0.4.2`
 neutral-withheld	`9f2c6e1`
 neutral-withheld	`cache_read`
 neutral-withheld	`cache_write_1h`
@@ -1090,7 +1090,7 @@ platform-pull	1,000,000
 platform-pull	121
 platform-pull	15605
 platform-pull	19
-platform-pull	2026-11-12
+platform-pull	2026-11-14
 platform-pull	272
 platform-pull	3495
 platform-pull	4.998380275
@@ -1117,7 +1117,7 @@ platform-pull	USD 5
 platform-pull	](https://app.costroid.com/#/pulls?repo=github.com/example/widgets&pr=7)
 platform-pull	](https://docs.costroid.com/export)
 platform-pull	](https://github.com/example/widgets/actions/runs/19203384756)
-platform-pull	`0.4.1`
+platform-pull	`0.4.2`
 platform-pull	`9f2c6e1`
 platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 platform-pull	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -1155,7 +1155,7 @@ policy-budget-no-cap	1,000,000
 policy-budget-no-cap	121
 policy-budget-no-cap	15605
 policy-budget-no-cap	19
-policy-budget-no-cap	2026-11-12
+policy-budget-no-cap	2026-11-14
 policy-budget-no-cap	272
 policy-budget-no-cap	3495
 policy-budget-no-cap	4450
@@ -1180,7 +1180,7 @@ policy-budget-no-cap	USD 5
 policy-budget-no-cap	](https://app.costroid.com/?installation=github%3A58120394)
 policy-budget-no-cap	](https://docs.costroid.com/export)
 policy-budget-no-cap	](https://github.com/example/widgets/actions/runs/19203384756)
-policy-budget-no-cap	`0.4.1`
+policy-budget-no-cap	`0.4.2`
 policy-budget-no-cap	`9f2c6e1`
 policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 policy-budget-no-cap	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -1261,7 +1261,7 @@ reconciliation	121
 reconciliation	15605
 reconciliation	19
 reconciliation	2026-11-05
-reconciliation	2026-11-12
+reconciliation	2026-11-14
 reconciliation	272
 reconciliation	3495
 reconciliation	4.998380275
@@ -1288,7 +1288,7 @@ reconciliation	USD 5
 reconciliation	](https://app.costroid.com/?installation=github%3A58120394)
 reconciliation	](https://docs.costroid.com/export)
 reconciliation	](https://github.com/example/widgets/actions/runs/19203384756)
-reconciliation	`0.4.1`
+reconciliation	`0.4.2`
 reconciliation	`9f2c6e1`
 reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 reconciliation	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -1316,13 +1316,13 @@ reconciliation	| unattributed |
 reconciliation-withheld	1%
 reconciliation-withheld	19
 reconciliation-withheld	2026-11-05
-reconciliation-withheld	2026-11-12
+reconciliation-withheld	2026-11-14
 reconciliation-withheld	List-equivalent, not billed
 reconciliation-withheld	Run budget: unverified rows cannot satisfy a budget.
 reconciliation-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 reconciliation-withheld	](https://docs.costroid.com/export)
 reconciliation-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-reconciliation-withheld	`0.4.1`
+reconciliation-withheld	`0.4.2`
 reconciliation-withheld	`9f2c6e1`
 reconciliation-withheld	`apikey_01Example`
 reconciliation-withheld	`apikey_02Example`
@@ -1357,7 +1357,7 @@ recorded-run	121
 recorded-run	15605
 recorded-run	19
 recorded-run	2026-11-07
-recorded-run	2026-11-12
+recorded-run	2026-11-14
 recorded-run	272
 recorded-run	3495
 recorded-run	4.998380275
@@ -1385,7 +1385,7 @@ recorded-run	USD 5
 recorded-run	](https://app.costroid.com/?installation=github%3A58120394)
 recorded-run	](https://docs.costroid.com/export)
 recorded-run	](https://github.com/example/widgets/actions/runs/19203384756)
-recorded-run	`0.4.1`
+recorded-run	`0.4.2`
 recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
 recorded-run	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
@@ -1408,14 +1408,14 @@ recorded-run	| agent-flag: client-side estimate, can pass the cap |
 recorded-run	| unattributed |
 recorded-run-withheld	19
 recorded-run-withheld	2026-11-07
-recorded-run-withheld	2026-11-12
+recorded-run-withheld	2026-11-14
 recorded-run-withheld	42368537950
 recorded-run-withheld	List-equivalent, not billed
 recorded-run-withheld	Run budget: unverified rows cannot satisfy a budget.
 recorded-run-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 recorded-run-withheld	](https://docs.costroid.com/export)
 recorded-run-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-recorded-run-withheld	`0.4.1`
+recorded-run-withheld	`0.4.2`
 recorded-run-withheld	`cache_read`
 recorded-run-withheld	`cache_write_1h`
 recorded-run-withheld	`cache_write_5m`
@@ -1556,7 +1556,7 @@ warn-shown	121
 warn-shown	15605
 warn-shown	19
 warn-shown	2026-11-09
-warn-shown	2026-11-12
+warn-shown	2026-11-14
 warn-shown	272
 warn-shown	3495
 warn-shown	4.998380275
@@ -1585,7 +1585,7 @@ warn-shown	USD 5
 warn-shown	](https://app.costroid.com/?installation=github%3A58120394)
 warn-shown	](https://docs.costroid.com/export)
 warn-shown	](https://github.com/example/widgets/actions/runs/19203384756)
-warn-shown	`0.4.1`
+warn-shown	`0.4.2`
 warn-shown	`9f2c6e1`
 warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
 warn-shown	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
@@ -1611,14 +1611,14 @@ warn-shown	| agent-flag: client-side estimate, can pass the cap |
 warn-shown	| unattributed |
 warn-withheld	19
 warn-withheld	2026-11-09
-warn-withheld	2026-11-12
+warn-withheld	2026-11-14
 warn-withheld	7
 warn-withheld	List-equivalent, not billed
 warn-withheld	Run budget: the run is over the budget.
 warn-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 warn-withheld	](https://docs.costroid.com/export)
 warn-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
-warn-withheld	`0.4.1`
+warn-withheld	`0.4.2`
 warn-withheld	`9f2c6e1`
 warn-withheld	`cache_read`
 warn-withheld	`cache_write_1h`
@@ -1636,13 +1636,13 @@ warn-withheld	`reasoning_output`
 warn-withheld	| agent-flag: client-side estimate, can pass the cap |
 warn-withheld	| unattributed |
 withheld-unsettled	19
-withheld-unsettled	2026-11-12
+withheld-unsettled	2026-11-14
 withheld-unsettled	List-equivalent, not billed
 withheld-unsettled	Run budget: unverified rows cannot satisfy a budget.
 withheld-unsettled	](https://app.costroid.com/?installation=github%3A58120394)
 withheld-unsettled	](https://docs.costroid.com/export)
 withheld-unsettled	](https://github.com/example/widgets/actions/runs/19203384756)
-withheld-unsettled	`0.4.1`
+withheld-unsettled	`0.4.2`
 withheld-unsettled	`9f2c6e1`
 withheld-unsettled	`cache_read`
 withheld-unsettled	`cache_write_1h`

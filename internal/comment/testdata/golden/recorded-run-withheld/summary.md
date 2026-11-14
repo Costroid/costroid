@@ -4,7 +4,7 @@ These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not 
 
 | Basis | Catalog | Attribution | Enforcement |
 | --- | --- | --- | --- |
-| List-equivalent, not billed | `0.4.1` | unattributed | agent-flag: client-side estimate, can pass the cap |
+| List-equivalent, not billed | `0.4.2` | unattributed | agent-flag: client-side estimate, can pass the cap |
 
 Unverified: the agent's job wrote these figures.
 

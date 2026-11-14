@@ -95,7 +95,7 @@ func TestOpenCodeWatchdogStopsAtTheCap(t *testing.T) {
 	if steps := logged(t, log); len(steps) != 1 {
 		t.Errorf("the agent finished %d steps, want the run stopped after the first", len(steps))
 	}
-	// The recording's first step, at catalog 0.4.1's Haiku 5.5 prices per
+	// The recording's first step, at catalog 0.4.2's Haiku 5.5 prices per
 	// million: 4 × 0.10 + 10532 × 0.125 + 75 × 0.50.
 	if err := checkListTotal(got.result.ListTotal, "0.0013544"); err != nil {
 		t.Error(err)

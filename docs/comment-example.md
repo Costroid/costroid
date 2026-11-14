@@ -20,7 +20,7 @@ No cap held this run: its enforcement grade is none.
 
 Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, catalog `0.4.1`, prices read 2026-11-12.
+Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, catalog `0.4.2`, prices read 2026-11-14.
 
 </details>
 
@@ -29,13 +29,13 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, c
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.4.1` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 1200 | USD 0.00012 |
-| `0.4.1` | `input_uncached` | `anthropic:claude-opus-5-5:global:standard:all:input_uncached` | USD 4 per 1,000,000 tokens | 4 | USD 0.000016 |
-| `0.4.1` | `cache_read` | `anthropic:claude-opus-5-5:global:standard:all:cache_read` | USD 0.2 per 1,000,000 tokens | 28767 | USD 0.0057534 |
-| `0.4.1` | `cache_write_5m` | `anthropic:claude-opus-5-5:global:standard:all:cache_write_5m` | USD 5 per 1,000,000 tokens | 5959 | USD 0.029795 |
-| `0.4.1` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 17 | USD 0.0000085 |
-| `0.4.1` | `output` | `anthropic:claude-opus-5-5:global:standard:all:output` | USD 20 per 1,000,000 tokens | 173 | USD 0.00346 |
-| `0.4.1` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28767 | USD 0 |
+| `0.4.2` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 1200 | USD 0.00012 |
+| `0.4.2` | `input_uncached` | `anthropic:claude-opus-5-5:global:standard:all:input_uncached` | USD 4 per 1,000,000 tokens | 4 | USD 0.000016 |
+| `0.4.2` | `cache_read` | `anthropic:claude-opus-5-5:global:standard:all:cache_read` | USD 0.2 per 1,000,000 tokens | 28767 | USD 0.0057534 |
+| `0.4.2` | `cache_write_5m` | `anthropic:claude-opus-5-5:global:standard:all:cache_write_5m` | USD 5 per 1,000,000 tokens | 5959 | USD 0.029795 |
+| `0.4.2` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 17 | USD 0.0000085 |
+| `0.4.2` | `output` | `anthropic:claude-opus-5-5:global:standard:all:output` | USD 20 per 1,000,000 tokens | 173 | USD 0.00346 |
+| `0.4.2` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28767 | USD 0 |
 
 </details>
 
@@ -89,7 +89,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, c
     ],
     "models_omitted": 0,
     "catalog_versions": [
-      "0.4.1"
+      "0.4.2"
     ],
     "fallback_models": [],
     "fallback_models_omitted": 0,

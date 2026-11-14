@@ -238,7 +238,7 @@ func TestCommentNamesTheCatalogDate(t *testing.T) {
 		ledger Ledger
 		want   string
 	}{
-		"the pinned release":    {realLedger(t), "19 rows, catalog `0.4.1`, prices read 2026-11-12."},
+		"the pinned release":    {realLedger(t), "19 rows, catalog `0.4.2`, prices read 2026-11-14."},
 		"an earlier release":    {ledgerOf(t, sampleFields()), "1 row, catalog `0.1.0`, prices read 2026-11-01."},
 		"two releases":          {two, "2 rows, catalogs `0.1.0` (prices read 2026-11-01) and `0.3.0` (prices read 2026-11-08)."},
 		"a release not carried": {unknown, "1 row, catalog `9.9.9`."},

@@ -29,7 +29,7 @@ cat "$FAKE_STREAM"
 // run and reports it. OpenCode's own figure, its two step costs 0.0013544 and
 // 0.00017877 added, reaches the result object as USD 0.00153317 from
 // opencode, and the comment states it once on its own line. Costroid's
-// figure is the rows' own, USD 0.00153317 at catalog 0.4.1, and the cap
+// figure is the rows' own, USD 0.00153317 at catalog 0.4.2, and the cap
 // compares with it alone: no amount reads the two added, 0.00306634.
 func TestOpenCodeStatesItsOwnUSD(t *testing.T) {
 	dir := t.TempDir()

@@ -143,7 +143,7 @@ func TestOpenCodeRecordedStopHoldsTheCap(t *testing.T) {
 	}
 
 	// 4 uncached input, 10543 five-minute cache writes and 173 output with 67
-	// reasoning, at catalog 0.4.1's Haiku 5.5 prices per million tokens:
+	// reasoning, at catalog 0.4.2's Haiku 5.5 prices per million tokens:
 	// 4 × 0.10 + 10543 × 0.125 + 240 × 0.50. Reasoning is informational.
 	classes := map[focus.TokenClass]string{}
 	for _, row := range rows {

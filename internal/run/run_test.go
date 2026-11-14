@@ -1079,7 +1079,7 @@ func TestRowsCarryTheRequestAndTheRunKeys(t *testing.T) {
 			t.Errorf("%s = %v, want %s", column, row[column], want)
 		}
 	}
-	if row["x_CostroidCatalogVersion"] != "0.4.1" {
+	if row["x_CostroidCatalogVersion"] != "0.4.2" {
 		t.Errorf("catalog version %v", row["x_CostroidCatalogVersion"])
 	}
 	if tagOf(row, focus.TagSessionID) != "00000000-0000-4000-8000-000000000001" || tagOf(row, focus.TagAgentVersion) != "2.1.316" {
