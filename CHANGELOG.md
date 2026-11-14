@@ -2,7 +2,7 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
-## 1.0.0-alpha.25 (2026-11-12)
+## 1.0.0-alpha.25 (2026-11-14)
 
 ### Breaking changes
 
