@@ -47,6 +47,7 @@ func Validate(data []byte) ([]Problem, error) {
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return []Problem{{Message: "not YAML: " + firstLine(err.Error())}}, nil
 	}
+	literalMergeKeys(&root)
 	var document any
 	if err := root.Decode(&document); err != nil {
 		return []Problem{{Message: "not YAML: " + firstLine(err.Error())}}, nil
@@ -77,6 +78,19 @@ func Validate(data []byte) ([]Problem, error) {
 		return []Problem{{Message: err.Error()}}, nil
 	}
 	return withForms(problemsOf(schema.Validate(instance)), forms), nil
+}
+
+// literalMergeKeys makes each YAML merge key, <<, a key of that name. The
+// policy, the approval rule and the comment read << as a key and never merge
+// the mapping it names, so validate decodes it the same way, and the schema
+// refuses it where a misspelled key is refused.
+func literalMergeKeys(node *yaml.Node) {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!merge" {
+		node.Tag = "!!str"
+	}
+	for _, child := range node.Content {
+		literalMergeKeys(child)
+	}
 }
 
 // dropNullSections removes each section the file names with no value, such as

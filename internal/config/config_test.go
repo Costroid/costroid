@@ -547,3 +547,33 @@ func TestModelsListAgreesAcrossReaderValidatorAndSchema(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateReadsAMergeKeyAsAKey holds validate to the way the policy, the
+// approval rule and the comment read a YAML merge key: as a key named <<,
+// never as the mapping it names. The schema refuses it, and the policy and
+// the approval rule refuse it under their sections.
+func TestValidateReadsAMergeKeyAsAKey(t *testing.T) {
+	for _, tc := range []struct{ body, path string }{
+		{"assumptions: &shared {enforce: true}\npolicy:\n  <<: *shared\n", "/policy"},
+		{"assumptions: &shared {expires_days: 7}\napproval:\n  <<: *shared\n", "/approval"},
+		{"assumptions: &shared {show_cost: false}\ncomment:\n  <<: *shared\n", "/comment"},
+		{"<<: {policy: {enforce: true}}\n", ""},
+		{"policy:\n  !!merge <<: {enforce: true}\n", "/policy"},
+		{"policy:\n  !<tag:yaml.org,2002:merge> <<: {enforce: true}\n", "/policy"},
+		{"policy:\n  ! <<: {enforce: true}\n", "/policy"},
+		{"budget_owner: &key <<\npolicy:\n  *key : {enforce: true}\n", "/policy"},
+	} {
+		problems, err := Validate([]byte(tc.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(problems) == 0 || !slices.ContainsFunc(problems, func(problem Problem) bool { return problem.Path == tc.path }) {
+			t.Errorf("%q: validate says %v, want a problem at %q", tc.body, problems, tc.path)
+		}
+		_, settingsErr := policy.ParseSettings([]byte(tc.body))
+		_, approvalErr := policy.ParseApproval([]byte(tc.body))
+		if (tc.path == "/policy") != (settingsErr != nil) || (tc.path == "/approval") != (approvalErr != nil) {
+			t.Errorf("%q: the policy %v, the approval rule %v", tc.body, settingsErr, approvalErr)
+		}
+	}
+}
