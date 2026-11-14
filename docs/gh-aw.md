@@ -15,7 +15,7 @@ The first lines it prints, for the run recorded in [`internal/adapter/ghaw/testd
 
 ```text
 costroid: gh-aw, 5 requests
-costroid: 18 rows in costroid-rows.jsonl, catalog 0.4.1
+costroid: 18 rows in costroid-rows.jsonl, catalog 0.4.2
 costroid: USD 0.0370553 at list, Measured
 costroid: none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid
 costroid: gh-aw stated 3.70553 AI credits for this run. Costroid does not convert credits.
