@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"go.yaml.in/yaml/v3"
 
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/comment"
@@ -127,6 +128,9 @@ func TestSchemaAndThePolicyAgree(t *testing.T) {
 		{"policy:\n  enforce: \"true\"\n", false},
 		{"policy:\n  budget: \"5\"\n", false},
 		{"policy: 5\n", false},
+		{"budget_owner: &amount \"5\"\ncomment:\n  show_cost: &on true\npolicy:\n  run_budget_usd: *amount\n  enforce: *on\n", true},
+		{"budget_owner: &amount \"0x10\"\npolicy:\n  run_budget_usd: *amount\n", false},
+		{"policy_pack: &key run_budget_usd\npolicy:\n  *key : 1e3\n", false},
 	} {
 		problems, err := Validate([]byte(tc.body))
 		if err != nil {
@@ -427,6 +431,119 @@ func TestAmountFormsAgreeAcrossReaderValidatorAndSchema(t *testing.T) {
 		}
 		if want := tc.read || tc.valueOnly; schemaTakes != want {
 			t.Errorf("%s: the schema takes it %t, want %t", tc.literal, schemaTakes, want)
+		}
+	}
+}
+
+// TestModelsListAgreesAcrossReaderValidatorAndSchema holds the policy's
+// reader, costroid validate and the published schema to one table of
+// policy.models lists. The reader and validate agree on every one, and
+// validate names a refused list in the reader's sentence, which the schema's
+// description of the key states. The schema reads the list YAML decodes, so
+// it cannot tell a date, a !!binary value or a scalar under the file's own
+// tag from a string: validate refuses those by their YAML node, and the
+// schema never refuses a list the reader takes. An alias reads as the node it
+// names on every side.
+func TestModelsListAgreesAcrossReaderValidatorAndSchema(t *testing.T) {
+	long := strings.Repeat("a", 128)
+	cases := []struct {
+		before, models string
+		read           bool
+		nodeOnly       bool
+	}{
+		{"", "[claude-sonnet-5-5]", true, false},
+		{"", `[claude-sonnet-5-5, "gpt-5*"]`, true, false},
+		{"", "\n    - codex\n    - gpt-5.5", true, false},
+		{"", `["claude-*", anthropic/claude-opus-5-5, "openai:gpt-5.5", a+b, a_b]`, true, false},
+		{"", `["2026-11-14", !!str 2026-11-14x, ! codex]`, true, false},
+		{"", "[" + long + "]", true, false},
+		{"budget_owner: &id codex\n", "[*id, gpt-5.5]", true, false},
+		{"agents: &list [codex]\n", "*list", true, false},
+		{"", "[]", false, false},
+		{"", "", false, false},
+		{"", "~", false, false},
+		{"", "codex", false, false},
+		{"", "{codex: true}", false, false},
+		{"", "[codex, codex]", false, false},
+		{"", "[&id codex, *id]", false, false},
+		{"", `["*"]`, false, false},
+		{"", `["a**"]`, false, false},
+		{"", `["-codex"]`, false, false},
+		{"", `["gpt 5"]`, false, false},
+		{"", `["codex\n"]`, false, false},
+		{"", "[" + long + "a]", false, false},
+		{"", "[5]", false, false},
+		{"", "[0x10]", false, false},
+		{"", "[true]", false, false},
+		{"", "[null]", false, false},
+		{"", "[[codex]]", false, false},
+		{"", "[{codex: 1}]", false, false},
+		{"", "[!0 0000]", false, true},
+		{"", "[!x codex]", false, true},
+		{"", "[2026-11-14]", false, true},
+		{"", "[!!timestamp 2026-11-14]", false, true},
+		{"", "[!!binary Y29kZXg=]", false, true},
+	}
+	schema, err := compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stated struct {
+		Properties struct {
+			Policy struct {
+				Properties struct {
+					Models struct {
+						Description string `json:"description"`
+					} `json:"models"`
+				} `json:"properties"`
+			} `json:"policy"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(costroid.ConfigSchema, &stated); err != nil {
+		t.Fatal(err)
+	}
+	sentence := fmt.Sprintf(modelsSentence, len(long))
+	if description := stated.Properties.Policy.Properties.Models.Description; !strings.Contains(description, " "+sentence+". ") {
+		t.Errorf("the schema describes policy.models as %q, which does not state %q", description, sentence)
+	}
+	for _, tc := range cases {
+		body := tc.before + "policy:\n  models: " + tc.models + "\n"
+		settings, readErr := policy.ParseSettings([]byte(body))
+		problems, err := Validate([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (readErr == nil) != tc.read || (len(problems) == 0) != tc.read {
+			t.Errorf("%q: the reader %v, validate %v, want read %t", body, readErr, problems, tc.read)
+			continue
+		}
+		if tc.read && len(settings.Models) == 0 {
+			t.Errorf("%q: the reader took no model", body)
+		}
+		if !tc.read {
+			want := Problem{Path: "/policy/models", Message: sentence}
+			if readErr.Error() != "policy: "+sentence || len(problems) != 1 || problems[0] != want {
+				t.Errorf("%q: validate says %v, the reader %v, want %q", body, problems, readErr, sentence)
+			}
+		}
+		var document struct {
+			Policy struct {
+				Models any `yaml:"models"`
+			} `yaml:"policy"`
+		}
+		if err := yaml.Unmarshal([]byte(body), &document); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(map[string]any{"policy": map[string]any{"models": document.Policy.Models}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		instance, err := jsonschema.UnmarshalJSON(strings.NewReader(string(encoded)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if takes, want := schema.Validate(instance) == nil, tc.read || tc.nodeOnly; takes != want {
+			t.Errorf("%q: the schema takes %s %t, want %t", body, encoded, takes, want)
 		}
 	}
 }

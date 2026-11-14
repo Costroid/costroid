@@ -66,7 +66,7 @@
           "minimum": 0
         },
         "models": {
-          "description": "The models a run may use: exact model ids, or a prefix that ends in *. A run that used another model warns during the warn-only period and fails after it.",
+          "description": "The models a run may use. policy.models must list distinct model ids, each of at most 128 characters, or prefixes that end in *. A run that used another model warns during the warn-only period and fails after it.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,

@@ -63,3 +63,27 @@ func TestNonDecimalIntegerFormsAreRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestAnAliasReadsAsTheNodeItNames holds that *name under policy and approval
+// reads as the node &name marks, as a key, as a value and as an entry of
+// policy.models, the way validate reads it.
+func TestAnAliasReadsAsTheNodeItNames(t *testing.T) {
+	body := []byte("budget_owner: &amount \"5\"\npolicy_pack: &key max_run_cost_usd\ncomment:\n  show_cost: &on true\n" +
+		"policy:\n  run_budget_usd: *amount\n  *key : 2.50\n  enforce: *on\n  models: [*key, codex]\n" +
+		"approval:\n  allow_author: *on\n")
+	settings, err := ParseSettings(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settings.Amounts[keyRunBudget].String() + " " + settings.Amounts[keyMaxRunCost].String(); got != "5 2.5" || !settings.Enforce ||
+		strings.Join(settings.Models, " ") != "max_run_cost_usd codex" {
+		t.Errorf("read amounts %s, enforce %t, models %v", got, settings.Enforce, settings.Models)
+	}
+	approval, err := ParseApproval(body)
+	if err != nil || !approval.AllowAuthor {
+		t.Errorf("approval read as %+v, %v", approval, err)
+	}
+	if _, err := ParseSettings([]byte("budget_owner: &amount \"0x10\"\npolicy:\n  run_budget_usd: *amount\n")); err == nil {
+		t.Error("an alias to 0x10 read as an amount")
+	}
+}

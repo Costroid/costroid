@@ -39,6 +39,8 @@ A file that is empty, `~`, `null` or only `---` reads as no file. A section writ
 
 `approval.expires_days` is a whole number of days from 1 to 90. An unquoted `7.0` is a YAML float, so it is a problem.
 
+`policy.models` must list distinct model ids, each of at most 128 characters, or prefixes that end in `*`. Each entry is read only as a YAML string: an unquoted `2026-11-14` is a date and `!x codex` carries a tag, so each is a problem. An alias such as `*shared` reads as the value `&shared` marks.
+
 The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
 
 ## Check a file

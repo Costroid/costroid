@@ -90,7 +90,7 @@ func ParseSettings(data []byte) (Settings, error) {
 	}
 	settings := Settings{Amounts: map[string]decimal.Decimal{}}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		key, value := mapping.Content[i].Value, mapping.Content[i+1]
+		key, value := resolved(mapping.Content[i]).Value, resolved(mapping.Content[i+1])
 		switch {
 		case slices.Contains(amountKeys, key):
 			amount, err := readAmount(key, value)
@@ -129,15 +129,21 @@ func section(root *yaml.Node, key string) *yaml.Node {
 	}
 	document := root.Content[0]
 	for i := 0; i+1 < len(document.Content); i += 2 {
-		if document.Content[i].Value != key {
-			continue
+		if resolved(document.Content[i]).Value == key {
+			return resolved(document.Content[i+1])
 		}
-		if value := document.Content[i+1]; value.Kind != yaml.AliasNode {
-			return value
-		}
-		return document.Content[i+1].Alias
 	}
 	return nil
+}
+
+// resolved is the node an alias names, and any other node itself. A key, a
+// value and an entry of a list each read through it, so *name reads as the
+// node &name marks wherever the file puts it, as validate reads it.
+func resolved(node *yaml.Node) *yaml.Node {
+	if node.Kind == yaml.AliasNode {
+		return node.Alias
+	}
+	return node
 }
 
 // The keys under approval, and the bounds of approval.expires_days.
@@ -181,7 +187,7 @@ func ParseApproval(data []byte) (ApprovalSettings, error) {
 		return ApprovalSettings{}, errors.New("policy: approval in costroid.yml is not a mapping")
 	}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		key, value := mapping.Content[i].Value, mapping.Content[i+1]
+		key, value := resolved(mapping.Content[i]).Value, resolved(mapping.Content[i+1])
 		switch key {
 		case keyAllowAuthor:
 			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
@@ -244,6 +250,7 @@ func parseModels(value *yaml.Node) ([]string, error) {
 	}
 	models := make([]string, 0, len(value.Content))
 	for _, entry := range value.Content {
+		entry = resolved(entry)
 		if entry.Kind != yaml.ScalarNode || entry.Tag != "!!str" || len(entry.Value) > maxModelLength ||
 			!modelEntryPattern.MatchString(entry.Value) || slices.Contains(models, entry.Value) {
 			return nil, refused

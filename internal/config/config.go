@@ -4,6 +4,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -61,6 +62,11 @@ func Validate(data []byte) ([]Problem, error) {
 		return nil, err
 	}
 	forms = append(forms, dayForms(&root)...)
+	models, err := modelForms(&root)
+	if err != nil {
+		return nil, err
+	}
+	forms = append(forms, models...)
 	instance, err := jsonValue(document)
 	switch {
 	case err != nil && len(forms) > 0:
@@ -170,7 +176,7 @@ func amountForms(root *yaml.Node) ([]Problem, error) {
 	}
 	var problems []Problem
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		key, value := mapping.Content[i].Value, mapping.Content[i+1]
+		key, value := resolved(mapping.Content[i]).Value, resolved(mapping.Content[i+1])
 		form, ok := amounts[key]
 		if !ok || value.Kind != yaml.ScalarNode || value.Tag == "!!null" {
 			continue
@@ -182,15 +188,16 @@ func amountForms(root *yaml.Node) ([]Problem, error) {
 	return problems, nil
 }
 
-// amountForm is how the schema states an amount's text.
-type amountForm struct {
+// textForm is how the schema states a value's text: an amount, or an entry
+// of policy.models.
+type textForm struct {
 	pattern   *regexp.Regexp
 	maxLength int
 }
 
 // amountKeys are the policy keys the schema states as an amount, a decimal
 // quoted or not, each with the pattern and length its text must meet.
-func amountKeys() (map[string]amountForm, error) {
+func amountKeys() (map[string]textForm, error) {
 	var document struct {
 		Properties struct {
 			Policy struct {
@@ -205,7 +212,7 @@ func amountKeys() (map[string]amountForm, error) {
 	if err := json.Unmarshal(costroid.ConfigSchema, &document); err != nil {
 		return nil, fmt.Errorf("config: read the schema: %w", err)
 	}
-	keys := map[string]amountForm{}
+	keys := map[string]textForm{}
 	for key, property := range document.Properties.Policy.Properties {
 		types, ok := property.Type.([]any)
 		if !ok || !slices.Contains(types, any("number")) || !slices.Contains(types, any("string")) {
@@ -215,28 +222,111 @@ func amountKeys() (map[string]amountForm, error) {
 		if err != nil || property.Pattern == "" || property.MaxLength == 0 {
 			return nil, fmt.Errorf("config: the schema states policy.%s with no usable pattern and length", key)
 		}
-		keys[key] = amountForm{pattern: pattern, maxLength: property.MaxLength}
+		keys[key] = textForm{pattern: pattern, maxLength: property.MaxLength}
 	}
 	return keys, nil
 }
 
+// modelsSentence is the policy's own sentence for a policy.models it cannot
+// read, so validate names it in the same words. The schema's description of
+// the key states it too.
+const modelsSentence = "policy.models must list distinct model ids, each of at most %d characters, or prefixes that end in *"
+
+// modelForms holds policy.models to the policy's reading of its YAML nodes.
+// The schema reads the list a JSON parser would make of it, and YAML makes a
+// string of more than a string: a date such as 2026-11-14, a !!binary value,
+// or a scalar under a tag of the file's own such as !x. The policy reads an
+// entry only when YAML resolves it as a string, so validate refuses a list
+// that holds any other, as it refuses an empty list, a repeated entry and an
+// entry outside the schema's pattern and length. It names each in the
+// policy's sentence, in place of what the schema says.
+func modelForms(root *yaml.Node) ([]Problem, error) {
+	mapping := valueOf(root.Content[0], "policy")
+	if mapping == nil {
+		return nil, nil
+	}
+	value := valueOf(mapping, "models")
+	if value == nil {
+		return nil, nil
+	}
+	form, err := modelEntryForm()
+	if err != nil {
+		return nil, err
+	}
+	refused := []Problem{{Path: "/policy/models", Message: fmt.Sprintf(modelsSentence, form.maxLength)}}
+	if value.Kind != yaml.SequenceNode || len(value.Content) == 0 {
+		return refused, nil
+	}
+	seen := make([]string, 0, len(value.Content))
+	for _, entry := range value.Content {
+		entry = resolved(entry)
+		if entry.Kind != yaml.ScalarNode || entry.Tag != "!!str" || len(entry.Value) > form.maxLength ||
+			!form.pattern.MatchString(entry.Value) || slices.Contains(seen, entry.Value) {
+			return refused, nil
+		}
+		seen = append(seen, entry.Value)
+	}
+	return nil, nil
+}
+
+// modelEntryForm is how the schema states an entry of policy.models.
+func modelEntryForm() (textForm, error) {
+	var document struct {
+		Properties struct {
+			Policy struct {
+				Properties struct {
+					Models struct {
+						Items struct {
+							Pattern   string `json:"pattern"`
+							MaxLength int    `json:"maxLength"`
+						} `json:"items"`
+					} `json:"models"`
+				} `json:"properties"`
+			} `json:"policy"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(costroid.ConfigSchema, &document); err != nil {
+		return textForm{}, fmt.Errorf("config: read the schema: %w", err)
+	}
+	items := document.Properties.Policy.Properties.Models.Items
+	pattern, err := regexp.Compile(items.Pattern)
+	if err != nil || items.Pattern == "" || items.MaxLength == 0 {
+		return textForm{}, errors.New("config: the schema states policy.models with no usable pattern and length")
+	}
+	return textForm{pattern: pattern, maxLength: items.MaxLength}, nil
+}
+
+// valueOf is the value of a mapping's key, nil when the node is not a mapping
+// or lacks the key. An alias reads as the node it names, as the policy and
+// the approval rule read it.
 func valueOf(mapping *yaml.Node, key string) *yaml.Node {
 	if mapping.Kind != yaml.MappingNode {
 		return nil
 	}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			return mapping.Content[i+1]
+		if resolved(mapping.Content[i]).Value == key {
+			return resolved(mapping.Content[i+1])
 		}
 	}
 	return nil
 }
 
+// resolved is the node an alias names, and any other node itself.
+func resolved(node *yaml.Node) *yaml.Node {
+	if node.Kind == yaml.AliasNode {
+		return node.Alias
+	}
+	return node
+}
+
 // withForms replaces what the schema says about a value written in a form
-// its rule cannot read with that rule's sentence.
+// its rule cannot read, and about any part of that value, with that rule's
+// sentence.
 func withForms(problems, forms []Problem) []Problem {
 	for _, form := range forms {
-		problems = slices.DeleteFunc(problems, func(problem Problem) bool { return problem.Path == form.Path })
+		problems = slices.DeleteFunc(problems, func(problem Problem) bool {
+			return problem.Path == form.Path || strings.HasPrefix(problem.Path, form.Path+"/")
+		})
 	}
 	problems = append(problems, forms...)
 	slices.SortFunc(problems, func(a, b Problem) int { return strings.Compare(a.String(), b.String()) })
