@@ -3,8 +3,8 @@ description: Run a coding agent under a budget, record what it cost and report i
 author: Costroid
 
 branding:
-  icon: dollar-sign
-  color: green
+  icon: circle
+  color: orange
 
 inputs:
   stage:
