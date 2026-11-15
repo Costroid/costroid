@@ -3,6 +3,7 @@ package policy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +35,8 @@ func seedRows(f *testing.F) {
 		}
 	}
 	f.Add([]byte(`{"BillingCurrency":"USD","ListCost":"-1"}` + "\n"))
+	f.Add([]byte(`{"BillingCurrency":"USD","ListCost":"0.04","Tags":{"costroid/cost_source":"infrastructure"}}` + "\n"))
+	f.Add([]byte(`{"BillingCurrency":"USD","ListCost":"1","Tags":{"costroid/agent":"claude-code","costroid/cost_source":"agent_session_file"}}` + "\n" + `{"BillingCurrency":"USD","ListCost":"0.04","Tags":{"costroid/cost_source":"infrastructure"}}`))
 	f.Add([]byte(`{"BillingCurrency":"USD","ListCost":"1","Tags":{"costroid/model":7}}` + "\n\n" + `{"BillingCurrency":"EUR","ListCost":"0.000000000001"}`))
 }
 
@@ -59,6 +62,17 @@ var fuzzBudgetRules = []string{
 
 var rowsLinePattern = regexp.MustCompile(`^policy: rows line ([0-9]+)`)
 
+// agentLine reports whether a line of a file that was read holds an agent's
+// row. A row that states a cost source and names no agent is an estimate the
+// workflow added, and the reader leaves it out.
+func agentLine(line []byte) bool {
+	var row usageRow
+	if err := json.Unmarshal(line, &row); err != nil {
+		return false
+	}
+	return row.tag(focus.TagAgent) != "" || row.tag(focus.TagCostSource) == ""
+}
+
 // assertUsage holds what ReadUsage returned to the rows it read: the counts
 // add up and none is negative, each currency's sum is the exact sum of its
 // rows, the currencies are distinct and sorted, and every row is
@@ -67,12 +81,12 @@ func assertUsage(t *testing.T, data []byte, usage Usage) {
 	t.Helper()
 	rows := 0
 	for _, line := range bytes.Split(data, []byte("\n")) {
-		if len(bytes.TrimSuffix(line, []byte("\r"))) > 0 {
+		if len(bytes.TrimSuffix(line, []byte("\r"))) > 0 && agentLine(line) {
 			rows++
 		}
 	}
 	if usage.Rows != rows {
-		t.Fatalf("%d rows read from %d lines that hold one", usage.Rows, rows)
+		t.Fatalf("%d rows read from %d lines that hold an agent's row", usage.Rows, rows)
 	}
 	counted := 0
 	for index, entry := range usage.Currencies {

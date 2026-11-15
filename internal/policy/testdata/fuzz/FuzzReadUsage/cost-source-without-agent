@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"BillingCurrenCY\":\"AAA\",\"ListCost\":\"0\",\"TAgs\":{\"costroid/cost_source\":\"0\"}}")
