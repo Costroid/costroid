@@ -144,19 +144,18 @@ const minterUser = "costroid-minter"
 
 func composeGateway(t *testing.T, mock *mockUpstream) *gatewayStack {
 	t.Helper()
-	port := freePort(t)
 	s := &gatewayStack{
 		t:       t,
 		project: fmt.Sprintf("costroid-gateway-e2e-%d", os.Getpid()),
-		url:     "http://127.0.0.1:" + strconv.Itoa(port),
 		admin:   "sk-e2e-admin-" + strconv.Itoa(os.Getpid()),
 		minter:  "sk-e2e-minter-" + strconv.Itoa(os.Getpid()),
 	}
-	s.env = append(os.Environ(), "LITELLM_MASTER_KEY="+s.admin, "MOCK_UPSTREAM="+mock.url, "LITELLM_PORT="+strconv.Itoa(port))
+	s.env = append(os.Environ(), "LITELLM_MASTER_KEY="+s.admin, "MOCK_UPSTREAM="+mock.url, "LITELLM_PORT=0")
 	t.Cleanup(s.down)
 	if out, err := s.docker("up", "--detach", "--wait"); err != nil {
 		t.Fatalf("compose up: %v\n%s", err, out)
 	}
+	s.url = publishedURL(t, s.env, s.project, "gateway-compose.yaml", "litellm", "4000")
 	s.awaitStore("connected")
 	s.adminCall(http.MethodPost, "/user/new", map[string]any{"user_id": minterUser, "user_role": "proxy_admin"}, http.StatusOK)
 	s.adminCall(http.MethodPost, "/key/generate", map[string]any{"key": s.minter, "user_id": minterUser, "allowed_routes": minterRoutes}, http.StatusOK)

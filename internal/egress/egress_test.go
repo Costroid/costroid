@@ -223,19 +223,15 @@ func TestACallToAListedHostGoesThrough(t *testing.T) {
 	}
 }
 
+// TestACallThatGetsNoAnswerCountsAsFailed calls a listener the test holds,
+// which closes each connection unanswered. A port the test had let go of could
+// be taken by a server in another test before the call, and answer it.
 func TestACallThatGetsNoAnswerCountsAsFailed(t *testing.T) {
-	listener, err := net.Listen("tcp", loopback+":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	silent := listenAndLog(t)
 	record := &tally{}
-	_, err = get(t, New([]string{loopback}, record).Client(testTimeout), "http://"+address+"/")
+	_, err := get(t, New([]string{loopback}, record).Client(testTimeout), "http://"+silent.listener.Addr().String()+"/")
 	if err == nil {
-		t.Fatal("a closed port answered")
+		t.Fatal("a connection closed unanswered gave an answer")
 	}
 	var refused *RefusedError
 	if errors.As(err, &refused) {

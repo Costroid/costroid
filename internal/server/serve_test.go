@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,67 +55,72 @@ func TestServeRefusesABindThatIsNotHostAndOwner(t *testing.T) {
 	}
 }
 
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = listener.Close() }()
-	return listener.Addr().String()
-}
+// anyPort has serve bind a port the kernel picks. serve holds it from the bind
+// until it exits and names it in its "listening" line, so no other process can
+// take it between a test's choice and serve's bind.
+const anyPort = "127.0.0.1:0"
 
-// serveOnce starts serve on addr, waits until it is healthy, stops it, and
-// returns its log. It returns false, having started nothing, when another
-// process on the machine took addr after freeAddress let it go: serve then
-// exits on the bind, and anything that answered on addr was not serve. Every
-// other failure is fatal.
-func serveOnce(t *testing.T, addr string) (string, bool) {
+// serveStartWait bounds how long serve may take to migrate and listen.
+const serveStartWait = 20 * time.Second
+
+// startServe runs serve on addr with args and waits until serve names the
+// address it holds and a health probe there answers 204. It returns that
+// address, the log, and stop, which ends serve and fails the test unless serve
+// exits 0. Cleanup calls stop when the test has not. Only the address serve
+// names is probed, never one it was handed and may not hold.
+func startServe(t *testing.T, addr string, args ...string) (string, *lockedBuffer, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	exit := make(chan int, 1)
-	var stderr bytes.Buffer
-	go func() { exit <- Main(ctx, []string{"--addr", addr, "--bind", "github.com:acme"}, &stderr) }()
-	taken := func(code int) bool {
-		return code != 0 && strings.Contains(stderr.String(), "address already in use")
+	log := &lockedBuffer{}
+	done := make(chan struct{})
+	var code int
+	go func() {
+		defer close(done)
+		code = Main(ctx, append([]string{"--addr", addr}, args...), log)
+	}()
+	stop := sync.OnceFunc(func() {
+		cancel()
+		<-done
+		if code != 0 {
+			t.Errorf("serve exited %d: %s", code, log.String())
+		}
+	})
+	t.Cleanup(stop)
+	held := listeningAddress(t, log, done)
+	response, err := http.Get("http://" + held + "/healthz")
+	if err != nil {
+		t.Fatalf("serve listens on %s and does not answer: %v", held, err)
 	}
-	deadline := time.Now().Add(20 * time.Second)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("serve's health on %s answered %d:\n%s", held, response.StatusCode, log.String())
+	}
+	return held, log, stop
+}
+
+// listeningAddress waits for serve's "listening" line and returns the address
+// it names: the one serve bound, and holds until it exits.
+func listeningAddress(t *testing.T, log *lockedBuffer, done <-chan struct{}) string {
+	t.Helper()
+	deadline := time.After(serveStartWait)
 	for {
-		response, err := http.Get("http://" + addr + "/healthz")
-		if err == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == http.StatusNoContent {
-				break
+		for _, line := range strings.SplitAfter(log.String(), "\n") {
+			var entry struct {
+				Msg  string `json:"msg"`
+				Addr string `json:"addr"`
 			}
-			select {
-			case code := <-exit:
-				if taken(code) {
-					return "", false
-				}
-				t.Fatalf("health status %d, and serve exited %d: %s", response.StatusCode, code, stderr.String())
-			case <-time.After(5 * time.Second):
-				t.Fatalf("health status %d", response.StatusCode)
+			if strings.HasSuffix(line, "\n") && json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "listening" {
+				return entry.Addr
 			}
 		}
 		select {
-		case code := <-exit:
-			if taken(code) {
-				return "", false
-			}
-			t.Fatalf("exited %d: %s", code, stderr.String())
-		default:
+		case <-done:
+			t.Fatalf("serve exited before it listened: %s", log.String())
+		case <-deadline:
+			t.Fatalf("serve did not listen within %s: %s", serveStartWait, log.String())
+		case <-time.After(10 * time.Millisecond):
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("not healthy: %v", err)
-		}
-		time.Sleep(50 * time.Millisecond)
 	}
-	cancel()
-	if code := <-exit; code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-	return stderr.String(), true
 }
 
 func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
@@ -123,23 +130,14 @@ func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
 	t.Setenv(envAudience, audience)
 	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
 	t.Setenv(envWebhook, "")
-	// Serve twice on one address: the second start finds the schema migrated
-	// and the bind in place. Another process can take the address between
-	// freeAddress and either start, so a taken address is tried again anew.
-	served := false
-	var log string
-	for attempt := 0; attempt < 3 && !served; attempt++ {
-		addr := freeAddress(t)
-		if _, first := serveOnce(t, addr); !first {
-			continue
-		}
-		log, served = serveOnce(t, addr)
-	}
-	if !served {
-		t.Fatal("another process took the address three times")
-	}
-	if count := strings.Count(log, `"msg":"webhook route not served"`); count != 1 {
-		t.Errorf("serve said %d times that the webhook route is not served:\n%s", count, log)
+	// Serve twice on one database: the second start finds the schema migrated
+	// and the bind in place.
+	_, _, stop := startServe(t, anyPort, "--bind", "github.com:acme")
+	stop()
+	_, log, stop := startServe(t, anyPort, "--bind", "github.com:acme")
+	stop()
+	if count := strings.Count(log.String(), `"msg":"webhook route not served"`); count != 1 {
+		t.Errorf("serve said %d times that the webhook route is not served:\n%s", count, log.String())
 	}
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, db.SuperURL)
@@ -157,18 +155,28 @@ func TestPostgresServeMigratesBindsAndRestartsCleanly(t *testing.T) {
 	}
 }
 
-// TestServeOnceGivesUpATakenAddress holds an address with a server that is not
-// serve and answers 200, as another process on the machine can: serveOnce
-// reports the address taken instead of failing on the foreign answer.
-func TestServeOnceGivesUpATakenAddress(t *testing.T) {
+// TestServeNeverProbesAnAddressItDoesNotHold takes the address a test hands
+// serve, between that choice and serve's bind, with a server that fails on any
+// request, as a stub in a test of another package can. serve still binds a port
+// of its own and is probed there, and the server that took the address is
+// asked nothing.
+func TestServeNeverProbesAnAddressItDoesNotHold(t *testing.T) {
 	db := storetest.Empty(t)
 	t.Setenv(envDatabase, db.AppURL)
 	t.Setenv(envMigration, db.OwnerURL)
 	t.Setenv(envAudience, audience)
 	t.Setenv(envPseudonym, base64.StdEncoding.EncodeToString(make([]byte, minPseudonymKeyBytes)))
-	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
-	defer foreign.Close()
-	if _, served := serveOnce(t, foreign.Listener.Addr().String()); served {
-		t.Fatal("serveOnce took an address another server holds")
+	addr := anyPort
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
 	}
+	taker := &httptest.Server{Listener: listener, Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the server that took the address was asked %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusTeapot)
+	})}}
+	taker.Start()
+	_, _, stop := startServe(t, addr)
+	stop()
+	taker.Close()
 }

@@ -14,12 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,16 +66,14 @@ type stack struct {
 
 func compose(t *testing.T) *stack {
 	t.Helper()
-	port := freePort(t)
 	s := &stack{
 		t:       t,
 		project: fmt.Sprintf("costroid-e2e-%d", os.Getpid()),
-		url:     "http://127.0.0.1:" + strconv.Itoa(port),
 		env: append(os.Environ(),
 			"POSTGRES_PASSWORD=e2e-superuser", "COSTROID_OWNER_PASSWORD=e2e-owner", "COSTROID_APP_PASSWORD=e2e-app",
 			"COSTROID_PSEUDONYM_KEY=ZTJlLXBzZXVkb255bS1rZXktb2YtdGhpcnR5LXR3by1ieXRlcw==",
 			"COSTROID_OIDC_AUDIENCE=https://costroid.example", "COSTROID_BIND="+owner,
-			"COSTROID_IMAGE=costroid-e2e:local", "COSTROID_VERSION=e2e", "COSTROID_PORT="+strconv.Itoa(port),
+			"COSTROID_IMAGE=costroid-e2e:local", "COSTROID_VERSION=e2e", "COSTROID_PORT=0",
 			"COSTROID_EGRESS_ALLOW=",
 		),
 	}
@@ -85,18 +81,27 @@ func compose(t *testing.T) *stack {
 	if out, err := s.docker(nil, "up", "--detach", "--build", "--wait"); err != nil {
 		t.Fatalf("compose up: %v\n%s", err, out)
 	}
+	s.url = publishedURL(t, s.env, s.project, "../deploy/compose.yaml", "costroid", "8080")
 	s.awaitService()
 	return s
 }
 
-func freePort(t *testing.T) int {
+// publishedURL asks Compose where Docker published a service's port. A stack
+// asks for host port 0, so Docker binds a free port itself and holds it while
+// the stack runs: no other process can take it between the choice and the bind.
+func publishedURL(t *testing.T, env []string, project, file, service, port string) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	command := exec.Command("docker", "compose", "--project-name", project, "--file", file, "port", service, port)
+	command.Env = env
+	out, err := command.Output()
 	if err != nil {
-		t.Fatal(err)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			t.Fatalf("compose port %s %s: %v\n%s", service, port, err, exit.Stderr)
+		}
+		t.Fatalf("compose port %s %s: %v", service, port, err)
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
+	return "http://" + strings.TrimSpace(string(out))
 }
 
 func (s *stack) docker(stdout io.Writer, args ...string) ([]byte, error) {

@@ -698,61 +698,6 @@ func TestTheAccountsInTheContractAreTheOnesTheButtonSees(t *testing.T) {
 	}
 }
 
-// startServe runs serve on a free address until the test ends, and returns
-// the address and its log. Another process can take the address before serve
-// binds it, so a taken address is tried again anew.
-func startServe(t *testing.T) (string, *lockedBuffer) {
-	t.Helper()
-	for range 3 {
-		addr := freeAddress(t)
-		if log, started := serveUntilCleanup(t, addr); started {
-			return addr, log
-		}
-	}
-	t.Fatal("another process took the address three times")
-	return "", nil
-}
-
-// serveUntilCleanup starts serve on addr and waits until it is healthy. It
-// reports false when serve exits on a taken address.
-func serveUntilCleanup(t *testing.T, addr string) (*lockedBuffer, bool) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	log := &lockedBuffer{}
-	exit := make(chan int, 1)
-	go func() { exit <- Main(ctx, []string{"--addr", addr}, log) }()
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		response, err := http.Get("http://" + addr + "/healthz")
-		if err == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == http.StatusNoContent {
-				t.Cleanup(func() {
-					cancel()
-					if code := <-exit; code != 0 {
-						t.Errorf("serve exited %d: %s", code, log.String())
-					}
-				})
-				return log, true
-			}
-		}
-		select {
-		case code := <-exit:
-			cancel()
-			if strings.Contains(log.String(), "address already in use") {
-				return nil, false
-			}
-			t.Fatalf("serve exited %d: %s", code, log.String())
-		default:
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatalf("serve is not healthy: %v\n%s", err, log.String())
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
 // TestWebhookRefusesReplayAfterRestart runs two instances of serve on one
 // database: the second refuses a delivery the first took, as a restarted
 // instance would.
@@ -779,8 +724,8 @@ func TestWebhookRefusesReplayAfterRestart(t *testing.T) {
 		_ = response.Body.Close()
 		return response.StatusCode
 	}
-	first, _ := startServe(t)
-	second, log := startServe(t)
+	first, _, _ := startServe(t, anyPort)
+	second, log, _ := startServe(t, anyPort)
 	if status := deliver(first, "taken-by-the-first"); status != http.StatusAccepted {
 		t.Fatalf("the first instance answered %d", status)
 	}

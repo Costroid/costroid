@@ -163,7 +163,7 @@ func TestServePostsAsTheAppWhenBothVariablesAreSet(t *testing.T) {
 	for _, name := range []string{envAppID, envAppKey, "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "AWS_ENDPOINT_URL_KMS"} {
 		t.Setenv(name, front.appEnvironment(name))
 	}
-	_, log := startServe(t)
+	_, log, _ := startServe(t, anyPort)
 	if !strings.Contains(log.String(), `"approve_button":"posts as the GitHub App, signed by its KMS key"`) {
 		t.Errorf("serve does not say the button posts:\n%s", log.String())
 	}
