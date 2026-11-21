@@ -112,7 +112,7 @@ Costroid prices an agent's run from the agent's own token counts. This page comp
 
 Each day a scheduled job in a private repository runs one small Claude Code task under ` + "`costroid run`" + `, with a budget of 0.10 USD. Two days later a second job saves the provider's usage and cost reports for that day, cut to that key's own records, beside every row the key's runs wrote that day. The rows, the reports and the time they were saved are that day's inputs. Each week they are committed to the private repository.
 
-Other workflows in that repository spend on the same key. Each one that runs under Costroid keeps its rows, and the second job gathers them. A run that spends on the key outside Costroid, such as a raw recording of an agent, writes no row. The day names each such run, the cause ` + "`shared_key`" + ` lists its run id, and the day fails: the provider's figures hold requests no row covers.
+Through 2026-11-15 other workflows in that repository spent on the same key, and since 2026-11-16 the task spends on a key of its own. On a shared key, each workflow that runs under Costroid keeps its rows, and the second job gathers them. A run that spends on the key outside Costroid, such as a raw recording of an agent, writes no row. The day names each such run, the cause ` + "`shared_key`" + ` lists its run id, and the day fails: the provider's figures hold requests no row covers.
 
 Measured cost is what the day's rows on the key cost at list price, from Costroid's own rows. It reads on a day with no provider report as well, so the test's spend is always on the page.
 

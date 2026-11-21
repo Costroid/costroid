@@ -48,6 +48,13 @@ var (
 	releaseTargets   = regexp.MustCompile(`for target in ([a-z0-9/ ]+); do`)
 )
 
+// dayRow is a line of the accuracy page's table of days. It names the release
+// the day's agent ran under, a record of that day and never the one to use.
+var dayRow = regexp.MustCompile(`^\| [0-9]{4}-[0-9]{2}-[0-9]{2} \|`)
+
+// accuracyPage is the one page whose day rows are read as records.
+const accuracyPage = "docs/accuracy.md"
+
 // pendingPages are pages whose release lines other changes own. Each must
 // still name another release, so the list only shrinks.
 var pendingPages = map[string]string{}
@@ -121,7 +128,11 @@ func TestDocsNameOnlyTheRecipesRelease(t *testing.T) {
 		}
 		name = filepath.ToSlash(name)
 		var stale []string
-		for _, named := range releasesNamed(read(t, page)) {
+		lines := strings.Split(read(t, page), "\n")
+		for _, named := range releasesNamed(strings.Join(lines, "\n")) {
+			if name == accuracyPage && dayRow.MatchString(lines[named.line-1]) {
+				continue
+			}
 			if named.release != pin {
 				stale = append(stale, name+":"+strconv.Itoa(named.line)+" names "+named.release)
 			} else if page == readmePath {
