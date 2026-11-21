@@ -461,15 +461,23 @@ var labels = map[focus.CostBasis]string{
 	focus.ListEquivalent: "List-equivalent, not billed",
 }
 
+// runCurrency is the currency of a run's cap and of the cost it is held to.
+const runCurrency = "USD"
+
+// summarize prints what a run recorded: its rows, its cost, the cap
+// --budget-usd set and how far the cap held. An amount is drawn as the comment
+// draws it. The note stands without its grade's id, which the rows and the
+// result object keep.
 func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Result) {
 	report := result.Report
 	summarizeRows(w, flags.out, catalogVersion, result)
-	fmt.Fprintf(w, "costroid: budget USD %s, %s\n", flags.budget, result.Enforcement.Note)
+	held := strings.TrimPrefix(result.Enforcement.Note, result.Enforcement.Grade+": ")
+	fmt.Fprintf(w, "costroid: cap %s (%s)\n", comment.Money(runCurrency, flags.budget.String()), held)
 	if result.Stopped {
 		fmt.Fprintln(w, "costroid: stopped the agent at the cap")
 	}
 	if over := result.ListTotal.Sub(flags.budget); over.Sign() > 0 {
-		fmt.Fprintf(w, "costroid: over budget by USD %s\n", over)
+		fmt.Fprintf(w, "costroid: over the cap by %s\n", comment.Money(runCurrency, over.String()))
 	}
 	warnAccount(w, flags.account)
 	for _, warning := range report.Warnings {
@@ -489,7 +497,7 @@ func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
 	// A run with no rows measured nothing, so it states no cost.
 	if result.Rows > 0 {
-		fmt.Fprintf(w, "costroid: USD %s at list, %s\n", result.ListTotal, labels[report.CostBasis])
+		fmt.Fprintf(w, "costroid: %s at list, %s\n", comment.Money(runCurrency, result.ListTotal.String()), labels[report.CostBasis])
 	}
 }
 

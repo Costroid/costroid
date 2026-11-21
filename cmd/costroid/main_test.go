@@ -145,8 +145,56 @@ func TestSummarySaysWhenAnAgentFlagRunPassedTheBudget(t *testing.T) {
 	claude := replayClaude(t)
 	out := filepath.Join(t.TempDir(), "rows.jsonl")
 	_, _, stderr := execute(t, "run", "--budget-usd", "0.0001", "--out", out, "--", claude, "-p", "work")
-	if !strings.Contains(stderr, "over budget by USD 0.001519725") {
+	if !strings.Contains(stderr, "costroid: over the cap by USD 0.001519725\n") {
 		t.Errorf("stderr: %s", stderr)
+	}
+}
+
+// TestRunSummaryNamesTheCapAndShowsTwoDecimals runs the recorded run under a
+// cap it stays within and under one it passes. The summary calls what
+// --budget-usd sets the cap and never a budget, says how far the cap held
+// without the grade's id, and shows each amount with at least two decimal
+// places and every digit of the exact string. The exit code is the agent's
+// own either way, and the rows keep the grade's id and its note as they were.
+func TestRunSummaryNamesTheCapAndShowsTwoDecimals(t *testing.T) {
+	for name, tc := range map[string]struct {
+		budget string
+		lines  []string
+	}{
+		"a whole cap, within it":     {"5", []string{"costroid: cap USD 5.00 (client-side estimate, can pass the cap)\n"}},
+		"a cap of one decimal place": {"0.5", []string{"costroid: cap USD 0.50 (client-side estimate, can pass the cap)\n"}},
+		"a cap the run passed":       {"0.0001", []string{"costroid: cap USD 0.0001 (client-side estimate, can pass the cap)\n", "costroid: over the cap by USD 0.001519725\n"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claude := replayClaude(t)
+			out := filepath.Join(t.TempDir(), "rows.jsonl")
+			code, _, stderr := execute(t, "run", "--budget-usd", tc.budget, "--out", out, "--", claude, "-p", "work")
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			for _, line := range append(tc.lines, "costroid: USD "+realTotal+" at list") {
+				if !strings.Contains(stderr, line) {
+					t.Errorf("the summary has no line %q:\n%s", line, stderr)
+				}
+			}
+			for _, old := range []string{"budget", "agent-flag"} {
+				if strings.Contains(stderr, old) {
+					t.Errorf("the summary says %q:\n%s", old, stderr)
+				}
+			}
+			for _, amount := range regexp.MustCompile(`USD [0-9]+(\.[0-9]+)?`).FindAllStringSubmatch(stderr, -1) {
+				if len(amount[1]) < 3 {
+					t.Errorf("the summary shows %q with fewer than two decimal places:\n%s", amount[0], stderr)
+				}
+			}
+			rows, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(rows, []byte("agent-flag: client-side estimate, can pass the cap")) {
+				t.Errorf("the rows lost the grade's id or its note:\n%s", rows)
+			}
+		})
 	}
 }
 
