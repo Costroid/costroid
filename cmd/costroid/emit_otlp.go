@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/Costroid/costroid/internal/cli"
@@ -20,6 +19,7 @@ traces over OTLP/HTTP, one span per model request.`,
 	Examples: []string{"costroid emit-otlp --rows rows.jsonl"},
 	Flags:    []cli.Row{{"--rows FILE", "the rows file costroid run wrote"}},
 	Sections: []cli.Section{
+		{Heading: "The rows", Body: []cli.Block{cli.Text("With --rows -, emit-otlp reads the rows from standard input.")}},
 		{Heading: "What a span carries", Body: []cli.Block{cli.Text(`A span carries the
 OpenTelemetry GenAI token counts as integers, and the repository, pull
 request, commit and run its rows name as vcs.* and cicd.* attributes. Its
@@ -52,10 +52,11 @@ reach the endpoint`},
 }.String()
 
 func emitOTLPCommand(ctx context.Context, args []string, std stdio) int {
-	return emitOTLP(ctx, args, os.Getenv, std.stdout, std.stderr)
+	return emitOTLP(ctx, args, os.Getenv, std)
 }
 
-func emitOTLP(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+func emitOTLP(ctx context.Context, args []string, getenv func(string) string, std stdio) int {
+	stdout, stderr := std.stdout, std.stderr
 	set := flag.NewFlagSet("emit-otlp", flag.ContinueOnError)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	if err := parseFlags(set, args, emitOTLPHelp, stdout); errors.Is(err, flag.ErrHelp) {
@@ -76,7 +77,7 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 	for _, warning := range warnings {
 		fmt.Fprintf(stderr, "costroid: warning: %s\n", warning)
 	}
-	data, err := os.ReadFile(*rows)
+	data, err := readNamed(*rows, std.stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure

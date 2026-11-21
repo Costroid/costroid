@@ -613,7 +613,9 @@ the schema allows.`,
 		{Heading: "What it checks and prints", Body: []cli.Block{cli.Text(`A policy amount or approval.expires_days that YAML reads as
 a float, such as 5.0, is a problem too, because the check refuses it. validate
 prints one line per problem, or valid. With no file named and no costroid.yml
-here, it says the defaults apply.`)}},
+here, it says the defaults apply.
+
+With - in place of a file, validate reads standard input.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "the file is valid, or there is none and the defaults apply"},
