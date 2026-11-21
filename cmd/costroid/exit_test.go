@@ -779,7 +779,7 @@ func TestEveryHelpPageListsTheCodesItsCommandReturns(t *testing.T) {
 			if slices.Contains(named, strconv.Itoa(cli.ExitUsage)) {
 				t.Errorf("run names exit %d, which is the agent's to return", cli.ExitUsage)
 			}
-			named = slices.DeleteFunc(named, func(code string) bool { return code == "0" })
+			named = slices.DeleteFunc(named, func(code string) bool { return code == strconv.Itoa(cli.ExitDone) })
 			listed = slices.DeleteFunc(listed, func(code string) bool { return code == "the agent's own" })
 			if len(listed) == len(pageCodes(entry.help, entry.name)) {
 				t.Error("help run does not say the agent's own code is run's")
