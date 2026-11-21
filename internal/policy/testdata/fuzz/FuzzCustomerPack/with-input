@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("package costroid.pack\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"fail\", \"reason\": \"replaced_input\"} if {\n\tinput.rows > 0 with input as {\"rows\": 1}\n}\n")

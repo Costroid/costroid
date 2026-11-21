@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("package costroid.pack\n\nresults contains {\"rule\": \"usd_only\", \"outcome\": \"warn\", \"reason\": \"other_currency\"} if {\n\tnot every usage in input.usage {\n\t\tusage.currency == \"USD\"\n\t}\n}\n")

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("package costroid.pack\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"model\", \"message\": model} if {\n\tsome usage in input.usage\n\tsome model, _ in usage.models\n}\n")
