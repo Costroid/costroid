@@ -85,6 +85,9 @@ func TestWithoutTakesAPackagesNameOffTheFrontAndKeepsTheError(t *testing.T) {
 	if mistake := Mistaken("tally", errors.New("tally: no rows")); Fail(&bytes.Buffer{}, Without("tally", mistake)) != ExitUsage {
 		t.Error("a mistake without its package's name is no mistake")
 	}
+	if got, want := Plain(Without("scm", errors.New("read pull request 7: scm: GET /pulls/7 answered 404"))), "read pull request 7: GET /pulls/7 answered 404"; got != want {
+		t.Errorf("a name after a colon reads %q, want %q", got, want)
+	}
 	if other := errors.New("the policy: none"); Without("policy", other) != other {
 		t.Error("an error that opens otherwise changed")
 	}

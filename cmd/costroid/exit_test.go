@@ -381,7 +381,11 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 	t.Chdir(directory)
 	writeFile(t, filepath.Join(directory, "rows.jsonl"), "")
 	writeFile(t, filepath.Join(directory, "no-currency.jsonl"), "{}\n")
-	t.Setenv("GITHUB_TOKEN", "")
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+	}))
+	defer refusing.Close()
+	t.Setenv("GITHUB_API_URL", refusing.URL)
 	walked := map[string]bool{}
 	for _, check := range []struct {
 		args  []string
@@ -389,6 +393,8 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		// then holds the lines under the first, where costroid says why
 		// and what to do next in words of its own.
 		then []string
+		// token is the GitHub token the command reads.
+		token string
 	}{
 		{args: []string{"demo", "--state", "passed"}, names: `"passed"`},
 		{args: []string{"demo", "rows.jsonl"}, names: "demo takes no argument"},
@@ -419,8 +425,10 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		{args: []string{"approve"}, names: "approve refused: GitHub Actions was not detected", then: []string{"approve runs in a GitHub Actions job on the pull_request_review event, as recipes/github-approval.yml does."}},
 		{args: []string{"result"}, names: "result needs --pr"},
 		{args: []string{"result", "--pr", "7", "--repo", "example/widgets"}, names: "GITHUB_TOKEN is not set"},
+		{args: []string{"result", "--pr", "7", "--repo", "example/widgets"}, token: "ghs_example", names: "read pull request 7: GET /repos/example/widgets/pulls/7 answered 500", then: []string{"See " + cli.Troubleshooting + "."}},
 	} {
 		walked[check.args[0]] = true
+		t.Setenv("GITHUB_TOKEN", check.token)
 		code, stdout, stderr := execute(t, check.args...)
 		lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
 		first, found := strings.CutPrefix(lines[0], "costroid: ")

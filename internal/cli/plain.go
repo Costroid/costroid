@@ -41,7 +41,7 @@ func File(err error) error {
 	return err
 }
 
-// unnamed is an error without the package's name its text opened with.
+// unnamed is an error without a package's name in its text.
 type unnamed struct {
 	error
 	text string
@@ -51,12 +51,17 @@ func (u unnamed) Error() string { return u.text }
 
 func (u unnamed) Unwrap() error { return u.error }
 
-// Without is err without the name of the package that made it, where its
-// text opens with that name: "policy: rows line 1" under costroid policy
-// names the command twice, and the second time stands before what is wrong.
+// Without is err without the name of the package that made it, where that
+// name opens its text or one of the parts a colon divides it into. A package
+// opens its errors with its own name, as in "policy: rows line 1", and the
+// name is the program's, not a thing the reader named.
 func Without(name string, err error) error {
-	if text, named := strings.CutPrefix(err.Error(), name+": "); named {
-		return unnamed{error: err, text: text}
+	text := err.Error()
+	if rest, opens := strings.CutPrefix(text, name+": "); opens {
+		return unnamed{error: err, text: rest}
+	}
+	if before, after, found := strings.Cut(text, ": "+name+": "); found {
+		return unnamed{error: err, text: before + ": " + after}
 	}
 	return err
 }

@@ -167,7 +167,7 @@ func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return exitRejected
 	}
 	if err != nil {
-		return cli.Fail(stderr, err)
+		return cli.Fail(stderr, cli.Without("scm", err))
 	}
 	if *asJSON {
 		fmt.Fprintln(stdout, posted.Object)
