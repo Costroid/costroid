@@ -361,13 +361,14 @@ and carries no tokens or dollars.
 
 --export sends the rows this run wrote to --out to the Costroid Platform
 COSTROID_PLATFORM_URL names, under the integration token in
-COSTROID_PLATFORM_TOKEN, by integration/v0.5. A platform that states an
-earlier version gets nothing. The rows go in bodies cut at the limits
-GET /quotas states, a span's rows in one body. On GitHub Actions with
-id-token: write the job's run token goes with them, beside the installation
---installation-id names. A server error sends the same body again every 2 s
-for up to 60 s. On 402, 409 INSTALLATION_NOT_BOUND or 429 reconcile warns and
-keeps the rows. The admin key never goes to the platform.
+COSTROID_PLATFORM_TOKEN, by integration/v0.6, or by v0.5 to a platform that
+states no later version, and names the version on standard error. A platform
+that states only an earlier version gets nothing. The rows go in bodies cut at
+the limits GET /quotas states, a span's rows in one body. On GitHub Actions
+with id-token: write the job's run token goes with them, beside the
+installation --installation-id names. A server error sends the same body again
+every 2 s for up to 60 s. On 402, 409 INSTALLATION_NOT_BOUND or 429 reconcile
+warns and keeps the rows. The admin key never goes to the platform.
 
 Exit codes of reconcile:
   0                 no token miss and no price miss

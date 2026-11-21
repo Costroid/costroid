@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -32,22 +33,59 @@ const (
 	mergesPath  = "/api/integration/v0.5/merges/"
 )
 
-// mergeContractPath is integration/v0.5's openapi.json of
-// Costroid/costroid-schemas at 4cf76ee, copied.
-var mergeContractPath = filepath.Join("testdata", "integration-v0.5.openapi.json")
+// contractCopy is a version's openapi.json of Costroid/costroid-schemas,
+// copied: integration/v0.5 at 4cf76ee, and integration/v0.6 at 338c5ec.
+func contractCopy(version contract) string {
+	return filepath.Join("testdata", "integration-v"+version.Version+".openapi.json")
+}
+
+var mergeContractPath = contractCopy(contractV05)
+
+// contractSchema compiles one schema of a version's copy of the contract.
+func contractSchema(t *testing.T, version contract, name string) *jsonschema.Schema {
+	t.Helper()
+	document, err := jsonschema.UnmarshalJSON(strings.NewReader(readFile(t, contractCopy(version))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("openapi.json", document); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile("openapi.json#/components/schemas/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
+}
+
+// mergedVersionLine is the line merged prints on standard error for the
+// version it sends by.
+func mergedVersionLine(version contract) string {
+	return "costroid: Costroid Platform states integration/v" + version.Version + ", so merged sends the merge facts by it\n"
+}
 
 var (
 	groupMerged = time.Date(2026, 11, 21, 10, 7, 50, 0, time.UTC)
 	tipMerged   = time.Date(2026, 11, 21, 10, 7, 52, 0, time.UTC)
 )
 
-// mergeStub answers as Costroid Platform, by integration/v0.5 where states
-// says so, and as GitHub's OIDC token endpoint. A PUT it holds no answer for
-// is graded as the contract grades it: token_verified when the run token is
-// the test's and the fact's commit is the token's, which is the tip.
+// mergeStub answers as Costroid Platform, by integration/v0.5 or v0.6 where
+// states says so, and as GitHub's OIDC token endpoint. A PUT it holds no
+// answer for is graded as the version of its path grades it: token_verified
+// when the run token is the test's and the fact's commit is the token's,
+// which is the tip, and by v0.6 when the token's ref_protected is "true" as
+// well. Each graded answer is held to that version's MergeFact.
 type mergeStub struct {
+	t      *testing.T
 	server *httptest.Server
 	states map[string]contract
+	// facts are each version's MergeFact.
+	facts map[contract]*jsonschema.Schema
+	// unprotected sets the run token's ref_protected to "false", and ref is
+	// the branch the token names.
+	unprotected bool
+	ref         string
 	// answers, by merge id, answer each PUT of that id in turn in place of
 	// the grading. A turn of status 0 drops the connection.
 	answers map[string][]turn
@@ -65,9 +103,22 @@ func newMergeStub(t *testing.T) *mergeStub {
 	t.Helper()
 	states := speaksEvery()
 	states[contractV05.path()] = contractV05
-	stub := &mergeStub{states: states, answers: map[string][]turn{}, held: map[string]mergeDocument{}}
+	facts := map[contract]*jsonschema.Schema{}
+	for _, version := range statementContracts {
+		facts[version] = contractSchema(t, version, "MergeFact")
+	}
+	stub := &mergeStub{t: t, states: states, facts: facts, ref: "refs/heads/main", answers: map[string][]turn{}, held: map[string]mergeDocument{}}
 	stub.server = httptest.NewTLSServer(http.HandlerFunc(stub.serve))
 	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+// newV06MergeStub is a platform that states integration/v0.6 under its path,
+// beside every earlier version.
+func newV06MergeStub(t *testing.T) *mergeStub {
+	t.Helper()
+	stub := newMergeStub(t)
+	stub.states[contractV06.path()] = contractV06
 	return stub
 }
 
@@ -90,18 +141,22 @@ func (s *mergeStub) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && rest == "/identity":
 		stated, _ := json.Marshal(s.states[prefix])
 		w.Write([]byte(`{"contract":` + string(stated) + `,"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"}}`))
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, mergesPath):
+	case r.Method == http.MethodPut && strings.HasPrefix(rest, "/merges/") && (prefix == contractV05.path() || prefix == contractV06.path()):
 		body := new(bytes.Buffer)
 		body.ReadFrom(r.Body)
 		s.puts = append(s.puts, r)
 		s.bodies = append(s.bodies, body.Bytes())
-		s.answer(w, r, strings.TrimPrefix(r.URL.Path, mergesPath), body.Bytes())
+		version := contractV05
+		if prefix == contractV06.path() {
+			version = contractV06
+		}
+		s.answer(w, r, version, strings.TrimPrefix(rest, "/merges/"), body.Bytes())
 	default:
 		http.Error(w, "", http.StatusNotFound)
 	}
 }
 
-func (s *mergeStub) answer(w http.ResponseWriter, r *http.Request, id string, body []byte) {
+func (s *mergeStub) answer(w http.ResponseWriter, r *http.Request, version contract, id string, body []byte) {
 	if turns := s.answers[id]; len(turns) > 0 {
 		s.answers[id] = turns[1:]
 		if turns[0].status == 0 {
@@ -123,7 +178,7 @@ func (s *mergeStub) answer(w http.ResponseWriter, r *http.Request, id string, bo
 		return
 	}
 	grade := unverified
-	if r.Header.Get("Costroid-Run-Token") == testRunToken && document.MergeCommitSHA == tipCommit {
+	if r.Header.Get("Costroid-Run-Token") == testRunToken && document.MergeCommitSHA == tipCommit && (version == contractV05 || !s.unprotected) {
 		grade = tokenVerified
 	}
 	s.held[id] = document
@@ -131,10 +186,21 @@ func (s *mergeStub) answer(w http.ResponseWriter, r *http.Request, id string, bo
 	if seen {
 		status = http.StatusOK
 	}
-	stored, _ := json.Marshal(map[string]any{
+	fact := map[string]any{
 		"merge_id": id, "repo": document.Repo, "pull_request": document.PullRequest,
 		"merged_at": document.MergedAt, "merge_commit_sha": document.MergeCommitSHA, "run_identity": grade,
-	})
+	}
+	if version == contractV06 {
+		fact["ref"] = nil
+		if grade == tokenVerified {
+			fact["ref"] = s.ref
+		}
+	}
+	stored, _ := json.Marshal(fact)
+	instance, _ := jsonschema.UnmarshalJSON(bytes.NewReader(stored))
+	if err := s.facts[version].Validate(instance); err != nil {
+		s.t.Errorf("the stub answers what integration/v%s's MergeFact refuses: %v\n%s", version.Version, err, stored)
+	}
 	w.WriteHeader(status)
 	w.Write(stored)
 }
@@ -176,6 +242,8 @@ func (s *mergeStub) pushEnv(t *testing.T, host *scmtest.Stub, commits ...string)
 		"GITHUB_RUN_ID":                  "16990415532",
 		"GITHUB_RUN_ATTEMPT":             "1",
 		"GITHUB_SHA":                     tipCommit,
+		"GITHUB_REF":                     s.ref,
+		"GITHUB_REF_PROTECTED":           strconv.FormatBool(!s.unprotected),
 		"GITHUB_API_URL":                 host.Server.URL,
 		"GITHUB_TOKEN":                   host.Token,
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   s.server.URL + "/oidc?api-version=2.0",
@@ -203,24 +271,7 @@ func (s *mergeStub) merged(t *testing.T, env map[string]string, extra ...string)
 // contract's copy.
 func mergeDocumentSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	file, err := os.Open(mergeContractPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	document, err := jsonschema.UnmarshalJSON(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("openapi.json", document); err != nil {
-		t.Fatal(err)
-	}
-	schema, err := compiler.Compile("openapi.json#/components/schemas/MergeDocument")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return schema
+	return contractSchema(t, contractV05, "MergeDocument")
 }
 
 // validMergeDocument holds a document merged sent or printed to the
@@ -232,7 +283,7 @@ func validMergeDocument(t *testing.T, schema *jsonschema.Schema, body []byte) {
 		t.Fatalf("%s: %v", body, err)
 	}
 	if err := schema.Validate(instance); err != nil {
-		t.Errorf("the document breaks integration/v0.5's MergeDocument: %v\n%s", err, body)
+		t.Errorf("the document breaks the contract's MergeDocument: %v\n%s", err, body)
 	}
 }
 
@@ -317,7 +368,7 @@ func TestMergedSendsOneFactPerMergedPullRequest(t *testing.T) {
 			t.Errorf("stdout lacks %q:\n%s", line, stdout)
 		}
 	}
-	if stderr != "" {
+	if stderr != mergedVersionLine(contractV05) {
 		t.Errorf("stderr %q", stderr)
 	}
 
@@ -387,7 +438,7 @@ func TestMergedSaysWhyAFactIsUnverified(t *testing.T) {
 	code, stdout, stderr := stub.merged(t, env)
 	want := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n" +
 		"costroid: merge 903114-1482 reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit\n"
-	if code != 0 || stdout != want || stderr != "" {
+	if code != 0 || stdout != want || stderr != mergedVersionLine(contractV05) {
 		t.Errorf("without id-token: exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
 	if len(stub.puts) != 1 || stub.puts[0].Header.Get("Costroid-Run-Token") != "" || len(stub.audience) != 0 {
@@ -402,7 +453,7 @@ func TestMergedDoesNotSendAConflictAgain(t *testing.T) {
 	stub, host := newMergeStub(t), mergeHost(t)
 	stub.held["903114-1482"] = mergeDocumentOf(1482, tipMerged.Add(-time.Hour), tipCommit)
 	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, host, groupCommit, tipCommit))
-	want := "costroid: Costroid Platform refused merge 903114-1482: 409 MERGE_FACT_CONFLICT. Pull request 1482 of github.com/example/widgets already holds a different fact, and a pull request merges once, so merged does not send it again\n"
+	want := mergedVersionLine(contractV05) + "costroid: Costroid Platform refused merge 903114-1482: 409 MERGE_FACT_CONFLICT. Pull request 1482 of github.com/example/widgets already holds a different fact, and a pull request merges once, so merged does not send it again\n"
 	if code != exitRejected || stderr != want {
 		t.Errorf("exit %d, stderr %q, want %q", code, stderr, want)
 	}
@@ -538,7 +589,7 @@ func TestMergedSendsAgainOnAServerError(t *testing.T) {
 	env := stub.pushEnv(t, mergeHost(t), tipCommit)
 	var out, errs bytes.Buffer
 	code = merged(context.Background(), []string{"--platform-url", stub.server.URL, "--installation-id", testInstallation}, stub.server.Client(), func(name string) string { return env[name] }, pace, &out, &errs)
-	if want := "costroid: Costroid Platform refused merge 903114-1482: 500 with no refusal code\n"; code != exitRejected || errs.String() != want {
+	if want := mergedVersionLine(contractV05) + "costroid: Costroid Platform refused merge 903114-1482: 500 with no refusal code\n"; code != exitRejected || errs.String() != want {
 		t.Errorf("a platform that keeps failing: exit %d, stderr %q, want %q", code, errs.String(), want)
 	}
 }
@@ -568,7 +619,7 @@ func TestMergedStatesEachRefusal(t *testing.T) {
 			stub := newMergeStub(t)
 			stub.answers["903114-1482"] = []turn{{check.status, `{"error":{"code":"` + check.code + `","message":"x"}}`}}
 			code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit))
-			if code != check.exit || stdout != "" || stderr != check.line+"\n" || len(stub.puts) != 1 {
+			if code != check.exit || stdout != "" || stderr != mergedVersionLine(contractV05)+check.line+"\n" || len(stub.puts) != 1 {
 				t.Errorf("exit %d, %d sends, stdout %q, stderr %q, want %q", code, len(stub.puts), stdout, stderr, check.line)
 			}
 		})
@@ -654,5 +705,209 @@ func TestMergedDocsMatchTheCommand(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("docs/export.md does not hold %q", want)
 		}
+	}
+}
+
+// sentRequests are the requests the stub took, the run token's aside.
+func (s *mergeStub) sentRequests() []string {
+	return slices.DeleteFunc(slices.Clone(s.requests), func(request string) bool { return request == "GET /oidc" })
+}
+
+// TestMergedSendsByV06ToAPlatformThatStatesIt sends a merge queue's push to a
+// platform that states integration/v0.6 beside every earlier version. merged
+// reads GET /identity under v0.6 alone, names that version on standard error,
+// and sends each fact to v0.6's path, each body a valid v0.6 MergeDocument.
+func TestMergedSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
+	schema := contractSchema(t, contractV06, "MergeDocument")
+	stub := newV06MergeStub(t)
+	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit))
+	if code != 0 || stderr != mergedVersionLine(contractV06) {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	want := []string{
+		"GET /api/integration/v0.6/identity",
+		"PUT /api/integration/v0.6/merges/903114-1481",
+		"PUT /api/integration/v0.6/merges/903114-1482",
+	}
+	if got := stub.sentRequests(); !slices.Equal(got, want) {
+		t.Errorf("the platform was asked %q, want %q", got, want)
+	}
+	for _, body := range stub.bodies {
+		validMergeDocument(t, schema, body)
+	}
+	for _, line := range []string{
+		"costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n",
+		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified, from a push to the protected branch main\n",
+	} {
+		if !strings.Contains(stdout, line) {
+			t.Errorf("stdout lacks %q:\n%s", line, stdout)
+		}
+	}
+}
+
+// TestMergedSendsByV05ToAPlatformThatStatesV05 sends to a platform that serves
+// no integration/v0.6. merged asks v0.6 first, sends by v0.5 and says so, and
+// reads the answers as v0.5 has them: no branch is named, and the job's
+// GITHUB_REF_PROTECTED, which v0.5 does not grade by, names no cause.
+func TestMergedSendsByV05ToAPlatformThatStatesV05(t *testing.T) {
+	schema := mergeDocumentSchema(t)
+	stub := newMergeStub(t)
+	env := stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit)
+	env["GITHUB_REF_PROTECTED"] = "false"
+	code, stdout, stderr := stub.merged(t, env)
+	if code != 0 || stderr != mergedVersionLine(contractV05) {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	want := []string{
+		"GET /api/integration/v0.6/identity",
+		"GET /api/integration/v0.5/identity",
+		"PUT /api/integration/v0.5/merges/903114-1481",
+		"PUT /api/integration/v0.5/merges/903114-1482",
+	}
+	if got := stub.sentRequests(); !slices.Equal(got, want) {
+		t.Errorf("the platform was asked %q, want %q", got, want)
+	}
+	for _, body := range stub.bodies {
+		validMergeDocument(t, schema, body)
+	}
+	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified\n"; !strings.Contains(stdout, line) {
+		t.Errorf("stdout lacks %q:\n%s", line, stdout)
+	}
+	if strings.Contains(stdout, "protected") {
+		t.Errorf("a v0.5 answer is read for a branch:\n%s", stdout)
+	}
+
+	stub = newMergeStub(t)
+	code, stdout, _ = stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit), "--json")
+	if want := `{"merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified"}` + "\n"; code != 0 || stdout != want {
+		t.Errorf("--json: exit %d, printed %q, want %q", code, stdout, want)
+	}
+}
+
+// TestMergedNamesARefusalOfAPlatformThatServesV06Alone holds a platform that
+// serves integration/v0.6 alone and refuses the token to its refusal. The 404
+// under v0.5 that follows does not say the platform serves no version.
+func TestMergedNamesARefusalOfAPlatformThatServesV06Alone(t *testing.T) {
+	stub := newMergeStub(t)
+	stub.states = map[string]contract{contractV06.path(): contractV06}
+	stub.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == contractV06.path()+"/identity" {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`))
+			return
+		}
+		stub.serve(w, r)
+	})
+	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit))
+	if want := "costroid: Costroid Platform refused the identity request: 403 AUTH_TOKEN_SCOPE\n"; code != exitRejected || stdout != "" || stderr != want {
+		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
+	}
+	if len(stub.puts) != 0 {
+		t.Errorf("%d facts sent", len(stub.puts))
+	}
+}
+
+// TestMergedNamesTheBranchOfACheckedFact holds a token_verified fact by
+// integration/v0.6 to a line that names its branch, whole when the name holds
+// a slash, and to its full ref under --json. An unverified fact names none,
+// and a ref no branch can hold, such as one that carries a workflow command,
+// names none either.
+func TestMergedNamesTheBranchOfACheckedFact(t *testing.T) {
+	stub := newV06MergeStub(t)
+	stub.ref = "refs/heads/release/2026.11"
+	env := stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit)
+	code, stdout, _ := stub.merged(t, env)
+	want := "costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n" +
+		"costroid: merge 903114-1481 reads unverified because its commit " + groupCommit + " is not the tip of the push, " + tipCommit + ", which the run token names, as in a merge queue's group\n" +
+		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified, from a push to the protected branch release/2026.11\n"
+	if code != 0 || stdout != want {
+		t.Errorf("exit %d, stdout %q, want %q", code, stdout, want)
+	}
+	code, stdout, _ = stub.merged(t, env)
+	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: already held as token_verified, from a push to the protected branch release/2026.11, so nothing changed\n"; code != 0 || !strings.Contains(stdout, line) {
+		t.Errorf("sent again: exit %d, stdout lacks %q:\n%s", code, line, stdout)
+	}
+
+	stub = newV06MergeStub(t)
+	stub.ref = "refs/heads/release/2026.11"
+	code, stdout, _ = stub.merged(t, stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit), "--json")
+	wantJSON := `{"merge_id":"903114-1481","pull_request":1481,"status":201,"run_identity":"unverified"}` + "\n" +
+		`{"merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified","ref":"refs/heads/release/2026.11"}` + "\n"
+	if code != 0 || stdout != wantJSON {
+		t.Errorf("--json: exit %d, printed %q, want %q", code, stdout, wantJSON)
+	}
+
+	for _, ref := range []string{`"refs/heads/::error::forged"`, `"refs/heads/main\n::error::forged"`, `"refs/tags/v1"`, `7`} {
+		stub = newV06MergeStub(t)
+		stub.answers["903114-1482"] = []turn{{http.StatusCreated, `{"merge_id":"903114-1482","repo":"github.com/example/widgets","pull_request":1482,"merged_at":"2026-11-21T10:07:52Z","merge_commit_sha":"` + tipCommit + `","run_identity":"token_verified","ref":` + ref + `}`}}
+		code, stdout, _ = stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit), "--json")
+		want := `{"merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified"}` + "\n"
+		if code != 0 || stdout != want {
+			t.Errorf("a ref of %s: exit %d, printed %q, want %q", ref, code, stdout, want)
+		}
+	}
+}
+
+// TestMergedSaysAnUnprotectedBranchIsWhyAFactIsUnchecked holds a push to a
+// branch that is not protected, by integration/v0.6, to a line on each fact
+// that names that cause beside any other. The job's GITHUB_REF_PROTECTED is
+// how merged can tell: without it no such line is printed, and either way the
+// run token goes with each fact.
+func TestMergedSaysAnUnprotectedBranchIsWhyAFactIsUnchecked(t *testing.T) {
+	unprotected := func(id string) string {
+		return "costroid: merge " + id + " reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch\n"
+	}
+	stub := newV06MergeStub(t)
+	stub.unprotected = true
+	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit))
+	want := "costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n" +
+		"costroid: merge 903114-1481 reads unverified because its commit " + groupCommit + " is not the tip of the push, " + tipCommit + ", which the run token names, as in a merge queue's group\n" +
+		unprotected("903114-1481") +
+		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n" +
+		unprotected("903114-1482")
+	if code != 0 || stdout != want || stderr != mergedVersionLine(contractV06) {
+		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
+	}
+	for i, request := range stub.puts {
+		if request.Header.Get("Costroid-Run-Token") != testRunToken {
+			t.Errorf("fact %d went without the run token", i)
+		}
+	}
+
+	stub = newV06MergeStub(t)
+	stub.unprotected = true
+	env := stub.pushEnv(t, mergeHost(t), tipCommit)
+	delete(env, "GITHUB_REF_PROTECTED")
+	code, stdout, _ = stub.merged(t, env)
+	if want := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n"; code != 0 || stdout != want {
+		t.Errorf("without GITHUB_REF_PROTECTED: exit %d, stdout %q, want %q", code, stdout, want)
+	}
+	if len(stub.puts) != 1 || stub.puts[0].Header.Get("Costroid-Run-Token") != testRunToken {
+		t.Errorf("without GITHUB_REF_PROTECTED: %d facts, the run token decided by it", len(stub.puts))
+	}
+}
+
+// TestMergedWritesTheRepositoryInLowerCase runs merged in a repository whose
+// name GitHub states with capitals. The document's repo is lower case, the
+// whole string with its host, and it is a valid integration/v0.6
+// MergeDocument, whose repo admits no upper-case letter.
+func TestMergedWritesTheRepositoryInLowerCase(t *testing.T) {
+	schema := contractSchema(t, contractV06, "MergeDocument")
+	stub := newV06MergeStub(t)
+	env := stub.pushEnv(t, mergeHost(t), tipCommit)
+	env["GITHUB_REPOSITORY"] = "Example/Widgets"
+	env["GITHUB_SERVER_URL"] = "https://GitHub.com"
+	code, stdout, stderr := stub.merged(t, env)
+	if code != 0 || len(stub.bodies) != 1 {
+		t.Fatalf("exit %d, %d facts sent: %s%s", code, len(stub.bodies), stdout, stderr)
+	}
+	var sent mergeDocument
+	if err := json.Unmarshal(stub.bodies[0], &sent); err != nil || sent.Repo != "github.com/example/widgets" {
+		t.Errorf("the document is %s, want repo github.com/example/widgets", stub.bodies[0])
+	}
+	validMergeDocument(t, schema, stub.bodies[0])
+	upper, _ := jsonschema.UnmarshalJSON(strings.NewReader(strings.Replace(string(stub.bodies[0]), "github.com/example/widgets", "github.com/Example/Widgets", 1)))
+	if schema.Validate(upper) == nil {
+		t.Error("integration/v0.6's MergeDocument takes a repo with capitals, so this test proves nothing")
 	}
 }

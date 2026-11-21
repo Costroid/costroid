@@ -366,9 +366,9 @@ func (s *reconcilePlatform) serve(w http.ResponseWriter, r *http.Request) {
 		case r.Method == http.MethodGet && rest == "identity":
 			contract, _ := json.Marshal(stated)
 			w.Write([]byte(`{"contract":` + string(contract) + `,"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"}}`))
-		case r.Method == http.MethodGet && rest == "quotas" && prefix == contractV05.path():
+		case r.Method == http.MethodGet && rest == "quotas" && carriesRows(prefix):
 			w.Write([]byte(s.quotas))
-		case r.Method == http.MethodPut && rest == "reconciliations" && prefix == contractV05.path():
+		case r.Method == http.MethodPut && rest == "reconciliations" && carriesRows(prefix):
 			s.puts = append(s.puts, body)
 			answer := turn{http.StatusOK, fmt.Sprintf(`{"stored":%d,"unchanged":0,"ignored":0}`, bytes.Count(body, []byte("\n")))}
 			if len(s.puts) <= len(s.answers) {
@@ -382,6 +382,11 @@ func (s *reconcilePlatform) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Error(w, "", http.StatusNotFound)
+}
+
+// carriesRows reports a version path that serves reconciliation rows.
+func carriesRows(prefix string) bool {
+	return prefix == contractV05.path() || prefix == contractV06.path()
 }
 
 func (s *reconcilePlatform) sent() ([][]byte, []seenRequest) {
@@ -433,19 +438,7 @@ const reconcileVersionLine = "costroid: Costroid Platform states integration/v0.
 // reconciliationRowSchema compiles integration/v0.5's ReconciliationRow.
 func reconciliationRowSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	document, err := jsonschema.UnmarshalJSON(strings.NewReader(readFile(t, filepath.Join("testdata", "integration-v0.5.openapi.json"))))
-	if err != nil {
-		t.Fatal(err)
-	}
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("openapi.json", document); err != nil {
-		t.Fatal(err)
-	}
-	schema, err := compiler.Compile("openapi.json#/components/schemas/ReconciliationRow")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return schema
+	return contractSchema(t, contractV05, "ReconciliationRow")
 }
 
 // reconcile --export sends what --out writes, byte for byte, as the body of
@@ -728,5 +721,42 @@ func TestReconcileExportRefusesBeforeAskingTheProvider(t *testing.T) {
 	}
 	if _, seen := stub.sent(); len(seen) != 0 {
 		t.Errorf("the platform saw %d requests", len(seen))
+	}
+}
+
+// A platform that states integration/v0.6 beside every earlier version gets
+// the rows by v0.6: the identity, the limits and the body are asked for under
+// v0.6's path alone, the line names v0.6, and each line of the body is a
+// ReconciliationRow of v0.6.
+func TestReconcileExportSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
+	schema := contractSchema(t, contractV06, "ReconciliationRow")
+	stub := newReconcilePlatform(t)
+	stub.states[contractV06.path()] = contractV06
+	code, _, stderr, stored := stub.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, stub.env(stub.githubJob()), "--installation-id", testInstallation)
+	if want := "costroid: Costroid Platform states integration/v0.6, so reconcile sends the rows by it\n"; code != 0 || stderr != want {
+		t.Fatalf("exit %d, stderr %q, want %q", code, stderr, want)
+	}
+	puts, seen := stub.sent()
+	if len(puts) != 1 || string(puts[0]) != stored || stored == "" {
+		t.Fatalf("%d bodies sent, want --out's rows once:\n%q\n%q", len(puts), puts, stored)
+	}
+	var asked []string
+	for _, request := range seen {
+		if request.path != "/oidc" {
+			asked = append(asked, request.method+" "+request.path)
+		}
+	}
+	want := []string{"GET /api/integration/v0.6/identity", "GET /api/integration/v0.6/quotas", "PUT /api/integration/v0.6/reconciliations"}
+	if !slices.Equal(asked, want) {
+		t.Errorf("the platform was asked %q, want %q", asked, want)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(stored, "\n"), "\n") {
+		instance, err := jsonschema.UnmarshalJSON(strings.NewReader(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(instance); err != nil {
+			t.Errorf("a line is no ReconciliationRow of v0.6: %v\n%s", err, line)
+		}
 	}
 }

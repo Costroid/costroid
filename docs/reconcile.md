@@ -36,7 +36,7 @@ ANTHROPIC_ADMIN_KEY=... costroid reconcile --rows rows.jsonl --from 2026-10-01 -
 
 ## What a row holds
 
-Each line of `--out` is one row, a `ReconciliationRow` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-reconciliation-result). Its key is `source`, `credential` and `day`.
+Each line of `--out` is one row, a `ReconciliationRow` of [`integration/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#the-reconciliation-result), the same row as `integration/v0.5`'s. Its key is `source`, `credential` and `day`.
 
 | Key | What it holds |
 | --- | --- |
@@ -79,9 +79,9 @@ ANTHROPIC_ADMIN_KEY=... COSTROID_PLATFORM_URL=https://app.costroid.com COSTROID_
   costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-20 --out reconciliation.jsonl --export
 ```
 
-`--export` sends the rows this run wrote to `--out`, byte for byte, as the body of `PUT /reconciliations` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-reconciliation-result). It reaches the platform as [`costroid export`](export.md#costroid-platform) does: the origin in `COSTROID_PLATFORM_URL`, https or http on a loopback address, the integration token in `COSTROID_PLATFORM_TOKEN`, and no redirect followed. The token needs `identity:read`, `quotas:read` and `reconciliations:write`. The admin key goes to the provider alone, never to the platform.
+`--export` sends the rows this run wrote to `--out`, byte for byte, as the body of `PUT /reconciliations` of [`integration/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#the-reconciliation-result), or of `integration/v0.5` to a platform that states no later version. It reaches the platform as [`costroid export`](export.md#costroid-platform) does: the origin in `COSTROID_PLATFORM_URL`, https or http on a loopback address, the integration token in `COSTROID_PLATFORM_TOKEN`, and no redirect followed. The token needs `identity:read`, `quotas:read` and `reconciliations:write`. The admin key goes to the provider alone, never to the platform.
 
-It reads `GET /identity` under `integration/v0.5` first. A platform that states an earlier version carries no reconciliation rows, so nothing is sent, the line names the version it states, and `reconcile` exits 125. It reads `GET /quotas` next and cuts the rows into bodies at `max_reconciliation_lines`, `max_reconciliation_bytes` and `max_reconciliation_line_bytes` as stated there. A limit the answer does not state is never guessed. The rows of a span go in one body, its first day first, so a reader never shows a later day `pending` while its first day's row waits in another body.
+It reads `GET /identity` under `integration/v0.6` first, then under `integration/v0.5`, sends by the first the platform states, and names it on standard error. A platform that states only an earlier version carries no reconciliation rows, so nothing is sent, the line names the version it states, and `reconcile` exits 125. It reads `GET /quotas` next and cuts the rows into bodies at `max_reconciliation_lines`, `max_reconciliation_bytes` and `max_reconciliation_line_bytes` as stated there. A limit the answer does not state is never guessed. The rows of a span go in one body, its first day first, so a reader never shows a later day `pending` while its first day's row waits in another body.
 
 On GitHub Actions, a job with `id-token: write` sends its run token beside the installation `--installation-id` names, as `costroid export` does, and the token proves which run sent the rows. Any other job sends no run token. The job that reconciles is a scheduled job where the admin key lives, not a pull request's job.
 

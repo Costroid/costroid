@@ -57,7 +57,7 @@ The platform takes rows only under an installation its tenant has bound, so bind
 
 ### Reconciliation rows
 
-`costroid reconcile --export` sends a second kind of statement: how each credential's UTC day compared with the provider's usage and cost reports. It sends the rows `reconcile --out` writes, one per source, credential and day, as newline-delimited JSON to `PUT /reconciliations` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-reconciliation-result), and only to a platform that states that version. It reads the same `COSTROID_PLATFORM_URL` and `COSTROID_PLATFORM_TOKEN` under the same rules, with `quotas:read` and `reconciliations:write` on the token beside `identity:read`, and a GitHub job's run token goes beside the installation as on a batch. The provider's admin key never goes with them. [Send the rows to Costroid Platform](reconcile.md#send-the-rows-to-costroid-platform) says how the rows are cut into bodies and how each answer is read.
+`costroid reconcile --export` sends a second kind of statement: how each credential's UTC day compared with the provider's usage and cost reports. It sends the rows `reconcile --out` writes, one per source, credential and day, as newline-delimited JSON to `PUT /reconciliations` of [`integration/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#the-reconciliation-result), or of `integration/v0.5` to a platform that states no later version, and only to a platform that states one of them. The row is the same in both. It reads the same `COSTROID_PLATFORM_URL` and `COSTROID_PLATFORM_TOKEN` under the same rules, with `quotas:read` and `reconciliations:write` on the token beside `identity:read`, and a GitHub job's run token goes beside the installation as on a batch. The provider's admin key never goes with them. [Send the rows to Costroid Platform](reconcile.md#send-the-rows-to-costroid-platform) says how the rows are cut into bodies and how each answer is read.
 
 ### From the action
 
@@ -158,13 +158,13 @@ In the `ingest` stage, each warning becomes a warning annotation, and any failur
 
 ### Merge facts
 
-Rows say what a pull request's runs spent. A merge fact says when the pull request ended: this pull request of this repository merged at this instant as this commit. With it the platform counts merged pull requests and dates what follows a merge. `costroid merged` sends one fact per merged pull request by `PUT /merges/{merge_id}` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-merge-fact), and only to a platform that serves that version:
+Rows say what a pull request's runs spent. A merge fact says when the pull request ended: this pull request of this repository merged at this instant as this commit. With it the platform counts merged pull requests and dates what follows a merge. `costroid merged` sends one fact per merged pull request by `PUT /merges/{merge_id}` of [`integration/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#the-merge-fact), or of `integration/v0.5` to a platform that states no later version. It reads `GET /identity` under `v0.6` first, then `v0.5`, names the version it sends by on standard error, and sends nothing to a platform that states neither. The document is the same in both:
 
 ```json
 {"repo":"github.com/example/widgets","pull_request":1482,"merged_at":"2026-11-21T10:07:52Z","merge_commit_sha":"9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"}
 ```
 
-`repo` is written as the rows' `costroid/repo` is, and `pull_request` is the number their `costroid/pr` carries, so a reader joins the fact to the pull request's rows by the same strings. `merged_at` is GitHub's `merged_at`, in UTC, to the second. The merge id is the repository id and the pull request's number, joined by a hyphen: `903114-1482`. The same document sent again under it changes nothing.
+`repo` is written as the rows' `costroid/repo` is, in lower case, the whole string with its host: a repository GitHub names `Example/Widgets` is `github.com/example/widgets`, the only form `integration/v0.6` [admits](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#letter-case). `pull_request` is the number their `costroid/pr` carries, so a reader joins the fact to the pull request's rows by the same strings. `merged_at` is GitHub's `merged_at`, in UTC, to the second. The merge id is the repository id and the pull request's number, joined by a hyphen: `903114-1482`. The same document sent again under it changes nothing.
 
 Run it in a job on a push to the default branch, with the integration token and the job's own token:
 
@@ -196,11 +196,26 @@ The command reads the push's commits from the event, asks GitHub's list of each 
 
 #### Why a push, and not the pull request's close
 
-A job on a pull request's `closed` event runs the workflow file of the pull request's own changes, so the pull request's author decides what that job sends. A job on a push to the default branch runs the default branch's file. On a push, `GITHUB_SHA` is the commit the push put at the tip, and the job's run token names that commit in its `sha` claim, so the platform can hold the fact's commit to it. The contract's section [Who sends it](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#who-sends-it-and-what-the-run-token-proves) cites GitHub for each. On any event but `push`, `costroid merged` sends nothing, says which event it ran on, and exits 0.
+A job on a pull request's `closed` event runs the workflow file of the pull request's own changes, so the pull request's author decides what that job sends. A job on a push to the default branch runs the default branch's file. On a push, `GITHUB_SHA` is the commit the push put at the tip, and the job's run token names that commit in its `sha` claim, so the platform can hold the fact's commit to it. The contract's section [Who sends it](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#who-sends-it-and-what-the-run-token-proves) cites GitHub for each. On any event but `push`, `costroid merged` sends nothing, says which event it ran on, and exits 0.
 
 #### What `token_verified` proves
 
-The job's OIDC token rides with each fact in `Costroid-Run-Token`, minted for the tenant's rows audience as on an export. The platform stores a fact as `token_verified` when that token verifies, its `sha` is the fact's `merge_commit_sha`, and its `ref_type` is `branch`. It then proves which repository and which run sent the fact, and that the run was on a branch at that commit. It proves nothing about `pull_request` or `merged_at`: the command reads both from GitHub, and the platform does not check them. So a `token_verified` fact does not prove that the commit closed this pull request, or when.
+The job's OIDC token rides with each fact in `Costroid-Run-Token`, minted for the tenant's rows audience as on an export. By `integration/v0.6`, the platform stores a fact as `token_verified` when that token verifies, its `sha` is the fact's `merge_commit_sha`, its `ref_type` is `branch`, and its `ref_protected` is `"true"`: the push was to a protected branch. It then proves which repository and which run sent the fact, and that the run was on a protected branch at that commit. It proves nothing about `pull_request` or `merged_at`: the command reads both from GitHub, and the platform does not check them. So a `token_verified` fact does not prove that the commit closed this pull request, or when. `integration/v0.5` grades a fact the same way without `ref_protected`, so a `token_verified` fact of that version can come from any branch.
+
+#### The grade needs a protected branch
+
+A branch other than the default runs its own copy of the workflow file. Without the protected branch, anyone who can push a branch could send a fact that reads `token_verified`. The rule has two costs, which [What the grade costs](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#what-the-grade-costs) states:
+
+- A repository whose default branch is not protected gets only `unverified` facts. Protect the default branch, by a branch protection rule or a ruleset, to have its facts read `token_verified`.
+- A protected branch that is not the default passes too. So the stored fact carries the branch the run token named, in `ref`, and a reader shows it beside the fact.
+
+`costroid merged` names that branch on each `token_verified` fact, by its name after `refs/heads/`, and `--json` prints the whole `ref`:
+
+```text
+costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified, from a push to the protected branch main
+```
+
+#### When a fact reads `unverified`
 
 Any other fact is stored as `unverified`, and the command says why when the cause is one of its send:
 
@@ -208,8 +223,9 @@ Any other fact is stored as `unverified`, and the command says why when the caus
 | ----- | -------- |
 | The job holds no `id-token: write`, so no run token went with the fact | `costroid: merge <id> reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit` |
 | The fact's commit is not the tip of the push | `costroid: merge <id> reads unverified because its commit <sha> is not the tip of the push, <sha>, which the run token names, as in a merge queue's group` |
+| By `integration/v0.6`, the push was to a branch that is not protected. The command reads that from the job's `GITHUB_REF_PROTECTED`, `false`, and prints nothing when the variable is absent | `costroid: merge <id> reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch` |
 
-A merge queue's group puts more than one pull request's commit on the branch in one push. The run token names the tip alone, so only the pull request merged as the tip reads `token_verified`, and the group's others read `unverified`. That is an honest cause, not a defect: those facts still count the merge and date it.
+A fact can have more than one cause, and each gets its line. A merge queue's group puts more than one pull request's commit on the branch in one push. The run token names the tip alone, so only the pull request merged as the tip reads `token_verified`, and the group's others read `unverified`. That is an honest cause, not a defect: those facts still count the merge and date it. `GITHUB_REF_PROTECTED` only names a cause. Whatever it holds, the run token goes with each fact, and the platform grades it from the token.
 
 #### What the platform answers
 
@@ -217,8 +233,8 @@ A merge queue's group puts more than one pull request's commit on the branch in 
 
 | Answer | `costroid merged` | Exit code |
 | ------ | ----------------- | --------- |
-| 201 | `costroid: merge <id>, pull request <number> of <repo>: stored as <grade>` | 0 |
-| 200 | The same line, ending `already held as <grade>, so nothing changed` | 0 |
+| 201 | `costroid: merge <id>, pull request <number> of <repo>: stored as <grade>`, and on a `token_verified` fact by `integration/v0.6`, `, from a push to the protected branch <branch>` | 0 |
+| 200 | The same line, with `already held as <grade>` and ending `, so nothing changed` | 0 |
 | 402 `PLAN_WRITES_REFUSED` | A warning. Nothing in the fact is wrong, and nothing keeps it: run the job again once the plan allows writes | 0 |
 | 409 `INSTALLATION_NOT_BOUND` | A warning that names `costroid connect`, then run the job again | 0 |
 | 409 `MERGE_FACT_CONFLICT` | The refusal line, then that the pull request already holds a different fact. A pull request merges once, so the command does not send it again | 1 |
@@ -227,7 +243,7 @@ A merge queue's group puts more than one pull request's commit on the branch in 
 
 The facts of one push are sent in turn, and the exit code is the worst answer's. A platform that cannot be reached ends the command with exit code 125.
 
-`--json` prints, on standard output, one object per fact sent: `merge_id`, `pull_request`, the `status` the platform answered, and `run_identity`, or the refusal's `code`. The lines above then go to standard error. `--dry-run` prints each fact's `merge_id` and `document` and sends nothing to the platform, so it needs neither the integration token nor the platform's flags:
+`--json` prints, on standard output, one object per fact sent: `merge_id`, `pull_request`, the `status` the platform answered, `run_identity` and, on a `token_verified` fact by `integration/v0.6`, its `ref`, or the refusal's `code`. The lines above then go to standard error. `--dry-run` prints each fact's `merge_id` and `document` and sends nothing to the platform, so it needs neither the integration token nor the platform's flags:
 
 ```sh
 costroid merged --dry-run

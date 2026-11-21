@@ -79,7 +79,7 @@ func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, er
 	out := set.String("out", "", "the file reconciliation rows are kept in, one per source, credential and day")
 	reports := set.String("reports", "", "a directory of saved provider reports, read in place of the provider")
 	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
-	send := set.Bool("export", false, "send the rows --out keeps to Costroid Platform, by integration/v0.5")
+	send := set.Bool("export", false, "send the rows --out keeps to Costroid Platform, by integration/v0.6 or v0.5")
 	installation := set.String("installation-id", "", "with --export, the installation the job runs under")
 	if err := parseFlags(set, args, reconcileHelp, stdout, stderr); err != nil {
 		return reconcileFlags{}, err
@@ -290,11 +290,42 @@ func storeRows(path string, rows []reconcile.Row) error {
 	return os.Rename(temporary.Name(), path)
 }
 
-// contractV05 is the first version of the integration contract that carries
-// merge facts and reconciliation rows. merged and reconcile --export send by
-// it alone. A later version is served under its own path, and its platform
-// keeps serving this one.
-var contractV05 = contract{Version: "0.5", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
+// Version 0.5 is the first version of the integration contract that carries
+// merge facts and reconciliation rows. Version 0.6 is 0.5 with a merge fact
+// read as token_verified only from a protected branch, the stored fact's
+// branch in its answer, and a repository's name compared in lower case.
+var (
+	contractV06 = contract{Version: "0.6", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
+	contractV05 = contract{Version: "0.5", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
+	// statementContracts are the versions merged and reconcile --export send
+	// by, newest first. The last is the least they send by.
+	statementContracts = []contract{contractV06, contractV05}
+)
+
+// statedOf reads GET /identity under each of versions, newest first, by the
+// rule statedContract keeps for export's: the first whose answer states that
+// version is kept. It sets p.base to the kept version's path and returns the
+// token's tenant. When none is kept, the error is the newest one that is not
+// a 404, so a platform that serves only the newest version and refuses the
+// token is not said to serve none, or else the last one's.
+func (p *platform) statedOf(ctx context.Context, versions []contract) (contract, string, error) {
+	var err, served error
+	for _, version := range versions {
+		var tenant string
+		if tenant, err = p.identityUnder(ctx, version); err == nil {
+			p.base = p.origin + version.path()
+			return version, tenant, nil
+		}
+		var refused *refusal
+		if served == nil && !(errors.As(err, &refused) && refused.status == http.StatusNotFound) {
+			served = err
+		}
+	}
+	if served != nil {
+		return contract{}, "", served
+	}
+	return contract{}, "", err
+}
 
 // The limits of GET /quotas a reconciliation body is cut at.
 const (
@@ -433,14 +464,13 @@ func (s *reconcileSender) prepare(ctx context.Context, rows []reconcile.Row, std
 	return bodies, runToken, err
 }
 
-// contract reads GET /identity under integration/v0.5 and returns the
-// token's tenant. A platform that does not state it is asked for the version
+// contract reads GET /identity under integration/v0.6, then v0.5, and returns
+// the token's tenant. A platform that states neither is asked for the version
 // it does state, which then names why nothing was sent.
 func (s *reconcileSender) contract(ctx context.Context, stderr io.Writer) (string, error) {
-	tenant, err := s.target.identityUnder(ctx, contractV05)
+	stated, tenant, err := s.target.statedOf(ctx, statementContracts)
 	if err == nil {
-		s.target.base = s.target.origin + contractV05.path()
-		fmt.Fprintln(stderr, "costroid: Costroid Platform states integration/v0.5, so reconcile sends the rows by it")
+		fmt.Fprintf(stderr, "costroid: Costroid Platform states integration/v%s, so reconcile sends the rows by it\n", stated.Version)
 		return tenant, nil
 	}
 	var refused *refusal
@@ -448,8 +478,8 @@ func (s *reconcileSender) contract(ctx context.Context, stderr io.Writer) (strin
 		return "", err
 	}
 	earlier := s.target
-	if stated, _, statedErr := earlier.statedContract(ctx); statedErr == nil {
-		return "", fmt.Errorf("the latest version Costroid Platform states is integration/v%s, and reconcile --export sends by integration/v0.5 or later, the first that carries reconciliation rows, so nothing was sent", stated.Version)
+	if latest, _, statedErr := earlier.statedContract(ctx); statedErr == nil {
+		return "", fmt.Errorf("the latest version Costroid Platform states is integration/v%s, and reconcile --export sends by integration/v0.5 or later, the first that carries reconciliation rows, so nothing was sent", latest.Version)
 	}
 	return "", err
 }

@@ -10,8 +10,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
@@ -28,8 +30,8 @@ const (
 	mergedInstant = "2006-01-02T15:04:05Z"
 )
 
-// mergeRefusals are the meanings integration/v0.5 gives the refusals of a
-// merge fact that merged prints no other sentence for.
+// mergeRefusals are the meanings integration/v0.6 and v0.5 give the refusals
+// of a merge fact that merged prints no other sentence for.
 var mergeRefusals = map[string]string{
 	"AUTH_TOKEN_INVALID":           "The token is absent, unknown, expired or revoked",
 	"AUTH_TOKEN_SCOPE":             "The token lacks merges:write",
@@ -55,16 +57,18 @@ GITHUB_TOKEN, which merged pull requests each commit the push event lists
 closed, and sends nothing when they closed none. On any other event it sends
 nothing and says so.
 
-It sends by integration/v0.5, under the integration token in
-COSTROID_PLATFORM_TOKEN, and only to a platform that serves that version.
---platform-url and --installation-id are read as export reads them. The token
-needs identity:read and merges:write. The merge id is the repository id and
-the pull request's number, joined by a hyphen, so the same fact sent again
-changes nothing. The job's OIDC token rides with each fact, as with a batch,
-and needs id-token: write on the job. The platform stores a fact as
-token_verified when the run token names the fact's commit, which is the tip of
-the push. A fact sent without a run token, or a fact of a merge queue's group
-whose commit is not the tip, is stored as unverified, and merged says why.
+It sends by integration/v0.6, or by v0.5 to a platform that states no later
+version, under the integration token in COSTROID_PLATFORM_TOKEN, and names the
+version on standard error. --platform-url and --installation-id are read as
+export reads them. The token needs identity:read and merges:write. The merge
+id is the repository id and the pull request's number, joined by a hyphen, so
+the same fact sent again changes nothing. The job's OIDC token rides with each
+fact, as with a batch, and needs id-token: write on the job. The platform
+stores a fact as token_verified when the run token names the fact's commit,
+which is the tip of the push, and, by v0.6, a protected branch, which merged
+then names. A fact sent without a run token, a fact of a merge queue's group
+whose commit is not the tip, or by v0.6 a fact of a push to a branch that is
+not protected, is stored as unverified, and merged says why.
 
 A server error or a lost connection is sent again every 2 s for up to 60 s.
 On 402 or 409 INSTALLATION_NOT_BOUND nothing in the fact is wrong, and
@@ -73,9 +77,10 @@ again. On 409 MERGE_FACT_CONFLICT the pull request already holds a different
 fact, and merged does not send it again. docs/export.md lists every answer.
 
 --json prints, on standard output, one object per fact sent: its merge id,
-its pull request, the status the platform answered and the fact's
-run_identity, or the refusal's code. --dry-run prints each fact's merge id and
-document instead, and reaches nothing but GitHub.
+its pull request, the status the platform answered, the fact's run_identity
+and, on a token_verified fact by v0.6, the ref of its branch, or the refusal's
+code. --dry-run prints each fact's merge id and document instead, and reaches
+nothing but GitHub.
 
 On GitLab CI merged sends nothing: it reads the pull requests a commit closed
 from GitHub alone.
@@ -87,7 +92,7 @@ Exit codes of merged:
   1                 the platform refused a fact, and the line names its code
   125               costroid could not read the flags, the run or GitHub's
                     answer, or reach Costroid Platform, or the platform does
-                    not serve integration/v0.5
+                    not serve integration/v0.5 or later
 `
 
 type mergedFlags struct {
@@ -120,9 +125,13 @@ type pushRun struct {
 // and the push the token names.
 type mergedSend struct {
 	target       platform
+	version      contract
 	installation string
 	runToken     string
 	tip          string
+	// refProtected is the job's GITHUB_REF_PROTECTED. It names a cause of an
+	// unverified fact and decides nothing.
+	refProtected string
 	pace         verdictPace
 	json         bool
 	// say takes the lines about each fact: standard output, or standard
@@ -176,7 +185,7 @@ func merged(ctx context.Context, args []string, client *http.Client, getenv func
 	if flags.dryRun {
 		return printFacts(facts, stdout, stderr)
 	}
-	send := mergedSend{installation: flags.installation, tip: push.tip, pace: pace, json: flags.json, say: say, stdout: stdout, stderr: stderr}
+	send := mergedSend{installation: flags.installation, tip: push.tip, refProtected: getenv("GITHUB_REF_PROTECTED"), pace: pace, json: flags.json, say: say, stdout: stdout, stderr: stderr}
 	send.target = platform{client: client, origin: flags.origin, token: getenv(platformTokenVariable)}
 	if code := send.open(ctx, getenv); code != 0 {
 		return code
@@ -325,20 +334,21 @@ func printFacts(facts []mergeFact, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// open checks the integration token, reads the platform's contract and mints
-// the run token, and returns the exit code of a failure, or 0. A job without
-// id-token: write sends its facts without a run token, and each is stored as
-// unverified.
+// open checks the integration token, reads the platform's contract, newest
+// first, and mints the run token, and returns the exit code of a failure, or
+// 0. A job without id-token: write sends its facts without a run token, and
+// each is stored as unverified.
 func (s *mergedSend) open(ctx context.Context, getenv func(string) string) int {
 	if !integrationTokenPattern.MatchString(s.target.token) {
 		fmt.Fprintf(s.stderr, "costroid: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform\n")
 		return exitFailure
 	}
-	tenant, err := s.target.identityUnder(ctx, contractV05)
+	stated, tenant, err := s.target.statedOf(ctx, statementContracts)
+	least := statementContracts[len(statementContracts)-1]
 	var refused *refusal
 	switch {
 	case errors.As(err, &refused) && refused.status == http.StatusNotFound:
-		fmt.Fprintf(s.stderr, "costroid: Costroid Platform does not serve integration/v%s, and a merge fact needs integration/v%s or later, so nothing was sent\n", contractV05.Version, contractV05.Version)
+		fmt.Fprintf(s.stderr, "costroid: Costroid Platform does not serve integration/v%s, and a merge fact needs integration/v%s or later, so nothing was sent\n", least.Version, least.Version)
 		return exitFailure
 	case errors.As(err, &refused):
 		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
@@ -347,7 +357,8 @@ func (s *mergedSend) open(ctx context.Context, getenv func(string) string) int {
 		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
-	s.target.base = s.target.origin + contractV05.path()
+	s.version = stated
+	fmt.Fprintf(s.stderr, "costroid: Costroid Platform states integration/v%s, so merged sends the merge facts by it\n", stated.Version)
 	if getenv("ACTIONS_ID_TOKEN_REQUEST_URL") == "" || getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
 		return 0
 	}
@@ -378,7 +389,35 @@ type mergedAnswer struct {
 	PullRequest int    `json:"pull_request"`
 	Status      int    `json:"status"`
 	RunIdentity string `json:"run_identity,omitempty"`
+	Ref         string `json:"ref,omitempty"`
 	Code        string `json:"code,omitempty"`
+}
+
+// branchName admits a branch's name without a character git refuses in a
+// ref, a control character, a space and a colon among them, so a name that
+// reaches the log carries no workflow command.
+var branchName = regexp.MustCompile(`^[^\x00-\x20\x7f~^:?*\[\\]{1,255}$`)
+
+// storedFact is the part of the platform's answer merged reads. A ref of
+// another form than a string leaves the grade readable.
+type storedFact struct {
+	RunIdentity string          `json:"run_identity"`
+	Ref         json.RawMessage `json:"ref"`
+}
+
+// branch is the ref and the branch of a token_verified fact by
+// integration/v0.6, or empty. A version before 0.6 grades a fact from any
+// branch and names none.
+func (f storedFact) branch(version contract) (string, string) {
+	var ref string
+	if version == contractV05 || f.RunIdentity != tokenVerified || json.Unmarshal(f.Ref, &ref) != nil {
+		return "", ""
+	}
+	name, found := strings.CutPrefix(ref, "refs/heads/")
+	if !found || !branchName.MatchString(name) {
+		return "", ""
+	}
+	return ref, name
 }
 
 // one sends a fact and states the answer.
@@ -393,14 +432,13 @@ func (s *mergedSend) one(ctx context.Context, fact mergeFact) int {
 		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
-	var stored struct {
-		RunIdentity string `json:"run_identity"`
-	}
+	var stored storedFact
 	if json.Unmarshal(data, &stored) != nil || stored.RunIdentity != tokenVerified && stored.RunIdentity != unverified {
-		stored.RunIdentity = ""
+		stored = storedFact{}
 	}
-	s.printJSON(mergedAnswer{MergeID: fact.id, PullRequest: fact.document.PullRequest, Status: status, RunIdentity: stored.RunIdentity})
-	s.printStored(fact, status, stored.RunIdentity)
+	ref, branch := stored.branch(s.version)
+	s.printJSON(mergedAnswer{MergeID: fact.id, PullRequest: fact.document.PullRequest, Status: status, RunIdentity: stored.RunIdentity, Ref: ref})
+	s.printStored(fact, status, stored.RunIdentity, branch)
 	return 0
 }
 
@@ -412,25 +450,41 @@ func (s *mergedSend) printJSON(answer mergedAnswer) {
 	fmt.Fprintf(s.stdout, "%s\n", line)
 }
 
-// printStored states the stored fact's grade and, for an unverified fact,
-// the cause the contract gives, where it is one of this send's.
-func (s *mergedSend) printStored(fact mergeFact, status int, grade string) {
+// printStored states the stored fact's grade, the branch a token_verified
+// fact names, and why an unverified fact reads so.
+func (s *mergedSend) printStored(fact mergeFact, status int, grade, branch string) {
 	pull := fmt.Sprintf("merge %s, pull request %d of %s", fact.id, fact.document.PullRequest, fact.document.Repo)
 	switch {
 	case grade == "":
 		fmt.Fprintf(s.stderr, "costroid: warning: Costroid Platform stored %s, and its answer names no run_identity the integration contract defines\n", pull)
 		return
+	case status == http.StatusOK && branch != "":
+		fmt.Fprintf(s.say, "costroid: %s: already held as %s, from a push to the protected branch %s, so nothing changed\n", pull, grade, branch)
 	case status == http.StatusOK:
 		fmt.Fprintf(s.say, "costroid: %s: already held as %s, so nothing changed\n", pull, grade)
+	case branch != "":
+		fmt.Fprintf(s.say, "costroid: %s: stored as %s, from a push to the protected branch %s\n", pull, grade, branch)
 	default:
 		fmt.Fprintf(s.say, "costroid: %s: stored as %s\n", pull, grade)
 	}
+	if grade == unverified {
+		s.printCauses(fact)
+	}
+}
+
+// printCauses states each cause the contract gives for an unverified fact
+// that is one of this send's. The job's GITHUB_REF_PROTECTED names the last,
+// and only by a version that grades a fact by its branch.
+func (s *mergedSend) printCauses(fact mergeFact) {
 	switch {
-	case grade != unverified:
 	case s.runToken == "":
 		fmt.Fprintf(s.say, "costroid: merge %s reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit\n", fact.id)
+		return
 	case fact.document.MergeCommitSHA != s.tip:
 		fmt.Fprintf(s.say, "costroid: merge %s reads unverified because its commit %s is not the tip of the push, %s, which the run token names, as in a merge queue's group\n", fact.id, fact.document.MergeCommitSHA, s.tip)
+	}
+	if s.version != contractV05 && s.refProtected == "false" {
+		fmt.Fprintf(s.say, "costroid: merge %s reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch\n", fact.id)
 	}
 }
 
