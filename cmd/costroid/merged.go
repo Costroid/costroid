@@ -59,7 +59,7 @@ commit.`,
 	},
 	Flags: []cli.Row{
 		{"--platform-url URL", "Costroid Platform's https origin"},
-		{"--installation-id ID", "the installation the facts come through"},
+		{"--installation-id ID", "the installation the facts come through: github:<id>, github-owner:<id> or gitlab-namespace:<id>"},
 		{"--json", "print one object per fact sent"},
 		{"--dry-run", "print the documents and send nothing"},
 	},

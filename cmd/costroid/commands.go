@@ -511,7 +511,7 @@ credential per UTC day.`,
 		{"--reports DIR", "a directory of saved provider reports, read in place of the provider"},
 		{"--as-of T", "when the saved reports were saved, as a UTC instant"},
 		{"--export", "send the rows --out keeps to Costroid Platform, by integration/v0.6 or v0.5"},
-		{"--installation-id ID", "with --export, the installation the job runs under"},
+		{"--installation-id ID", "with --export, the installation the job runs under: github:<id>, github-owner:<id> or gitlab-namespace:<id>"},
 	},
 	Sections: []cli.Section{
 		{Heading: "What counts as a match", Body: []cli.Block{cli.Text(`Tokens must match within 1% by class. List-price dollars

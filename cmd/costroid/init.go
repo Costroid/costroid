@@ -49,7 +49,7 @@ to.`,
 		"costroid init github --existing .github/workflows/claude.yml > costroid.patch",
 	},
 	Flags: []cli.Row{
-		{"--agent AGENT", "the agent the recipe runs or reads"},
+		{"--agent AGENT", "the agent the recipe runs or reads: claude, codex, claude-code-action, codex-action, claude-agent-sdk or codex-sdk on GitHub, and claude or codex on GitLab"},
 		{"--host HOST", "the host the recipe runs on"},
 		{"--out PATH", "the file to write the recipe to"},
 		{"--force", "replace a file that exists"},

@@ -1081,3 +1081,87 @@ func TestInitHelpNamesEveryAgentItAccepts(t *testing.T) {
 		}
 	}
 }
+
+// twoMeanings are the flags whose name means one thing on one command and
+// another on the next, with what each command's own line says the value is
+// there.
+var twoMeanings = map[string]map[string]string{
+	"--from": {
+		"ingest-run": "KIND=PATH the source to read",
+		"review":     "KIND=PATH where the run left its answer",
+		"reconcile":  "the first UTC day, YYYY-MM-DD",
+	},
+	"--agent": {
+		"run":  "claude-code, claude-code-sdk, codex, codex-sdk, opencode, copilot",
+		"init": "claude, codex, claude-code-action, codex-action, claude-agent-sdk or codex-sdk on GitHub, and claude or codex on GitLab",
+	},
+	"--budget-usd": {
+		"run":     "the run's cap in USD",
+		"report":  "the run's cap in USD, read only when the run left no result object",
+		"init":    "the cap in USD --existing adds to claude_args that hold none",
+		"gateway": "the run's budget in USD, the key's max_budget",
+	},
+	"--out": {
+		"run":        "the file the FOCUS rows go to",
+		"ingest-run": "the file the FOCUS rows go to",
+		"review":     "the file the answer goes to",
+		"export":     "the file --format writes, or the directory for cloudability, ternary and focus-1.5-cr",
+		"reconcile":  "the file reconciliation rows are kept in",
+		"init":       "the file to write the recipe to",
+		"gateway":    "the directory the key and the sealed request go to",
+	},
+	"--installation-id": {
+		"report":    "github:<id> or the bare number",
+		"export":    "github:<id>, github-owner:<id> or gitlab-namespace:<id>",
+		"merged":    "github:<id>, github-owner:<id> or gitlab-namespace:<id>",
+		"reconcile": "github:<id>, github-owner:<id> or gitlab-namespace:<id>",
+		"connect":   "github-owner:<id> or gitlab-namespace:<id>",
+	},
+	"--json": {
+		"run":    "print the result object on stdout",
+		"report": "print the result object on stdout",
+		"result": "print the result object whole",
+		"policy": "print the verdict as the machine block carries it",
+		"merged": "print one object per fact sent",
+		"egress": "print the counters as one JSON object",
+	},
+}
+
+// flagLines reads a page's Flags part into one line a flag, by the flag's
+// name. A flag two subcommands share has each of its lines.
+func flagLines(page string) map[string]string {
+	lines := map[string]string{}
+	name := ""
+	for line := range strings.SplitSeq(part(page, "Flags"), "\n") {
+		text := strings.Join(strings.Fields(line), " ")
+		if strings.HasPrefix(line, "  --") {
+			name, _, _ = strings.Cut(text, " ")
+		}
+		if name != "" && text != "" {
+			lines[name] = strings.TrimSpace(lines[name] + " " + text)
+		}
+	}
+	return lines
+}
+
+// TestAFlagWithTwoMeaningsSaysItsValueOnEachPage holds the six flags whose
+// name is shared across commands with different values: each command's page
+// says, in the flag's own line, what the value is on that command, so no page
+// relies on the reader knowing another.
+func TestAFlagWithTwoMeaningsSaysItsValueOnEachPage(t *testing.T) {
+	for _, entry := range commands {
+		lines := flagLines(entry.help)
+		for flag, says := range twoMeanings {
+			line, has := lines[flag]
+			want, listed := says[entry.name]
+			switch {
+			case has && !listed:
+				t.Errorf("help %s has %s, and twoMeanings does not say what its value is there", entry.name, flag)
+			case !has && listed:
+				t.Errorf("twoMeanings names %s on %s, whose help has no such flag", flag, entry.name)
+			case has && !strings.Contains(line, want):
+				t.Errorf("help %s: the line of %s does not say %q:\n%s", entry.name, flag, want, line)
+			}
+		}
+	}
+}

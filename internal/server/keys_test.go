@@ -134,22 +134,25 @@ func TestKeysRefuseWhatTheyCannotAct(t *testing.T) {
 	w := postgresWorld(t)
 	t.Setenv(envMigration, w.db.OwnerURL)
 	unknown := strings.Repeat("c", 64)
-	for name, args := range map[string][]string{
-		"unknown":        {"rotate"},
-		"no owner":       {"create"},
-		"malformed":      {"create", "--owner", "acme"},
-		"unbound owner":  {"create", "--owner", "github.com:nobody"},
-		"no id":          {"revoke"},
-		"unknown id":     {"revoke", unknown},
-		"a pasted key":   {"revoke", "costroid_ik_pasted-by-mistake"},
-		"two ids":        {"revoke", unknown, unknown},
-		"an upper id":    {"revoke", strings.Repeat("C", 64)},
-		"flag-less item": {"create", "github.com:acme"},
+	for name, refusal := range map[string]struct {
+		args []string
+		code int
+	}{
+		"unknown":        {[]string{"rotate"}, cli.ExitUsage},
+		"no owner":       {[]string{"create"}, cli.ExitUsage},
+		"malformed":      {[]string{"create", "--owner", "acme"}, cli.ExitUsage},
+		"unbound owner":  {[]string{"create", "--owner", "github.com:nobody"}, cli.ExitCouldNot},
+		"no id":          {[]string{"revoke"}, cli.ExitUsage},
+		"unknown id":     {[]string{"revoke", unknown}, cli.ExitCouldNot},
+		"a pasted key":   {[]string{"revoke", "costroid_ik_pasted-by-mistake"}, cli.ExitUsage},
+		"two ids":        {[]string{"revoke", unknown, unknown}, cli.ExitUsage},
+		"an upper id":    {[]string{"revoke", strings.Repeat("C", 64)}, cli.ExitUsage},
+		"flag-less item": {[]string{"create", "github.com:acme"}, cli.ExitUsage},
 	} {
 		t.Run(name, func(t *testing.T) {
-			code, stdout, stderr := keysCommandLine(t, args...)
-			if code != cli.ExitCouldNot {
-				t.Fatalf("exit %d", code)
+			code, stdout, stderr := keysCommandLine(t, refusal.args...)
+			if code != refusal.code {
+				t.Fatalf("exit %d, want %d", code, refusal.code)
 			}
 			if stdout != "" {
 				t.Fatalf("stdout %q", stdout)

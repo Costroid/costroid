@@ -123,10 +123,10 @@ integration token in COSTROID_PLATFORM_TOKEN.`,
 	Flags: []cli.Row{
 		{"--rows FILE", "the rows file costroid run wrote"},
 		{"--platform-url URL", "Costroid Platform's https origin"},
-		{"--installation-id ID", "the installation the rows came through"},
+		{"--installation-id ID", "the installation the rows came through: github:<id>, github-owner:<id> or gitlab-namespace:<id>"},
 		{"--batch-id ID", "the batch id; GitHub Actions derives one from the run"},
 		{"--format FORMAT", "the file format to write instead of sending"},
-		{"--out PATH", "the file --format writes; standard output when absent"},
+		{"--out PATH", "the file --format writes, or the directory for cloudability, ternary and focus-1.5-cr; standard output when absent"},
 		{"--root-dir BUCKET", "the bucket or container a cloudability manifest names"},
 	},
 	Sections: []cli.Section{

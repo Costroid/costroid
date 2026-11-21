@@ -28,7 +28,7 @@ var EgressUsage = cli.Page{
 	Summary:  egressGroup.Summary,
 	Usage:    []string{"costroid egress report [--json]"},
 	Examples: []string{"costroid egress report", "costroid egress report --json"},
-	Flags:    []cli.Row{{"--json", "print JSON"}},
+	Flags:    []cli.Row{{"--json", "print the counters as one JSON object"}},
 	Sections: []cli.Section{
 		{Heading: "What the report holds", Body: []cli.Block{cli.Text(`A refused call never
 opened a socket. The report holds no path, query, header or body. A service
