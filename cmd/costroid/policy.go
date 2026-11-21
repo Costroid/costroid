@@ -11,14 +11,17 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/comment"
+	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/policy"
 )
 
 type policyFlags struct {
-	rows, config, history string
-	start                 policy.Start
-	at                    time.Time
-	json                  bool
+	rows, config, history, baseline string
+	start                           policy.Start
+	at                              time.Time
+	json                            bool
+	// warnings takes a warning, on the stderr the flags were parsed with.
+	warnings io.Writer
 }
 
 func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
@@ -27,6 +30,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	config := set.String("config", configFile, "costroid.yml as the base branch holds it")
 	earlier := set.String("history", "", "the result objects of the pull request's earlier check runs, one per line")
+	baseline := set.String("baseline", "", "the result objects of the check runs on the merged pull requests' heads, one per line")
 	added := set.String("workflow-added", "", "when the workflow reached the base branch, as RFC 3339")
 	at := set.String("at", "", "the time of the check, as RFC 3339; now when empty")
 	asJSON := set.Bool("json", false, "print the verdict as the machine block carries it")
@@ -36,7 +40,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	if *rows == "" || set.NArg() > 0 {
 		return policyFlags{}, errors.New("policy needs --rows and takes no argument")
 	}
-	flags := policyFlags{rows: *rows, config: *config, history: *earlier, at: time.Now(), json: *asJSON}
+	flags := policyFlags{rows: *rows, config: *config, history: *earlier, baseline: *baseline, at: time.Now(), json: *asJSON, warnings: stderr}
 	if *added != "" {
 		start, err := time.Parse(time.RFC3339, *added)
 		if err != nil {
@@ -98,7 +102,7 @@ func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, err
 	if config.Unread != nil {
 		return policy.Verdict{}, config.Unread
 	}
-	runs, err := historyOf(ctx, flags)
+	runs, err := historyOf(ctx, flags, config)
 	if err != nil {
 		return policy.Verdict{}, err
 	}
@@ -114,23 +118,56 @@ func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, err
 	})
 }
 
-// historyOf reads --history as the report reads the pull request's check
-// runs, with the rows as this run's report. Without the flag there is no
-// history, and the rules that read one do not run.
-func historyOf(ctx context.Context, flags policyFlags) (earlierRuns, error) {
-	if flags.history == "" {
+// errHistoryIsNoBaseline refuses --history alone where a rule reads a
+// baseline. The file once gave the baseline too, and a verdict without it
+// would differ from the one it gave.
+var errHistoryIsNoBaseline = errors.New("--history gives no baseline: run_increase and run_increase_percent read the merged pull requests' check runs, which --baseline names")
+
+// historyOf reads --history and --baseline as the report reads the pull
+// request's check runs and the merged pull requests', with the rows as this
+// run's report. Without a flag its part is not read, and the rules that read
+// it do not run. A baseline file whose part cannot be read is left out, as
+// the report leaves out the baseline, and a warning says so.
+func historyOf(ctx context.Context, flags policyFlags, config policy.ConfigFile) (earlierRuns, error) {
+	if flags.history == "" && flags.baseline == "" {
 		return earlierRuns{}, nil
 	}
-	checks, err := readHistoryFile(flags.history)
-	if err != nil {
-		return earlierRuns{}, err
+	if flags.baseline == "" && readsBaseline(config) {
+		return earlierRuns{}, errHistoryIsNoBaseline
 	}
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
 		return earlierRuns{}, err
 	}
-	own := comment.Input{Ledger: rows.ledger, State: rows.state, Reason: rows.reason, RowsSHA256: rows.rowsSHA256, RowsFileSHA256: rows.fileSHA256}
-	return earlierRunsOf(ctx, checks, 0, historyFileCommit, own)
+	own, err := ownReport(comment.Input{Ledger: rows.ledger, State: rows.state, Reason: rows.reason, RowsSHA256: rows.rowsSHA256, RowsFileSHA256: rows.fileSHA256})
+	if err != nil {
+		return earlierRuns{}, err
+	}
+	var runs earlierRuns
+	if flags.history != "" {
+		checks, err := readCheckFile(flags.history, "--history")
+		if err != nil {
+			return earlierRuns{}, err
+		}
+		if runs.lifetime, runs.earlier, err = pullRunsOf(ctx, &fileHistory{checks}, 0, historyFileCommit, own); err != nil {
+			return earlierRuns{}, err
+		}
+	}
+	if flags.baseline != "" {
+		checks, err := readCheckFile(flags.baseline, "--baseline")
+		if err != nil {
+			return earlierRuns{}, err
+		}
+		reports, err := history.Merged(ctx, &fileMerged{checks}, "", 0, historyFileCommit)
+		if err != nil {
+			fmt.Fprintf(flags.warnings, "costroid: warning: the baseline is left out: %v\n", err)
+			return runs, nil
+		}
+		if runs.baseline, err = baselineOf(reports, own); err != nil {
+			return earlierRuns{}, err
+		}
+	}
+	return runs, nil
 }
 
 // printVerdict prints what the verdict sentence leaves unsaid, one sentence a

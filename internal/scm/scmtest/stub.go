@@ -35,6 +35,10 @@ type Pull struct {
 	HeadSHA        string
 	HeadRepository string
 	HeadBranch     string
+	// BaseBranch is the branch the pull request merges into, and UpdatedAt
+	// when GitHub last updated it, which orders the list of pull requests.
+	BaseBranch string
+	UpdatedAt  time.Time
 	// Commits are the pull request's commits, oldest first, as GitHub lists
 	// them.
 	Commits []string
@@ -228,6 +232,23 @@ func commitOf(path string) string {
 	return sha
 }
 
+// listedPull is a pull request as GitHub's list of pull requests gives it,
+// with merged_at null until it merged.
+func listedPull(pull Pull) map[string]any {
+	head := map[string]any{"sha": pull.HeadSHA, "ref": pull.HeadBranch, "repo": nil}
+	if pull.HeadRepository != "" {
+		head["repo"] = map[string]string{"full_name": pull.HeadRepository}
+	}
+	var merged any
+	if !pull.MergedAt.IsZero() {
+		merged = pull.MergedAt.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"number": pull.Number, "state": pull.State, "head": head, "base": map[string]string{"ref": pull.BaseBranch},
+		"updated_at": pull.UpdatedAt.UTC().Format(time.RFC3339), "merged_at": merged, "merge_commit_sha": pull.MergeCommitSHA,
+	}
+}
+
 // listPulls answers as GitHub's list of pull requests does, filtered by state
 // and by a head of the form owner:branch.
 func (s *Stub) listPulls(w http.ResponseWriter, r *http.Request) {
@@ -244,22 +265,21 @@ func (s *Stub) listPulls(w http.ResponseWriter, r *http.Request) {
 	}
 	state := cmp.Or(query.Get("state"), "open")
 	owner, branch, filtered := strings.Cut(query.Get("head"), ":")
+	base := query.Get("base")
 	var matched []Pull
 	for _, pull := range s.Pulls {
 		holder, _, _ := strings.Cut(pull.HeadRepository, "/")
-		if pull.State != state || filtered && (holder != owner || pull.HeadBranch != branch) {
+		if pull.State != state || filtered && (holder != owner || pull.HeadBranch != branch) || base != "" && pull.BaseBranch != base {
 			continue
 		}
 		matched = append(matched, pull)
 	}
+	if query.Get("sort") == "updated" && query.Get("direction") == "desc" {
+		slices.SortStableFunc(matched, func(a, b Pull) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
+	}
 	listed := []map[string]any{}
 	for index := (page - 1) * size; index >= 0 && index < len(matched) && index < page*size; index++ {
-		pull := matched[index]
-		head := map[string]any{"sha": pull.HeadSHA, "ref": pull.HeadBranch, "repo": nil}
-		if pull.HeadRepository != "" {
-			head["repo"] = map[string]string{"full_name": pull.HeadRepository}
-		}
-		listed = append(listed, map[string]any{"number": pull.Number, "state": pull.State, "head": head})
+		listed = append(listed, listedPull(matched[index]))
 	}
 	s.answer(w, listed)
 }

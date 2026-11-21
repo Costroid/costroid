@@ -13,8 +13,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -30,12 +32,13 @@ import (
 const earlierRunCost = "0.001"
 
 // earlierReports are the result objects of n earlier runs of the recorded
-// agent, each on its own check run and rows. The figures are synthetic.
-func earlierReports(t *testing.T, n int) []string {
+// agent, each on its own check run and rows, numbered from first. The figures
+// are synthetic.
+func earlierReports(t *testing.T, first int64, n int) []string {
 	t.Helper()
 	objects := make([]string, n)
 	for index := range objects {
-		id := int64(100 + index)
+		id := first + int64(index)
 		result, err := comment.Result(comment.Input{
 			State: comment.Reported,
 			Ledger: comment.Ledger{Rows: 1, Agents: []comment.Data{"claude-code"}, Figures: []comment.Figure{
@@ -54,11 +57,18 @@ func earlierReports(t *testing.T, n int) []string {
 }
 
 // pathCase is one pull request as each path sees it: costroid.yml at the
-// base, nil for none, and the earlier runs of the same agent.
+// base, nil for none, the earlier runs of the same agent on the pull
+// request's commits, and its runs on the pull requests merged into the base
+// branch, perHead on each merged head.
 type pathCase struct {
 	name    string
 	config  *string
 	earlier int
+	merged  int
+	perHead int
+	// unread puts on the first merged head a check run whose object this
+	// release does not read.
+	unread bool
 	// want is the conclusion and the outcome and reason of each result, as
 	// the report and costroid policy give them.
 	want verdictWords
@@ -84,9 +94,11 @@ func text(s string) *string { return &s }
 
 // TestOfflineEqualsOnline holds one pull request to one costroid.yml and one
 // history on the three paths: costroid policy on the rows file, the report on
-// GitHub, and serve over the same rows in its ledger. The report and costroid
-// policy give the same verdict, rule for rule and figure for figure. serve
-// gives it too, except on a run rule, which it answers for the pull request.
+// GitHub, and serve over the same rows in its ledger. The history is the
+// pull request's own earlier runs and the agent's runs on the pull requests
+// merged into the base branch. The report and costroid policy give the same
+// verdict, rule for rule and figure for figure. serve gives it too, except on
+// a run rule, which it answers for the pull request.
 func TestOfflineEqualsOnline(t *testing.T) {
 	cases := []pathCase{
 		{name: "no costroid.yml", earlier: 10, want: verdictWords{conclusion: policy.Neutral}},
@@ -108,26 +120,44 @@ func TestOfflineEqualsOnline(t *testing.T) {
 			want: verdictWords{policy.Neutral, []string{"pr_budget unproven unverified_rows"}},
 		},
 		{
-			name: "a run over the P50 of ten earlier runs", config: text("policy:\n  max_increase_usd: \"0.0006\"\n  enforce: true\n"), earlier: 10,
+			name: "a run over the P50 of ten merged runs", config: text("policy:\n  max_increase_usd: \"0.0006\"\n  enforce: true\n"), merged: 10,
 			want:  verdictWords{policy.Failure, []string{"run_increase fail over_baseline"}},
 			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows"}},
 		},
 		{
-			name: "a run within the P50 of ten earlier runs", config: text("policy:\n  max_increase_usd: \"0.0007\"\n  enforce: true\n"), earlier: 10,
+			name: "a run within the P50 of ten merged runs", config: text("policy:\n  max_increase_usd: \"0.0007\"\n  enforce: true\n"), merged: 10,
 			want:  verdictWords{policy.Neutral, []string{"run_increase unproven unverified_rows"}},
 			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows"}},
 		},
 		{
-			name: "nine earlier runs are no baseline", config: text("policy:\n  max_increase_usd: 0\n  enforce: true\n"), earlier: 9,
+			name: "nine merged runs are no baseline", config: text("policy:\n  max_increase_usd: 0\n  enforce: true\n"), merged: 9,
+			want:  verdictWords{policy.Neutral, []string{"run_increase unproven no_baseline"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows"}},
+		},
+		{
+			name: "ten runs on five merged pull requests each count", config: text("policy:\n  max_increase_percent: 50\n  enforce: true\n"), merged: 10, perHead: 2,
+			want:  verdictWords{policy.Failure, []string{"run_increase_percent fail over_baseline"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_increase_percent unproven no_run_rows"}},
+		},
+		{
+			name: "the pull request's own ten runs are no baseline", config: text("policy:\n  max_increase_usd: 0\n  enforce: true\n"), earlier: 10,
+			want:  verdictWords{policy.Neutral, []string{"run_increase unproven no_baseline"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows"}},
+		},
+		{
+			name: "a merged run that cannot be read leaves no baseline", config: text("policy:\n  max_increase_usd: 0\n  enforce: true\n"), merged: 20, unread: true,
 			want:  verdictWords{policy.Neutral, []string{"run_increase unproven no_baseline"}},
 			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows"}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			objects := earlierReports(t, tc.earlier)
-			report := reportPath(t, tc, objects)
-			offline := offlinePath(t, tc, objects)
+			history := pathHistory{own: earlierReports(t, 100, tc.earlier), merged: earlierReports(t, 1, tc.merged)}
+			if tc.unread {
+				history.merged[0] = olderSchema.ReplaceAllString(history.merged[0], `"schema": "costroid.result/0.2"`)
+			}
+			report := reportPath(t, tc, history)
+			offline := offlinePath(t, tc, history)
 			served := servePath(t, tc)
 			if got := wordsOf(report); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("the report: %+v, want %+v", got, tc.want)
@@ -149,19 +179,48 @@ func TestOfflineEqualsOnline(t *testing.T) {
 	}
 }
 
-// reportPath posts the report on pull request 7, whose earlier commit holds
-// the earlier runs' check runs, and reads the verdict from the check it posts.
-func reportPath(t *testing.T, tc pathCase, objects []string) policy.Verdict {
+// olderSchema finds the schema of a result object, which a test rewrites to
+// one this release does not read.
+var olderSchema = regexp.MustCompile(`"schema": "costroid\.result/[0-9.]+"`)
+
+// pathHistory is the result objects of the pull request's own earlier runs
+// and of the runs on the merged pull requests' heads.
+type pathHistory struct {
+	own, merged []string
+}
+
+// mergedHead is the synthetic head commit of merged pull request number.
+func mergedHead(number int) string {
+	return fmt.Sprintf("%040x", 0xfeed00+number)
+}
+
+// reportPath posts the report on pull request 7 into main, whose earlier
+// commit holds the check runs of its own earlier runs, and reads the verdict
+// from the check it posts. The merged runs are on the heads of pull requests
+// merged into main, perHead on each.
+func reportPath(t *testing.T, tc pathCase, history pathHistory) policy.Verdict {
 	t.Helper()
-	stub := reportEnvironment(t, pullRequestEvent())
+	stub := reportEnvironment(t, pullRequestEventOn("main"))
 	stub.SetPrivate(true)
 	if tc.config != nil {
 		stub.Files[configFile] = *tc.config
 	}
-	stub.Pulls = []scmtest.Pull{{Number: 7, State: "open", HeadSHA: headCommit, Commits: []string{earlierCommit, headCommit}}}
-	for index, object := range objects {
+	stub.Pulls = []scmtest.Pull{{Number: 7, State: "open", BaseBranch: "main", HeadSHA: headCommit, Commits: []string{earlierCommit, headCommit}}}
+	for index, object := range history.own {
 		stub.Checks = append(stub.Checks, scmtest.Check{
 			ID: int64(100 + index), Name: comment.CheckName, HeadSHA: earlierCommit, Conclusion: policy.Neutral,
+			Text: "```json\n" + object + "\n```", App: "github-actions",
+		})
+	}
+	perHead := max(tc.perHead, 1)
+	for index, object := range history.merged {
+		number := 10 + index/perHead
+		if index%perHead == 0 {
+			merged := time.Date(2026, 11, 2, 9, number, 0, 0, time.UTC)
+			stub.Pulls = append(stub.Pulls, scmtest.Pull{Number: number, State: "closed", BaseBranch: "main", HeadSHA: mergedHead(number), UpdatedAt: merged, MergedAt: merged})
+		}
+		stub.Checks = append(stub.Checks, scmtest.Check{
+			ID: int64(1 + index), Name: comment.CheckName, HeadSHA: mergedHead(number), Conclusion: policy.Neutral,
 			Text: "```json\n" + object + "\n```", App: "github-actions",
 		})
 	}
@@ -183,9 +242,10 @@ func reportPath(t *testing.T, tc pathCase, objects []string) policy.Verdict {
 	return policy.Verdict{}
 }
 
-// offlinePath runs costroid policy on the rows with the same costroid.yml and
-// the earlier runs' result objects as --history, one per line.
-func offlinePath(t *testing.T, tc pathCase, objects []string) policy.Verdict {
+// offlinePath runs costroid policy on the rows with the same costroid.yml,
+// the pull request's own earlier runs' result objects as --history and the
+// merged runs' as --baseline, one per line.
+func offlinePath(t *testing.T, tc pathCase, history pathHistory) policy.Verdict {
 	t.Helper()
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "base.yml")
@@ -194,18 +254,9 @@ func offlinePath(t *testing.T, tc pathCase, objects []string) policy.Verdict {
 			t.Fatal(err)
 		}
 	}
-	var lines bytes.Buffer
-	for _, object := range objects {
-		if err := json.Compact(&lines, []byte(object)); err != nil {
-			t.Fatal(err)
-		}
-		lines.WriteByte('\n')
-	}
-	historyPath := filepath.Join(directory, "earlier.jsonl")
-	if err := os.WriteFile(historyPath, lines.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	code, stdout, stderr := execute(t, "policy", "--json", "--rows", realRows, "--config", configPath, "--history", historyPath)
+	historyPath := writeObjects(t, filepath.Join(directory, "earlier.jsonl"), history.own)
+	baselinePath := writeObjects(t, filepath.Join(directory, "merged.jsonl"), history.merged)
+	code, stdout, stderr := execute(t, "policy", "--json", "--rows", realRows, "--config", configPath, "--history", historyPath, "--baseline", baselinePath)
 	if code != 0 && code != exitRejected {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -214,6 +265,23 @@ func offlinePath(t *testing.T, tc pathCase, objects []string) policy.Verdict {
 		t.Fatalf("%v: %s", err, stdout)
 	}
 	return verdict
+}
+
+// writeObjects writes the result objects to path, one per line, and returns
+// the path.
+func writeObjects(t *testing.T, path string, objects []string) string {
+	t.Helper()
+	var lines bytes.Buffer
+	for _, object := range objects {
+		if err := json.Compact(&lines, []byte(object)); err != nil {
+			t.Fatal(err)
+		}
+		lines.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, lines.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // servePath asks serve for the verdict on pull request 7, whose rows in its
@@ -310,7 +378,7 @@ func (l pullLedger) MintedCredentials(context.Context, store.TenantID, []string)
 func TestPolicyRefusesAHistoryLineWithoutItsCheckRun(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "earlier.jsonl")
-	objects := earlierReports(t, 1)
+	objects := earlierReports(t, 100, 1)
 	unnamed := strings.Replace(objects[0], `"check_run_id": 100,`, "", 1)
 	var lines bytes.Buffer
 	for _, object := range []string{objects[0], unnamed} {
@@ -324,6 +392,43 @@ func TestPolicyRefusesAHistoryLineWithoutItsCheckRun(t *testing.T) {
 	}
 	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", filepath.Join(directory, "none.yml"), "--history", path)
 	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "--history line 2: the result object names no check run") {
+		t.Errorf("exit %d: %q %q", code, stdout, stderr)
+	}
+}
+
+// TestPolicyRefusesHistoryAloneWhereARuleReadsABaseline refuses --history
+// without --baseline when a rule reads a baseline: the file once gave the
+// baseline, and is never read as giving none. Where no rule reads one, or
+// beside --baseline, --history is read as before.
+func TestPolicyRefusesHistoryAloneWhereARuleReadsABaseline(t *testing.T) {
+	directory := t.TempDir()
+	history := writeObjects(t, filepath.Join(directory, "earlier.jsonl"), earlierReports(t, 100, 10))
+	baseline := writeObjects(t, filepath.Join(directory, "merged.jsonl"), nil)
+	increase := writeBaseConfig(t, "policy:\n  max_increase_percent: 10\n")
+	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", increase, "--history", history)
+	want := "costroid: --history gives no baseline: run_increase and run_increase_percent read the merged pull requests' check runs, which --baseline names\n"
+	if code != exitFailure || stdout != "" || stderr != want {
+		t.Errorf("exit %d: %q %q", code, stdout, stderr)
+	}
+	for name, args := range map[string][]string{
+		"with --baseline":         {"--config", increase, "--history", history, "--baseline", baseline},
+		"where no rule reads one": {"--config", writeBaseConfig(t, "policy:\n  pr_budget_usd: 5\n"), "--history", history},
+	} {
+		if code, stdout, stderr := execute(t, append([]string{"policy", "--rows", realRows}, args...)...); code != 0 || !strings.HasPrefix(stdout, "Verdict: neutral.") {
+			t.Errorf("%s: exit %d: %q %q", name, code, stdout, stderr)
+		}
+	}
+}
+
+// TestPolicyRefusesABaselineLineWithoutItsCheckRun refuses a --baseline file
+// as --history is refused: a run without its check run cannot be placed in
+// the window.
+func TestPolicyRefusesABaselineLineWithoutItsCheckRun(t *testing.T) {
+	directory := t.TempDir()
+	unnamed := strings.Replace(earlierReports(t, 100, 1)[0], `"check_run_id": 100,`, "", 1)
+	path := writeObjects(t, filepath.Join(directory, "merged.jsonl"), []string{unnamed})
+	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", filepath.Join(directory, "none.yml"), "--baseline", path)
+	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "--baseline line 1: the result object names no check run") {
 		t.Errorf("exit %d: %q %q", code, stdout, stderr)
 	}
 }

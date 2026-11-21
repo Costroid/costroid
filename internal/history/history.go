@@ -119,6 +119,12 @@ func CheckRunBlocks(ctx context.Context, host scm.History, sha string) (reports 
 	if err != nil {
 		return nil, 0, err
 	}
+	reports, unread = checkReports(checks)
+	return reports, unread, nil
+}
+
+// checkReports reads the result objects of check runs as CheckRunBlocks does.
+func checkReports(checks []scm.ListedCheck) (reports []Report, unread int) {
 	for _, check := range checks {
 		report, err := parseText(check.Text)
 		if err != nil {
@@ -131,7 +137,7 @@ func CheckRunBlocks(ctx context.Context, host scm.History, sha string) (reports 
 		report.CheckRun = check.ID
 		reports = append(reports, report)
 	}
-	return reports, unread, nil
+	return reports, unread
 }
 
 // Posted is the result object of one check run as the check run carries it.
@@ -236,20 +242,29 @@ func Earlier(reports []Report, own Report) (policy.Lifetime, error) {
 // readCommits reads the commits' check runs, parallel at a time, and keeps
 // them in the commits' order. One commit that cannot be read fails the whole.
 func readCommits(ctx context.Context, host scm.History, commits []string) ([]Report, int, error) {
-	type read struct {
+	return readEach(ctx, commits, func(ctx context.Context, sha string) ([]Report, int, error) {
+		return CheckRunBlocks(ctx, host, sha)
+	})
+}
+
+// readEach reads each commit with read, parallel at a time, and keeps the
+// reports in the commits' order. One commit that cannot be read fails the
+// whole.
+func readEach(ctx context.Context, commits []string, read func(context.Context, string) ([]Report, int, error)) ([]Report, int, error) {
+	type commitRead struct {
 		reports []Report
 		unread  int
 		err     error
 	}
-	reads := make([]read, len(commits))
+	reads := make([]commitRead, len(commits))
 	slots := make(chan struct{}, parallel)
 	var group sync.WaitGroup
 	for index, sha := range commits {
 		group.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			reports, unread, err := CheckRunBlocks(ctx, host, sha)
-			reads[index] = read{reports, unread, err}
+			reports, unread, err := read(ctx, sha)
+			reads[index] = commitRead{reports, unread, err}
 		})
 	}
 	group.Wait()

@@ -13,7 +13,7 @@ comment:
 | `comment.show_cost` | `true`  | Off, a public repository's comment and job summary show the verdict and what held the run to its cap, without amounts or token counts. The rows, the check run's machine block and the action's outputs keep them. A private repository always prints them, and a GitLab project set to internal counts as private |
 | `policy.run_budget_usd` | none | The budget each run is held to, in USD, such as `5` or `"5.00"`. Unset, the rule does not run |
 | `policy.max_run_cost_usd` | none | A ceiling on one run's cost at list, in USD. Unset, the rule does not run |
-| `policy.max_increase_usd` | none | How far a run may cost more than the median of this agent's 10 or more earlier runs, in USD. Unset, the rule does not run |
+| `policy.max_increase_usd` | none | How far a run may cost more than the median of this agent's 10 or more runs on merged pull requests, in USD. Unset, the rule does not run |
 | `policy.max_increase_percent` | none | The same increase, in percent of the median, such as `25` or `"12.5"`. Unset, the rule does not run |
 | `policy.pr_budget_usd` | none | The budget a pull request's runs are held to together, in USD. Unset, the rule does not run |
 | `policy.monthly_budget_usd` | none | The budget the repository's runs are held to over a calendar month, in USD. It reads a ledger's month to date only. Unset, the rule does not run |

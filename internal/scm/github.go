@@ -606,12 +606,71 @@ func (g *GitHub) PullCommits(ctx context.Context, number int) ([]string, bool, e
 // CheckRuns lists the commit's completed check runs named name, every
 // attempt included, that GitHub Actions or this token's own App posted.
 func (g *GitHub) CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error) {
+	return g.checkRuns(ctx, sha, name, maxCheckRunPages)
+}
+
+// HeadCheckRuns lists what CheckRuns lists from its first answer alone, and
+// refuses a commit whose list goes on past it.
+func (g *GitHub) HeadCheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error) {
+	return g.checkRuns(ctx, sha, name, 1)
+}
+
+// mergedAnswer is one closed pull request as GitHub's list gives it.
+type mergedAnswer struct {
+	Number    int        `json:"number"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	MergedAt  *time.Time `json:"merged_at"`
+	Head      struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// MergedInto lists the pull requests merged into branch from one answer: the
+// 100 closed pull requests into branch that GitHub updated last. It keeps
+// those that merged, the latest merge first, at most limit. A merge updates
+// its pull request, so a merge left out of a full answer came no later than
+// its last update, and only a merge after it is kept: the list holds the
+// latest merges and skips none. The answer must name branch as each pull
+// request's base and a full SHA as its head.
+func (g *GitHub) MergedInto(ctx context.Context, branch string, limit int) ([]MergedHead, error) {
+	if branch == "" {
+		return nil, errors.New("scm: a list of merged pull requests needs a branch")
+	}
+	var answer []mergedAnswer
+	query := url.Values{
+		"state": {"closed"}, "base": {branch}, "sort": {"updated"}, "direction": {"desc"},
+		"per_page": {strconv.Itoa(pullsPerPage)}, "page": {"1"},
+	}
+	if err := g.do(ctx, http.MethodGet, g.repo("/pulls?"+query.Encode()), nil, &answer); err != nil {
+		return nil, err
+	}
+	var after time.Time
+	if len(answer) >= pullsPerPage {
+		after = slices.MinFunc(answer, func(a, b mergedAnswer) int { return a.UpdatedAt.Compare(b.UpdatedAt) }).UpdatedAt
+	}
+	var merged []MergedHead
+	for _, pull := range answer {
+		if pull.Base.Ref != branch || !vcs.IsCommit(pull.Head.SHA) {
+			return nil, fmt.Errorf("scm: the list of pull requests merged into %s names pull request %d with another base or no head commit", branch, pull.Number)
+		}
+		if pull.MergedAt != nil && pull.MergedAt.After(after) {
+			merged = append(merged, MergedHead{Number: pull.Number, HeadSHA: pull.Head.SHA, MergedAt: pull.MergedAt.UTC()})
+		}
+	}
+	slices.SortStableFunc(merged, func(a, b MergedHead) int { return b.MergedAt.Compare(a.MergedAt) })
+	return merged[:min(len(merged), max(limit, 0))], nil
+}
+
+func (g *GitHub) checkRuns(ctx context.Context, sha, name string, pages int) ([]ListedCheck, error) {
 	if !vcs.IsCommit(sha) {
 		return nil, errors.New("scm: the commit is not a full SHA")
 	}
 	apps := []string{actionsApp, strings.TrimSuffix(g.ownLogin(), botSuffix)}
 	var checks []ListedCheck
-	for page := 1; page <= maxCheckRunPages; page++ {
+	for page := 1; page <= pages; page++ {
 		var answer struct {
 			TotalCount int `json:"total_count"`
 			CheckRuns  []struct {
@@ -641,7 +700,7 @@ func (g *GitHub) CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck
 			return checks, nil
 		}
 	}
-	return nil, fmt.Errorf("scm: more than %d check runs named %s are on commit %s", maxCheckRunPages*checkRunsPerPage, name, sha)
+	return nil, fmt.Errorf("scm: more than %d check runs named %s are on commit %s", pages*checkRunsPerPage, name, sha)
 }
 
 // Reviews pages through the pull request's reviews in the order GitHub lists

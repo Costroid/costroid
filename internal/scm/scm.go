@@ -81,6 +81,26 @@ type History interface {
 	CheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error)
 }
 
+// MergedHead is a pull request merged into a base branch, and the commit at
+// its head when it merged.
+type MergedHead struct {
+	Number   int
+	HeadSHA  string
+	MergedAt time.Time
+}
+
+// Merged reads what earlier reports posted on the pull requests merged into a
+// branch, one request per question.
+type Merged interface {
+	// MergedInto lists at most limit of the pull requests merged into branch,
+	// the latest merge first, from one request.
+	MergedInto(ctx context.Context, branch string, limit int) ([]MergedHead, error)
+	// HeadCheckRuns is CheckRuns from one request. A commit with more check
+	// runs named name than one answer holds is an error, so the list is never
+	// read in part.
+	HeadCheckRuns(ctx context.Context, sha, name string) ([]ListedCheck, error)
+}
+
 // Reporter is what a report needs from one repository on one source-code host.
 type Reporter interface {
 	// PostCheck returns the check's id. A host without one answers ErrNoCheck.

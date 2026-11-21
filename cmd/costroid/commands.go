@@ -378,14 +378,17 @@ Exit codes of reconcile:
 
 const policyHelp = `Usage:
   costroid policy --rows rows.jsonl [--config costroid.yml]
-                  [--history earlier.jsonl] [--workflow-added T] [--at T]
-                  [--json]
+                  [--history earlier.jsonl] [--baseline merged.jsonl]
+                  [--workflow-added T] [--at T] [--json]
 
 policy gives, offline, the verdict the check gives: it holds the rows to the
 policy keys of the costroid.yml named, which should be the base branch's.
 --history names the result objects of the pull request's earlier check runs,
-one per line, each with its check_run_id: the pull request's total and the
-agent's baseline are read from them as the report reads them. --workflow-added
+one per line, each with its check_run_id: the pull request's total is read
+from them as the report reads it. --baseline names, in the same form, the
+result objects of the check runs on the heads of the pull requests merged
+into the base branch: the agent's baseline is read from them. --history
+without --baseline is refused when a rule reads a baseline. --workflow-added
 and --at state when the workflow reached the base branch and when the check
 ran, both as RFC 3339. Without --workflow-added the warn-only period has not
 ended. The last line is the verdict sentence, the title the check gets. --json

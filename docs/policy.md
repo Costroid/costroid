@@ -8,8 +8,8 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | ---------------------- | ----------------------------- | -------------- |
 | `run_budget`           | `policy.run_budget_usd`       | The run's cost at list, in USD, against the budget |
 | `run_cost_threshold`   | `policy.max_run_cost_usd`     | The run's cost at list, in USD, against the limit |
-| `run_increase`         | `policy.max_increase_usd`     | The run's cost at list, in USD, against the median of this agent's earlier runs plus the amount set |
-| `run_increase_percent` | `policy.max_increase_percent` | The run's cost at list, in USD, against the median of this agent's earlier runs plus the percent set |
+| `run_increase`         | `policy.max_increase_usd`     | The run's cost at list, in USD, against the median of this agent's runs on merged pull requests plus the amount set |
+| `run_increase_percent` | `policy.max_increase_percent` | The run's cost at list, in USD, against the median of this agent's runs on merged pull requests plus the percent set |
 | `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, over every basis, this run included, against the budget |
 | `monthly_budget`       | `policy.monthly_budget_usd`   | The repository's month to date, in USD, against the budget. It reads a ledger only |
 | `model_allowlist`      | `policy.models`               | Each row's `costroid/model` tag against the list |
@@ -23,7 +23,7 @@ Four rules read figures from outside the run. One that is set and lacks its figu
 
 | Rule                                   | Reads                                                         | In this release                                                                        |
 | -------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `run_increase`, `run_increase_percent` | The median of 10 or more earlier runs of the same agent, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --history` from a file. With fewer runs, off a pull request, on GitLab, or when a commit's check runs cannot be read, both conclude `unproven` with reason `no_baseline` |
+| `run_increase`, `run_increase_percent` | The median of 10 or more runs of the same agent on the pull requests merged into the base branch, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --baseline` from a file. With fewer runs, off a pull request, on GitLab, or when any part of it cannot be read, both conclude `unproven` with reason `no_baseline` |
 | `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --history` from a file. Off a pull request, on GitLab, under `costroid policy` without `--history`, or when a commit's check runs cannot be read, it concludes `unproven` with reason `no_lifetime` |
 | `monthly_budget`                       | The repository's month to date, from a ledger                 | No ledger reaches the check, so it concludes `unproven` with reason `no_ledger`        |
 
@@ -37,16 +37,20 @@ Any job of the repository can post a check run named `costroid`, so the total is
 
 ## The baseline
 
-`run_increase` and `run_increase_percent` hold a run to the median of the same agent's earlier runs. The report reads those runs from the `costroid` check runs on the pull request's commits, as it reads them for `pr_budget`, so the baseline is the pull request's own earlier runs.
+`run_increase` and `run_increase_percent` hold a run to the median of the same agent's runs on the pull requests merged into the base branch. The report reads those runs from the `costroid` check runs on each merged pull request's head commit. The pull request the check is about never counts, whatever its state: not its own earlier runs, not a listing of it as merged, and not a merged pull request whose head is its head. Up to 1.0.0-alpha.26 the baseline was the pull request's own earlier runs, so a pull request set its own baseline: costly early runs raised the median a later run was held to.
 
+- The report reads the baseline only when `costroid.yml` at the base sets `max_increase_usd` or `max_increase_percent`. It asks GitHub in one request for the 100 closed pull requests into the base branch that were updated last, and keeps the latest 30 merges among them. A merge updates its pull request, so from an answer of 100 it keeps only the merges after the answer's oldest update, and never skips a later merge for an earlier one. It then reads the check runs on each head in one request: 31 requests at most. It reads them beside the pull request's own check runs, inside the same 6 seconds.
 - A run is one earlier report on rows that name one agent, the agent this run's rows name. A run that names no agent or several joins no baseline, and when this run's rows name no agent or several, there is no baseline.
+- Every run on a merged head counts, not only its last: the window is the agent's latest runs, so a pull request whose agent ran three times adds three runs. The runs on a merged pull request's earlier commits are not read.
 - A run's cost is its figures added up at list, over every basis, as the run rules read this run. A run whose figures span two currencies has no single cost and joins no baseline. Each currency has its own baseline, and the rules read the one in USD.
 - A run counts once, at the first check run that reported its `rows_sha256`, so an approval that posts the report again adds nothing. A report that states no `rows_sha256` may repeat another, and is left out. So is this run's own report.
 - The window is the latest 20 runs with a cost in the currency, by check run id, the order in which GitHub creates check runs. Twenty runs is the count that ends the warn-only period.
 - With fewer than 10 runs there is no baseline, and both rules conclude `unproven` with reason `no_baseline`. Below 10, one run moves the median.
 - The median is the nearest-rank P50: the costs are sorted, and the median is the cost at rank ⌈n × 50 / 100⌉, counted from 1. Of 10 runs it is the 5th, of 20 the 10th. It is always one of the runs' costs, compared as an exact decimal, never a midpoint and never a float.
 
-Any job of the repository can post a check run named `costroid`, so a baseline is unverified, as the pull request's total is. It can show a run over it, never within it: the rules warn or fail, or conclude `unproven`.
+When any part of the baseline cannot be read, there is none, and both rules conclude `unproven` with reason `no_baseline`: the list, the check runs on one head, a `costroid` check run whose object this release does not read, or a head with more than 100 check runs named `costroid`. A baseline of part of its window would hold other runs than the latest. A warning on stderr names the part, and the pull request's total, read from other check runs, still reaches the comment.
+
+Any job of the repository can post a check run named `costroid`, so a baseline is unverified, as the pull request's total is. It can show a run over it, never within it: the rules warn or fail, or conclude `unproven`. It is the one figure from a claim that can still move a limit: a check run posted on a merged head can raise the median, and a raised median spares a run a failure. A pull request's own check runs no longer can.
 
 `model_allowlist` takes exact model ids, and prefixes that end in `*`: `claude-*` admits `claude-sonnet-5-5`, and `claude` admits only `claude`. A row whose tag is absent, or is not a model id of at most 128 letters, digits and `._:/+-`, cannot pass the rule: it concludes `unproven` with reason `unreadable_model`. A model off the list fails the rule whatever else the rows hold, and the verdict names at most 10 such models.
 
@@ -182,13 +186,24 @@ costroid policy --rows rows.jsonl --config base.yml
 
 It prints one sentence per line, in the comment's words: each rule the last line does not name, then the verdict sentence, which is the title the check gets. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
 
-`--history` takes the result objects of the pull request's earlier check runs, one object per line, each with its `check_run_id`. The command reads the pull request's total, the count that ends the warn-only period and the baseline from them, as the report reads them from the check runs, with the rows as this run's report. A line that is not a JSON object, or that names no check run, refuses the file with its line number. An object the report would skip, such as one that withholds its amounts, is skipped. This collects the objects on one commit:
+`--history` takes the result objects of the pull request's earlier check runs, one object per line, each with its `check_run_id`. The command reads the pull request's total and the count that ends the warn-only period from them, as the report reads them from the check runs, with the rows as this run's report. A line that is not a JSON object, or that names no check run, refuses the file with its line number. An object the report would skip, such as one that withholds its amounts, is skipped. This collects the objects on one commit:
 
 ```sh
 gh api repos/OWNER/REPO/commits/SHA/check-runs \
   --jq '.check_runs[] | select(.name == "costroid") | .output.text | ltrimstr("```json\n") | rtrimstr("\n```") | fromjson | tojson' \
   >> earlier.jsonl
-costroid policy --rows rows.jsonl --config base.yml --history earlier.jsonl
+```
+
+`--baseline` takes the result objects of the check runs on the heads of the pull requests merged into the base branch, in the same form, and the command reads the baseline from them as the report does. An object the report would not read leaves no baseline, with the report's warning. `--history` without `--baseline` is refused when the `costroid.yml` named sets `max_increase_usd` or `max_increase_percent`: up to 1.0.0-alpha.26 `--history` gave those rules their baseline, and the command does not conclude `no_baseline` without saying why. This collects the objects of the latest 30 merges into `main`, leaving out pull request `NUMBER`, the one the check is about:
+
+```sh
+gh api 'repos/OWNER/REPO/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100' \
+  --jq '[.[] | select(.merged_at != null and .number != NUMBER)] | sort_by(.merged_at) | reverse | .[:30][] | .head.sha' |
+  while read -r sha; do
+    gh api "repos/OWNER/REPO/commits/$sha/check-runs?check_name=costroid&filter=all&per_page=100" \
+      --jq '.check_runs[] | select(.status == "completed" and .app.slug == "github-actions") | .output.text | ltrimstr("```json\n") | rtrimstr("\n```") | fromjson | tojson'
+  done > merged.jsonl
+costroid policy --rows rows.jsonl --config base.yml --history earlier.jsonl --baseline merged.jsonl
 ```
 
 It exits 0 on `success` or `neutral`, 1 on `failure`, and 125 when it cannot read a file.
