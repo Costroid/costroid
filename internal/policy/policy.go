@@ -157,6 +157,9 @@ type Request struct {
 	// GatewayMeasured and Reconciled let a budget rule or the model allowlist
 	// pass on them. Anything else reads as AgentCounts.
 	Evidence Evidence
+	// Pack is the customer pack Config names, as ReadPack or PackFromFile
+	// read it for Config. A pack read for any other configuration is unread.
+	Pack Pack
 }
 
 // Verdict is the pack's answer and what it was computed from.
@@ -175,14 +178,20 @@ type Verdict struct {
 	EvaluatedAt    string   `json:"evaluated_at"`
 	WarnOnly       WarnOnly `json:"warn_only"`
 	Results        []Result `json:"results"`
+	// Pack is the customer pack costroid.yml names and its results, nil when
+	// it names none.
+	Pack *PackRun `json:"pack,omitempty"`
 	// JoinableRows counts the rows the attribution rule names.
 	JoinableRows int `json:"joinable_rows"`
 	// Evidence is what vouched for the spend of token-verified rows, as a
 	// ledger states it. A verdict on rows the agent's job wrote states none,
 	// and so does one from Evaluate.
 	Evidence Evidence `json:"evidence,omitempty"`
+	// PackChange says what the pull request changes of the pack, which
+	// applies after the merge. The result object does not hold it.
+	PackChange PackChange `json:"-"`
 
-	problem error
+	problem, packProblem error
 }
 
 // Result is one rule's outcome. LimitUSD, CostUSD, BaselineUSD and P95USD
@@ -192,7 +201,10 @@ type Result struct {
 	Outcome        string `json:"outcome"`
 	Reason         string `json:"reason"`
 	HeldByWarnOnly bool   `json:"held_by_warn_only,omitempty"`
-	LimitUSD       string `json:"limit_usd,omitempty"`
+	// Line is the line of the customer pack the compiler named, beside
+	// pack_invalid alone.
+	Line     int    `json:"line,omitempty"`
+	LimitUSD string `json:"limit_usd,omitempty"`
 	// LimitPercent is the increase over the baseline a run may reach, in
 	// percent.
 	LimitPercent string `json:"limit_percent,omitempty"`
@@ -219,7 +231,15 @@ func (v Verdict) ConfigProblem() error {
 	return v.problem
 }
 
-// WithoutAmounts returns the verdict with every amount dropped.
+// PackProblem says why the customer pack gave no results, nil when it gave
+// its answer or costroid.yml names none.
+func (v Verdict) PackProblem() error {
+	return v.packProblem
+}
+
+// WithoutAmounts returns the verdict with every amount dropped, and every
+// message of the customer pack's results, which can echo an amount the pack
+// read.
 func (v Verdict) WithoutAmounts() Verdict {
 	v.Results = slices.Clone(v.Results)
 	for index := range v.Results {
@@ -227,6 +247,14 @@ func (v Verdict) WithoutAmounts() Verdict {
 		v.Results[index].CostUSD = ""
 		v.Results[index].BaselineUSD = ""
 		v.Results[index].P95USD = ""
+	}
+	if v.Pack != nil {
+		pack := *v.Pack
+		pack.Results = slices.Clone(pack.Results)
+		for index := range pack.Results {
+			pack.Results[index].Message = ""
+		}
+		v.Pack = &pack
 	}
 	return v
 }
@@ -285,7 +313,7 @@ func evaluateScoped(ctx context.Context, request Request, ledger bool) (Verdict,
 	}
 	verdict.Conclusion = conclusion
 	verdict.Results = annotate(results, request, settings)
-	return verdict, nil
+	return withPack(ctx, request, settings, verdict), nil
 }
 
 // endAtPullRequests ends a running period at the twentieth pull request with a
@@ -376,8 +404,10 @@ type LedgerRequest struct {
 	// MeasuredUSD is the gateway's own count for the pull request's keys. It
 	// is read only with GatewayMeasured, and pr_budget is then held to the
 	// larger of it and the rows' USD list cost.
-	MeasuredUSD          decimal.Decimal
-	Config               ConfigFile
+	MeasuredUSD decimal.Decimal
+	Config      ConfigFile
+	// Pack is the customer pack Config names, read by serve itself.
+	Pack                 Pack
 	Start                Start
 	MeasuredPullRequests int
 	At                   time.Time
@@ -410,6 +440,7 @@ func EvaluateLedger(ctx context.Context, request LedgerRequest) (Verdict, error)
 		Lifetime:             lifetime,
 		MeasuredPullRequests: request.MeasuredPullRequests,
 		Evidence:             request.Evidence,
+		Pack:                 request.Pack,
 	}, true)
 }
 

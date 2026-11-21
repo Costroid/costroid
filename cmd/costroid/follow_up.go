@@ -299,6 +299,7 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 		},
 		rowsPath: rowsPath,
 		state:    input.State,
+		offHead:  true,
 	}, stderr)
 	if fork {
 		input = input.OnForkRows()

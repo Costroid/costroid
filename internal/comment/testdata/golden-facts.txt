@@ -2217,6 +2217,953 @@ p95-within-withheld	`input_uncached`
 p95-within-withheld	`output`
 p95-within-withheld	`reasoning_output`
 p95-within-withheld	| client-side estimate, can pass the cap |
+pack-answer-refused	0.0000008
+pack-answer-refused	0.000136
+pack-answer-refused	0.00015605
+pack-answer-refused	0.000436875
+pack-answer-refused	0.00089
+pack-answer-refused	0.001619725
+pack-answer-refused	0.01
+pack-answer-refused	0.10
+pack-answer-refused	0.125
+pack-answer-refused	0.20
+pack-answer-refused	0.50
+pack-answer-refused	121
+pack-answer-refused	15605
+pack-answer-refused	19
+pack-answer-refused	2026-11-21
+pack-answer-refused	272
+pack-answer-refused	3495
+pack-answer-refused	4.998380275
+pack-answer-refused	4450
+pack-answer-refused	5.00
+pack-answer-refused	8
+pack-answer-refused	List-equivalent, not billed
+pack-answer-refused	Pack stopped (pack_result): the policy pack answered with something other than its results, so the check fails. This run cost USD 0.001619725 at list (List-equivalent, not billed).
+pack-answer-refused	USD 0.0000008
+pack-answer-refused	USD 0.000136
+pack-answer-refused	USD 0.00015605
+pack-answer-refused	USD 0.000436875
+pack-answer-refused	USD 0.00089
+pack-answer-refused	USD 0.001619725
+pack-answer-refused	USD 0.01
+pack-answer-refused	USD 0.10
+pack-answer-refused	USD 0.125
+pack-answer-refused	USD 0.20
+pack-answer-refused	USD 0.50
+pack-answer-refused	USD 4.998380275
+pack-answer-refused	USD 5.00
+pack-answer-refused	](https://app.costroid.com/?installation=github%3A58120394)
+pack-answer-refused	](https://docs.costroid.com/approval)
+pack-answer-refused	](https://docs.costroid.com/export)
+pack-answer-refused	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-answer-refused	`0.4.3`
+pack-answer-refused	`9f2c6e1`
+pack-answer-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-answer-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-answer-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-answer-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-answer-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-answer-refused	`anthropic:informational:cached_input_reported`
+pack-answer-refused	`anthropic:informational:reasoning_output`
+pack-answer-refused	`cache_read`
+pack-answer-refused	`cache_write_1h`
+pack-answer-refused	`cache_write_5m`
+pack-answer-refused	`cached_input_reported`
+pack-answer-refused	`claude-code`
+pack-answer-refused	`claude-haiku-5-5`
+pack-answer-refused	`costroid.yml`
+pack-answer-refused	`input_uncached`
+pack-answer-refused	`output`
+pack-answer-refused	`reasoning_output`
+pack-answer-refused	| client-side estimate, can pass the cap |
+pack-answer-refused-withheld	19
+pack-answer-refused-withheld	2026-11-21
+pack-answer-refused-withheld	List-equivalent, not billed
+pack-answer-refused-withheld	Pack stopped (pack_result): the policy pack answered with something other than its results, so the check fails. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
+pack-answer-refused-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-answer-refused-withheld	](https://docs.costroid.com/approval)
+pack-answer-refused-withheld	](https://docs.costroid.com/export)
+pack-answer-refused-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-answer-refused-withheld	`0.4.3`
+pack-answer-refused-withheld	`9f2c6e1`
+pack-answer-refused-withheld	`cache_read`
+pack-answer-refused-withheld	`cache_write_1h`
+pack-answer-refused-withheld	`cache_write_5m`
+pack-answer-refused-withheld	`cached_input_reported`
+pack-answer-refused-withheld	`claude-code`
+pack-answer-refused-withheld	`claude-haiku-5-5`
+pack-answer-refused-withheld	`comment.show_cost: false`
+pack-answer-refused-withheld	`costroid.yml`
+pack-answer-refused-withheld	`input_uncached`
+pack-answer-refused-withheld	`output`
+pack-answer-refused-withheld	`reasoning_output`
+pack-answer-refused-withheld	| client-side estimate, can pass the cap |
+pack-beside-a-failing-budget	0.0000008
+pack-beside-a-failing-budget	0.000136
+pack-beside-a-failing-budget	0.00015605
+pack-beside-a-failing-budget	0.000436875
+pack-beside-a-failing-budget	0.00089
+pack-beside-a-failing-budget	0.001
+pack-beside-a-failing-budget	0.001619725
+pack-beside-a-failing-budget	0.01
+pack-beside-a-failing-budget	0.10
+pack-beside-a-failing-budget	0.125
+pack-beside-a-failing-budget	0.20
+pack-beside-a-failing-budget	0.50
+pack-beside-a-failing-budget	121
+pack-beside-a-failing-budget	15605
+pack-beside-a-failing-budget	19
+pack-beside-a-failing-budget	2026-11-21
+pack-beside-a-failing-budget	272
+pack-beside-a-failing-budget	3495
+pack-beside-a-failing-budget	4.998380275
+pack-beside-a-failing-budget	4450
+pack-beside-a-failing-budget	5.00
+pack-beside-a-failing-budget	8
+pack-beside-a-failing-budget	List-equivalent, not billed
+pack-beside-a-failing-budget	Over budget: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget.
+pack-beside-a-failing-budget	Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`.
+pack-beside-a-failing-budget	USD 0.0000008
+pack-beside-a-failing-budget	USD 0.000136
+pack-beside-a-failing-budget	USD 0.00015605
+pack-beside-a-failing-budget	USD 0.000436875
+pack-beside-a-failing-budget	USD 0.00089
+pack-beside-a-failing-budget	USD 0.001
+pack-beside-a-failing-budget	USD 0.001619725
+pack-beside-a-failing-budget	USD 0.01
+pack-beside-a-failing-budget	USD 0.10
+pack-beside-a-failing-budget	USD 0.125
+pack-beside-a-failing-budget	USD 0.20
+pack-beside-a-failing-budget	USD 0.50
+pack-beside-a-failing-budget	USD 4.998380275
+pack-beside-a-failing-budget	USD 5.00
+pack-beside-a-failing-budget	](https://app.costroid.com/?installation=github%3A58120394)
+pack-beside-a-failing-budget	](https://docs.costroid.com/approval)
+pack-beside-a-failing-budget	](https://docs.costroid.com/export)
+pack-beside-a-failing-budget	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-beside-a-failing-budget	`.costroid/policy.rego`
+pack-beside-a-failing-budget	`0.4.3`
+pack-beside-a-failing-budget	`9f2c6e1`
+pack-beside-a-failing-budget	`Opus models are not used on a change to docs/ alone.`
+pack-beside-a-failing-budget	`This run cost more than the team estimate in .costroid/estimates.md.`
+pack-beside-a-failing-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-beside-a-failing-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-beside-a-failing-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-beside-a-failing-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-beside-a-failing-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-beside-a-failing-budget	`anthropic:informational:cached_input_reported`
+pack-beside-a-failing-budget	`anthropic:informational:reasoning_output`
+pack-beside-a-failing-budget	`cache_read`
+pack-beside-a-failing-budget	`cache_write_1h`
+pack-beside-a-failing-budget	`cache_write_5m`
+pack-beside-a-failing-budget	`cached_input_reported`
+pack-beside-a-failing-budget	`claude-code`
+pack-beside-a-failing-budget	`claude-haiku-5-5`
+pack-beside-a-failing-budget	`costroid.yml`
+pack-beside-a-failing-budget	`input_uncached`
+pack-beside-a-failing-budget	`large_run`
+pack-beside-a-failing-budget	`model_on_docs_change`
+pack-beside-a-failing-budget	`no_opus_on_docs`
+pack-beside-a-failing-budget	`output`
+pack-beside-a-failing-budget	`over_team_estimate`
+pack-beside-a-failing-budget	`policy.run_budget_usd`
+pack-beside-a-failing-budget	`reasoning_output`
+pack-beside-a-failing-budget	| client-side estimate, can pass the cap |
+pack-beside-the-p95-limit	0.0000008
+pack-beside-the-p95-limit	0.000136
+pack-beside-the-p95-limit	0.00015605
+pack-beside-the-p95-limit	0.000436875
+pack-beside-the-p95-limit	0.0006
+pack-beside-the-p95-limit	0.00089
+pack-beside-the-p95-limit	0.001619725
+pack-beside-the-p95-limit	0.01
+pack-beside-the-p95-limit	0.10
+pack-beside-the-p95-limit	0.125
+pack-beside-the-p95-limit	0.20
+pack-beside-the-p95-limit	0.50
+pack-beside-the-p95-limit	1.5
+pack-beside-the-p95-limit	121
+pack-beside-the-p95-limit	15605
+pack-beside-the-p95-limit	19
+pack-beside-the-p95-limit	20
+pack-beside-the-p95-limit	2026-11-21
+pack-beside-the-p95-limit	272
+pack-beside-the-p95-limit	3495
+pack-beside-the-p95-limit	4.998380275
+pack-beside-the-p95-limit	4450
+pack-beside-the-p95-limit	5.00
+pack-beside-the-p95-limit	8
+pack-beside-the-p95-limit	List-equivalent, not billed
+pack-beside-the-p95-limit	Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.
+pack-beside-the-p95-limit	USD 0.0000008
+pack-beside-the-p95-limit	USD 0.000136
+pack-beside-the-p95-limit	USD 0.00015605
+pack-beside-the-p95-limit	USD 0.000436875
+pack-beside-the-p95-limit	USD 0.0006
+pack-beside-the-p95-limit	USD 0.00089
+pack-beside-the-p95-limit	USD 0.001619725
+pack-beside-the-p95-limit	USD 0.01
+pack-beside-the-p95-limit	USD 0.10
+pack-beside-the-p95-limit	USD 0.125
+pack-beside-the-p95-limit	USD 0.20
+pack-beside-the-p95-limit	USD 0.50
+pack-beside-the-p95-limit	USD 4.998380275
+pack-beside-the-p95-limit	USD 5.00
+pack-beside-the-p95-limit	](https://app.costroid.com/?installation=github%3A58120394)
+pack-beside-the-p95-limit	](https://docs.costroid.com/approval)
+pack-beside-the-p95-limit	](https://docs.costroid.com/export)
+pack-beside-the-p95-limit	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-beside-the-p95-limit	`.costroid/policy.rego`
+pack-beside-the-p95-limit	`0.4.3`
+pack-beside-the-p95-limit	`9f2c6e1`
+pack-beside-the-p95-limit	`This run cost more than the team estimate in .costroid/estimates.md.`
+pack-beside-the-p95-limit	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-beside-the-p95-limit	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-beside-the-p95-limit	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-beside-the-p95-limit	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-beside-the-p95-limit	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-beside-the-p95-limit	`anthropic:informational:cached_input_reported`
+pack-beside-the-p95-limit	`anthropic:informational:reasoning_output`
+pack-beside-the-p95-limit	`cache_read`
+pack-beside-the-p95-limit	`cache_write_1h`
+pack-beside-the-p95-limit	`cache_write_5m`
+pack-beside-the-p95-limit	`cached_input_reported`
+pack-beside-the-p95-limit	`claude-code`
+pack-beside-the-p95-limit	`claude-haiku-5-5`
+pack-beside-the-p95-limit	`costroid.yml`
+pack-beside-the-p95-limit	`input_uncached`
+pack-beside-the-p95-limit	`large_run`
+pack-beside-the-p95-limit	`output`
+pack-beside-the-p95-limit	`over_team_estimate`
+pack-beside-the-p95-limit	`reasoning_output`
+pack-beside-the-p95-limit	| client-side estimate, can pass the cap |
+pack-changed-at-head	0.0000008
+pack-changed-at-head	0.000136
+pack-changed-at-head	0.00015605
+pack-changed-at-head	0.000436875
+pack-changed-at-head	0.00089
+pack-changed-at-head	0.001619725
+pack-changed-at-head	0.01
+pack-changed-at-head	0.10
+pack-changed-at-head	0.125
+pack-changed-at-head	0.20
+pack-changed-at-head	0.50
+pack-changed-at-head	121
+pack-changed-at-head	15605
+pack-changed-at-head	19
+pack-changed-at-head	2026-11-21
+pack-changed-at-head	272
+pack-changed-at-head	3495
+pack-changed-at-head	4.998380275
+pack-changed-at-head	4450
+pack-changed-at-head	5.00
+pack-changed-at-head	8
+pack-changed-at-head	List-equivalent, not billed
+pack-changed-at-head	Pack rule warned (large_run): this run cost USD 0.001619725 at list (List-equivalent, not billed). The rule is this repository's own, and a warning never fails the check.
+pack-changed-at-head	USD 0.0000008
+pack-changed-at-head	USD 0.000136
+pack-changed-at-head	USD 0.00015605
+pack-changed-at-head	USD 0.000436875
+pack-changed-at-head	USD 0.00089
+pack-changed-at-head	USD 0.001619725
+pack-changed-at-head	USD 0.01
+pack-changed-at-head	USD 0.10
+pack-changed-at-head	USD 0.125
+pack-changed-at-head	USD 0.20
+pack-changed-at-head	USD 0.50
+pack-changed-at-head	USD 4.998380275
+pack-changed-at-head	USD 5.00
+pack-changed-at-head	](https://app.costroid.com/?installation=github%3A58120394)
+pack-changed-at-head	](https://docs.costroid.com/export)
+pack-changed-at-head	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-changed-at-head	`.costroid/policy.rego`
+pack-changed-at-head	`0.4.3`
+pack-changed-at-head	`9f2c6e1`
+pack-changed-at-head	`This run cost more than the team estimate in .costroid/estimates.md.`
+pack-changed-at-head	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-changed-at-head	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-changed-at-head	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-changed-at-head	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-changed-at-head	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-changed-at-head	`anthropic:informational:cached_input_reported`
+pack-changed-at-head	`anthropic:informational:reasoning_output`
+pack-changed-at-head	`cache_read`
+pack-changed-at-head	`cache_write_1h`
+pack-changed-at-head	`cache_write_5m`
+pack-changed-at-head	`cached_input_reported`
+pack-changed-at-head	`claude-code`
+pack-changed-at-head	`claude-haiku-5-5`
+pack-changed-at-head	`costroid.yml`
+pack-changed-at-head	`input_uncached`
+pack-changed-at-head	`large_run`
+pack-changed-at-head	`output`
+pack-changed-at-head	`over_team_estimate`
+pack-changed-at-head	`reasoning_output`
+pack-changed-at-head	| client-side estimate, can pass the cap |
+pack-not-read	0.0000008
+pack-not-read	0.000136
+pack-not-read	0.00015605
+pack-not-read	0.000436875
+pack-not-read	0.00089
+pack-not-read	0.001619725
+pack-not-read	0.01
+pack-not-read	0.10
+pack-not-read	0.125
+pack-not-read	0.20
+pack-not-read	0.50
+pack-not-read	121
+pack-not-read	15605
+pack-not-read	19
+pack-not-read	2026-11-21
+pack-not-read	272
+pack-not-read	3495
+pack-not-read	4.998380275
+pack-not-read	4450
+pack-not-read	5.00
+pack-not-read	8
+pack-not-read	List-equivalent, not billed
+pack-not-read	Not decided: the policy pack could not be read at the base commit, so none of its rules ran. This run cost USD 0.001619725 at list (List-equivalent, not billed).
+pack-not-read	USD 0.0000008
+pack-not-read	USD 0.000136
+pack-not-read	USD 0.00015605
+pack-not-read	USD 0.000436875
+pack-not-read	USD 0.00089
+pack-not-read	USD 0.001619725
+pack-not-read	USD 0.01
+pack-not-read	USD 0.10
+pack-not-read	USD 0.125
+pack-not-read	USD 0.20
+pack-not-read	USD 0.50
+pack-not-read	USD 4.998380275
+pack-not-read	USD 5.00
+pack-not-read	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-read	](https://docs.costroid.com/export)
+pack-not-read	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-not-read	`0.4.3`
+pack-not-read	`9f2c6e1`
+pack-not-read	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-not-read	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-not-read	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-not-read	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-not-read	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-not-read	`anthropic:informational:cached_input_reported`
+pack-not-read	`anthropic:informational:reasoning_output`
+pack-not-read	`cache_read`
+pack-not-read	`cache_write_1h`
+pack-not-read	`cache_write_5m`
+pack-not-read	`cached_input_reported`
+pack-not-read	`claude-code`
+pack-not-read	`claude-haiku-5-5`
+pack-not-read	`costroid.yml`
+pack-not-read	`input_uncached`
+pack-not-read	`output`
+pack-not-read	`reasoning_output`
+pack-not-read	| client-side estimate, can pass the cap |
+pack-not-read-withheld	19
+pack-not-read-withheld	2026-11-21
+pack-not-read-withheld	List-equivalent, not billed
+pack-not-read-withheld	Not decided: the policy pack could not be read at the base commit, so none of its rules ran. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
+pack-not-read-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-read-withheld	](https://docs.costroid.com/export)
+pack-not-read-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-not-read-withheld	`0.4.3`
+pack-not-read-withheld	`9f2c6e1`
+pack-not-read-withheld	`cache_read`
+pack-not-read-withheld	`cache_write_1h`
+pack-not-read-withheld	`cache_write_5m`
+pack-not-read-withheld	`cached_input_reported`
+pack-not-read-withheld	`claude-code`
+pack-not-read-withheld	`claude-haiku-5-5`
+pack-not-read-withheld	`comment.show_cost: false`
+pack-not-read-withheld	`costroid.yml`
+pack-not-read-withheld	`input_uncached`
+pack-not-read-withheld	`output`
+pack-not-read-withheld	`reasoning_output`
+pack-not-read-withheld	| client-side estimate, can pass the cap |
+pack-not-valid	0.0000008
+pack-not-valid	0.000136
+pack-not-valid	0.00015605
+pack-not-valid	0.000436875
+pack-not-valid	0.00089
+pack-not-valid	0.001619725
+pack-not-valid	0.01
+pack-not-valid	0.10
+pack-not-valid	0.125
+pack-not-valid	0.20
+pack-not-valid	0.50
+pack-not-valid	121
+pack-not-valid	15605
+pack-not-valid	19
+pack-not-valid	2026-11-21
+pack-not-valid	272
+pack-not-valid	3495
+pack-not-valid	4
+pack-not-valid	4.998380275
+pack-not-valid	4450
+pack-not-valid	5.00
+pack-not-valid	8
+pack-not-valid	List-equivalent, not billed
+pack-not-valid	Not decided: the policy pack is not valid at line 4, so none of its rules ran. This run cost USD 0.001619725 at list (List-equivalent, not billed).
+pack-not-valid	USD 0.0000008
+pack-not-valid	USD 0.000136
+pack-not-valid	USD 0.00015605
+pack-not-valid	USD 0.000436875
+pack-not-valid	USD 0.00089
+pack-not-valid	USD 0.001619725
+pack-not-valid	USD 0.01
+pack-not-valid	USD 0.10
+pack-not-valid	USD 0.125
+pack-not-valid	USD 0.20
+pack-not-valid	USD 0.50
+pack-not-valid	USD 4.998380275
+pack-not-valid	USD 5.00
+pack-not-valid	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-valid	](https://docs.costroid.com/export)
+pack-not-valid	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-not-valid	`0.4.3`
+pack-not-valid	`9f2c6e1`
+pack-not-valid	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-not-valid	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-not-valid	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-not-valid	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-not-valid	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-not-valid	`anthropic:informational:cached_input_reported`
+pack-not-valid	`anthropic:informational:reasoning_output`
+pack-not-valid	`cache_read`
+pack-not-valid	`cache_write_1h`
+pack-not-valid	`cache_write_5m`
+pack-not-valid	`cached_input_reported`
+pack-not-valid	`claude-code`
+pack-not-valid	`claude-haiku-5-5`
+pack-not-valid	`costroid.yml`
+pack-not-valid	`input_uncached`
+pack-not-valid	`output`
+pack-not-valid	`reasoning_output`
+pack-not-valid	| client-side estimate, can pass the cap |
+pack-not-valid-withheld	19
+pack-not-valid-withheld	2026-11-21
+pack-not-valid-withheld	4
+pack-not-valid-withheld	List-equivalent, not billed
+pack-not-valid-withheld	Not decided: the policy pack is not valid at line 4, so none of its rules ran. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
+pack-not-valid-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-valid-withheld	](https://docs.costroid.com/export)
+pack-not-valid-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-not-valid-withheld	`0.4.3`
+pack-not-valid-withheld	`9f2c6e1`
+pack-not-valid-withheld	`cache_read`
+pack-not-valid-withheld	`cache_write_1h`
+pack-not-valid-withheld	`cache_write_5m`
+pack-not-valid-withheld	`cached_input_reported`
+pack-not-valid-withheld	`claude-code`
+pack-not-valid-withheld	`claude-haiku-5-5`
+pack-not-valid-withheld	`comment.show_cost: false`
+pack-not-valid-withheld	`costroid.yml`
+pack-not-valid-withheld	`input_uncached`
+pack-not-valid-withheld	`output`
+pack-not-valid-withheld	`reasoning_output`
+pack-not-valid-withheld	| client-side estimate, can pass the cap |
+pack-past-its-bound	0.0000008
+pack-past-its-bound	0.000136
+pack-past-its-bound	0.00015605
+pack-past-its-bound	0.000436875
+pack-past-its-bound	0.00089
+pack-past-its-bound	0.001619725
+pack-past-its-bound	0.01
+pack-past-its-bound	0.10
+pack-past-its-bound	0.125
+pack-past-its-bound	0.20
+pack-past-its-bound	0.50
+pack-past-its-bound	121
+pack-past-its-bound	15605
+pack-past-its-bound	19
+pack-past-its-bound	2026-11-21
+pack-past-its-bound	272
+pack-past-its-bound	3495
+pack-past-its-bound	4.998380275
+pack-past-its-bound	4450
+pack-past-its-bound	5.00
+pack-past-its-bound	8
+pack-past-its-bound	List-equivalent, not billed
+pack-past-its-bound	Pack stopped (pack_bound): the policy pack passed its evaluation bound on this run's rows, so the check fails. This run cost USD 0.001619725 at list (List-equivalent, not billed).
+pack-past-its-bound	USD 0.0000008
+pack-past-its-bound	USD 0.000136
+pack-past-its-bound	USD 0.00015605
+pack-past-its-bound	USD 0.000436875
+pack-past-its-bound	USD 0.00089
+pack-past-its-bound	USD 0.001619725
+pack-past-its-bound	USD 0.01
+pack-past-its-bound	USD 0.10
+pack-past-its-bound	USD 0.125
+pack-past-its-bound	USD 0.20
+pack-past-its-bound	USD 0.50
+pack-past-its-bound	USD 4.998380275
+pack-past-its-bound	USD 5.00
+pack-past-its-bound	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound	](https://docs.costroid.com/approval)
+pack-past-its-bound	](https://docs.costroid.com/export)
+pack-past-its-bound	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-past-its-bound	`0.4.3`
+pack-past-its-bound	`9f2c6e1`
+pack-past-its-bound	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-past-its-bound	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-past-its-bound	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-past-its-bound	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-past-its-bound	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-past-its-bound	`anthropic:informational:cached_input_reported`
+pack-past-its-bound	`anthropic:informational:reasoning_output`
+pack-past-its-bound	`cache_read`
+pack-past-its-bound	`cache_write_1h`
+pack-past-its-bound	`cache_write_5m`
+pack-past-its-bound	`cached_input_reported`
+pack-past-its-bound	`claude-code`
+pack-past-its-bound	`claude-haiku-5-5`
+pack-past-its-bound	`costroid.yml`
+pack-past-its-bound	`input_uncached`
+pack-past-its-bound	`output`
+pack-past-its-bound	`reasoning_output`
+pack-past-its-bound	| client-side estimate, can pass the cap |
+pack-past-its-bound-warn-only	0.0000008
+pack-past-its-bound-warn-only	0.000136
+pack-past-its-bound-warn-only	0.00015605
+pack-past-its-bound-warn-only	0.000436875
+pack-past-its-bound-warn-only	0.00089
+pack-past-its-bound-warn-only	0.001619725
+pack-past-its-bound-warn-only	0.01
+pack-past-its-bound-warn-only	0.10
+pack-past-its-bound-warn-only	0.125
+pack-past-its-bound-warn-only	0.20
+pack-past-its-bound-warn-only	0.50
+pack-past-its-bound-warn-only	121
+pack-past-its-bound-warn-only	15605
+pack-past-its-bound-warn-only	19
+pack-past-its-bound-warn-only	2026-11-09
+pack-past-its-bound-warn-only	2026-11-21
+pack-past-its-bound-warn-only	272
+pack-past-its-bound-warn-only	3495
+pack-past-its-bound-warn-only	4.998380275
+pack-past-its-bound-warn-only	4450
+pack-past-its-bound-warn-only	5.00
+pack-past-its-bound-warn-only	7
+pack-past-its-bound-warn-only	8
+pack-past-its-bound-warn-only	List-equivalent, not billed
+pack-past-its-bound-warn-only	Pack stopped (pack_bound): the policy pack passed its evaluation bound on this run's rows. This run cost USD 0.001619725 at list (List-equivalent, not billed). After 2026-11-09 09:00 UTC this fails the check.
+pack-past-its-bound-warn-only	USD 0.0000008
+pack-past-its-bound-warn-only	USD 0.000136
+pack-past-its-bound-warn-only	USD 0.00015605
+pack-past-its-bound-warn-only	USD 0.000436875
+pack-past-its-bound-warn-only	USD 0.00089
+pack-past-its-bound-warn-only	USD 0.001619725
+pack-past-its-bound-warn-only	USD 0.01
+pack-past-its-bound-warn-only	USD 0.10
+pack-past-its-bound-warn-only	USD 0.125
+pack-past-its-bound-warn-only	USD 0.20
+pack-past-its-bound-warn-only	USD 0.50
+pack-past-its-bound-warn-only	USD 4.998380275
+pack-past-its-bound-warn-only	USD 5.00
+pack-past-its-bound-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound-warn-only	](https://docs.costroid.com/export)
+pack-past-its-bound-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-past-its-bound-warn-only	`0.4.3`
+pack-past-its-bound-warn-only	`9f2c6e1`
+pack-past-its-bound-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-past-its-bound-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-past-its-bound-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-past-its-bound-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-past-its-bound-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-past-its-bound-warn-only	`anthropic:informational:cached_input_reported`
+pack-past-its-bound-warn-only	`anthropic:informational:reasoning_output`
+pack-past-its-bound-warn-only	`cache_read`
+pack-past-its-bound-warn-only	`cache_write_1h`
+pack-past-its-bound-warn-only	`cache_write_5m`
+pack-past-its-bound-warn-only	`cached_input_reported`
+pack-past-its-bound-warn-only	`claude-code`
+pack-past-its-bound-warn-only	`claude-haiku-5-5`
+pack-past-its-bound-warn-only	`costroid.yml`
+pack-past-its-bound-warn-only	`enforce: true`
+pack-past-its-bound-warn-only	`input_uncached`
+pack-past-its-bound-warn-only	`output`
+pack-past-its-bound-warn-only	`policy`
+pack-past-its-bound-warn-only	`reasoning_output`
+pack-past-its-bound-warn-only	| client-side estimate, can pass the cap |
+pack-past-its-bound-warn-only-withheld	19
+pack-past-its-bound-warn-only-withheld	2026-11-09
+pack-past-its-bound-warn-only-withheld	2026-11-21
+pack-past-its-bound-warn-only-withheld	7
+pack-past-its-bound-warn-only-withheld	List-equivalent, not billed
+pack-past-its-bound-warn-only-withheld	Pack stopped (pack_bound): the policy pack passed its evaluation bound on this run's rows. This run was priced at list (List-equivalent, not billed). After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
+pack-past-its-bound-warn-only-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound-warn-only-withheld	](https://docs.costroid.com/export)
+pack-past-its-bound-warn-only-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-past-its-bound-warn-only-withheld	`0.4.3`
+pack-past-its-bound-warn-only-withheld	`9f2c6e1`
+pack-past-its-bound-warn-only-withheld	`cache_read`
+pack-past-its-bound-warn-only-withheld	`cache_write_1h`
+pack-past-its-bound-warn-only-withheld	`cache_write_5m`
+pack-past-its-bound-warn-only-withheld	`cached_input_reported`
+pack-past-its-bound-warn-only-withheld	`claude-code`
+pack-past-its-bound-warn-only-withheld	`claude-haiku-5-5`
+pack-past-its-bound-warn-only-withheld	`comment.show_cost: false`
+pack-past-its-bound-warn-only-withheld	`costroid.yml`
+pack-past-its-bound-warn-only-withheld	`enforce: true`
+pack-past-its-bound-warn-only-withheld	`input_uncached`
+pack-past-its-bound-warn-only-withheld	`output`
+pack-past-its-bound-warn-only-withheld	`policy`
+pack-past-its-bound-warn-only-withheld	`reasoning_output`
+pack-past-its-bound-warn-only-withheld	| client-side estimate, can pass the cap |
+pack-past-its-bound-withheld	19
+pack-past-its-bound-withheld	2026-11-21
+pack-past-its-bound-withheld	List-equivalent, not billed
+pack-past-its-bound-withheld	Pack stopped (pack_bound): the policy pack passed its evaluation bound on this run's rows, so the check fails. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
+pack-past-its-bound-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound-withheld	](https://docs.costroid.com/approval)
+pack-past-its-bound-withheld	](https://docs.costroid.com/export)
+pack-past-its-bound-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-past-its-bound-withheld	`0.4.3`
+pack-past-its-bound-withheld	`9f2c6e1`
+pack-past-its-bound-withheld	`cache_read`
+pack-past-its-bound-withheld	`cache_write_1h`
+pack-past-its-bound-withheld	`cache_write_5m`
+pack-past-its-bound-withheld	`cached_input_reported`
+pack-past-its-bound-withheld	`claude-code`
+pack-past-its-bound-withheld	`claude-haiku-5-5`
+pack-past-its-bound-withheld	`comment.show_cost: false`
+pack-past-its-bound-withheld	`costroid.yml`
+pack-past-its-bound-withheld	`input_uncached`
+pack-past-its-bound-withheld	`output`
+pack-past-its-bound-withheld	`reasoning_output`
+pack-past-its-bound-withheld	| client-side estimate, can pass the cap |
+pack-returned-nothing	0.0000008
+pack-returned-nothing	0.000136
+pack-returned-nothing	0.00015605
+pack-returned-nothing	0.000436875
+pack-returned-nothing	0.00089
+pack-returned-nothing	0.001619725
+pack-returned-nothing	0.01
+pack-returned-nothing	0.10
+pack-returned-nothing	0.125
+pack-returned-nothing	0.20
+pack-returned-nothing	0.50
+pack-returned-nothing	121
+pack-returned-nothing	15605
+pack-returned-nothing	19
+pack-returned-nothing	2026-11-21
+pack-returned-nothing	272
+pack-returned-nothing	3495
+pack-returned-nothing	4.998380275
+pack-returned-nothing	4450
+pack-returned-nothing	5.00
+pack-returned-nothing	8
+pack-returned-nothing	List-equivalent, not billed
+pack-returned-nothing	No budget set: this run cost USD 0.001619725 at list (List-equivalent, not billed). No rule decides this check.
+pack-returned-nothing	USD 0.0000008
+pack-returned-nothing	USD 0.000136
+pack-returned-nothing	USD 0.00015605
+pack-returned-nothing	USD 0.000436875
+pack-returned-nothing	USD 0.00089
+pack-returned-nothing	USD 0.001619725
+pack-returned-nothing	USD 0.01
+pack-returned-nothing	USD 0.10
+pack-returned-nothing	USD 0.125
+pack-returned-nothing	USD 0.20
+pack-returned-nothing	USD 0.50
+pack-returned-nothing	USD 4.998380275
+pack-returned-nothing	USD 5.00
+pack-returned-nothing	](https://app.costroid.com/?installation=github%3A58120394)
+pack-returned-nothing	](https://docs.costroid.com/export)
+pack-returned-nothing	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-returned-nothing	`.costroid/policy.rego`
+pack-returned-nothing	`0.4.3`
+pack-returned-nothing	`9f2c6e1`
+pack-returned-nothing	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-returned-nothing	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-returned-nothing	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-returned-nothing	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-returned-nothing	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-returned-nothing	`anthropic:informational:cached_input_reported`
+pack-returned-nothing	`anthropic:informational:reasoning_output`
+pack-returned-nothing	`cache_read`
+pack-returned-nothing	`cache_write_1h`
+pack-returned-nothing	`cache_write_5m`
+pack-returned-nothing	`cached_input_reported`
+pack-returned-nothing	`claude-code`
+pack-returned-nothing	`claude-haiku-5-5`
+pack-returned-nothing	`costroid.yml`
+pack-returned-nothing	`input_uncached`
+pack-returned-nothing	`output`
+pack-returned-nothing	`reasoning_output`
+pack-returned-nothing	| client-side estimate, can pass the cap |
+pack-rule-fails	0.0000008
+pack-rule-fails	0.000136
+pack-rule-fails	0.00015605
+pack-rule-fails	0.000436875
+pack-rule-fails	0.00089
+pack-rule-fails	0.001619725
+pack-rule-fails	0.01
+pack-rule-fails	0.10
+pack-rule-fails	0.125
+pack-rule-fails	0.20
+pack-rule-fails	0.50
+pack-rule-fails	121
+pack-rule-fails	15605
+pack-rule-fails	19
+pack-rule-fails	2026-11-21
+pack-rule-fails	272
+pack-rule-fails	3495
+pack-rule-fails	4.998380275
+pack-rule-fails	4450
+pack-rule-fails	5.00
+pack-rule-fails	8
+pack-rule-fails	List-equivalent, not billed
+pack-rule-fails	Pack rule failed (no_opus_on_docs): this run cost USD 0.001619725 at list (List-equivalent, not billed). The rule is this repository's own, read from the base branch.
+pack-rule-fails	USD 0.0000008
+pack-rule-fails	USD 0.000136
+pack-rule-fails	USD 0.00015605
+pack-rule-fails	USD 0.000436875
+pack-rule-fails	USD 0.00089
+pack-rule-fails	USD 0.001619725
+pack-rule-fails	USD 0.01
+pack-rule-fails	USD 0.10
+pack-rule-fails	USD 0.125
+pack-rule-fails	USD 0.20
+pack-rule-fails	USD 0.50
+pack-rule-fails	USD 4.998380275
+pack-rule-fails	USD 5.00
+pack-rule-fails	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails	](https://docs.costroid.com/approval)
+pack-rule-fails	](https://docs.costroid.com/export)
+pack-rule-fails	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-rule-fails	`.costroid/policy.rego`
+pack-rule-fails	`0.4.3`
+pack-rule-fails	`9f2c6e1`
+pack-rule-fails	`Opus models are not used on a change to docs/ alone.`
+pack-rule-fails	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-rule-fails	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-rule-fails	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-rule-fails	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-rule-fails	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-rule-fails	`anthropic:informational:cached_input_reported`
+pack-rule-fails	`anthropic:informational:reasoning_output`
+pack-rule-fails	`cache_read`
+pack-rule-fails	`cache_write_1h`
+pack-rule-fails	`cache_write_5m`
+pack-rule-fails	`cached_input_reported`
+pack-rule-fails	`claude-code`
+pack-rule-fails	`claude-haiku-5-5`
+pack-rule-fails	`costroid.yml`
+pack-rule-fails	`input_uncached`
+pack-rule-fails	`model_on_docs_change`
+pack-rule-fails	`no_opus_on_docs`
+pack-rule-fails	`output`
+pack-rule-fails	`reasoning_output`
+pack-rule-fails	| client-side estimate, can pass the cap |
+pack-rule-fails-warn-only	0.0000008
+pack-rule-fails-warn-only	0.000136
+pack-rule-fails-warn-only	0.00015605
+pack-rule-fails-warn-only	0.000436875
+pack-rule-fails-warn-only	0.00089
+pack-rule-fails-warn-only	0.001619725
+pack-rule-fails-warn-only	0.01
+pack-rule-fails-warn-only	0.10
+pack-rule-fails-warn-only	0.125
+pack-rule-fails-warn-only	0.20
+pack-rule-fails-warn-only	0.50
+pack-rule-fails-warn-only	121
+pack-rule-fails-warn-only	15605
+pack-rule-fails-warn-only	19
+pack-rule-fails-warn-only	2026-11-09
+pack-rule-fails-warn-only	2026-11-21
+pack-rule-fails-warn-only	272
+pack-rule-fails-warn-only	3495
+pack-rule-fails-warn-only	4.998380275
+pack-rule-fails-warn-only	4450
+pack-rule-fails-warn-only	5.00
+pack-rule-fails-warn-only	7
+pack-rule-fails-warn-only	8
+pack-rule-fails-warn-only	List-equivalent, not billed
+pack-rule-fails-warn-only	Pack rule failed, warn-only (no_opus_on_docs): this run cost USD 0.001619725 at list (List-equivalent, not billed). The rule is this repository's own. After 2026-11-09 09:00 UTC this fails the check.
+pack-rule-fails-warn-only	USD 0.0000008
+pack-rule-fails-warn-only	USD 0.000136
+pack-rule-fails-warn-only	USD 0.00015605
+pack-rule-fails-warn-only	USD 0.000436875
+pack-rule-fails-warn-only	USD 0.00089
+pack-rule-fails-warn-only	USD 0.001619725
+pack-rule-fails-warn-only	USD 0.01
+pack-rule-fails-warn-only	USD 0.10
+pack-rule-fails-warn-only	USD 0.125
+pack-rule-fails-warn-only	USD 0.20
+pack-rule-fails-warn-only	USD 0.50
+pack-rule-fails-warn-only	USD 4.998380275
+pack-rule-fails-warn-only	USD 5.00
+pack-rule-fails-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails-warn-only	](https://docs.costroid.com/export)
+pack-rule-fails-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-rule-fails-warn-only	`.costroid/policy.rego`
+pack-rule-fails-warn-only	`0.4.3`
+pack-rule-fails-warn-only	`9f2c6e1`
+pack-rule-fails-warn-only	`Opus models are not used on a change to docs/ alone.`
+pack-rule-fails-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-rule-fails-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-rule-fails-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-rule-fails-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-rule-fails-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-rule-fails-warn-only	`anthropic:informational:cached_input_reported`
+pack-rule-fails-warn-only	`anthropic:informational:reasoning_output`
+pack-rule-fails-warn-only	`cache_read`
+pack-rule-fails-warn-only	`cache_write_1h`
+pack-rule-fails-warn-only	`cache_write_5m`
+pack-rule-fails-warn-only	`cached_input_reported`
+pack-rule-fails-warn-only	`claude-code`
+pack-rule-fails-warn-only	`claude-haiku-5-5`
+pack-rule-fails-warn-only	`costroid.yml`
+pack-rule-fails-warn-only	`enforce: true`
+pack-rule-fails-warn-only	`input_uncached`
+pack-rule-fails-warn-only	`model_on_docs_change`
+pack-rule-fails-warn-only	`no_opus_on_docs`
+pack-rule-fails-warn-only	`output`
+pack-rule-fails-warn-only	`policy`
+pack-rule-fails-warn-only	`reasoning_output`
+pack-rule-fails-warn-only	| client-side estimate, can pass the cap |
+pack-rule-fails-warn-only-withheld	19
+pack-rule-fails-warn-only-withheld	2026-11-09
+pack-rule-fails-warn-only-withheld	2026-11-21
+pack-rule-fails-warn-only-withheld	7
+pack-rule-fails-warn-only-withheld	List-equivalent, not billed
+pack-rule-fails-warn-only-withheld	Pack rule failed, warn-only (no_opus_on_docs): this run was priced at list (List-equivalent, not billed). The rule is this repository's own. After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
+pack-rule-fails-warn-only-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails-warn-only-withheld	](https://docs.costroid.com/export)
+pack-rule-fails-warn-only-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-rule-fails-warn-only-withheld	`.costroid/policy.rego`
+pack-rule-fails-warn-only-withheld	`0.4.3`
+pack-rule-fails-warn-only-withheld	`9f2c6e1`
+pack-rule-fails-warn-only-withheld	`cache_read`
+pack-rule-fails-warn-only-withheld	`cache_write_1h`
+pack-rule-fails-warn-only-withheld	`cache_write_5m`
+pack-rule-fails-warn-only-withheld	`cached_input_reported`
+pack-rule-fails-warn-only-withheld	`claude-code`
+pack-rule-fails-warn-only-withheld	`claude-haiku-5-5`
+pack-rule-fails-warn-only-withheld	`comment.show_cost: false`
+pack-rule-fails-warn-only-withheld	`costroid.yml`
+pack-rule-fails-warn-only-withheld	`enforce: true`
+pack-rule-fails-warn-only-withheld	`input_uncached`
+pack-rule-fails-warn-only-withheld	`model_on_docs_change`
+pack-rule-fails-warn-only-withheld	`no_opus_on_docs`
+pack-rule-fails-warn-only-withheld	`output`
+pack-rule-fails-warn-only-withheld	`policy`
+pack-rule-fails-warn-only-withheld	`reasoning_output`
+pack-rule-fails-warn-only-withheld	| client-side estimate, can pass the cap |
+pack-rule-fails-withheld	19
+pack-rule-fails-withheld	2026-11-21
+pack-rule-fails-withheld	List-equivalent, not billed
+pack-rule-fails-withheld	Pack rule failed (no_opus_on_docs): this run was priced at list (List-equivalent, not billed). The rule is this repository's own, read from the base branch. Amounts are withheld here.
+pack-rule-fails-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails-withheld	](https://docs.costroid.com/approval)
+pack-rule-fails-withheld	](https://docs.costroid.com/export)
+pack-rule-fails-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-rule-fails-withheld	`.costroid/policy.rego`
+pack-rule-fails-withheld	`0.4.3`
+pack-rule-fails-withheld	`9f2c6e1`
+pack-rule-fails-withheld	`cache_read`
+pack-rule-fails-withheld	`cache_write_1h`
+pack-rule-fails-withheld	`cache_write_5m`
+pack-rule-fails-withheld	`cached_input_reported`
+pack-rule-fails-withheld	`claude-code`
+pack-rule-fails-withheld	`claude-haiku-5-5`
+pack-rule-fails-withheld	`comment.show_cost: false`
+pack-rule-fails-withheld	`costroid.yml`
+pack-rule-fails-withheld	`input_uncached`
+pack-rule-fails-withheld	`model_on_docs_change`
+pack-rule-fails-withheld	`no_opus_on_docs`
+pack-rule-fails-withheld	`output`
+pack-rule-fails-withheld	`reasoning_output`
+pack-rule-fails-withheld	| client-side estimate, can pass the cap |
+pack-rule-warns	0.0000008
+pack-rule-warns	0.000136
+pack-rule-warns	0.00015605
+pack-rule-warns	0.000436875
+pack-rule-warns	0.00089
+pack-rule-warns	0.001619725
+pack-rule-warns	0.01
+pack-rule-warns	0.10
+pack-rule-warns	0.125
+pack-rule-warns	0.20
+pack-rule-warns	0.50
+pack-rule-warns	121
+pack-rule-warns	15605
+pack-rule-warns	19
+pack-rule-warns	2026-11-21
+pack-rule-warns	272
+pack-rule-warns	3495
+pack-rule-warns	4.998380275
+pack-rule-warns	4450
+pack-rule-warns	5.00
+pack-rule-warns	8
+pack-rule-warns	List-equivalent, not billed
+pack-rule-warns	Pack rule warned (large_run): this run cost USD 0.001619725 at list (List-equivalent, not billed). The rule is this repository's own, and a warning never fails the check.
+pack-rule-warns	USD 0.0000008
+pack-rule-warns	USD 0.000136
+pack-rule-warns	USD 0.00015605
+pack-rule-warns	USD 0.000436875
+pack-rule-warns	USD 0.00089
+pack-rule-warns	USD 0.001619725
+pack-rule-warns	USD 0.01
+pack-rule-warns	USD 0.10
+pack-rule-warns	USD 0.125
+pack-rule-warns	USD 0.20
+pack-rule-warns	USD 0.50
+pack-rule-warns	USD 4.998380275
+pack-rule-warns	USD 5.00
+pack-rule-warns	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-warns	](https://docs.costroid.com/export)
+pack-rule-warns	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-rule-warns	`.costroid/policy.rego`
+pack-rule-warns	`0.4.3`
+pack-rule-warns	`9f2c6e1`
+pack-rule-warns	`This run cost more than the team estimate in .costroid/estimates.md.`
+pack-rule-warns	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+pack-rule-warns	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+pack-rule-warns	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+pack-rule-warns	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+pack-rule-warns	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+pack-rule-warns	`anthropic:informational:cached_input_reported`
+pack-rule-warns	`anthropic:informational:reasoning_output`
+pack-rule-warns	`cache_read`
+pack-rule-warns	`cache_write_1h`
+pack-rule-warns	`cache_write_5m`
+pack-rule-warns	`cached_input_reported`
+pack-rule-warns	`claude-code`
+pack-rule-warns	`claude-haiku-5-5`
+pack-rule-warns	`costroid.yml`
+pack-rule-warns	`input_uncached`
+pack-rule-warns	`large_run`
+pack-rule-warns	`output`
+pack-rule-warns	`over_team_estimate`
+pack-rule-warns	`reasoning_output`
+pack-rule-warns	| client-side estimate, can pass the cap |
+pack-rule-warns-withheld	19
+pack-rule-warns-withheld	2026-11-21
+pack-rule-warns-withheld	List-equivalent, not billed
+pack-rule-warns-withheld	Pack rule warned (large_run): this run was priced at list (List-equivalent, not billed). The rule is this repository's own, and a warning never fails the check. Amounts are withheld here.
+pack-rule-warns-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-warns-withheld	](https://docs.costroid.com/export)
+pack-rule-warns-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+pack-rule-warns-withheld	`.costroid/policy.rego`
+pack-rule-warns-withheld	`0.4.3`
+pack-rule-warns-withheld	`9f2c6e1`
+pack-rule-warns-withheld	`cache_read`
+pack-rule-warns-withheld	`cache_write_1h`
+pack-rule-warns-withheld	`cache_write_5m`
+pack-rule-warns-withheld	`cached_input_reported`
+pack-rule-warns-withheld	`claude-code`
+pack-rule-warns-withheld	`claude-haiku-5-5`
+pack-rule-warns-withheld	`comment.show_cost: false`
+pack-rule-warns-withheld	`costroid.yml`
+pack-rule-warns-withheld	`input_uncached`
+pack-rule-warns-withheld	`large_run`
+pack-rule-warns-withheld	`output`
+pack-rule-warns-withheld	`over_team_estimate`
+pack-rule-warns-withheld	`reasoning_output`
+pack-rule-warns-withheld	| client-side estimate, can pass the cap |
 pass-shown	0.10
 pass-shown	1
 pass-shown	1000000

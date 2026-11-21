@@ -20,6 +20,7 @@ import (
 	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/oidc/oidctest"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/store"
 	"github.com/Costroid/costroid/internal/store/storetest"
 )
@@ -48,7 +49,13 @@ const (
 
 var testNow = time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
 
+// TestMain runs the test binary as a customer pack's child when serve's
+// runner starts it as one, and records otherwise, as costroid's main does,
+// that this executable hands such a child to the pack.
 func TestMain(m *testing.M) {
+	if code, child := policy.PackChild(); child {
+		os.Exit(code)
+	}
 	os.Exit(storetest.Main(m))
 }
 

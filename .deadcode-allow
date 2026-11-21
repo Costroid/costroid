@@ -6,20 +6,3 @@
 # The catalog's Sigstore bundles, catalog.Signatures, are a variable, which
 # deadcode does not judge. Only tests read them until the binary verifies the
 # catalog against Sigstore's trusted root.
-
-# The customer pack runner. The change that reads policy_pack from costroid.yml
-# at the base commit calls it from costroid report, costroid policy and serve.
-2026-11-21 internal/policy.compose the change that reads policy_pack
-2026-11-21 internal/policy.heldByWarnOnly the change that reads policy_pack
-2026-11-21 internal/policy.PackFault.result the change that reads policy_pack
-2026-11-21 internal/policy.RunCustomerPack the change that reads policy_pack
-2026-11-21 internal/policy.packRunner.run the change that reads policy_pack
-2026-11-21 internal/policy.packRunner.exchange the change that reads policy_pack
-2026-11-21 internal/policy.closeInheritedOnExec the change that reads policy_pack
-2026-11-21 internal/policy.capped.Write the change that reads policy_pack
-2026-11-21 internal/policy.firstLine the change that reads policy_pack
-2026-11-21 internal/policy.readAnswer the change that reads policy_pack
-2026-11-21 internal/policy.answeredFault the change that reads policy_pack
-2026-11-21 internal/policy.customerInput the change that reads policy_pack
-2026-11-21 internal/policy.selfExecutable the change that reads policy_pack
-2026-11-21 internal/policy.childAttributes the change that reads policy_pack

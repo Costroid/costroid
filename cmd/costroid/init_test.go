@@ -1474,7 +1474,7 @@ func TestWrittenConfigLeavesOutReservedKeys(t *testing.T) {
 		}
 	}
 	slices.Sort(reserved)
-	if want := slices.Sorted(slices.Values(reservedKeys)); !slices.Equal(reserved, want) || len(reserved) != 5 {
+	if want := slices.Sorted(slices.Values(reservedKeys)); !slices.Equal(reserved, want) || len(reserved) != 4 {
 		t.Errorf("the schema reserves %v, and init leaves out %v", reserved, want)
 	}
 	root := t.TempDir()

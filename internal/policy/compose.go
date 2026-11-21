@@ -13,18 +13,20 @@ type Composed struct {
 	Verdict Verdict
 	// Pack is the pack's results, apart from Costroid's.
 	Pack []PackResult
-	// Line is the pack's line a fault names, 0 when it names none.
-	Line int
+
+	// problem is why the pack gave no results, nil when it gave its answer.
+	problem *PackFault
 }
 
 // compose joins a pack's results to Costroid's verdict. It reads
 // base.Results and never writes them, and the conclusion it returns is never
 // below base's: raise only assigns a conclusion of greater severity, and no
 // outcome maps to success. A fault becomes Costroid's own customer_pack
-// result, its outcome taken from packFaultOutcomes. compose runs after every
+// result, its outcome taken from packFaultOutcomes, with the line the
+// compiler named when the pack is not valid. compose runs after every
 // adjustment of Costroid's own, so nothing lowers its answer.
 func compose(base Verdict, pack []PackResult, problem *PackFault) Composed {
-	out := Composed{Verdict: base}
+	out := Composed{Verdict: base, problem: problem}
 	out.Verdict.Results = slices.Clone(base.Results)
 	conclusion := base.Conclusion
 	raise := func(outcome string) {
@@ -39,7 +41,6 @@ func compose(base Verdict, pack []PackResult, problem *PackFault) Composed {
 	if problem != nil {
 		result := heldByWarnOnly(problem.result(), base.WarnOnly.Active)
 		out.Verdict.Results = append(out.Verdict.Results, result)
-		out.Line = problem.Line
 		raise(result.Outcome)
 	}
 	for _, result := range pack {

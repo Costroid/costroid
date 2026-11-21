@@ -20,6 +20,7 @@ comment:
 | `policy.monthly_budget_usd` | none | The budget the repository's runs are held to over a calendar month, in USD. It reads a ledger's month to date only. Unset, the rule does not run |
 | `policy.models` | none | The models a run may use: exact model ids, or prefixes that end in `*`. Unset, the rule does not run |
 | `policy.enforce` | `false` | `true` ends the warn-only period now, so a run over a limit fails the check |
+| `policy_pack` | none | The path of a Rego file of the repository's own rules, from the repository's root, such as `.costroid/policy.rego`. Its rules can add a warning or a failure, never a pass. Unset, no pack runs |
 
 An amount is a plain decimal of at most 12 fractional digits, quoted or not: `5`, `2.50` and `"2.50"` read the same. Costroid reads the amount's text, never a float made from it, so `0.1` stays 0.1. Any other way YAML writes a number is a problem: an exponent such as `1e3`, `.inf`, `.nan`, hex such as `0x10`, octal such as `0o17` or `017`, an underscore such as `1_000`, and a sign. A leading zero is octal in YAML, so `017` would read as 15. `policy.max_p95_factor` is read the same way, at least 1 and below 10000, so `0.5` and `10000` are problems too. [`docs/policy.md`](policy.md) says what each rule concludes, which rules need figures the check does not read yet, and when the warn-only period ends.
 
@@ -42,7 +43,9 @@ A file that is empty, `~`, `null` or only `---` reads as no file. A section writ
 
 `policy.models` must list distinct model ids, each of at most 128 characters, or prefixes that end in `*`. Each entry is read only as a YAML string: an unquoted `2026-11-14` is a date and `!x codex` carries a tag, so each is a problem. An alias such as `*shared` reads as the value `&shared` marks.
 
-The schema also names `policy_pack`, `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
+`policy_pack` is a path of letters, digits, `.`, `_`, `-` and `/`, at most 256 characters, with no `.` or `..` segment, ending `.rego`. Any other value is a problem, and the file is then not valid, so no rule runs. The pack is read at the commit `costroid.yml` is read at, so a pull request cannot change the pack that judges it. [`docs/policy.md`](policy.md#a-repositorys-own-pack) says what a pack may call, what it sees and what each fault concludes.
+
+The schema also names `budget_owner`, `assumptions`, `catalog` and `agents`. They are reserved: this release accepts them and reads none of them. `costroid report` prints a warning in the job log for each reserved key it finds, and for each key it does not know, and still posts.
 
 ## Check a file
 

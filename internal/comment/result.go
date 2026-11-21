@@ -274,8 +274,10 @@ func (i Input) fields() Block {
 	block.Policy = blockVerdict(i.Verdict, shown)
 	block.Estimates = i.blockEstimates(shown)
 	block.EstimatesOmitted = i.Ledger.Infrastructure.FiguresOmitted
-	switch {
-	case addedIn(addedValues("", block), schemaV011):
+	switch added := addedValues("", block); {
+	case addedIn(added, schemaV012):
+		block.Schema = schemaV012
+	case addedIn(added, schemaV011):
 		block.Schema = schemaV011
 	case len(block.Estimates) == 0:
 		block.Schema = schemaV09
@@ -334,12 +336,15 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
 }
 
-// The versions other than result/0.10. This release writes 0.11 only for an object
-// that holds a value only 0.11 defines, 0.10 for one that states an estimate,
-// and 0.9 for any other, and a pull request whose newest check a release that
-// wrote an older one posted can still be approved, so ParseResult reads them
-// all. 0.11 holds the fields of 0.10, with estimates and estimates_omitted
-// only beside an estimate, and a run_p95 result with its three fields. 0.9
+// The versions other than result/0.10. This release writes 0.12 only for an
+// object that holds a customer pack, 0.11 for one that holds a value only
+// 0.11 defines, 0.10 for one that states an estimate, and 0.9 for any other,
+// and a pull request whose newest check a release that wrote an older one
+// posted can still be approved, so ParseResult reads them all. 0.12 holds
+// the fields of 0.11, policy.pack, and a customer_pack result with its four
+// reasons and its line. 0.11 holds the fields of 0.10, with estimates and
+// estimates_omitted only beside an estimate, and a run_p95 result with its
+// three fields. 0.9
 // holds every field of 0.10 but estimates and estimates_omitted. 0.8 holds an
 // agent_stated from gh-aw alone. 0.7 holds no recorded either, 0.6 holds no
 // agent_stated, and 0.5 holds none of rows_sha256, rows_file_sha256 and
@@ -351,13 +356,14 @@ const (
 	schemaV08  = "costroid.result/0.8"
 	schemaV09  = "costroid.result/0.9"
 	schemaV011 = "costroid.result/0.11"
+	schemaV012 = "costroid.result/0.12"
 )
 
 var (
 	// readSchemas are the versions ParseResult reads, oldest first.
-	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema, schemaV011}
+	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema, schemaV011, schemaV012}
 	// writtenSchemas are the versions this release writes.
-	writtenSchemas = []string{schemaV09, schema, schemaV011}
+	writtenSchemas = []string{schemaV09, schema, schemaV011, schemaV012}
 )
 
 // WrittenSchemas are the versions of the result object this release writes,
@@ -421,7 +427,7 @@ func (b Block) encode() (string, error) {
 		object = blockV07{Block: b}
 	case schemaV08, schemaV09:
 		object = blockV09{Block: b}
-	case schemaV011:
+	case schemaV011, schemaV012:
 		if len(b.Estimates) == 0 {
 			object = blockV09{Block: b}
 		}
@@ -524,8 +530,10 @@ func ParseResult(text string) (Block, error) {
 	if block.Schema == schema && len(block.Estimates) == 0 {
 		return Block{}, fmt.Errorf("comment: the result object states no estimate, and a release writes %s only for an object that states one", schema)
 	}
-	if block.Schema == schemaV011 && !addedIn(added, schemaV011) {
-		return Block{}, fmt.Errorf("comment: the result object holds nothing only %s defines, and a release writes %s only for an object that does", schemaV011, schemaV011)
+	for _, version := range []string{schemaV011, schemaV012} {
+		if block.Schema == version && !addedIn(added, version) {
+			return Block{}, fmt.Errorf("comment: the result object holds nothing only %s defines, and a release writes %s only for an object that does", version, version)
+		}
 	}
 	if again, err := block.encode(); err == nil && again == object {
 		return block, nil
@@ -558,6 +566,9 @@ var (
 	// rulesAddedIn011 are the rules of policy.results that result/v0.11
 	// added.
 	rulesAddedIn011 = []string{policy.RuleRunP95}
+	// reasonsAddedIn012 are the reasons of policy.results that result/v0.12
+	// added, each of the rule customer_pack, which it added too.
+	reasonsAddedIn012 = []string{policy.ReasonPackUnread, policy.ReasonPackInvalid, policy.ReasonPackBound, policy.ReasonPackResult}
 	// fieldsAdded are the top-level fields a later version added. Each is
 	// present in every object of that version, null or not.
 	fieldsAdded = []addedValue{
@@ -586,8 +597,9 @@ func addedIn(values []addedValue, version string) bool {
 
 // addedValues lists the values the object holds that a version after 0.5
 // added: a top-level field, the run reason artifact_refused, an agent_stated
-// source, and a rule, a reason or a field of policy.results. The fields at the
-// top are read from the object's text, and none from an empty one.
+// source, policy.pack, and a rule, a reason or a field of policy.results. The
+// fields at the top are read from the object's text, and none from an empty
+// one.
 func addedValues(object string, block Block) []addedValue {
 	var found []addedValue
 	var fields map[string]json.RawMessage
@@ -607,12 +619,21 @@ func addedValues(object string, block Block) []addedValue {
 	if block.Policy == nil {
 		return found
 	}
+	if block.Policy.Pack != nil {
+		found = append(found, addedValue{"the field policy.pack", schemaV012})
+	}
 	for _, result := range block.Policy.Results {
 		if slices.Contains(rulesAddedIn06, result.Rule) {
 			found = append(found, addedValue{"the rule " + result.Rule, schemaV06})
 		}
 		if slices.Contains(rulesAddedIn011, result.Rule) {
 			found = append(found, addedValue{"the rule " + result.Rule, schemaV011})
+		}
+		if result.Rule == policy.RuleCustomerPack {
+			found = append(found, addedValue{"the rule " + result.Rule, schemaV012})
+		}
+		if slices.Contains(reasonsAddedIn012, result.Reason) {
+			found = append(found, addedValue{"the reason " + result.Reason, schemaV012})
 		}
 		if slices.Contains(reasonsAddedIn06, result.Reason) {
 			found = append(found, addedValue{"the reason " + result.Reason, schemaV06})
@@ -627,6 +648,7 @@ func addedValues(object string, block Block) []addedValue {
 			{"limit_percent", schemaV06, result.LimitPercent != ""}, {"baseline_usd", schemaV06, result.BaselineUSD != ""},
 			{"models", schemaV06, len(result.Models) > 0}, {"p95_usd", schemaV011, result.P95USD != ""},
 			{"limit_factor", schemaV011, result.LimitFactor != ""}, {"baseline_runs", schemaV011, result.BaselineRuns != nil},
+			{"line", schemaV012, result.Line != 0},
 		} {
 			if field.set {
 				found = append(found, addedValue{"the field policy.results." + field.name, field.version})

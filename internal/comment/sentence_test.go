@@ -18,8 +18,9 @@ import (
 )
 
 // sentenceStates are the states a verdict sentence opens with. Each names
-// what is true of the run, and none is a conclusion value.
-var sentenceStates = regexp.MustCompile(`^(Within budget|Over budget|Within limit|Over limit|Model not on the list|Models on the list|No budget set|Not decided|No figure \([a-z_]+\)|No agent run)(, by the job's own figures|, warn-only|, approved by [A-Za-z0-9-]+|, on a fork's own rows)?: `)
+// what is true of the run, and none is a conclusion value. A pack rule's
+// state names the rule, and a stopped pack's its reason.
+var sentenceStates = regexp.MustCompile(`^((Within budget|Over budget|Within limit|Over limit|Model not on the list|Models on the list|No budget set|Not decided|No figure \([a-z_]+\)|No agent run)(, by the job's own figures|, warn-only|, approved by [A-Za-z0-9-]+|, on a fork's own rows)?|(Pack rule failed|Pack rule warned)(, warn-only|, on a fork's own rows)? \([a-z][a-z0-9_]{0,62}\)|Pack stopped \((pack_bound|pack_result)\)): `)
 
 // markup is every character that would make a sentence render as anything
 // but its own text in a comment, or break a table.
@@ -196,6 +197,7 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 	if checked != len(rules)*len(outcomes)*3*6 {
 		t.Fatalf("%d worst cases were built", checked)
 	}
+	checkPackWorstCases(t)
 
 	// The order of the cuts, on one report: three figures and the closing
 	// clause fit, a longer budget counts the later figures, and the longest
@@ -554,5 +556,71 @@ func TestRecordedRunSentenceNamesTheRecordedRun(t *testing.T) {
 		if body := commentOf(t, tc.input); !strings.HasPrefix(body, Marker+"\n**"+sentence+"**\n\nThese figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.\n") {
 			t.Errorf("%s: the recorded line does not stand under the sentence:\n%s", name, body)
 		}
+	}
+}
+
+// longestPackRule is the longest id a pack's rule takes: a letter and 62
+// more characters.
+var longestPackRule = "a" + strings.Repeat("z", 62)
+
+// checkPackWorstCases holds every sentence of a repository's own pack to the
+// status limit, as TestVerdictSentenceFitsTheStatusLimit holds Costroid's: a
+// pack rule that fails, that the warn-only period holds and that warns, each
+// named by the longest rule id, and the pack not valid at a long line, not
+// read, past its bound and with an answer outside its words, enforced and
+// held, over one figure and more than the table holds at the longest amounts,
+// shown and withheld, on GitHub, on GitLab and on a fork's rows.
+func checkPackWorstCases(t *testing.T) {
+	t.Helper()
+	results := []policy.PackResult{
+		{Rule: longestPackRule, Outcome: policy.PackFail, Reason: "r"},
+		{Rule: longestPackRule, Outcome: policy.PackWarn, Reason: "r", HeldByWarnOnly: true},
+		{Rule: longestPackRule, Outcome: policy.PackWarn, Reason: "r"},
+	}
+	faults := []policy.Result{
+		{Rule: policy.RuleCustomerPack, Outcome: policy.Unproven, Reason: policy.ReasonPackInvalid, Line: 999999999},
+		{Rule: policy.RuleCustomerPack, Outcome: policy.Unproven, Reason: policy.ReasonPackUnread},
+		{Rule: policy.RuleCustomerPack, Outcome: policy.Fail, Reason: policy.ReasonPackBound},
+		{Rule: policy.RuleCustomerPack, Outcome: policy.Warn, Reason: policy.ReasonPackBound, HeldByWarnOnly: true},
+		{Rule: policy.RuleCustomerPack, Outcome: policy.Fail, Reason: policy.ReasonPackResult},
+		{Rule: policy.RuleCustomerPack, Outcome: policy.Warn, Reason: policy.ReasonPackResult, HeldByWarnOnly: true},
+	}
+	var verdicts []policy.Verdict
+	for _, result := range results {
+		verdicts = append(verdicts, policy.Verdict{Results: []policy.Result{}, Pack: &policy.PackRun{Path: ".costroid/policy.rego", Results: []policy.PackResult{result}}})
+	}
+	for _, result := range faults {
+		verdicts = append(verdicts, policy.Verdict{Results: []policy.Result{result}, Pack: &policy.PackRun{Path: ".costroid/policy.rego", Results: []policy.PackResult{}}})
+	}
+	opening := regexp.MustCompile(`^(Pack rule failed|Pack rule warned|Pack stopped|Not decided)`)
+	checked := 0
+	for _, verdict := range verdicts {
+		for _, figures := range []int{1, 3, maxFigures + 3} {
+			shown := worstCase(t, figures, policy.Result{})
+			held := verdict
+			held.ConfigFromBase, held.WarnOnly = true, shown.Verdict.WarnOnly
+			shown.Verdict = &held
+			onGitLab, onFork := asGitLab(shown), shown.OnForkRows()
+			for _, input := range []Input{shown, withheld(shown), onGitLab, withheld(onGitLab), onFork, withheld(onFork)} {
+				sentence := VerdictSentence(input)
+				checked++
+				if length := utf8.RuneCountInString(sentence); length > StatusLimit {
+					t.Errorf("%+v over %d figures, amounts %d: %d characters: %s", verdict.Results, figures, input.Amounts, length, sentence)
+				}
+				if !sentenceStates.MatchString(sentence) || !opening.MatchString(sentence) || strings.ContainsAny(sentence, markup) {
+					t.Errorf("%+v over %d figures: the cut dropped the state: %s", verdict.Results, figures, sentence)
+				}
+				names := strings.Contains(sentence, "XAA ")
+				if input.Amounts != AmountsShown {
+					names = strings.Contains(sentence, "priced at list (List-equivalent, not billed)") && strings.HasSuffix(sentence, " Amounts are withheld here.") && !amountInWords.MatchString(sentence)
+				}
+				if !names {
+					t.Errorf("%+v over %d figures, amounts %d: the cut dropped the first figure, its basis or the withheld note: %s", verdict.Results, figures, input.Amounts, sentence)
+				}
+			}
+		}
+	}
+	if checked != len(verdicts)*3*6 {
+		t.Fatalf("%d worst cases of a pack were built", checked)
 	}
 }

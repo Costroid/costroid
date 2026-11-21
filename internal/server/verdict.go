@@ -2,11 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +29,21 @@ const (
 	// maxMeasuredPullRequests bounds the stated count of measured pull
 	// requests. Any count from the threshold up ends the period alike.
 	maxMeasuredPullRequests = 1 << 20
+	// maxPackChildren is how many customer packs serve runs at once. Each runs
+	// in a child process of this one, which can hold up to 1 GiB before the
+	// kernel stops it, and lives at most 2 seconds.
+	maxPackChildren = 4
+	// codePackBusy refuses a verdict whose pack found no free child in time.
+	codePackBusy = "PACK_BUSY"
 )
+
+// packChildren holds a slot for each customer pack serve runs. The slots are
+// the process's, as the children's memory is, so every Server shares them.
+var packChildren = make(chan struct{}, maxPackChildren)
+
+// packWait is how long a verdict waits for a slot: the deadline of a running
+// child, by which every slot it holds is free again.
+var packWait = 2 * time.Second
 
 // spendAttestation is what costroid gateway close sends once the run is over:
 // the run its key was minted for and what the gateway counted on the key. The
@@ -142,6 +159,11 @@ type verdictRequest struct {
 	WorkflowNotOnBase bool   `json:"workflow_not_on_base"`
 	// MeasuredPullRequests can only end the warn-only period early.
 	MeasuredPullRequests int `json:"measured_pull_requests"`
+	// Installation is the GitHub App's installation serve reads the
+	// repository through. With it, serve reads costroid.yml and the policy
+	// pack at config_ref itself, and runs the pack. Without it, a pack the
+	// stated costroid.yml names is not read.
+	Installation int64 `json:"installation"`
 }
 
 type verdictAnswer struct {
@@ -229,6 +251,7 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		Lines:                ledgerLines(lines),
 		Evidence:             evidenceOf(budget),
 		Config:               config,
+		Pack:                 s.readPack(r.Context(), repo, stated, config),
 		Start:                start,
 		MeasuredPullRequests: stated.MeasuredPullRequests,
 		At:                   s.Now(),
@@ -236,12 +259,68 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 	if budget.Basis == budgetBasisGateway {
 		request.MeasuredUSD = measured.usd
 	}
+	if request.Pack.Read() {
+		release, admitted := admitPack(r.Context())
+		if !admitted {
+			w.Header().Set("Retry-After", strconv.Itoa(int(packWait/time.Second)))
+			s.fail(w, r, refuse(http.StatusServiceUnavailable, codePackBusy, fmt.Sprintf("The service runs %d policy packs at once, and none ended within %s. Retry after %s.", maxPackChildren, packWait, packWait)))
+			return
+		}
+		defer release()
+	}
 	verdict, err := policy.EvaluateLedger(r.Context(), request)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, verdictAnswer{Repository: repo, PullRequest: pr, Budget: budget, Policy: verdict})
+}
+
+// admitPack takes a slot for one customer pack's child, waiting at most
+// packWait, and returns what frees it. A verdict with no slot gets no answer
+// rather than one without its pack: a pack can only raise a conclusion, so a
+// verdict without it could read looser than the repository's own policy.
+func admitPack(ctx context.Context) (func(), bool) {
+	timer := time.NewTimer(packWait)
+	defer timer.Stop()
+	select {
+	case packChildren <- struct{}{}:
+		return func() { <-packChildren }, true
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	return nil, false
+}
+
+// readPack reads the customer pack the stated costroid.yml names through the
+// GitHub App's installation the request names, and only when serve read
+// costroid.yml itself, at config_ref, through that installation, and found the
+// bytes the caller stated. The pack is then the one that file names at that
+// commit, never one a caller states. The installation must be held, not
+// suspended, and reach the repository. Any other request reads no pack, and
+// its verdict states customer_pack pack_unread.
+func (s *Server) readPack(ctx context.Context, repo string, stated verdictRequest, config policy.ConfigFile) policy.Pack {
+	name, onGitHub := strings.CutPrefix(repo, "github.com/")
+	if config.PackPath() == "" || stated.Installation <= 0 || !onGitHub || s.App == nil || s.App.Hosts == nil {
+		return policy.Pack{}
+	}
+	held, err := s.App.Installations.Installation(ctx, stated.Installation)
+	if err != nil || held.Suspended {
+		return policy.Pack{}
+	}
+	index := slices.IndexFunc(held.Repositories, func(repository store.Repository) bool { return strings.EqualFold(repository.FullName, name) })
+	if index < 0 {
+		return policy.Pack{}
+	}
+	host, err := s.App.Hosts.Repository(stated.Installation, held.Repositories[index].FullName)
+	if err != nil {
+		return policy.Pack{}
+	}
+	own := policy.ReadConfig(ctx, host, policy.Commits{Base: stated.ConfigRef, PullRequest: true})
+	if own.Unread != nil || own.Found != config.Found || !bytes.Equal(own.Data, config.Data) {
+		return policy.Pack{}
+	}
+	return policy.ReadPack(ctx, host, own)
 }
 
 // evidenceOf names what stands behind the budget's spend, for the pack.

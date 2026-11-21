@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -33,6 +34,9 @@ type Settings struct {
 	Models []string
 	// Enforce ends the warn-only period early.
 	Enforce bool
+	// Pack is the path of the customer pack policy_pack names, empty when it
+	// names none.
+	Pack string
 }
 
 // amountPattern is a plain decimal of at most the row contract's scale, the
@@ -79,23 +83,28 @@ func Keys() []string {
 	return keys
 }
 
-// ParseSettings reads the policy mapping of costroid.yml. Any key or value
-// under it that the schema refuses is an error, so a typo never runs a rule
-// on a default. A policy key with no value sets no rule, as an absent one
-// does. Keys outside it are not the policy's to judge.
+// ParseSettings reads the policy mapping of costroid.yml, and policy_pack.
+// Any key or value under policy that the schema refuses is an error, and so
+// is a policy_pack the schema refuses, so a typo never runs a rule on a
+// default. A policy key with no value sets no rule, as an absent one does.
+// Other keys outside policy are not the policy's to judge.
 func ParseSettings(data []byte) (Settings, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return Settings{}, fmt.Errorf("policy: parse costroid.yml: %w", err)
 	}
+	pack, err := readPackPath(&root)
+	if err != nil {
+		return Settings{}, err
+	}
 	mapping := policyMapping(&root)
 	if mapping == nil || mapping.Tag == "!!null" {
-		return Settings{}, nil
+		return Settings{Pack: pack}, nil
 	}
 	if mapping.Kind != yaml.MappingNode {
 		return Settings{}, errors.New("policy: policy in costroid.yml is not a mapping")
 	}
-	settings := Settings{Amounts: map[string]decimal.Decimal{}}
+	settings := Settings{Amounts: map[string]decimal.Decimal{}, Pack: pack}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		key, value := resolved(mapping.Content[i]).Value, resolved(mapping.Content[i+1])
 		switch {
@@ -131,6 +140,34 @@ func ParseSettings(data []byte) (Settings, error) {
 
 func policyMapping(root *yaml.Node) *yaml.Node {
 	return section(root, "policy")
+}
+
+// PackKey is the top-level key of costroid.yml that names a customer pack.
+const PackKey = "policy_pack"
+
+// maxPackPath is the longest path policy_pack takes, in bytes.
+const maxPackPath = 256
+
+// packPathPattern is a path from the repository's root: segments of letters,
+// digits, ., _ and -, none of them . or .., the last ending .rego. It is the
+// pattern result/v0.12 states for policy.pack.path and costroid.schema.json
+// for policy_pack.
+var packPathPattern = regexp.MustCompile(`^((\.?[A-Za-z0-9_-]|\.\.[A-Za-z0-9._-])[A-Za-z0-9._-]*/)*(\.?[A-Za-z0-9_-]|\.\.[A-Za-z0-9._-])[A-Za-z0-9._-]*\.rego$`)
+
+var errPackPath = fmt.Errorf("policy: policy_pack in costroid.yml must be a path from the repository's root such as .costroid/policy.rego: at most %d characters of letters, digits, ., _, - and /, with no . or .. segment, ending .rego", maxPackPath)
+
+// readPackPath reads policy_pack, empty when costroid.yml names no pack. A
+// value with no text, as policy_pack: alone gives, is refused as the schema
+// refuses it.
+func readPackPath(root *yaml.Node) (string, error) {
+	node := section(root, PackKey)
+	if node == nil {
+		return "", nil
+	}
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || len(node.Value) > maxPackPath || !packPathPattern.MatchString(node.Value) {
+		return "", errPackPath
+	}
+	return node.Value, nil
 }
 
 // section is the value of a top-level key, nil when the document is not a
@@ -320,6 +357,12 @@ type ConfigFile struct {
 	FromBase bool
 	// Unread is why the file could not be read, nil when it was.
 	Unread error
+
+	// commit is the commit ReadConfig read the file at, and pullRequest says
+	// it read it for a pull request. Nothing else sets them, so a pack is
+	// read only at a commit ReadConfig chose.
+	commit      string
+	pullRequest bool
 }
 
 func (c ConfigFile) settings() (Settings, error) {
@@ -370,7 +413,7 @@ func ReadConfig(ctx context.Context, files FileReader, commits Commits) ConfigFi
 	if err != nil {
 		return ConfigFile{Ref: ref, FromBase: commits.PullRequest, Unread: fmt.Errorf("policy: read %s at %s: %w", ConfigPath, ref, err)}
 	}
-	return ConfigFile{Data: data, Found: found, Ref: ref, FromBase: commits.PullRequest}
+	return ConfigFile{Data: data, Found: found, Ref: ref, FromBase: commits.PullRequest, commit: ref, pullRequest: commits.PullRequest}
 }
 
 func readOptional(ctx context.Context, files FileReader, ref string) ([]byte, bool, error) {
@@ -395,4 +438,176 @@ func ConfigFromFile(path string) ConfigFile {
 		return ConfigFile{Unread: fmt.Errorf("policy: %w", err)}
 	}
 	return ConfigFile{Data: data, Found: true}
+}
+
+// PackPath is the path of the customer pack the file names, empty when it
+// names none or cannot be read.
+func (c ConfigFile) PackPath() string {
+	settings, err := c.settings()
+	if err != nil {
+		return ""
+	}
+	return settings.Pack
+}
+
+// Pack is the customer pack a costroid.yml names, as one commit holds it, or
+// as a file offline. Only ReadPack and PackFromFile make one that holds
+// bytes, and each records the costroid.yml it was read for, so a pack read
+// for one file never runs under another. The zero Pack is a pack not read.
+type Pack struct {
+	path string
+	// ref is the commit the pack was read at, empty offline, and config the
+	// SHA-256 of the costroid.yml that named it.
+	ref, config string
+	data        []byte
+	// unread is why the pack cannot run, nil when it can, and absent says
+	// the commit or the directory holds no such file.
+	unread error
+	absent bool
+}
+
+// ReadPack reads the customer pack config names at the commit ReadConfig read
+// config at, and at no other: no parameter takes a commit. A configuration
+// ReadConfig did not read is refused, and so, on a pull request, is one that
+// is not the base's. A missing file, a file over 64 KiB and a host that did
+// not answer each leave the pack unread.
+func ReadPack(ctx context.Context, files FileReader, config ConfigFile) Pack {
+	path := config.PackPath()
+	if path == "" {
+		return Pack{}
+	}
+	pack := Pack{path: path, ref: config.Ref, config: digest(config.Data)}
+	switch {
+	case config.commit == "":
+		pack.unread = errors.New("policy: costroid.yml was not read at a commit, so the pack is not read at one either")
+	case config.Ref != config.commit:
+		pack.unread = fmt.Errorf("policy: costroid.yml was read at %s and names %s as its commit", config.commit, config.Ref)
+	case config.pullRequest && !config.FromBase:
+		pack.unread = errors.New("policy: on a pull request a pack is read at the base alone")
+	default:
+		pack.data, pack.unread = readPackFile(ctx, files, path, config.commit)
+		pack.absent = errors.Is(pack.unread, scm.ErrNotFound)
+	}
+	return pack
+}
+
+func readPackFile(ctx context.Context, files FileReader, path, commit string) ([]byte, error) {
+	data, err := files.ReadFile(ctx, path, commit)
+	switch {
+	case errors.Is(err, scm.ErrNotFound):
+		return nil, fmt.Errorf("policy: %s at %s: %w", path, commit, err)
+	case err != nil:
+		return nil, fmt.Errorf("policy: read %s at %s: %w", path, commit, err)
+	case len(data) > maxPackBytes:
+		return data, fmt.Errorf("policy: %s at %s holds %d bytes, over %d", path, commit, len(data), maxPackBytes)
+	}
+	return data, nil
+}
+
+// PackFromFile reads the customer pack config names from a file, as costroid
+// policy does offline: file holds the pack as the base branch holds it at the
+// path config names. A missing file and a file over 64 KiB leave it unread,
+// as they do online.
+func PackFromFile(file string, config ConfigFile) Pack {
+	path := config.PackPath()
+	if path == "" {
+		return Pack{}
+	}
+	pack := Pack{path: path, ref: config.Ref, config: digest(config.Data)}
+	data, err := os.ReadFile(file)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		pack.unread, pack.absent = fmt.Errorf("policy: %w", err), true
+	case err != nil:
+		pack.unread = fmt.Errorf("policy: %w", err)
+	case len(data) > maxPackBytes:
+		pack.data, pack.unread = data, fmt.Errorf("policy: %s holds %d bytes, over %d", file, len(data), maxPackBytes)
+	default:
+		pack.data = data
+	}
+	return pack
+}
+
+// Read reports a pack whose bytes were read whole, which runs when a verdict
+// reads the costroid.yml it was read for.
+func (p Pack) Read() bool {
+	return p.path != "" && p.unread == nil
+}
+
+// readFor reports a pack read for config: the pack config names, at the
+// commit config names, for config's bytes.
+func (p Pack) readFor(config ConfigFile) bool {
+	return p.path != "" && p.path == config.PackPath() && p.ref == config.Ref && p.config == digest(config.Data)
+}
+
+// fault is why the pack cannot run under config, and nil when it can: a pack
+// not read, not read whole, or read for another costroid.yml.
+func (p Pack) fault(config ConfigFile) *PackFault {
+	switch {
+	case p.path == "":
+		return fault(ReasonPackUnread, 0, errors.New("the pack was not read"))
+	case !p.readFor(config):
+		return fault(ReasonPackUnread, 0, errors.New("the pack was read for another costroid.yml"))
+	case p.unread != nil:
+		return fault(ReasonPackUnread, 0, p.unread)
+	}
+	return nil
+}
+
+// bytesFor is the bytes a verdict under config states the digest of: the
+// pack's, when it was read for config, and none otherwise.
+func (p Pack) bytesFor(config ConfigFile) []byte {
+	if !p.readFor(config) {
+		return nil
+	}
+	return p.data
+}
+
+// PackChange says what a pull request changes of its customer pack. The
+// change applies after the merge, because the verdict reads the base.
+type PackChange int
+
+// What a pull request changes of its pack.
+const (
+	// PackUnchanged is no change, or one that could not be read.
+	PackUnchanged PackChange = iota
+	// PackKeyChanged is a policy_pack at the head that names another path,
+	// or none.
+	PackKeyChanged
+	// PackFileChanged is a pack file at the head whose bytes differ from the
+	// base's.
+	PackFileChanged
+)
+
+// ChangedAtHead compares the pack config names with the pull request's head,
+// and reports only what changed. It reads costroid.yml and the pack's path at
+// head when config names a pack, and nothing leaves this function but the
+// answer, so the head's bytes never run. A read the host did not answer is no
+// change, since none is known. Off a pull request there is no head to
+// compare.
+func (p Pack) ChangedAtHead(ctx context.Context, files FileReader, config ConfigFile, head string) PackChange {
+	if !p.readFor(config) || !config.pullRequest || !vcs.IsCommit(head) || head == config.commit {
+		return PackUnchanged
+	}
+	headConfig, found, err := readOptional(ctx, files, head)
+	if err != nil {
+		return PackUnchanged
+	}
+	var root yaml.Node
+	if !found || yaml.Unmarshal(headConfig, &root) != nil {
+		return PackKeyChanged
+	}
+	if path, err := readPackPath(&root); err != nil || path != p.path {
+		return PackKeyChanged
+	}
+	data, err := files.ReadFile(ctx, p.path, head)
+	absent := errors.Is(err, scm.ErrNotFound)
+	switch {
+	case err != nil && !absent, p.data == nil && p.unread != nil && !p.absent:
+		// One side could not be read, so whether it changed is not known.
+		return PackUnchanged
+	case absent != p.absent, !bytes.Equal(data, p.data):
+		return PackFileChanged
+	}
+	return PackUnchanged
 }

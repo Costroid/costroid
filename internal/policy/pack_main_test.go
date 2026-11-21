@@ -2,6 +2,7 @@ package policy
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,9 +18,10 @@ import (
 // one. The child first refuses, with exit code 3, if anything of its
 // parent's reached it: a variable of the environment, a file in its working
 // directory, or a descriptor beyond its pipes. Started under a name in
-// fakeChildren, it then answers as that child does. Otherwise it runs the
-// tests with a stub first on PATH for every agent, since the package starts
-// processes.
+// fakeChildren, it then answers as that child does. Otherwise it records, as
+// costroid's main does, that this executable hands a child to the pack, and
+// runs the tests with a stub first on PATH for every agent, since the package
+// starts processes.
 func TestMain(m *testing.M) {
 	if len(os.Args) == 2 && os.Args[1] == PackChildArgument {
 		if problem := inheritedProblem(); problem != "" {
@@ -33,6 +35,7 @@ func TestMain(m *testing.M) {
 		code, _ := PackChild()
 		os.Exit(code)
 	}
+	PackChild()
 	os.Exit(agenttest.Main(m.Run))
 }
 
@@ -53,6 +56,19 @@ var fakeChildren = map[string]func(){
 	},
 	"hang-child": func() {
 		time.Sleep(time.Hour)
+	},
+	// lying-invalid-child says the pack is not valid when it is handed rows,
+	// and answers no result when it is handed none.
+	"lying-invalid-child": func() {
+		var request childRequest
+		if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
+			panic(err)
+		}
+		if string(request.Input) == "{}" {
+			os.Stdout.WriteString(`{"steps":1,"results":[]}` + "\n")
+			return
+		}
+		os.Stdout.WriteString(`{"steps":0,"fault":{"reason":"pack_invalid","line":1,"error":"forged"}}` + "\n")
 	},
 }
 

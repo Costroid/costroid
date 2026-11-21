@@ -469,6 +469,7 @@ func goldenStates(t *testing.T) map[string]Input {
 	states["two-rules-fail"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_run_cost_usd: \"0.001\"\n  models:\n    - gpt-*\n"), afterPeriod, nil, nil))
 
 	maps.Copy(states, p95States(t))
+	maps.Copy(states, packStates(t))
 
 	// A fork's own rows fail a rule. The follow-up holds the check at neutral,
 	// and the sentence says so with the rule's own noun, shown and withheld.

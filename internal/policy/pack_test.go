@@ -144,7 +144,7 @@ func assertComposedPack(t *testing.T, name string, base Verdict, out Composed) {
 		if outcome == Fail && base.WarnOnly.Active {
 			outcome = Warn
 		}
-		if !known || added[0].Rule != ruleCustomerPack || added[0].Outcome != outcome || len(out.Pack) > 0 {
+		if !known || added[0].Rule != RuleCustomerPack || added[0].Outcome != outcome || len(out.Pack) > 0 {
 			t.Fatalf("%s: a fault became %+v beside %+v", name, added[0], out.Pack)
 		}
 	}
@@ -245,7 +245,7 @@ func TestCustomerPackCannotLoosenTheDefault(t *testing.T) {
 			switch {
 			case valid && faulted:
 				t.Fatalf("%s: an answer in the pack's words faulted: %+v", name, result)
-			case !valid && (!faulted || result.Reason != packResult):
+			case !valid && (!faulted || result.Reason != ReasonPackResult):
 				t.Fatalf("%s: an answer outside the pack's words was read: %+v, %+v", name, out.Pack, out.Verdict.Results)
 			}
 		}
@@ -344,7 +344,7 @@ func TestCustomerPackWithARefusedBuiltinFailsClosed(t *testing.T) {
 	runner := childRunner(t)
 	for _, entry := range faults {
 		results, _, problem := runner.run(context.Background(), []byte(entry.source), cases[0].request, cases[0].verdict.Results)
-		if problem == nil || problem.Reason() != packInvalid || problem.Line != entry.line {
+		if problem == nil || problem.Reason() != ReasonPackInvalid || problem.Line != entry.line {
 			t.Errorf("%s loaded as %v, line %d", entry.name, problem, entry.line)
 			continue
 		}
@@ -353,8 +353,8 @@ func TestCustomerPackWithARefusedBuiltinFailsClosed(t *testing.T) {
 			assertComposedPack(t, entry.name+", "+base.name, base.verdict, out)
 			result, faulted := customerResult(base.verdict, out)
 			want := max(severity[base.verdict.Conclusion], severity[Neutral])
-			if !faulted || result.Outcome != Unproven || result.Reason != packInvalid || out.Line != entry.line || severity[out.Verdict.Conclusion] != want {
-				t.Errorf("%s over %s: %s, %+v, line %d", entry.name, base.name, out.Verdict.Conclusion, result, out.Line)
+			if !faulted || result.Outcome != Unproven || result.Reason != ReasonPackInvalid || result.Line != entry.line || severity[out.Verdict.Conclusion] != want {
+				t.Errorf("%s over %s: %s, %+v", entry.name, base.name, out.Verdict.Conclusion, result)
 			}
 		}
 	}
@@ -380,11 +380,11 @@ func TestCustomerPackIsBounded(t *testing.T) {
 		reason  string
 		steps   int64
 	}{
-		{"five nested loops over the input", header + warn + " if {\n\tn := count([1 | some a in input.usage; some b in input.usage; some c in input.usage; some d in input.usage; some e in input.usage])\n\tn > 0\n}\n", largest, packBound, maxPackSteps + 1},
-		{"17 currencies", header + warn + "\n", wider, packBound, 0},
-		{"257 model ids", header + warn + "\n", more, packBound, 0},
-		{"33 results", many.String(), largest, packBound, 68},
-		{"a file over 64 KiB", header + warn + "\n" + strings.Repeat("#", maxPackBytes), largest, packUnread, 0},
+		{"five nested loops over the input", header + warn + " if {\n\tn := count([1 | some a in input.usage; some b in input.usage; some c in input.usage; some d in input.usage; some e in input.usage])\n\tn > 0\n}\n", largest, ReasonPackBound, maxPackSteps + 1},
+		{"17 currencies", header + warn + "\n", wider, ReasonPackBound, 0},
+		{"257 model ids", header + warn + "\n", more, ReasonPackBound, 0},
+		{"33 results", many.String(), largest, ReasonPackBound, 68},
+		{"a file over 64 KiB", header + warn + "\n" + strings.Repeat("#", maxPackBytes), largest, ReasonPackUnread, 0},
 	}
 	runner := childRunner(t)
 	for _, entry := range cases {
@@ -403,7 +403,7 @@ func TestCustomerPackIsBounded(t *testing.T) {
 			base := Verdict{Conclusion: Success, WarnOnly: WarnOnly{Active: active}, Results: []Result{}}
 			out := compose(base, results, problem)
 			want := Failure
-			if active || entry.reason == packUnread {
+			if active || entry.reason == ReasonPackUnread {
 				want = Neutral
 			}
 			if out.Verdict.Conclusion != want {
@@ -563,7 +563,7 @@ results contains {"rule": "reached", "outcome": "fail", "reason": "warn_only"} i
 	for _, name := range []string{"opa.runtime", "time.now_ns", "http.send", "net.lookup_ip_addr", "rand.intn"} {
 		source := "package costroid.pack\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"x\"} if {\n\t_ := " + refusedCalls[name] + "\n}\n"
 		_, _, problem := childRunner(t).run(context.Background(), []byte(source), request, verdict.Results)
-		if problem == nil || problem.Reason() != packInvalid {
+		if problem == nil || problem.Reason() != ReasonPackInvalid {
 			t.Errorf("a pack that calls %s loaded: %v", name, problem)
 		}
 	}
@@ -584,7 +584,7 @@ func TestPackMessagesKeepOnlyWhatACommentPrints(t *testing.T) {
 }
 
 func TestPackFaultNamesItsReasonAndLine(t *testing.T) {
-	problem := fault(packInvalid, 4, errors.New("undefined function http.send"))
+	problem := fault(ReasonPackInvalid, 4, errors.New("undefined function http.send"))
 	if problem.Error() != "policy: customer pack: pack_invalid at line 4: undefined function http.send" || problem.Unwrap() == nil {
 		t.Errorf("the fault reads %q", problem.Error())
 	}

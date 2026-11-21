@@ -123,13 +123,18 @@ const refusedSentence = "No figure (artifact_refused): the rows artifact held fi
 func (b telling) sentenceAt(said cut) string {
 	withheld := b.Amounts != amountsShown
 	decided, ruled := deciding(b.Policy)
+	pack, packDecides := packDeciding(b.Policy, b.State)
 	switch {
 	case b.RunReason == ArtifactRefused:
 		return refusedSentence
-	case ruled && broken(decided):
+	case packDecides:
+		return b.packClaim(pack, said).text(said, withheld)
+	case ruled && overRule(decided):
 		return b.overClaim(decided, said).text(said, withheld)
+	case ruled && broken(decided):
+		return b.packStopped(decided, said).text(said, withheld)
 	case b.State != Reported:
-		return b.noFigure(!ruled && said.closing)
+		return b.noFigure(!ruled && !packAnswered(b.Policy) && said.closing)
 	case b.Policy != nil && b.Policy.Config == policy.ConfigInvalid:
 		return b.undecided("costroid.yml is not valid, so no rule ran", said).text(said, withheld)
 	case b.Policy != nil && b.Policy.Config == policy.ConfigUnread:
@@ -171,9 +176,55 @@ func deciding(verdict *policy.Verdict) (policy.Result, bool) {
 }
 
 // broken reports a result that found its limit passed or a model off the
-// list, whether it fails the check or the warn-only period holds it.
+// list, or a customer pack stopped past its bound or its words, whether it
+// fails the check or the warn-only period holds it.
 func broken(result policy.Result) bool {
 	return rank(result) < 2
+}
+
+// overRule reports a broken result of a rule that holds a figure to a limit
+// or the models to a list: every broken result but customer_pack's.
+func overRule(result policy.Result) bool {
+	return broken(result) && result.Rule != policy.RuleCustomerPack
+}
+
+// packRank orders a customer pack's results from the one that decides a
+// conclusion down, on the scale of rank times packScale: a pack's failure
+// comes after a failing rule of Costroid's and before one the warn-only
+// period holds, and a pack's failure the period holds, then its warning, come
+// after that and before a rule that could not pass.
+func packRank(result policy.PackResult) int {
+	switch {
+	case result.HeldByWarnOnly:
+		return packScale + 1
+	case result.Outcome == policy.PackFail:
+		return 1
+	}
+	return packScale + 2
+}
+
+// packScale is how many ranks of the pack's fit between two of Costroid's.
+const packScale = 4
+
+// packDeciding is the customer pack's result the verdict sentence names: the
+// first, in the order the verdict lists them, of the worst outcome, when it
+// comes before every result of Costroid's. A failing rule of Costroid's always
+// decides first. A report with no figures names none, because the sentence
+// names the figure the pack's rule was held to.
+func packDeciding(verdict *policy.Verdict, state State) (policy.PackResult, bool) {
+	if state != Reported || verdict == nil || verdict.Pack == nil || len(verdict.Pack.Results) == 0 {
+		return policy.PackResult{}, false
+	}
+	pack := slices.MinFunc(verdict.Pack.Results, func(a, b policy.PackResult) int { return packRank(a) - packRank(b) })
+	if decided, ruled := deciding(verdict); ruled && rank(decided)*packScale < packRank(pack) {
+		return policy.PackResult{}, false
+	}
+	return pack, true
+}
+
+// packAnswered reports a verdict whose customer pack returned a result.
+func packAnswered(verdict *policy.Verdict) bool {
+	return verdict != nil && verdict.Pack != nil && len(verdict.Pack.Results) > 0
 }
 
 // leadNouns name what each rule holds a cost to, in the state a sentence
@@ -238,6 +289,67 @@ func (b telling) overClaim(result policy.Result, said cut) claim {
 	return over
 }
 
+// packOwn opens the closing clause of a pack rule's sentence.
+const packOwn = "The rule is this repository's own"
+
+// packClaim is the sentence for a rule of the repository's own pack that
+// decides the check: one that fails, one the warn-only period holds, one
+// that warns, or one a fork's own rows break. The pack's message is the
+// pack's own text, so it follows in the body and never here.
+func (b telling) packClaim(result policy.PackResult, said cut) claim {
+	pack := claim{state: "Pack rule warned (" + result.Rule + ")", figure: b.runCost(said), closing: packOwn + ", and a warning never fails the check."}
+	switch {
+	case result.Outcome == policy.PackWarn && !result.HeldByWarnOnly:
+	case b.forkRows:
+		pack.state, pack.closing = "Pack rule failed, on a fork's own rows ("+result.Rule+")", forkClosing
+	case result.HeldByWarnOnly:
+		pack.state, pack.closing = "Pack rule failed, warn-only ("+result.Rule+")", packOwn+". After "+b.warnOnlyEnd()+" this fails the check."
+	default:
+		pack.state, pack.closing = "Pack rule failed ("+result.Rule+")", packOwn+", read from the base branch."
+	}
+	return pack
+}
+
+// packStopped is the sentence for a customer pack that did not run to its
+// end for a cause the rows can reach: past its bound, or an answer outside
+// its words. It fails the check, or warns in the warn-only period, and says
+// when it will fail. A report with no figures names none, and the reason for
+// that opens the comment under it.
+func (b telling) packStopped(result policy.Result, said cut) claim {
+	why := "the policy pack passed its evaluation bound on this run's rows"
+	if result.Reason == policy.ReasonPackResult {
+		why = "the policy pack answered with something other than its results"
+	}
+	stopped := claim{state: "Pack stopped (" + result.Reason + ")", figure: why}
+	switch {
+	case b.forkRows:
+		stopped.closing = forkClosing
+	case result.Outcome == policy.Warn:
+		stopped.closing = "After " + b.warnOnlyEnd() + " this fails the check."
+	default:
+		stopped.figure += ", so the check fails"
+	}
+	if b.State == Reported {
+		stopped.figure += ". " + capital(b.runCost(said))
+	}
+	return stopped
+}
+
+// packUnproven is why a customer pack that the base branch alone kept from
+// running ran none of its rules: a file that is not valid, at the line the
+// compiler named, or one that could not be read.
+func (b telling) packUnproven(result policy.Result) string {
+	switch {
+	case result.Reason == policy.ReasonPackInvalid && result.Line > 0:
+		return fmt.Sprintf("the policy pack is not valid at line %d, so none of its rules ran", result.Line)
+	case result.Reason == policy.ReasonPackInvalid:
+		return "the policy pack is not valid, so none of its rules ran"
+	case b.Policy.ConfigFromBase:
+		return "the policy pack could not be read at the base commit, so none of its rules ran"
+	}
+	return "the policy pack could not be read, so none of its rules ran"
+}
+
 // warnOnlyEnd is the instant the warn-only period ends, or the period by name
 // when it has no end yet.
 func (b Block) warnOnlyEnd() string {
@@ -262,6 +374,8 @@ func (b telling) keptClaim(result policy.Result, said cut) claim {
 		kept.closing = "Nothing outside the job checked the figures, so the check is neutral."
 	case result.Rule == policy.RuleRunP95 && result.Reason == policy.ReasonNoBaseline:
 		return b.undecided(fmt.Sprintf("the P95 limit needs %d earlier runs of this agent and %d reached the check, so the rule did not run", policy.MinP95Runs, baselineRuns(result)), said)
+	case result.Rule == policy.RuleCustomerPack:
+		return b.undecided(b.packUnproven(result), said)
 	default:
 		return b.undecided("the "+ruleNoun(result.Rule, b.request)+" could not be checked", said)
 	}

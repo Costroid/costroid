@@ -70,6 +70,112 @@ policy:
 - Within the limit, it passes only when this run's rows and the baseline were both checked against a token, as the median rules do. On the Action path it concludes `unproven` at best.
 - It sits beside the median rules. They are independent, read one baseline, and can all be set. `run_increase` and `run_increase_percent` ask whether a run is far from a typical run, and need 10 runs. `run_p95` asks whether a run costs more than nearly every earlier run, and needs 20. A verdict lists it after `run_increase_percent` and before `pr_budget`, so when it fails beside a median rule the sentence names the median rule.
 
+## A repository's own pack
+
+`policy_pack` in `costroid.yml` names one Rego file in the repository: a policy pack of the repository's own. Its rules can add a warning or a failure to the check. They can never make it pass, and they never change a rule of Costroid's.
+
+```yaml
+policy_pack: .costroid/policy.rego
+policy:
+  run_budget_usd: 5
+```
+
+```rego
+package costroid.pack
+
+# No run may use an Opus model.
+results contains {
+	"rule": "no_opus",
+	"outcome": "fail",
+	"reason": "model_not_allowed",
+	"message": "Opus models are not used in this repository.",
+} if {
+	some usage in input.usage
+	some model, _ in usage.models
+	startswith(model, "claude-opus")
+}
+
+# Warn when the run budget could not be shown kept.
+results contains {
+	"rule": "budget_unproven",
+	"outcome": "warn",
+	"reason": "rows_unchecked",
+} if {
+	some result in input.results
+	result.rule == "run_budget"
+	result.outcome == "unproven"
+}
+```
+
+Over the recorded run in [`internal/comment/testdata/rows.jsonl`](../internal/comment/testdata/rows.jsonl), which used `claude-haiku-5-5` and whose rows the agent's own job wrote, the first rule finds no Opus model, and the second warns, because `run_budget` cannot pass on those rows. The check concludes `neutral`, and the verdict holds:
+
+```json
+"pack": {
+  "path": ".costroid/policy.rego",
+  "sha256": "<SHA-256 of the file>",
+  "results": [
+    { "rule": "budget_unproven", "outcome": "warn", "reason": "rows_unchecked" }
+  ]
+}
+```
+
+### Where the pack is read
+
+- The path is from the repository's root, has no `.` or `..` segment, ends `.rego` and is at most 256 characters of letters, digits, `.`, `_`, `-` and `/`. `costroid validate` refuses any other, and a `costroid.yml` that names one is not valid, so no rule runs.
+- The report reads the pack at the commit it reads `costroid.yml` at, the head of the pull request's base branch, and never at the pull request's head. A pull request that changes the pack, or `policy_pack`, does not change its own verdict. When it changes either, the comment says the change applies after the merge. To say so, the report reads `costroid.yml` and the pack's path at the head, compares them with the base's, and runs nothing it read there.
+- A fork's follow-up reads it at the default branch's commit, as it reads `costroid.yml`, and reads nothing at the head.
+- `costroid policy` reads it from `--pack FILE`, or from the path `policy_pack` names in the directory that holds the `--config` file. `--pack` beside a `costroid.yml` that names no pack is refused.
+- `costroid serve` runs a pack only when it read the file itself, through the GitHub App's installation the request names. [`docs/serve.md`](serve.md#a-repositorys-own-pack) says when.
+- A file over 64 KiB does not run: it concludes `pack_unread`, as an absent file does.
+
+### What a pack returns
+
+The module declares `package costroid.pack`, and `results` is a set or an array of at most 32 objects. Each object holds `rule`, `outcome` and `reason`, and may hold `message`, every value a string:
+
+- `rule` and `reason` are the pack's own ids: a lower-case letter, then at most 62 lower-case letters, digits and underscores. `rule` is never one of Costroid's rule ids.
+- `outcome` is `warn` or `fail`. A pack has no word for pass: a result with any other outcome stops the pack, and so does a key outside the four.
+- `message` is the pack's own text. Every character outside letters, digits, the space and `.,:;()'=_/+-` becomes `?`, and it is cut at 160 bytes. The comment shows it as a code span under the title, and never in the title. A copy that withholds amounts drops it, since it can repeat an amount the pack read.
+
+In the warn-only period a pack's `fail` warns, as Costroid's own rules do. The verdict holds the pack's results in `policy.pack.results`, apart from Costroid's `policy.results`, so a pack's rule named like one of Costroid's would still be the pack's.
+
+### What a pack sees
+
+| Key | Holds |
+| --- | --- |
+| `input.trust` | `unverified` for rows the agent's job wrote, `token_verified` for rows a ledger checked against the job's OIDC token |
+| `input.rows` | The number of rows |
+| `input.usage` | Per currency: `currency`, `list_cost` as a decimal string, `rows`, `unattributed_rows`, `joinable_rows`, and `models`, the rows per model id |
+| `input.settings` | The `policy` keys the base's `costroid.yml` sets: each amount as a decimal string, and `models` |
+| `input.baseline` | `trust`, `runs`, `p50_usd` and `p95_usd`, when 10 or more runs on merged pull requests give one |
+| `input.lifetime` | `trust`, `total_usd`, `may_repeat` and `other_currency`, when the pull request's earlier runs were read |
+| `input.results` | Costroid's own results: `rule`, `outcome` and `reason`, so a pack can fail a run whose budget could not pass |
+
+A pack never sees a row or a tag, a path, a branch, a commit, the pull request's number, title or author, a reviewer, a credential, the head's `costroid.yml`, whether the warn-only period runs, or the time.
+
+### What a pack may call
+
+[`internal/policy/capabilities.pack.json`](../internal/policy/capabilities.pack.json) lists 15 built-ins: `=`, `==` and `!=`, `<`, `<=`, `>` and `>=`, `in` and `some k, v in`, `count`, `sum`, `object.union`, `startswith`, `endswith` and `contains`. The binary adds `costroid.compare_decimal`, which compares two amounts as exact decimals, since OPA compares a number of more than 15 significant digits as a `float64`. A pack that calls any other built-in is not valid. There is no arithmetic: amounts stay strings.
+
+### What a pack can never do
+
+- Make a check pass. Its results join the verdict through one function that only raises the conclusion, from `success` to `neutral` to `failure`. A failing rule of Costroid's stays a failure, and a pack's warning on a check Costroid would pass makes it `neutral`.
+- Change a result of Costroid's. Rows the agent's job wrote still never satisfy a budget.
+- Reach a network, a clock, randomness, a file or the environment. No such built-in is in the file.
+- Run in the process that decides the verdict. A child process of the same binary compiles and evaluates the pack, with an empty environment, an empty working directory and nothing but its three pipes. The child is killed at 2 seconds, stops past 200,000 evaluation steps, and its stack is held to 64 MiB and, on Linux, its heap to 1 GiB. Its answer is read as a stranger's.
+
+### When a pack does not run to its end
+
+A fault the base branch alone can cause concludes `unproven`, and a fault the pull request's rows can cause fails. Costroid's own result of the rule `customer_pack` states it:
+
+| Reason | When | Outcome |
+| --- | --- | --- |
+| `pack_unread` | The file is absent or over 64 KiB, or the host did not answer | `unproven`, so the check concludes `neutral` at best |
+| `pack_invalid` | The file does not parse or compile, calls a built-in outside the file, or declares another package. `line` names the line the compiler named | `unproven` |
+| `pack_bound` | The pack passed 200,000 steps or 2 seconds, returned more than 32 results, or the rows name more than 16 currencies or 256 model ids | `fail`, or `warn` in the warn-only period |
+| `pack_result` | A result has another outcome, a value that is not a string, or an id outside the pattern | `fail`, or `warn` in the warn-only period |
+
+Rows past the input's bound fail as `pack_bound` whether or not the pack would compile: the report judges the rows before a child starts. A child that says the pack is not valid is asked again with the pack and no rows. The same answer at the same line stands, since no row reached that child, and any other answer fails as `pack_result`. The job's log names each fault in a `costroid: warning:` line.
+
 ## The verdict on each trust path
 
 Who wrote the rows decides what a rule can conclude. A row whose run identity no one checked is `unattributed`, and an `unattributed` row never satisfies a rule.
@@ -127,13 +233,19 @@ No figure (agent_error): the agent ended in an error before it reported usage, s
 | Any of the three, then ", approved by" and a login     | A reviewer approved that failure on this commit                                              | `neutral`  |
 | Any of the three, then ", on a fork's own rows"        | A fork's own run wrote the rows, so the follow-up holds the check, in the warn-only period and after it | `neutral`  |
 | `No budget set`                                        | `costroid.yml` sets nothing a rule reads                                                     | `neutral`  |
-| `Not decided`                                          | `costroid.yml` could not be used, or the rule named could not be checked                     | `neutral`  |
+| `Not decided`                                          | `costroid.yml` could not be used, the rule named could not be checked, or the policy pack is not valid or could not be read | `neutral`  |
+| `Pack rule failed` and the pack's rule in brackets     | A rule of the repository's own pack failed, and no rule of Costroid's failed                 | `failure`  |
+| `Pack rule failed`, then ", warn-only" before the rule | The warn-only period holds that failure back                                                 | `neutral`  |
+| `Pack rule warned` and the pack's rule in brackets     | A rule of the repository's own pack warned                                                   | `neutral`  |
+| `Pack stopped` and a code in brackets                  | The pack passed its bound on this run's rows, `pack_bound`, or answered outside its words, `pack_result` | `failure`, or `neutral` in the warn-only period |
 | `No figure` and a code in brackets                     | The report has no figures. The code is the result object's `run_reason`, `reason` or `state` | `neutral`, or `failure` for `artifact_refused` |
 | `No agent run`                                         | The workflow skipped the agent's job                                                         | `neutral`  |
 
 `Over limit` and `Within limit` name `run_cost_threshold`, the two increase rules and `run_p95`, whose amounts are limits. A budget is `run_budget`, `pr_budget` or `monthly_budget`.
 
 When several rules ran, the sentence names one: the first, in the order of the table of rules above, of the worst outcome the verdict holds. A rule that fails comes before one the warn-only period holds, that before one that cannot pass, and that before one that passed. Every other rule's line follows in the comment, above the folds. `attribution` never names the sentence alone, and its line is under the first fold.
+
+A rule of the pack's names the sentence after every failing rule of Costroid's: a pack rule that fails comes after a rule of Costroid's that fails and before one the warn-only period holds, and a pack rule that the period holds, then one that warns, come before a rule that cannot pass. The pack's results follow the sentence as a list, each with its rule, what it concluded, its reason and its message.
 
 An amount shows at least two decimal places and every digit, such as `USD 5.00` and `USD 0.001619725`. Where amounts are withheld, the sentence names none and ends "Amounts are withheld here."
 
@@ -186,7 +298,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
 }
 ```
 
-A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
+A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a pack, under `policy.pack`, is `costroid.result/0.12`, and its `policy.results` can hold Costroid's `customer_pack` result with `line`. Any other block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
 
 ## The engine
 
@@ -202,7 +314,14 @@ git show origin/main:costroid.yml > base.yml
 costroid policy --rows rows.jsonl --config base.yml
 ```
 
-It prints one sentence per line, in the comment's words: each rule the last line does not name, then the verdict sentence, which is the title the check gets. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
+It prints one sentence per line, in the comment's words: each rule the last line does not name, then the verdict sentence, which is the title the check gets. When `costroid.yml` names a policy pack, the command reads it from the path it names beside `base.yml`, or from `--pack`:
+
+```sh
+git show origin/main:.costroid/policy.rego > base.rego
+costroid policy --rows rows.jsonl --config base.yml --pack base.rego
+```
+
+The pack runs as the report runs it, and the lines list its results. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
 
 `--history` takes the result objects of the pull request's earlier check runs, one object per line, each with its `check_run_id`. The command reads the pull request's total and the count that ends the warn-only period from them, as the report reads them from the check runs, with the rows as this run's report. A line that is not a JSON object, or that names no check run, refuses the file with its line number. An object the report would skip, such as one that withholds its amounts, is skipped. This collects the objects on one commit:
 

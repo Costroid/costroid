@@ -154,10 +154,10 @@ The gateway counts what passed through it, at its own prices. Spend on a credent
 `POST /v1/pulls/{pr}/verdict` runs the policy pack over the pull request's rows in this ledger. The service holds no SCM token, so the caller states what only the repository can tell:
 
 ```json
-{"config": "<costroid.yml at the base commit, in base64>", "config_ref": "<the base commit>", "workflow_added": "2026-11-01T10:00:00Z", "workflow_not_on_base": false, "measured_pull_requests": 4}
+{"config": "<costroid.yml at the base commit, in base64>", "config_ref": "<the base commit>", "workflow_added": "2026-11-01T10:00:00Z", "workflow_not_on_base": false, "measured_pull_requests": 4, "installation": 58}
 ```
 
-An absent `config` is a base commit with no `costroid.yml`. An absent `workflow_added` is a start the caller could not read, and the warn-only period keeps running. `measured_pull_requests` counts the repository's pull requests with a measured cost. At 20 the warn-only period ends, whichever of that and its 7 days comes first, and `warn_only` then reads `ended` with no `ends`. A count can only end the period early, so a caller that overstates it holds its own pull requests to the policy sooner. A CI token asks for its own repository only, and the answer uses the service's clock.
+An absent `config` is a base commit with no `costroid.yml`. `installation` is optional, and only a `costroid.yml` that names a policy pack reads it, as [A repository's own pack](#a-repositorys-own-pack) says. An absent `workflow_added` is a start the caller could not read, and the warn-only period keeps running. `measured_pull_requests` counts the repository's pull requests with a measured cost. At 20 the warn-only period ends, whichever of that and its 7 days comes first, and `warn_only` then reads `ended` with no `ends`. A count can only end the period early, so a caller that overstates it holds its own pull requests to the policy sooner. A CI token asks for its own repository only, and the answer uses the service's clock.
 
 The answer holds `budget`, as the per-PR view has it, and the verdict under `policy`, in the shape [`docs/policy.md`](policy.md) gives:
 
@@ -168,6 +168,18 @@ The answer holds `budget`, as the per-PR view has it, and the verdict under `pol
 - `monthly_budget` concludes `unproven` with reason `no_ledger`, because the pack reads no month to date yet.
 
 Over a limit, the agent's own counts are enough: a rule that fails on them fails here too.
+
+### A repository's own pack
+
+A `costroid.yml` that names a pack with `policy_pack` runs that pack only when the service read the file itself. A caller never states a pack: a stated pack could be one from the pull request's head. With `installation`, the id of a GitHub App installation the service's installations table holds, that is not suspended and that reaches the repository, the service reads `costroid.yml` at `config_ref` through that installation, as the App, and then the pack at the same commit:
+
+```json
+{"config": "<costroid.yml at the base commit, in base64>", "config_ref": "<the base commit>", "installation": 58}
+```
+
+The service runs the pack only when the `costroid.yml` it read is the one the request states, byte for byte. Without `installation`, without the App's id and KMS key, or when the file it read differs, it reads no pack, and the verdict holds `customer_pack` `unproven` with reason `pack_unread`, so the check concludes `neutral` at best. `config_ref` is the caller's to name, as it is for `costroid.yml`: a pack can only raise the conclusion, so a pack read at another commit can make the verdict stricter and never looser. [`docs/policy.md`](policy.md#a-repositorys-own-pack) says what a pack may do.
+
+Each pack runs in a child process of the service, which can hold up to 1 GiB on Linux and is killed at 2 seconds. The service runs at most 4 policy packs at once. A verdict that would start a fifth waits up to 2 seconds, the deadline of a running pack, for one to end. If none ends, it answers `503 PACK_BUSY` with `Retry-After: 2` and runs nothing. It never answers without the pack, which could read looser than the repository's policy. A verdict that runs no pack never waits.
 
 ## Prices
 

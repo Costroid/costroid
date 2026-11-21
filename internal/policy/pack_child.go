@@ -53,12 +53,20 @@ const (
 //go:embed capabilities.pack.json
 var packCapabilitiesFile []byte
 
+// diverting says this process called PackChild as it started, so a child
+// started from its executable runs the pack and nothing else.
+var diverting atomic.Bool
+
 // PackChild runs this process as a customer pack's child when it was started
-// as one, and reports whether it was. The child limits itself, reads one
+// as one, and reports whether it was. Every executable that runs a pack calls
+// it first, in main or in TestMain: in any other process it records that the
+// executable hands such a child to the pack, and RunCustomerPack starts no
+// child from an executable that does not. The child limits itself, reads one
 // request on stdin, compiles and evaluates the pack, and writes one answer on
 // stdout. The code is the process's exit code.
 func PackChild() (int, bool) {
 	if len(os.Args) != 2 || os.Args[1] != PackChildArgument {
+		diverting.Store(true)
 		return 0, false
 	}
 	if err := limitChild(); err != nil {
@@ -129,11 +137,11 @@ func answerPack(request childRequest) childAnswer {
 	decoder.UseNumber()
 	var document any
 	if err := decoder.Decode(&document); err != nil {
-		return faultAnswer(0, fault(packBound, 0, fmt.Errorf("read the input: %w", err)))
+		return faultAnswer(0, fault(ReasonPackBound, 0, fmt.Errorf("read the input: %w", err)))
 	}
 	input, err := ast.InterfaceToValue(document)
 	if err != nil {
-		return faultAnswer(0, fault(packBound, 0, fmt.Errorf("read the input: %w", err)))
+		return faultAnswer(0, fault(ReasonPackBound, 0, fmt.Errorf("read the input: %w", err)))
 	}
 	steps := request.Steps
 	if steps < 1 || steps > maxPackSteps {
@@ -161,7 +169,7 @@ type customerPack struct {
 func compileCustomerPack(source []byte) (*customerPack, *PackFault) {
 	capabilities, err := ast.LoadCapabilitiesJSON(bytes.NewReader(packCapabilitiesFile))
 	if err != nil {
-		return nil, fault(packInvalid, 0, fmt.Errorf("read the capabilities: %w", err))
+		return nil, fault(ReasonPackInvalid, 0, fmt.Errorf("read the capabilities: %w", err))
 	}
 	module, err := ast.ParseModuleWithOpts("pack.rego", string(source), ast.ParserOptions{
 		Capabilities: capabilities,
@@ -193,7 +201,7 @@ func compileCustomerPack(source []byte) (*customerPack, *PackFault) {
 // that writes a result for a rule of Costroid's.
 func checkModule(module *ast.Module) *PackFault {
 	if path := module.Package.Path.String(); path != "data."+customerPackage {
-		return fault(packInvalid, row(module.Package.Location), fmt.Errorf("the package is %s, not %s", strings.TrimPrefix(path, "data."), customerPackage))
+		return fault(ReasonPackInvalid, row(module.Package.Location), fmt.Errorf("the package is %s, not %s", strings.TrimPrefix(path, "data."), customerPackage))
 	}
 	var problem *PackFault
 	ast.WalkTerms(module, func(term *ast.Term) bool {
@@ -206,7 +214,7 @@ func checkModule(module *ast.Module) *PackFault {
 			return false
 		}
 		if rule, ok := named.Value.(ast.String); ok && slices.Contains(reservedRules, string(rule)) {
-			problem = fault(packInvalid, row(term.Location), fmt.Errorf("a result names Costroid's rule %s", rule))
+			problem = fault(ReasonPackInvalid, row(term.Location), fmt.Errorf("a result names Costroid's rule %s", rule))
 		}
 		return problem != nil
 	})
@@ -218,13 +226,13 @@ func checkModule(module *ast.Module) *PackFault {
 func compileFault(err error) *PackFault {
 	var errs ast.Errors
 	if errors.As(err, &errs) && len(errs) > 0 {
-		return fault(packInvalid, row(errs[0].Location), err)
+		return fault(ReasonPackInvalid, row(errs[0].Location), err)
 	}
 	var single *ast.Error
 	if errors.As(err, &single) {
-		return fault(packInvalid, row(single.Location), err)
+		return fault(ReasonPackInvalid, row(single.Location), err)
 	}
-	return fault(packInvalid, 0, err)
+	return fault(ReasonPackInvalid, 0, err)
 }
 
 func row(location *ast.Location) int {
@@ -262,19 +270,19 @@ func (p *customerPack) evaluate(input ast.Value, limit int64) ([]PackResult, int
 	var problem *PackFault
 	switch {
 	case bound.tripped.Load():
-		return nil, steps, fault(packBound, 0, fmt.Errorf("stopped at step %d, past %d steps", steps, limit))
+		return nil, steps, fault(ReasonPackBound, 0, fmt.Errorf("stopped at step %d, past %d steps", steps, limit))
 	case errors.As(err, &problem):
 		return nil, steps, problem
 	case err != nil:
-		return nil, steps, fault(packResult, 0, err)
+		return nil, steps, fault(ReasonPackResult, 0, err)
 	case len(set) == 0:
 		return nil, steps, nil
 	case len(set) != 1 || len(set[0].Expressions) != 1:
-		return nil, steps, fault(packResult, 0, errors.New("the pack gave more than one answer"))
+		return nil, steps, fault(ReasonPackResult, 0, errors.New("the pack gave more than one answer"))
 	}
 	results, ok := set[0].Expressions[0].Value.([]PackResult)
 	if !ok {
-		return nil, steps, fault(packResult, 0, errors.New("the pack's answer was not decoded"))
+		return nil, steps, fault(ReasonPackResult, 0, errors.New("the pack's answer was not decoded"))
 	}
 	return results, steps, nil
 }
@@ -289,18 +297,18 @@ func decodeResults(term *ast.Term, _ *rego.EvalContext) (any, error) {
 	switch value := term.Value.(type) {
 	case ast.Set:
 		if value.Len() > maxPackResults {
-			return nil, fault(packBound, 0, fmt.Errorf("the pack returned %d results, over %d", value.Len(), maxPackResults))
+			return nil, fault(ReasonPackBound, 0, fmt.Errorf("the pack returned %d results, over %d", value.Len(), maxPackResults))
 		}
 		elements = value.Slice()
 	case *ast.Array:
 		if value.Len() > maxPackResults {
-			return nil, fault(packBound, 0, fmt.Errorf("the pack returned %d results, over %d", value.Len(), maxPackResults))
+			return nil, fault(ReasonPackBound, 0, fmt.Errorf("the pack returned %d results, over %d", value.Len(), maxPackResults))
 		}
 		for index := range value.Len() {
 			elements = append(elements, value.Elem(index))
 		}
 	default:
-		return nil, fault(packResult, 0, fmt.Errorf("results is a %s, not a set of results", ast.ValueName(term.Value)))
+		return nil, fault(ReasonPackResult, 0, fmt.Errorf("results is a %s, not a set of results", ast.ValueName(term.Value)))
 	}
 	results := make([]PackResult, 0, len(elements))
 	for _, element := range elements {
@@ -317,20 +325,20 @@ func decodeResults(term *ast.Term, _ *rego.EvalContext) (any, error) {
 func decodeResult(term *ast.Term) (PackResult, *PackFault) {
 	object, ok := term.Value.(ast.Object)
 	if !ok {
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result is a %s, not an object", ast.ValueName(term.Value)))
+		return PackResult{}, fault(ReasonPackResult, 0, fmt.Errorf("a result is a %s, not an object", ast.ValueName(term.Value)))
 	}
 	if object.Len() > 4 {
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result holds %d keys", object.Len()))
+		return PackResult{}, fault(ReasonPackResult, 0, fmt.Errorf("a result holds %d keys", object.Len()))
 	}
 	fields := map[string]string{}
 	for _, key := range object.Keys() {
 		name, ok := key.Value.(ast.String)
 		if !ok || !slices.Contains([]string{"rule", "outcome", "reason", "message"}, string(name)) {
-			return PackResult{}, fault(packResult, 0, fmt.Errorf("a result holds the key %v", key))
+			return PackResult{}, fault(ReasonPackResult, 0, fmt.Errorf("a result holds the key %v", key))
 		}
 		text, ok := object.Get(key).Value.(ast.String)
 		if !ok {
-			return PackResult{}, fault(packResult, 0, fmt.Errorf("a result's %s is not a string", name))
+			return PackResult{}, fault(ReasonPackResult, 0, fmt.Errorf("a result's %s is not a string", name))
 		}
 		fields[string(name)] = string(text)
 	}

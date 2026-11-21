@@ -94,11 +94,16 @@ type verdictRequest struct {
 	earlier  *policy.Lifetime
 	baseline *policy.Baseline
 	measured int
+	// offHead says the job reads nothing at the head, as a follow-up never
+	// does, so it does not compare the pack with the head's.
+	offHead bool
 }
 
 // decideVerdict evaluates the policy. The rows come from the agent's job, so
-// the trust path is unverified. A policy that cannot run leaves no verdict,
-// and the check concludes neutral.
+// the trust path is unverified. The customer pack costroid.yml names is read
+// at the commit costroid.yml was read at. The pull request's head is read only
+// to say whether it changes the pack, and never by a job that keeps off it. A
+// policy that cannot run leaves no verdict, and the check concludes neutral.
 func decideVerdict(ctx context.Context, host scm.Reporter, request verdictRequest, stderr io.Writer) *policy.Verdict {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
@@ -106,10 +111,13 @@ func decideVerdict(ctx context.Context, host scm.Reporter, request verdictReques
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
+	config := policy.ReadConfig(ctx, host, request.commits)
+	pack := policy.ReadPack(ctx, host, config)
 	verdict, err := policy.Evaluate(ctx, policy.Request{
 		Usage:                usage,
 		Trust:                policy.Unverified,
-		Config:               policy.ReadConfig(ctx, host, request.commits),
+		Config:               config,
+		Pack:                 pack,
 		Start:                request.start(ctx),
 		At:                   time.Now(),
 		Baseline:             request.baseline,
@@ -123,5 +131,17 @@ func decideVerdict(ctx context.Context, host scm.Reporter, request verdictReques
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
+	warnPack(verdict, stderr)
+	if !request.offHead {
+		verdict.PackChange = pack.ChangedAtHead(ctx, host, config, request.commits.Head)
+	}
 	return &verdict
+}
+
+// warnPack names on stderr why the customer pack did not run to its end, as
+// the job's log is where a reader of the pack looks.
+func warnPack(verdict policy.Verdict, stderr io.Writer) {
+	if problem := verdict.PackProblem(); problem != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
+	}
 }

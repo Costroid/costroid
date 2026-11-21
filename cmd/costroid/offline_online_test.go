@@ -21,6 +21,7 @@ import (
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 	"github.com/Costroid/costroid/internal/server"
 	"github.com/Costroid/costroid/internal/store"
@@ -77,8 +78,11 @@ func reportsAt(t *testing.T, first int64, n int, cost string) []string {
 // request's commits, and its runs on the pull requests merged into the base
 // branch, perHead on each merged head.
 type pathCase struct {
-	name    string
-	config  *string
+	name   string
+	config *string
+	// pack is the pack costroid.yml names, as the base holds it, nil for
+	// none.
+	pack    *string
 	earlier int
 	merged  int
 	perHead int
@@ -105,8 +109,22 @@ func wordsOf(verdict policy.Verdict) verdictWords {
 	for _, result := range verdict.Results {
 		words.results = append(words.results, result.Rule+" "+result.Outcome+" "+result.Reason)
 	}
+	if verdict.Pack != nil {
+		for _, result := range verdict.Pack.Results {
+			words.results = append(words.results, "pack "+result.Rule+" "+string(result.Outcome)+" "+result.Reason)
+		}
+	}
 	return words
 }
+
+// The packs the paths run, beside the bodies check_pack_test.go names: one
+// that is not valid at line 4, and one that fails a run whose budget could
+// not pass.
+const (
+	packInvalid   = "package costroid.pack\n\nresults contains x if {\n\tx := http.send({})\n}\n"
+	packUnproven  = "package costroid.pack\n\nresults contains {\"rule\": \"proven_budget\", \"outcome\": \"fail\", \"reason\": \"budget_unproven\"} if {\n\tsome result in input.results\n\tresult.rule == \"run_budget\"\n\tresult.outcome == \"unproven\"\n}\n"
+	packAndBudget = packConfig + "  run_budget_usd: \"5\"\n"
+)
 
 func text(s string) *string { return &s }
 
@@ -192,6 +210,27 @@ func TestOfflineEqualsOnline(t *testing.T) {
 			want:  verdictWords{policy.Failure, []string{"run_increase fail over_baseline", "run_p95 unproven unverified_rows"}},
 			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows", "run_p95 unproven no_run_rows"}},
 		},
+		{
+			name: "a pack rule that fails", config: text(packConfig), pack: text(packFails), earlier: 10,
+			want: verdictWords{policy.Failure, []string{"pack base_rule fail on_every_run"}},
+		},
+		{
+			name: "a pack rule that warns", config: text(packConfig), pack: text(packWarns), earlier: 10,
+			want: verdictWords{policy.Neutral, []string{"pack moved_rule warn on_every_run"}},
+		},
+		{
+			name: "a pack that is not valid", config: text(packConfig), pack: text(packInvalid), earlier: 10,
+			want: verdictWords{policy.Neutral, []string{"customer_pack unproven pack_invalid"}},
+		},
+		{
+			name: "a pack the base does not hold", config: text(packConfig), earlier: 10,
+			want: verdictWords{policy.Neutral, []string{"customer_pack unproven pack_unread"}},
+		},
+		{
+			name: "a pack that fails a run whose budget could not pass", config: text(packAndBudget), pack: text(packUnproven), earlier: 10,
+			want:  verdictWords{policy.Failure, []string{"run_budget unproven unverified_rows", "pack proven_budget fail budget_unproven"}},
+			serve: &verdictWords{policy.Failure, []string{"run_budget unproven no_run_rows", "pack proven_budget fail budget_unproven"}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,8 +244,11 @@ func TestOfflineEqualsOnline(t *testing.T) {
 			if got := wordsOf(report); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("the report: %+v, want %+v", got, tc.want)
 			}
-			if !reflect.DeepEqual(report.Results, offline.Results) || report.Conclusion != offline.Conclusion || report.Config != offline.Config {
+			if !reflect.DeepEqual(report.Results, offline.Results) || report.Conclusion != offline.Conclusion || report.Config != offline.Config || !reflect.DeepEqual(report.Pack, offline.Pack) {
 				t.Errorf("costroid policy differs from the report:\nreport  %+v\noffline %+v", report, offline)
+			}
+			if !reflect.DeepEqual(served.Pack, report.Pack) {
+				t.Errorf("serve ran another pack than the report:\nreport %+v\nserve  %+v", report.Pack, served.Pack)
 			}
 			want := tc.want
 			if tc.serve != nil {
@@ -259,6 +301,9 @@ func postedCheck(t *testing.T, tc pathCase, history pathHistory) scmtest.Check {
 	stub.SetPrivate(true)
 	if tc.config != nil {
 		stub.Files[configFile] = *tc.config
+	}
+	if tc.pack != nil {
+		stub.Files[packPath] = *tc.pack
 	}
 	stub.Pulls = []scmtest.Pull{{Number: 7, State: "open", BaseBranch: "main", HeadSHA: headCommit, Commits: []string{earlierCommit, headCommit}}}
 	for index, object := range history.own {
@@ -316,6 +361,15 @@ func offlineOutput(t *testing.T, tc pathCase, history pathHistory, flags ...stri
 			t.Fatal(err)
 		}
 	}
+	if tc.pack != nil {
+		pack := filepath.Join(directory, filepath.FromSlash(packPath))
+		if err := os.MkdirAll(filepath.Dir(pack), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(pack, []byte(*tc.pack), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	historyPath := writeObjects(t, filepath.Join(directory, "earlier.jsonl"), history.own)
 	baselinePath := writeObjects(t, filepath.Join(directory, "merged.jsonl"), history.merged)
 	args := append([]string{"policy", "--rows", realRows, "--config", configPath, "--history", historyPath, "--baseline", baselinePath}, flags...)
@@ -345,7 +399,8 @@ func writeObjects(t *testing.T, path string, objects []string) string {
 
 // servePath asks serve for the verdict on pull request 7, whose rows in its
 // ledger are the recorded run's and the earlier runs', none checked against a
-// CI token.
+// CI token. serve reaches the repository as the App's installation, and reads
+// costroid.yml and the pack at the base commit itself.
 func servePath(t *testing.T, tc pathCase) policy.Verdict {
 	t.Helper()
 	earlier := decimal.MustParse(earlierRunCost).Mul(decimal.FromInt(int64(tc.earlier)))
@@ -353,9 +408,17 @@ func servePath(t *testing.T, tc pathCase) policy.Verdict {
 		ingestedLine(decimal.MustParse(realTotal), 19),
 		ingestedLine(earlier, int64(tc.earlier)),
 	}}
-	service := httptest.NewServer(server.New(server.Config{Ledger: ledger}).Handler())
+	repository := scmtest.New(t)
+	if tc.config != nil {
+		repository.Files[configFile] = *tc.config
+	}
+	if tc.pack != nil {
+		repository.Files[packPath] = *tc.pack
+	}
+	app := &server.GitHubApp{Installations: oneInstallation{}, Hosts: stubHosts{repository}}
+	service := httptest.NewServer(server.New(server.Config{Ledger: ledger, App: app}).Handler())
 	defer service.Close()
-	body := map[string]any{"config_ref": baseCommit}
+	body := map[string]any{"config_ref": baseCommit, "installation": servedInstallation}
 	if tc.config != nil {
 		body["config"] = base64.StdEncoding.EncodeToString([]byte(*tc.config))
 	}
@@ -384,6 +447,48 @@ func servePath(t *testing.T, tc pathCase) policy.Verdict {
 		t.Fatal(err)
 	}
 	return verdict.Policy
+}
+
+// servedInstallation is the App's installation that reaches
+// example/widgets.
+const servedInstallation = 42
+
+// oneInstallation is the App's installations table holding one
+// installation, which reaches example/widgets, and refusing every write.
+type oneInstallation struct{}
+
+func (oneInstallation) AddRepositories(context.Context, int64, string, []store.Repository) error {
+	return errReadOnly
+}
+
+func (oneInstallation) RemoveRepositories(context.Context, int64, []int64) error {
+	return errReadOnly
+}
+
+func (oneInstallation) SuspendInstallation(context.Context, int64, string, bool) error {
+	return errReadOnly
+}
+
+func (oneInstallation) DeleteInstallation(context.Context, int64) error {
+	return errReadOnly
+}
+
+func (oneInstallation) Installation(_ context.Context, id int64) (store.Installation, error) {
+	if id != servedInstallation {
+		return store.Installation{}, store.ErrNotFound
+	}
+	return store.Installation{ID: id, Account: "example", Repositories: []store.Repository{{ID: 1, FullName: "example/widgets"}}}, nil
+}
+
+// stubHosts reaches every repository through one stub.
+type stubHosts struct {
+	stub *scmtest.Stub
+}
+
+func (h stubHosts) Repository(installation int64, repository string) (server.ApprovalHost, error) {
+	return scm.NewGitHub(scm.GitHubOptions{
+		API: h.stub.Server.URL, Repository: repository, Tokens: scm.StaticToken(h.stub.Token), Client: &http.Client{}, Installation: installation,
+	})
 }
 
 // ingestedLine is rows of the recorded agent and model as an ingest key sent

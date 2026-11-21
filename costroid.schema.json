@@ -111,10 +111,11 @@
       }
     },
     "policy_pack": {
-      "description": "The policy pack this repository is held to. Reserved: this release reads no pack.",
+      "description": "This repository's own policy pack: one Rego file, by its path from the repository's root, such as .costroid/policy.rego. Costroid reads it at the commit it reads this file at, so a pull request cannot change the pack that judges it, and its rules can only add a warning or a failure.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 256
+      "maxLength": 256,
+      "pattern": "^((\\.?[A-Za-z0-9_-]|\\.\\.[A-Za-z0-9._-])[A-Za-z0-9._-]*/)*(\\.?[A-Za-z0-9_-]|\\.\\.[A-Za-z0-9._-])[A-Za-z0-9._-]*\\.rego$"
     },
     "budget_owner": {
       "description": "Who answers for this repository's budget, as an SCM login or team. Reserved: this release reads no owner.",

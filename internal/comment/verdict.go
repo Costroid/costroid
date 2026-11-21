@@ -29,6 +29,7 @@ var ruleLabels = map[string]string{
 	policy.RuleMonthlyBudget:      "Monthly budget",
 	policy.RuleModelAllowlist:     "Model allowlist",
 	policy.RuleAttribution:        "Attribution",
+	policy.RuleCustomerPack:       "Policy pack",
 }
 
 // ruleLabel opens a rule's own line. request is the host's word for a change.
@@ -93,6 +94,11 @@ func (i Input) reading(shown bool) []string {
 	} else {
 		add(i.why())
 	}
+	if lines := packLines(i.Verdict, shown); len(lines) > 0 {
+		add(lines[0])
+		add(strings.Join(lines[1:], "\n"))
+	}
+	add(packChangeSentence(i.Verdict, i.request()))
 	add(strings.Join(i.otherRules(shown, false), " "))
 	add(i.nextStep())
 	return paragraphs
@@ -104,6 +110,8 @@ func (i Input) reading(shown bool) []string {
 // line, and so is the model list, whose line names the models.
 func named(result policy.Result) bool {
 	switch {
+	case result.Rule == policy.RuleCustomerPack:
+		return true
 	case leadNouns[result.Rule] == "":
 		return false
 	case broken(result) || result.Outcome == policy.Pass:
@@ -123,7 +131,8 @@ func (i Input) otherRules(shown, attribution bool) []string {
 		return nil
 	}
 	decided, ruled := deciding(i.Verdict)
-	stated := ruled && named(decided) && (i.State == Reported || broken(decided))
+	_, packDecides := packDeciding(i.Verdict, i.State)
+	stated := !packDecides && ruled && named(decided) && (i.State == Reported || broken(decided))
 	var lines []string
 	for _, result := range i.Verdict.Results {
 		switch {
@@ -166,8 +175,68 @@ func (i Input) nextStep() string {
 		return ""
 	case i.Verdict.Conclusion == policy.Failure && !i.approved() && i.AccountHost != AccountGitLab:
 		return "[The approval page](" + approvalPage + ") says how a reviewer approves a failed check."
-	case slices.ContainsFunc(i.Verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly }):
+	case heldByWarnOnly(i.Verdict):
 		return warnOnlySentence(i.Verdict.WarnOnly)
+	}
+	return ""
+}
+
+// heldByWarnOnly reports a verdict that holds a failure back for the
+// warn-only period: one of Costroid's rules, or one of the pack's.
+func heldByWarnOnly(verdict *policy.Verdict) bool {
+	held := slices.ContainsFunc(verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly })
+	if verdict.Pack != nil {
+		held = held || slices.ContainsFunc(verdict.Pack.Results, func(result policy.PackResult) bool { return result.HeldByWarnOnly })
+	}
+	return held
+}
+
+// packOutcomes are what a pack's result concluded, in the words of its line.
+var packOutcomes = map[policy.PackOutcome]string{
+	policy.PackFail: "failed",
+	policy.PackWarn: "warned",
+}
+
+// packLines are the customer pack's results as a person reads them: a line
+// that names the pack, then one item each with the rule, what it concluded,
+// its reason and, where amounts are shown, its message as a code span, which
+// is the pack's own text and can echo an amount it read. A pack that returned none says so
+// in one line. A pack that did not run to its end has none, and Costroid's
+// own line says why.
+func packLines(verdict *policy.Verdict, shown bool) []string {
+	if verdict == nil || verdict.Pack == nil || slices.ContainsFunc(verdict.Results, func(result policy.Result) bool { return result.Rule == policy.RuleCustomerPack }) {
+		return nil
+	}
+	pack := "The policy pack `" + verdict.Pack.Path + "`"
+	if len(verdict.Pack.Results) == 0 {
+		return []string{pack + " returned no warning and no failure."}
+	}
+	lines := []string{pack + " returned:"}
+	for _, result := range verdict.Pack.Results {
+		line := "- `" + result.Rule + "` " + packOutcomes[result.Outcome] + " with `" + result.Reason + "`"
+		if result.HeldByWarnOnly {
+			line = "- `" + result.Rule + "` failed with `" + result.Reason + "`, held to a warning in the warn-only period"
+		}
+		if shown && result.Message != "" {
+			line += ": `" + result.Message + "`"
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// packChangeSentence says why a change the pull request makes to its pack,
+// or to the key that names it, does not reach its own verdict, in the words
+// fromBase uses for costroid.yml. It is empty when the pull request changes
+// neither.
+func packChangeSentence(verdict *policy.Verdict, request string) string {
+	switch {
+	case verdict == nil:
+		return ""
+	case verdict.PackChange == policy.PackKeyChanged:
+		return "A change to `" + policy.PackKey + "` in `costroid.yml` in this " + request + " applies after the merge, because the verdict reads the base branch's file."
+	case verdict.PackChange == policy.PackFileChanged && verdict.Pack != nil:
+		return "A change to `" + verdict.Pack.Path + "` in this " + request + " applies after the merge, because the verdict reads the base branch's file."
 	}
 	return ""
 }
@@ -221,8 +290,12 @@ func VerdictLines(input Input, config string) []string {
 	if unruled(verdict) {
 		lines = append(lines, noRuleApplied(config))
 	}
+	lines = append(lines, packLines(&verdict, input.Amounts == AmountsShown)...)
+	if change := packChangeSentence(&verdict, input.request()); change != "" {
+		lines = append(lines, change)
+	}
 	lines = append(lines, input.otherRules(input.Amounts == AmountsShown, true)...)
-	if slices.ContainsFunc(verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly }) {
+	if heldByWarnOnly(&verdict) {
 		lines = append(lines, warnOnlySentence(verdict.WarnOnly))
 	}
 	if verdict.ConfigFromBase {
@@ -250,10 +323,11 @@ func configSentence(verdict policy.Verdict, config string) string {
 }
 
 // unruled reports a verdict whose costroid.yml was read and set nothing a
-// rule reads: no rule ran but attribution, which needs no setting.
+// rule reads: no rule ran but attribution, which needs no setting, and no
+// customer pack.
 func unruled(verdict policy.Verdict) bool {
 	_, ruled := deciding(&verdict)
-	return !ruled && configSentence(verdict, "") == ""
+	return !ruled && verdict.Pack == nil && configSentence(verdict, "") == ""
 }
 
 // noRuleApplied says the costroid.yml named sets nothing a rule reads, and
@@ -267,6 +341,8 @@ func noRuleApplied(config string) string {
 func resultSentence(result policy.Result, joinable int, shown bool, bases []string, request string) string {
 	label, noun := ruleLabel(result.Rule, request), limitNouns[result.Rule]
 	switch {
+	case result.Rule == policy.RuleCustomerPack:
+		return label + ": " + packFaultSentence(result)
 	case result.Rule == policy.RuleModelAllowlist:
 		return label + ": " + allowlistSentence(result)
 	case result.Rule == policy.RuleRunIncrease || result.Rule == policy.RuleRunIncreasePercent:
@@ -312,6 +388,27 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 	return fmt.Sprintf("%s: %d %s a credential, a %s and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.", label, joinable, rows, request)
 }
 
+// packFaultSentence says why the customer pack did not run to its end, and
+// what that concludes.
+func packFaultSentence(result policy.Result) string {
+	switch {
+	case result.Reason == policy.ReasonPackInvalid && result.Line > 0:
+		return fmt.Sprintf("it is not valid at line %d, so none of its rules ran.", result.Line)
+	case result.Reason == policy.ReasonPackInvalid:
+		return "it is not valid, so none of its rules ran."
+	case result.Reason == policy.ReasonPackUnread:
+		return "it could not be read, so none of its rules ran."
+	}
+	what := "it passed its evaluation bound on this run's rows"
+	if result.Reason == policy.ReasonPackResult {
+		what = "it answered with something other than its results"
+	}
+	if result.HeldByWarnOnly {
+		return what + ", so the rule warns until the warn-only period ends, then fails."
+	}
+	return what + ", so the rule fails."
+}
+
 // budgetRules are the rules that hold a figure to a USD budget or threshold.
 var budgetRules = []string{policy.RuleRunBudget, policy.RuleRunCostThreshold, policy.RulePullRequestBudget}
 
@@ -347,7 +444,7 @@ const setBudget = "Set `policy.run_budget_usd` to hold each run to a budget."
 // its warning does not count against it. budget says one of the rules is a
 // budget rule.
 func onAgentRows(verdict policy.Verdict) (neutral, budget bool) {
-	if verdict.Conclusion != policy.Neutral {
+	if verdict.Conclusion != policy.Neutral || packAnswered(&verdict) {
 		return false, false
 	}
 	for _, result := range verdict.Results {

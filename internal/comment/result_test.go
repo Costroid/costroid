@@ -108,11 +108,12 @@ func TestParseResultRefusesNewerValuesInAnOlderVersion(t *testing.T) {
 }
 
 // TestEveryRunReasonIsInTheSchema holds each reason the source can write to
-// the closed list result/v0.7 gives it: the report's reason, the run reason,
-// a policy result's reason and the warn-only period's reason. It reads the
-// constants from the source, so a reason added later is held too.
+// the closed list the newest version this release writes gives it: the
+// report's reason, the run reason, a policy result's reason and the warn-only
+// period's reason. It reads the constants from the source, so a reason added
+// later is held too.
 func TestEveryRunReasonIsInTheSchema(t *testing.T) {
-	data, err := os.ReadFile(resultSchemaPath)
+	data, err := os.ReadFile(resultV012SchemaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +161,7 @@ func TestEveryRunReasonIsInTheSchema(t *testing.T) {
 		}
 		for _, reason := range list.written {
 			if !slices.Contains(list.enum, reason) {
-				t.Errorf("%s: the source can write %q, which result/v0.7 does not list", list.name, reason)
+				t.Errorf("%s: the source can write %q, which result/v0.12 does not list", list.name, reason)
 			}
 		}
 	}

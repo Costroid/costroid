@@ -19,7 +19,6 @@ type Config struct {
 
 // reservedKeys are named by the schema and read by nothing yet.
 var reservedKeys = map[string]bool{
-	"policy_pack":  true,
 	"budget_owner": true,
 	"assumptions":  true,
 	"catalog":      true,
@@ -29,7 +28,7 @@ var reservedKeys = map[string]bool{
 // knownKeys are the keys this release reads, by the mapping that holds them.
 // The policy's own parser names its keys, so the two never drift apart.
 var knownKeys = map[string]map[string]bool{
-	"":         {"comment": true, "policy": true, "approval": true},
+	"":         {"comment": true, "policy": true, "approval": true, policy.PackKey: true},
 	"comment":  {"show_cost": true},
 	"policy":   keySet(policy.Keys()),
 	"approval": keySet(policy.ApprovalKeys()),

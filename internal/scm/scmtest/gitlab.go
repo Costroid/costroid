@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -141,7 +142,7 @@ func (s *GitLab) route(w http.ResponseWriter, r *http.Request, path string, body
 	case strings.HasPrefix(path, notes+"/") && r.Method == http.MethodPut:
 		s.updateNote(w, path, body)
 	case strings.HasPrefix(path, "/repository/files/") && r.Method == http.MethodGet:
-		s.readFile(w, r, strings.TrimPrefix(path, "/repository/files/"))
+		s.readFile(w, r)
 	case strings.HasPrefix(path, "/repository/branches/") && r.Method == http.MethodGet:
 		s.readBranch(w, strings.TrimPrefix(path, "/repository/branches/"))
 	default:
@@ -241,7 +242,16 @@ func (s *GitLab) updateNote(w http.ResponseWriter, path string, body []byte) {
 	s.message(w, http.StatusNotFound, "404 Not found")
 }
 
-func (s *GitLab) readFile(w http.ResponseWriter, r *http.Request, path string) {
+// readFile answers as the repository files API does for one file. The API
+// takes the file's path as one segment, each / escaped as %2F, so a path sent
+// with a / of its own names no file.
+func (s *GitLab) readFile(w http.ResponseWriter, r *http.Request) {
+	_, sent, _ := strings.Cut(r.URL.EscapedPath(), "/repository/files/")
+	path, err := url.PathUnescape(sent)
+	if err != nil || strings.Contains(sent, "/") {
+		s.message(w, http.StatusNotFound, "404 File Not Found")
+		return
+	}
 	ref := r.URL.Query().Get("ref")
 	if ref == "" {
 		s.message(w, http.StatusBadRequest, "ref is missing")

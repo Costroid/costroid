@@ -25,7 +25,8 @@ const (
 
 // TestMain runs main when a customer pack's runner starts the test binary as
 // its child, and replays a recorded stream when the harness runs the test
-// binary under the name claude. Otherwise it runs the tests with a stub first
+// binary under the name claude. Otherwise it records, as main does, that this
+// executable hands a child to the pack, and runs the tests with a stub first
 // on PATH for every agent, so no test can start the machine's own.
 func TestMain(m *testing.M) {
 	if len(os.Args) == 2 && os.Args[1] == policy.PackChildArgument {
@@ -39,6 +40,7 @@ func TestMain(m *testing.M) {
 		os.Stdout.Write(data)
 		return
 	}
+	policy.PackChild()
 	os.Exit(agenttest.Main(m.Run))
 }
 

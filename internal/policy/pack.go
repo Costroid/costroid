@@ -52,21 +52,24 @@ const (
 	maxChildErrorBytes = 2 << 10
 )
 
-// The rule of Costroid's own result on a pack that gave no answer, and its
-// reasons.
+// The rule of Costroid's own result on a pack that did not run to its end,
+// and its reasons.
 const (
-	ruleCustomerPack = "customer_pack"
-	// packUnread: the file is absent, too large, or the host did not answer.
-	packUnread = "pack_unread"
-	// packInvalid: the module does not compile under capabilities.pack.json,
-	// or declares another package, or names a result for one of Costroid's
-	// rules.
-	packInvalid = "pack_invalid"
-	// packBound: the input, the steps, the time or the results passed their
-	// bound, or the child ended without an answer.
-	packBound = "pack_bound"
-	// packResult: the answer is not a list of results in the pack's words.
-	packResult = "pack_result"
+	// RuleCustomerPack says why the pack costroid.yml names gave no results.
+	RuleCustomerPack = "customer_pack"
+	// ReasonPackUnread is a file that is absent or too large, or a host that
+	// did not answer.
+	ReasonPackUnread = "pack_unread"
+	// ReasonPackInvalid is a module that does not compile under
+	// capabilities.pack.json, declares another package, or names a result for
+	// one of Costroid's rules.
+	ReasonPackInvalid = "pack_invalid"
+	// ReasonPackBound is an input, a count of steps, a time or a count of
+	// results past its bound, or a child that ended without an answer.
+	ReasonPackBound = "pack_bound"
+	// ReasonPackResult is an answer that is not a list of results in the
+	// pack's words.
+	ReasonPackResult = "pack_result"
 )
 
 // packFaultOutcomes is the outcome of Costroid's customer_pack result for
@@ -77,15 +80,15 @@ const (
 // request would have made its own check pass. A slow runner, which the
 // head's workflow picks, is such a cause, so every fault of time fails.
 var packFaultOutcomes = map[string]string{
-	packUnread:  Unproven,
-	packInvalid: Unproven,
-	packBound:   Fail,
-	packResult:  Fail,
+	ReasonPackUnread:  Unproven,
+	ReasonPackInvalid: Unproven,
+	ReasonPackBound:   Fail,
+	ReasonPackResult:  Fail,
 }
 
-// reservedRules are the rule ids of Costroid's own results, run_p95 among
-// them before its rule ships. A pack's result never takes one.
-var reservedRules = append(slices.Clone(ruleOrder), "run_p95", ruleCustomerPack)
+// reservedRules are the rule ids of Costroid's own results. A pack's result
+// never takes one.
+var reservedRules = append(slices.Clone(ruleOrder), RuleCustomerPack)
 
 // idPattern is a pack result's rule and reason.
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
@@ -139,15 +142,19 @@ func (f *PackFault) Reason() string {
 	return f.reason
 }
 
-// result is Costroid's own customer_pack result for the fault. A reason the
-// table does not hold fails, so a fault never concludes looser than the
-// table says.
+// result is Costroid's own customer_pack result for the fault, with the line
+// the compiler named beside pack_invalid alone. A reason the table does not
+// hold fails, so a fault never concludes looser than the table says.
 func (f *PackFault) result() Result {
 	outcome, known := packFaultOutcomes[f.reason]
 	if !known {
 		outcome = Fail
 	}
-	return Result{Rule: ruleCustomerPack, Outcome: outcome, Reason: f.reason}
+	result := Result{Rule: RuleCustomerPack, Outcome: outcome, Reason: f.reason}
+	if f.reason == ReasonPackInvalid && f.Line > 0 {
+		result.Line = f.Line
+	}
+	return result
 }
 
 func fault(reason string, line int, err error) *PackFault {
@@ -187,9 +194,12 @@ type packRunner struct {
 // Costroid's verdict was computed from, and joins its results to that
 // verdict. The conclusion it returns is never below the verdict's.
 func RunCustomerPack(ctx context.Context, source []byte, request Request, verdict Verdict) Composed {
+	if !diverting.Load() {
+		return compose(verdict, nil, fault(ReasonPackBound, 0, errors.New("this executable did not call policy.PackChild as it started, so a child it starts would not run the pack")))
+	}
 	executable, err := selfExecutable()
 	if err != nil {
-		return compose(verdict, nil, fault(packBound, 0, fmt.Errorf("find this executable: %w", err)))
+		return compose(verdict, nil, fault(ReasonPackBound, 0, fmt.Errorf("find this executable: %w", err)))
 	}
 	runner := packRunner{executable: executable, steps: maxPackSteps, time: maxPackTime}
 	results, _, problem := runner.run(ctx, source, request, verdict.Results)
@@ -201,7 +211,7 @@ func RunCustomerPack(ctx context.Context, source []byte, request Request, verdic
 // fault.
 func (r packRunner) run(ctx context.Context, source []byte, request Request, results []Result) ([]PackResult, int64, *PackFault) {
 	if len(source) > maxPackBytes {
-		return nil, 0, fault(packUnread, 0, fmt.Errorf("the file holds %d bytes, over %d", len(source), maxPackBytes))
+		return nil, 0, fault(ReasonPackUnread, 0, fmt.Errorf("the file holds %d bytes, over %d", len(source), maxPackBytes))
 	}
 	settings, _ := request.Config.settings()
 	input, problem := customerInput(request, settings, results)
@@ -210,17 +220,80 @@ func (r packRunner) run(ctx context.Context, source []byte, request Request, res
 	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
-		return nil, 0, fault(packBound, 0, fmt.Errorf("write the input: %w", err))
+		return nil, 0, fault(ReasonPackBound, 0, fmt.Errorf("write the input: %w", err))
 	}
 	frame, err := json.Marshal(childRequest{Source: source, Input: encoded, Steps: r.steps})
 	if err != nil {
-		return nil, 0, fault(packBound, 0, fmt.Errorf("write the request: %w", err))
+		return nil, 0, fault(ReasonPackBound, 0, fmt.Errorf("write the request: %w", err))
 	}
 	answer, problem := r.exchange(ctx, frame)
 	if problem != nil {
 		return nil, 0, problem
 	}
-	return readAnswer(answer, source)
+	found, steps, problem := readAnswer(answer, source)
+	if problem != nil && problem.reason == ReasonPackInvalid {
+		problem = r.confirmInvalid(ctx, source, problem)
+	}
+	return found, steps, problem
+}
+
+// confirmInvalid holds a child's claim that the pack is not valid to the
+// base branch alone. The claim concludes unproven, and the parent never
+// compiles a pack to check it. So a second child is handed the pack and no
+// rows: the same claim at the same line stands, because no row reached that
+// child, and any other answer is a pack_result fault, which fails. A child
+// compiles before it reads its input, so a pack that is not valid answers
+// alike both times.
+func (r packRunner) confirmInvalid(ctx context.Context, source []byte, claimed *PackFault) *PackFault {
+	frame, err := json.Marshal(childRequest{Source: source, Input: json.RawMessage("{}"), Steps: 1})
+	if err != nil {
+		return fault(ReasonPackResult, 0, fmt.Errorf("write the request: %w", err))
+	}
+	answer, again := r.exchange(ctx, frame)
+	if again == nil {
+		_, _, again = readAnswer(answer, source)
+	}
+	if again == nil || again.reason != ReasonPackInvalid || again.Line != claimed.Line {
+		return fault(ReasonPackResult, 0, fmt.Errorf("the pack's process stated it is not valid at line %d, and without this run's rows it answered %v", claimed.Line, again))
+	}
+	return claimed
+}
+
+// PackRun is the customer pack a verdict ran, as result/0.12 states it.
+type PackRun struct {
+	// Path is the pack's path as costroid.yml names it.
+	Path string `json:"path"`
+	// SHA256 hashes the bytes read, and zero bytes when none were.
+	SHA256 string `json:"sha256"`
+	// Results are the pack's own, empty when it returned none and when
+	// Costroid's customer_pack result says why it did not run to its end.
+	Results []PackResult `json:"results"`
+}
+
+// withPack joins the customer pack costroid.yml names to Costroid's verdict,
+// after every adjustment of Costroid's own. A pack that was not read for the
+// request's costroid.yml never runs: it is pack_unread. Every other pack runs
+// in a child, and compose joins its answer, so the conclusion never drops.
+func withPack(ctx context.Context, request Request, settings Settings, verdict Verdict) Verdict {
+	if settings.Pack == "" {
+		return verdict
+	}
+	var joined Composed
+	if problem := request.Pack.fault(request.Config); problem != nil {
+		joined = compose(verdict, nil, problem)
+	} else {
+		joined = RunCustomerPack(ctx, request.Pack.data, request, verdict)
+	}
+	out := joined.Verdict
+	if joined.problem != nil {
+		out.packProblem = joined.problem
+	}
+	out.Pack = &PackRun{
+		Path:    settings.Pack,
+		SHA256:  digest(request.Pack.bytesFor(request.Config)),
+		Results: append([]PackResult{}, joined.Pack...),
+	}
+	return out
 }
 
 // exchange starts the child by this executable's own path, with no shell,
@@ -230,15 +303,15 @@ func (r packRunner) run(ctx context.Context, source []byte, request Request, res
 // process outlives the call.
 func (r packRunner) exchange(ctx context.Context, frame []byte) ([]byte, *PackFault) {
 	if !filepath.IsAbs(r.executable) {
-		return nil, fault(packBound, 0, fmt.Errorf("the child %q is not an absolute path", r.executable))
+		return nil, fault(ReasonPackBound, 0, fmt.Errorf("the child %q is not an absolute path", r.executable))
 	}
 	dir, err := os.MkdirTemp("", "costroid-pack-")
 	if err != nil {
-		return nil, fault(packBound, 0, fmt.Errorf("make the child's directory: %w", err))
+		return nil, fault(ReasonPackBound, 0, fmt.Errorf("make the child's directory: %w", err))
 	}
 	defer os.RemoveAll(dir)
 	if err := closeInheritedOnExec(); err != nil {
-		return nil, fault(packBound, 0, err)
+		return nil, fault(ReasonPackBound, 0, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.time)
 	defer cancel()
@@ -253,11 +326,11 @@ func (r packRunner) exchange(ctx context.Context, frame []byte) ([]byte, *PackFa
 	err = command.Run()
 	switch {
 	case ctx.Err() != nil:
-		return nil, fault(packBound, 0, fmt.Errorf("the pack did not answer within %s", r.time))
+		return nil, fault(ReasonPackBound, 0, fmt.Errorf("the pack did not answer within %s", r.time))
 	case err != nil:
-		return nil, fault(packBound, 0, fmt.Errorf("the pack's process ended without an answer: %w: %s", err, firstLine(stderr.data)))
+		return nil, fault(ReasonPackBound, 0, fmt.Errorf("the pack's process ended without an answer: %w: %s", err, firstLine(stderr.data)))
 	case stdout.over:
-		return nil, fault(packResult, 0, fmt.Errorf("the pack's process wrote more than %d bytes", maxAnswerBytes))
+		return nil, fault(ReasonPackResult, 0, fmt.Errorf("the pack's process wrote more than %d bytes", maxAnswerBytes))
 	}
 	return stdout.data, nil
 }
@@ -308,16 +381,16 @@ func readAnswer(data, source []byte) ([]PackResult, int64, *PackFault) {
 	decoder.DisallowUnknownFields()
 	var answer childAnswer
 	if err := decoder.Decode(&answer); err != nil {
-		return nil, 0, fault(packResult, 0, fmt.Errorf("read the pack's answer: %w", err))
+		return nil, 0, fault(ReasonPackResult, 0, fmt.Errorf("read the pack's answer: %w", err))
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, 0, fault(packResult, 0, errors.New("the pack's answer holds more than one value"))
+		return nil, 0, fault(ReasonPackResult, 0, errors.New("the pack's answer holds more than one value"))
 	}
 	if answer.Fault != nil {
 		return nil, answer.Steps, answeredFault(*answer.Fault, len(answer.Results), source)
 	}
 	if len(answer.Results) > maxPackResults {
-		return nil, answer.Steps, fault(packBound, 0, fmt.Errorf("the pack returned %d results, over %d", len(answer.Results), maxPackResults))
+		return nil, answer.Steps, fault(ReasonPackBound, 0, fmt.Errorf("the pack returned %d results, over %d", len(answer.Results), maxPackResults))
 	}
 	for _, result := range answer.Results {
 		if problem := checkResult(result); problem != nil {
@@ -333,9 +406,9 @@ func readAnswer(data, source []byte) ([]PackResult, int64, *PackFault) {
 // the bounds of the input are the parent's to judge.
 func answeredFault(stated childFault, results int, source []byte) *PackFault {
 	lines := bytes.Count(source, []byte("\n")) + 1
-	known := slices.Contains([]string{packInvalid, packBound, packResult}, stated.Reason)
+	known := slices.Contains([]string{ReasonPackInvalid, ReasonPackBound, ReasonPackResult}, stated.Reason)
 	if !known || results > 0 || stated.Line < 0 || stated.Line > lines {
-		return fault(packResult, 0, fmt.Errorf("the pack's process stated the fault %q at line %d", printable(stated.Reason), stated.Line))
+		return fault(ReasonPackResult, 0, fmt.Errorf("the pack's process stated the fault %q at line %d", printable(stated.Reason), stated.Line))
 	}
 	return fault(stated.Reason, stated.Line, errors.New(printable(stated.Error)))
 }
@@ -346,13 +419,13 @@ func answeredFault(stated childFault, results int, source []byte) *PackFault {
 func checkResult(result PackResult) *PackFault {
 	switch {
 	case result.Outcome != PackWarn && result.Outcome != PackFail:
-		return fault(packResult, 0, fmt.Errorf("a result's outcome is %q, not warn or fail", printable(string(result.Outcome))))
+		return fault(ReasonPackResult, 0, fmt.Errorf("a result's outcome is %q, not warn or fail", printable(string(result.Outcome))))
 	case !idPattern.MatchString(result.Rule) || !idPattern.MatchString(result.Reason):
-		return fault(packResult, 0, fmt.Errorf("a result's rule %q or reason %q is not an id", printable(result.Rule), printable(result.Reason)))
+		return fault(ReasonPackResult, 0, fmt.Errorf("a result's rule %q or reason %q is not an id", printable(result.Rule), printable(result.Reason)))
 	case slices.Contains(reservedRules, result.Rule):
-		return fault(packResult, 0, fmt.Errorf("a result names Costroid's rule %s", result.Rule))
+		return fault(ReasonPackResult, 0, fmt.Errorf("a result names Costroid's rule %s", result.Rule))
 	case printable(result.Message) != result.Message || result.HeldByWarnOnly:
-		return fault(packResult, 0, errors.New("a result holds a message a comment cannot print, or a warn-only hold"))
+		return fault(ReasonPackResult, 0, errors.New("a result holds a message a comment cannot print, or a warn-only hold"))
 	}
 	return nil
 }
@@ -365,7 +438,7 @@ func checkResult(result PackResult) *PackFault {
 func customerInput(request Request, settings Settings, results []Result) (map[string]any, *PackFault) {
 	usage := request.Usage
 	if len(usage.Currencies) > maxPackCurrencies {
-		return nil, fault(packBound, 0, fmt.Errorf("the rows hold %d currencies, over %d", len(usage.Currencies), maxPackCurrencies))
+		return nil, fault(ReasonPackBound, 0, fmt.Errorf("the rows hold %d currencies, over %d", len(usage.Currencies), maxPackCurrencies))
 	}
 	models := 0
 	entries := make([]any, 0, len(usage.Currencies))
@@ -385,7 +458,7 @@ func customerInput(request Request, settings Settings, results []Result) (map[st
 		})
 	}
 	if models > maxPackModels {
-		return nil, fault(packBound, 0, fmt.Errorf("the rows name %d model ids, over %d", models, maxPackModels))
+		return nil, fault(ReasonPackBound, 0, fmt.Errorf("the rows name %d model ids, over %d", models, maxPackModels))
 	}
 	limits := map[string]any{}
 	for key, amount := range settings.Amounts {

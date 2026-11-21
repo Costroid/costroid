@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -184,7 +185,7 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/commits") && r.Method == http.MethodGet:
 		s.listCommits(w, r)
 	case strings.Contains(path, "/contents/"):
-		s.readFile(w, path, r.URL.Query().Get("ref"))
+		s.readFile(w, r.URL.EscapedPath(), r.URL.Query().Get("ref"))
 	case strings.Contains(path, "/git/ref/heads/"):
 		s.readBranch(w, path[strings.Index(path, "/git/ref/heads/")+len("/git/ref/heads/"):])
 	case strings.Contains(path, "/pulls/"):
@@ -513,8 +514,17 @@ func (s *Stub) listCommits(w http.ResponseWriter, r *http.Request) {
 	s.answer(w, listed)
 }
 
-func (s *Stub) readFile(w http.ResponseWriter, path, ref string) {
-	name := path[strings.LastIndex(path, "/")+1:]
+// readFile answers as the contents API does for one file, by its path from
+// the repository's root. The path is read as it was sent: a / escaped as %2F
+// names no file here, since whether GitHub reads one as a directory is not
+// known, so a reader that sends one fails its tests.
+func (s *Stub) readFile(w http.ResponseWriter, escaped, ref string) {
+	_, sent, _ := strings.Cut(escaped, "/contents/")
+	name, err := url.PathUnescape(sent)
+	if err != nil || strings.Contains(strings.ToUpper(sent), "%2F") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	files, pinned := s.FilesAt[ref]
 	if !pinned {
 		files = s.Files

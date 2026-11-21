@@ -68,7 +68,7 @@ func TestNonDecimalIntegerFormsAreRefused(t *testing.T) {
 // reads as the node &name marks, as a key, as a value and as an entry of
 // policy.models, the way validate reads it.
 func TestAnAliasReadsAsTheNodeItNames(t *testing.T) {
-	body := []byte("budget_owner: &amount \"5\"\npolicy_pack: &key max_run_cost_usd\ncomment:\n  show_cost: &on true\n" +
+	body := []byte("budget_owner: &amount \"5\"\ncatalog: &key max_run_cost_usd\ncomment:\n  show_cost: &on true\n" +
 		"policy:\n  run_budget_usd: *amount\n  *key : 2.50\n  enforce: *on\n  models: [*key, codex]\n" +
 		"approval:\n  allow_author: *on\n")
 	settings, err := ParseSettings(body)

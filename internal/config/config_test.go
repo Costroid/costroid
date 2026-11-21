@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -25,7 +26,7 @@ policy:
   run_budget_usd: "5.00"
   max_run_cost_usd: "0.75"
   enforce: true
-policy_pack: costroid/default
+policy_pack: .costroid/policy.rego
 budget_owner: platform-team
 assumptions:
   calls_per_day: 100
@@ -611,5 +612,100 @@ func TestValidateReadsAMergeKeyAsAKey(t *testing.T) {
 		if (tc.path == "/policy") != (settingsErr != nil) || (tc.path == "/approval") != (approvalErr != nil) {
 			t.Errorf("%q: the policy %v, the approval rule %v", tc.body, settingsErr, approvalErr)
 		}
+	}
+}
+
+// packPaths are values of policy_pack, each with whether it names a pack: a
+// path from the repository's root, segment by segment, with no . or ..
+// segment, ending .rego, of at most 256 characters, written as a string.
+var packPaths = []struct {
+	value string
+	valid bool
+}{
+	{".costroid/policy.rego", true},
+	{"policy.rego", true},
+	{"policy/team-a/budget_v2.rego", true},
+	{"...hidden/x.rego", true},
+	{"..a.rego", true},
+	{`".costroid/policy.rego"`, true},
+	{strings.Repeat("a", 251) + ".rego", true},
+	{strings.Repeat("a", 252) + ".rego", false},
+	{"../policy.rego", false},
+	{"./policy.rego", false},
+	{"a/../policy.rego", false},
+	{"a/./policy.rego", false},
+	{"/etc/policy.rego", false},
+	{"a//policy.rego", false},
+	{".rego", false},
+	{"policy.yml", false},
+	{"policy.REGO", false},
+	{"policy.rego/", false},
+	{`"team packs/policy.rego"`, false},
+	{`"policy.rego\n"`, false},
+	{`"a\\b.rego"`, false},
+	{"costroid/default", false},
+	{`""`, false},
+	{"~", false},
+	{"5", false},
+	{"true", false},
+	{"[a.rego]", false},
+	{"{path: a.rego}", false},
+}
+
+// TestPolicyPackRefusesTheFormsThePolicyRefuses holds costroid validate and
+// the policy's reader of costroid.yml to one rule for policy_pack: each
+// value either both take or both refuse, whatever else the file holds. The
+// pattern costroid.schema.json states is the one result/v0.12 states for the
+// pack's path, so a path the key takes is one a result object can hold.
+func TestPolicyPackRefusesTheFormsThePolicyRefuses(t *testing.T) {
+	for _, tc := range packPaths {
+		for _, body := range []string{"policy_pack: " + tc.value + "\n", "policy_pack: " + tc.value + "\npolicy:\n  run_budget_usd: \"5\"\n"} {
+			problems, err := Validate([]byte(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings, parseErr := policy.ParseSettings([]byte(body))
+			if (len(problems) == 0) != tc.valid || (parseErr == nil) != tc.valid {
+				t.Errorf("%q: validate %v, the policy %v, want valid %t", body, problems, parseErr, tc.valid)
+			}
+			if tc.valid && settings.Pack != strings.Trim(tc.value, `"`) {
+				t.Errorf("%q: the policy reads the pack %q", body, settings.Pack)
+			}
+		}
+	}
+	var config struct {
+		Properties struct {
+			Pack struct {
+				Description string `json:"description"`
+				Pattern     string `json:"pattern"`
+			} `json:"policy_pack"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(costroid.ConfigSchema, &config); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join("..", "comment", "testdata", "result-v0.12.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Defs struct {
+			Pack struct {
+				Properties struct {
+					Path struct {
+						Pattern string `json:"pattern"`
+					} `json:"path"`
+				} `json:"properties"`
+			} `json:"pack"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if config.Properties.Pack.Pattern == "" || config.Properties.Pack.Pattern != result.Defs.Pack.Properties.Path.Pattern {
+		t.Errorf("costroid.schema.json takes %q, and result/v0.12 holds %q", config.Properties.Pack.Pattern, result.Defs.Pack.Properties.Path.Pattern)
+	}
+	if strings.Contains(config.Properties.Pack.Description, "Reserved") {
+		t.Errorf("costroid.schema.json still reserves policy_pack: %q", config.Properties.Pack.Description)
 	}
 }

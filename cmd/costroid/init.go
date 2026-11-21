@@ -193,7 +193,7 @@ type agentAction struct {
 
 // reservedKeys are the schema's top-level keys that this release reads
 // nothing from, so the costroid.yml init writes leaves them out.
-var reservedKeys = []string{"policy_pack", "budget_owner", "assumptions", "catalog", "agents"}
+var reservedKeys = []string{"budget_owner", "assumptions", "catalog", "agents"}
 
 // unreadKeys are keys below the top level, by their dotted path, whose rule
 // reads a figure no check receives yet, so the costroid.yml init writes

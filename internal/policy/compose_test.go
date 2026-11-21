@@ -93,11 +93,11 @@ func assertCompose(t *testing.T, name string, base Verdict, pack []PackResult, p
 		if outcome == Fail && active {
 			wantOutcome = Warn
 		}
-		if added.Rule != ruleCustomerPack || added.Reason != problem.reason || added.Outcome != wantOutcome || added.HeldByWarnOnly != (outcome == Fail && active) {
+		if added.Rule != RuleCustomerPack || added.Reason != problem.reason || added.Outcome != wantOutcome || added.HeldByWarnOnly != (outcome == Fail && active) {
 			t.Fatalf("%s: the fault became %+v", name, added)
 		}
-		if out.Line != problem.Line {
-			t.Fatalf("%s: line %d of a fault at %d", name, out.Line, problem.Line)
+		if wantLine := problem.Line * btoi(problem.reason == ReasonPackInvalid); added.Line != wantLine {
+			t.Fatalf("%s: line %d of a fault at %d", name, added.Line, problem.Line)
 		}
 		want = max(want, level(outcome == Fail && !active))
 	}
@@ -117,6 +117,14 @@ func assertCompose(t *testing.T, name string, base Verdict, pack []PackResult, p
 	if got := severity[out.Verdict.Conclusion]; got < severity[base.Conclusion] || got != want {
 		t.Fatalf("%s: concluded %s", name, out.Verdict.Conclusion)
 	}
+}
+
+// btoi is 1 for true and 0 for false.
+func btoi(set bool) int {
+	if set {
+		return 1
+	}
+	return 0
 }
 
 // level is the severity a result adds: failure for one that fails, and

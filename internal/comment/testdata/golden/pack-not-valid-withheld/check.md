@@ -1,0 +1,142 @@
+# Title
+
+Not decided: the policy pack is not valid at line 4, so none of its rules ran. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
+
+# Summary
+
+**Not decided: the policy pack is not valid at line 4, so none of its rules ran. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
+This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
+
+| Basis | Enforcement |
+| --- | --- |
+| List-equivalent, not billed | client-side estimate, can pass the cap |
+
+Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
+
+<details>
+<summary>Policy, agents, models and catalog</summary>
+
+A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
+
+</details>
+
+<details>
+<summary>Token classes behind line 1</summary>
+
+| Catalog | Token class |
+| --- | --- |
+| `0.4.3` | `input_uncached` |
+| `0.4.3` | `cache_read` |
+| `0.4.3` | `cache_write_5m` |
+| `0.4.3` | `cache_write_1h` |
+| `0.4.3` | `output` |
+| `0.4.3` | `reasoning_output` |
+| `0.4.3` | `cached_input_reported` |
+
+Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
+
+</details>
+
+# Text
+
+```json
+{
+  "schema": "costroid.result/0.12",
+  "conclusion": "neutral",
+  "state": "reported",
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": null,
+  "rows_file_sha256": null,
+  "amounts": "shown",
+  "rows": 19,
+  "run_identity": "unverified",
+  "figures": [
+    {
+      "currency": "USD",
+      "list_cost": "0.001619725",
+      "cost_basis": "list_equivalent",
+      "attribution_grade": "unattributed",
+      "enforcement_grade": "agent-flag",
+      "rows": 19,
+      "fallback_rows": 0,
+      "tokens": {
+        "cache_read": "15605",
+        "cache_write_1h": "4450",
+        "cache_write_5m": "3495",
+        "cached_input_reported": "15605",
+        "input_uncached": "8",
+        "output": "272",
+        "reasoning_output": "121"
+      }
+    }
+  ],
+  "figures_omitted": 0,
+  "cap": {
+    "currency": "USD",
+    "amount": "5",
+    "enforcement_grade": "agent-flag",
+    "cost": "0.001619725",
+    "cost_basis": "list_equivalent",
+    "remainder": "4.998380275",
+    "overshoot": "0",
+    "overshoot_tokens": "0"
+  },
+  "data": {
+    "agents": [
+      "claude-code"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "models_omitted": 0,
+    "catalog_versions": [
+      "0.4.3"
+    ],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": null,
+  "agent_stated": null,
+  "recorded": null,
+  "policy": {
+    "conclusion": "neutral",
+    "trust": "unverified",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
+    "config_sha256": "30d1ab92ba61eafe42aef585f6b19a9289e859d4f3fe4208f9d249a94614d8e3",
+    "config_ref": "1111111111111111111111111111111111111111",
+    "config": "found",
+    "config_from_base": true,
+    "evaluated_at": "2026-11-12T09:00:00Z",
+    "warn_only": {
+      "active": false,
+      "reason": "ended",
+      "started": "2026-11-02T09:00:00Z",
+      "ends": "2026-11-09T09:00:00Z"
+    },
+    "results": [
+      {
+        "rule": "customer_pack",
+        "outcome": "unproven",
+        "reason": "pack_invalid",
+        "line": 4
+      }
+    ],
+    "pack": {
+      "path": ".costroid/policy.rego",
+      "sha256": "835ba38d86cdb606f7dce50cd19b4a1ce77427bd8dcdcf535143d26b2f96e1e1",
+      "results": []
+    },
+    "joinable_rows": 0
+  }
+}
+```

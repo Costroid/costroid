@@ -508,14 +508,16 @@ func (g *GitHub) BranchesAt(ctx context.Context, sha string) ([]string, error) {
 	return branches, nil
 }
 
-// ReadFile reads one file through the contents API.
+// ReadFile reads one file through the contents API. The path is escaped
+// segment by segment, so a file in a directory is asked for as the API names
+// it, with each / kept.
 func (g *GitHub) ReadFile(ctx context.Context, path, ref string) ([]byte, error) {
 	var file struct {
 		Type     string `json:"type"`
 		Encoding string `json:"encoding"`
 		Content  string `json:"content"`
 	}
-	endpoint := g.repo("/contents/" + url.PathEscape(path) + "?ref=" + url.QueryEscape(ref))
+	endpoint := g.repo("/contents/" + escapeSegments(path) + "?ref=" + url.QueryEscape(ref))
 	if err := g.do(ctx, http.MethodGet, endpoint, nil, &file); err != nil {
 		return nil, err
 	}
@@ -523,6 +525,16 @@ func (g *GitHub) ReadFile(ctx context.Context, path, ref string) ([]byte, error)
 		return nil, fmt.Errorf("scm: %s at %s is not a readable file", path, ref)
 	}
 	return decodeFile(path, file.Content)
+}
+
+// escapeSegments escapes each segment of a path in a repository and joins
+// them with /.
+func escapeSegments(path string) string {
+	segments := strings.Split(path, "/")
+	for index, segment := range segments {
+		segments[index] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 func decodeFile(path, encoded string) ([]byte, error) {

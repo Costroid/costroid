@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Costroid/costroid/internal/comment"
@@ -16,10 +17,10 @@ import (
 )
 
 type policyFlags struct {
-	rows, config, history, baseline string
-	start                           policy.Start
-	at                              time.Time
-	json                            bool
+	rows, config, pack, history, baseline string
+	start                                 policy.Start
+	at                                    time.Time
+	json                                  bool
 	// warnings takes a warning, on the stderr the flags were parsed with.
 	warnings io.Writer
 }
@@ -29,6 +30,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	config := set.String("config", configFile, "costroid.yml as the base branch holds it")
+	pack := set.String("pack", "", "the policy pack policy_pack names, as the base branch holds it; the path it names, beside --config, when empty")
 	earlier := set.String("history", "", "the result objects of the pull request's earlier check runs, one per line")
 	baseline := set.String("baseline", "", "the result objects of the check runs on the merged pull requests' heads, one per line")
 	added := set.String("workflow-added", "", "when the workflow reached the base branch, as RFC 3339")
@@ -40,7 +42,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	if *rows == "" || set.NArg() > 0 {
 		return policyFlags{}, errors.New("policy needs --rows and takes no argument")
 	}
-	flags := policyFlags{rows: *rows, config: *config, history: *earlier, baseline: *baseline, at: time.Now(), json: *asJSON, warnings: stderr}
+	flags := policyFlags{rows: *rows, config: *config, pack: *pack, history: *earlier, baseline: *baseline, at: time.Now(), json: *asJSON, warnings: stderr}
 	if *added != "" {
 		start, err := time.Parse(time.RFC3339, *added)
 		if err != nil {
@@ -78,6 +80,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
+	warnPack(verdict, stderr)
 	if err := printVerdict(stdout, verdict, runs.lifetime, flags); err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
@@ -109,6 +112,10 @@ func offlineCheck(ctx context.Context, flags policyFlags) (policy.Verdict, earli
 	if config.Unread != nil {
 		return policy.Verdict{}, earlierRuns{}, config.Unread
 	}
+	pack, err := offlinePack(flags, config)
+	if err != nil {
+		return policy.Verdict{}, earlierRuns{}, err
+	}
 	runs, err := historyOf(ctx, flags, config)
 	if err != nil {
 		return policy.Verdict{}, earlierRuns{}, err
@@ -117,6 +124,7 @@ func offlineCheck(ctx context.Context, flags policyFlags) (policy.Verdict, earli
 		Usage:                usage,
 		Trust:                policy.Unverified,
 		Config:               config,
+		Pack:                 pack,
 		Start:                flags.start,
 		At:                   flags.at,
 		Baseline:             runs.baseline,
@@ -124,6 +132,24 @@ func offlineCheck(ctx context.Context, flags policyFlags) (policy.Verdict, earli
 		MeasuredPullRequests: measuredReports(runs.lifetime),
 	})
 	return verdict, runs, err
+}
+
+// offlinePack reads the customer pack the costroid.yml named names, as the
+// report reads it at the base commit: from --pack, or from the path it names
+// beside --config, which a costroid.yml at a repository's root names it from.
+// A --pack beside a costroid.yml that names no pack is refused, since no pack
+// would run online.
+func offlinePack(flags policyFlags, config policy.ConfigFile) (policy.Pack, error) {
+	path := config.PackPath()
+	switch {
+	case flags.pack != "" && path == "":
+		return policy.Pack{}, fmt.Errorf("--pack names a policy pack, and %s names none in %s", flags.config, policy.PackKey)
+	case path == "":
+		return policy.Pack{}, nil
+	case flags.pack != "":
+		return policy.PackFromFile(flags.pack, config), nil
+	}
+	return policy.PackFromFile(filepath.Join(filepath.Dir(flags.config), filepath.FromSlash(path)), config), nil
 }
 
 // errHistoryIsNoBaseline refuses --history alone where a rule reads a

@@ -182,7 +182,8 @@ func TestMachineBlockStatesEveryEstimateFigureOrCountsIt(t *testing.T) {
 }
 
 // TestResultWithoutAnEstimateIsWhatItWas holds every golden state that states
-// no estimate, and holds no value only result/v0.11 defines, to result/v0.9:
+// no estimate, and holds no value only result/v0.11 or result/v0.12 defines,
+// to result/v0.9:
 // its schema string, no estimates field, and the copied 0.9 schema. A note
 // whose reason is off the closed list states no line, so it states no
 // estimate either.
@@ -198,7 +199,7 @@ func TestResultWithoutAnEstimateIsWhatItWas(t *testing.T) {
 			stated++
 			continue
 		}
-		if holdsP95(input) {
+		if holdsP95(input) || holdsPack(input) {
 			continue
 		}
 		for file, object := range machineBlocks(t, input) {
