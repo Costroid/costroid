@@ -1,6 +1,6 @@
 # Read a command's exit code
 
-Every `costroid` command ends in one of four ways, and each way has one exit code. A script or a job can tell an answer that is a failure from a command line that is wrong, and both from work Costroid could not do. `costroid help <command>` prints the codes of one command.
+Every `costroid` command ends in one of the ways below, and each way has one exit code. A script or a job can tell an answer that is a failure from a command line that is wrong, and both from work Costroid could not do. `costroid help <command>` prints the codes of one command.
 
 | Code | How the command ended | For example |
 | ---- | --------------------- | ----------- |
