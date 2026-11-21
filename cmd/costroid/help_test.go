@@ -54,6 +54,7 @@ var helpAfterFlags = map[string][][]string{
 	"approve":    {{"approve"}},
 	"reconcile":  {{"reconcile", "--rows", "rows.jsonl"}},
 	"export":     {{"export", "--rows", "rows.jsonl"}},
+	"merged":     {{"merged", "--dry-run"}},
 	"connect":    {{"connect", "--platform-url", "https://platform.example"}},
 	"review":     {{"review", "--keep"}},
 	"policy":     {{"policy", "--rows", "rows.jsonl"}},

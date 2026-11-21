@@ -253,6 +253,32 @@ The `ingest` stage. Each line here is a warning annotation, and the job still pa
 | `costroid: --installation-id names what --export sends beside the rows, so it goes with --export` | Nothing is sent without `--export` | Pass `--export`, or drop `--installation-id` |
 | `costroid: this job has id-token: write, so its run token goes with the rows, and the platform checks it against an installation: pass --installation-id` | On GitHub Actions a job that can mint a run token sends it, and the platform checks the run's owner against `Costroid-Installation-Id` | Pass `--installation-id` with the installation the job runs under, such as `github-owner:<id>` |
 
+## Sending merge facts to Costroid Platform
+
+`costroid merged`, in a job on a push to the default branch. [`docs/export.md`](export.md#merge-facts) says what a merge fact holds.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: merge <id>, pull request <number> of <repo>: stored as <grade>` | The platform stored the fact, 201 | None |
+| `costroid: merge <id>, pull request <number> of <repo>: already held as <grade>, so nothing changed` | The platform held this document under this merge id, 200 | None |
+| `costroid: merge <id> reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit` | The job cannot ask for an OIDC token, so the fact went without one, and the platform stored it as `unverified` | Give the job `id-token: write` |
+| `costroid: merge <id> reads unverified because its commit <sha> is not the tip of the push, <sha>, which the run token names, as in a merge queue's group` | One push carried more than one merged pull request. The run token names the tip alone | None. The fact still counts the merge |
+| `costroid: the push to <sha> closed no pull request, so no merge fact was sent` | No commit of the push is the merge commit of a merged pull request, as on a direct push. The command exits 0 | None |
+| `costroid: merged sends the merge facts of a push, and this run is on <event>, so nothing was sent` | The job ran on another event. The command exits 0 | Run the job on `push` alone |
+| `costroid: warning: the event file could not be read (<error>), so merged asks about the pushed commit alone` | `GITHUB_EVENT_PATH` names no readable push event, so the push's other commits are unknown | None on GitHub Actions, which writes the file |
+| `costroid: warning: the push lists <count> commits, past the <count> merged asks about, so it asks about the pushed commit alone` | A push of more than 100 commits. One request to GitHub per commit would pass that bound | None. A pull request merged as an earlier commit of the push gets no fact |
+| `costroid: --dry-run printed <count> merge facts and sent none` | `--dry-run` printed each fact's merge id and document | None |
+| `costroid: Costroid Platform does not serve integration/v0.5, and a merge fact needs integration/v0.5 or later, so nothing was sent` | `GET /identity` under `integration/v0.5` answered 404. The command exits 125 | Send to a platform that serves `integration/v0.5` |
+| `costroid: warning: Costroid Platform stored <merge>, and its answer names no run_identity the integration contract defines` | The platform answered 200 or 201 without `token_verified` or `unverified` | None. The fact was stored |
+| `costroid: warning: Costroid Platform refused <merge>: <status> <code>. Nothing in the merge fact is wrong, and nothing keeps it: run this job again once the plan allows writes` | 402 `PLAN_WRITES_REFUSED`. Nothing was stored. The command exits 0 | Run the job again once the plan allows writes |
+| `costroid: warning: Costroid Platform refused <merge>: <status> <code>. The tenant holds no binding of <installation>: run costroid connect, as docs/connect.md shows, then run this job again` | 409 `INSTALLATION_NOT_BOUND`: the tenant holds no binding of the owner, or it was revoked or displaced. The command exits 0 | Add [`recipes/github-connect.yml`](../recipes/github-connect.yml), then run the job again |
+| `costroid: Costroid Platform refused <merge>: <status> <code>. Pull request <number> of <repo> already holds a different fact, and a pull request merges once, so merged does not send it again` | 409 `MERGE_FACT_CONFLICT`: the platform holds another document for this pull request. The command exits 1 | None. The platform keeps the fact it holds |
+| `costroid: Costroid Platform refused <merge>: <status> <code>. <meaning>. Nothing was stored` | 401, 403 or 422, with the meaning `integration/v0.5` gives the code: the token lacks `merges:write`, the run token fails verification or names another owner, or the document's repository or form is refused. The command exits 1 | Read the meaning. The contract's [refusals of a merge fact](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-merge-fact) list each code |
+| `costroid: merged reads the pull requests a commit closed from GitHub alone, so on GitLab CI it sends nothing` | `costroid merged` asks GitHub's API. The command exits 125 | None on GitLab CI |
+| `costroid: merged runs in a GitHub Actions job on a push, and this is no GitHub Actions run` | `GITHUB_ACTIONS` is not `true`. The command exits 125 | Run it in the job |
+| `costroid: GITHUB_TOKEN is not set: pass the job's token, which needs pull-requests: read, in GITHUB_TOKEN` | The command reads the push's pull requests from GitHub with the job's token | Set `GITHUB_TOKEN: ${{ github.token }}` on the step |
+| `costroid: ask GitHub which pull requests commit <sha> closed: <error>` | GitHub refused the list, or could not be reached. Nothing was sent. The command exits 125 | Give the job `pull-requests: read` and `contents: read`, then run it again |
+
 ## Writing rows for another tool
 
 `costroid export --format`, which writes a file and sends nothing. [`docs/export.md`](export.md#files-for-another-tool) says what each format holds.

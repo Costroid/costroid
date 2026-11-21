@@ -450,6 +450,46 @@ func (g *GitHub) OpenPullsFrom(ctx context.Context, owner, branch string) ([]Ope
 	return nil, fmt.Errorf("scm: more than %d open pull requests have the head %q", maxPullPages*pullsPerPage, owner+":"+branch)
 }
 
+// MergedPull is a pull request a commit closed: it merged, and its merge put
+// that commit on the base branch.
+type MergedPull struct {
+	Number         int
+	MergedAt       time.Time
+	MergeCommitSHA string
+}
+
+// MergedPullsAt lists the pull requests the commit closed. GitHub's list of a
+// commit's pull requests also names open ones, whose merge_commit_sha is a
+// test merge, and merged ones whose merge put another commit on the base
+// branch, so only a pull request with merged_at set and the commit as its
+// merge_commit_sha is kept.
+func (g *GitHub) MergedPullsAt(ctx context.Context, sha string) ([]MergedPull, error) {
+	if !vcs.IsCommit(sha) {
+		return nil, errors.New("scm: the commit is not a full SHA")
+	}
+	var pulls []MergedPull
+	for page := 1; page <= maxPullPages; page++ {
+		var answer []struct {
+			Number         int        `json:"number"`
+			MergedAt       *time.Time `json:"merged_at"`
+			MergeCommitSHA string     `json:"merge_commit_sha"`
+		}
+		query := url.Values{"per_page": {strconv.Itoa(pullsPerPage)}, "page": {strconv.Itoa(page)}}
+		if err := g.do(ctx, http.MethodGet, g.repo("/commits/"+sha+"/pulls?"+query.Encode()), nil, &answer); err != nil {
+			return nil, err
+		}
+		for _, pull := range answer {
+			if pull.MergedAt != nil && pull.MergeCommitSHA == sha && pull.Number > 0 {
+				pulls = append(pulls, MergedPull{Number: pull.Number, MergedAt: pull.MergedAt.UTC(), MergeCommitSHA: sha})
+			}
+		}
+		if len(answer) < pullsPerPage {
+			return pulls, nil
+		}
+	}
+	return nil, fmt.Errorf("scm: more than %d pull requests name commit %s", maxPullPages*pullsPerPage, sha)
+}
+
 // BranchesAt lists this repository's branches whose head is the commit.
 func (g *GitHub) BranchesAt(ctx context.Context, sha string) ([]string, error) {
 	if !vcs.IsCommit(sha) {

@@ -51,6 +51,7 @@ var commands = []command{
 	{name: "approve", help: approveHelp, run: withOutputs(approveCommand)},
 	{name: "reconcile", help: reconcileHelp, run: reconcileWithProvider},
 	{name: "export", help: exportHelp, run: exportCommand},
+	{name: "merged", help: mergedHelp, run: mergedCommand},
 	{name: "connect", help: connectHelp, run: connectCommand},
 	{name: "review", help: reviewHelp, run: withOutputs(reviewCommand)},
 	{name: "policy", help: policyHelp, run: withOutputs(policyCommand)},

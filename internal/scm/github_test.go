@@ -220,6 +220,33 @@ func TestPullsForCommitPagesAndStopsAtAThousand(t *testing.T) {
 	}
 }
 
+func TestMergedPullsAtKeepsOnlyThePullRequestsTheCommitClosed(t *testing.T) {
+	stub := scmtest.New(t)
+	merged := time.Date(2026, 11, 21, 10, 7, 52, 0, time.UTC)
+	stub.Pulls = []scmtest.Pull{
+		{Number: 1482, State: "closed", MergedAt: merged, MergeCommitSHA: sampleSHA},
+		{Number: 1483, State: "open", MergeCommitSHA: sampleSHA},
+		{Number: 1470, State: "closed", MergedAt: merged, MergeCommitSHA: movedSHA, Commits: []string{sampleSHA}},
+	}
+	pulls, err := adapter(t, stub).MergedPullsAt(context.Background(), sampleSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []scm.MergedPull{{Number: 1482, MergedAt: merged, MergeCommitSHA: sampleSHA}}; fmt.Sprint(pulls) != fmt.Sprint(want) {
+		t.Errorf("pulls = %+v, want %+v", pulls, want)
+	}
+	if want := "GET /repos/example/widgets/commits/" + sampleSHA + "/pulls?page=1&per_page=100"; stub.Requests[0] != want {
+		t.Errorf("request = %s", stub.Requests[0])
+	}
+	if _, err := adapter(t, stub).MergedPullsAt(context.Background(), "9f2c6e1"); err == nil {
+		t.Error("a short commit was asked about")
+	}
+	stub.Fail["GET /commits/"] = http.StatusForbidden
+	if _, err := adapter(t, stub).MergedPullsAt(context.Background(), sampleSHA); !errors.As(err, new(*scm.StatusError)) {
+		t.Errorf("a refused list: %v", err)
+	}
+}
+
 func TestBranchesAtNamesEveryBranchWhoseHeadIsTheCommit(t *testing.T) {
 	stub := scmtest.New(t)
 	stub.Branches["main"] = sampleSHA

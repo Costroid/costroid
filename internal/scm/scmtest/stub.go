@@ -38,6 +38,10 @@ type Pull struct {
 	// Commits are the pull request's commits, oldest first, as GitHub lists
 	// them.
 	Commits []string
+	// MergedAt is when the pull request merged, zero while it has not, and
+	// MergeCommitSHA the commit its merge put on the base branch.
+	MergedAt       time.Time
+	MergeCommitSHA string
 }
 
 // Check is a stored check run. App is the slug of the App that posted it, the
@@ -73,7 +77,8 @@ type Stub struct {
 	// Branches maps a branch to the commit at its head.
 	Branches map[string]string
 	// Pulls are the repository's pull requests. The list of a commit's pull
-	// requests answers empty, as GitHub's does for a fork's.
+	// requests names those whose commits or merge commit it is, so a fork's
+	// pull request is not named there, as on GitHub.
 	Pulls []Pull
 	// App is the slug of the App the token belongs to. A check run's answer
 	// names it, and the stub posts comments as its account.
@@ -152,7 +157,7 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
 	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/pulls"):
-		s.answer(w, []any{})
+		s.listCommitPulls(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && strings.HasSuffix(path, "/check-runs"):
 		s.listChecks(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/pulls/") && strings.HasSuffix(path, "/commits"):
@@ -253,6 +258,34 @@ func (s *Stub) listPulls(w http.ResponseWriter, r *http.Request) {
 			head["repo"] = map[string]string{"full_name": pull.HeadRepository}
 		}
 		listed = append(listed, map[string]any{"number": pull.Number, "state": pull.State, "head": head})
+	}
+	s.answer(w, listed)
+}
+
+// listCommitPulls answers as GitHub's list of a commit's pull requests does:
+// each pull request the commit belongs to or merged as, with its merged_at
+// null until it merged.
+func (s *Stub) listCommitPulls(w http.ResponseWriter, r *http.Request) {
+	sha := commitOf(r.URL.Path)
+	size, page, ok := paging(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var matched []Pull
+	for _, pull := range s.Pulls {
+		if pull.MergeCommitSHA == sha || slices.Contains(pull.Commits, sha) {
+			matched = append(matched, pull)
+		}
+	}
+	listed := []map[string]any{}
+	for index := (page - 1) * size; index >= 0 && index < len(matched) && index < page*size; index++ {
+		pull := matched[index]
+		var merged any
+		if !pull.MergedAt.IsZero() {
+			merged = pull.MergedAt.UTC().Format(time.RFC3339)
+		}
+		listed = append(listed, map[string]any{"number": pull.Number, "state": pull.State, "merged_at": merged, "merge_commit_sha": pull.MergeCommitSHA})
 	}
 	s.answer(w, listed)
 }
