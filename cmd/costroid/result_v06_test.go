@@ -22,7 +22,7 @@ import (
 //	sha256sum rows.jsonl
 const (
 	realRowsSHA256     = "ffbdfb76589dfdfd44187050fde97f7a44684d0cb9bb588394dc005ff65bc8f4"
-	realRowsFileSHA256 = "ba1d40db6a55760657eb1d6ebf3c8979a3df229881b1e7c65e107cc981691cf4"
+	realRowsFileSHA256 = "71e590abea936653272d6b936c8079b89ee106668ff19899a83201990b720f74"
 	// emptySHA256 is the SHA-256 of zero bytes.
 	emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	// earlierDigest stands for the digest of an earlier run's rows. The

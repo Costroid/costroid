@@ -27,7 +27,7 @@ Last reconciliation of `apikey_03Example`: 2026-11-05, the provider had not fini
 <details>
 <summary>Agents, models and catalog</summary>
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.2`, prices read 2026-11-14.
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
 
 </details>
 
@@ -36,13 +36,13 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.2`, pri
 
 | Catalog | Token class |
 | --- | --- |
-| `0.4.2` | `input_uncached` |
-| `0.4.2` | `cache_read` |
-| `0.4.2` | `cache_write_5m` |
-| `0.4.2` | `cache_write_1h` |
-| `0.4.2` | `output` |
-| `0.4.2` | `reasoning_output` |
-| `0.4.2` | `cached_input_reported` |
+| `0.4.3` | `input_uncached` |
+| `0.4.3` | `cache_read` |
+| `0.4.3` | `cache_write_5m` |
+| `0.4.3` | `cache_write_1h` |
+| `0.4.3` | `output` |
+| `0.4.3` | `reasoning_output` |
+| `0.4.3` | `cached_input_reported` |
 
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
@@ -104,7 +104,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
     ],
     "models_omitted": 0,
     "catalog_versions": [
-      "0.4.2"
+      "0.4.3"
     ],
     "fallback_models": [],
     "fallback_models_omitted": 0,
