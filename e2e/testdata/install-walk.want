@@ -1,0 +1,33 @@
+# The commands e2e/install-walk.sh expects to fail, one a line: the image, the
+# phase, and the command as typed, with the pinned release as <version>.
+
+# Neither ubuntu nor debian holds less.
+ubuntu:24.04 one-step $ less costroid-install.sh
+debian:12 one-step $ less costroid-install.sh
+
+# The script refuses without cosign, so nothing is installed and costroid is
+# not found.
+ubuntu:24.04 one-step $ sh costroid-install.sh
+ubuntu:24.04 one-step $ costroid demo
+debian:12 one-step $ sh costroid-install.sh
+debian:12 one-step $ costroid demo
+alpine:3.20 one-step $ sh costroid-install.sh
+alpine:3.20 one-step $ costroid demo
+
+# BusyBox's sha256sum takes -c, not --check.
+alpine:3.20 by-hand $ grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
+
+# No image holds sudo, and a user with no privilege cannot write
+# /usr/local/bin, so costroid is not found.
+ubuntu:24.04 by-hand $ sudo mv costroid-linux-amd64 /usr/local/bin/costroid
+ubuntu:24.04 by-hand $ costroid version
+debian:12 by-hand $ sudo mv costroid-linux-amd64 /usr/local/bin/costroid
+debian:12 by-hand $ costroid version
+alpine:3.20 by-hand $ sudo mv costroid-linux-amd64 /usr/local/bin/costroid
+alpine:3.20 by-hand $ costroid version
+
+# demo's next command, costroid init, asks for the host in a repository with
+# no remote.
+ubuntu:24.04 binary $ costroid init
+debian:12 binary $ costroid init
+alpine:3.20 binary $ costroid init

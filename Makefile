@@ -88,6 +88,16 @@ image:
 e2e:
 	go test -tags e2e -count=1 -timeout 15m ./e2e
 
+.PHONY: install-walk
+
+# Walks docs/install.md in fresh ubuntu, debian and alpine containers against
+# the public release the recipes pin, with this tree's install script and
+# binary, and fails when the commands that fail differ from
+# e2e/testdata/install-walk.want. It needs Docker and the network, and it stays
+# out of check.
+install-walk:
+	./e2e/install-walk.sh
+
 # Proves e2e fails, at every step that states the figure, when a price moves.
 e2e-bite:
 	./e2e/price-bite.sh
