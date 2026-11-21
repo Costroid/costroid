@@ -1,14 +1,14 @@
 # Title
 
-Verdict: neutral
+No figure (reader_refused): the reader refused the agent's stream, so the run wrote no rows. No rule ran.
 
 # Summary
 
-**Verdict: neutral.** No policy ran on this change.
+**No figure (reader_refused): the reader refused the agent's stream, so the run wrote no rows. No rule ran.**
+
+The reader's first error: `claude-code: the execution file ends inside its array`.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-This report shows no figures. Reason `reader_refused`: the reader refused the agent's stream, so the run wrote no rows. The reader's first error: `claude-code: the execution file ends inside its array`.
 
 # Text
 

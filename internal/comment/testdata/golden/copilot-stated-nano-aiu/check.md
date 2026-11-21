@@ -1,27 +1,27 @@
 # Title
 
-Verdict: neutral
+No budget set: this run cost USD 0.00329423 at list (Measured). No rule decides this check.
 
 # Summary
 
-This run cost USD 0.00329423 at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.
+**No budget set: this run cost USD 0.00329423 at list (Measured). No rule decides this check.**
 
-**Verdict: neutral.** No policy ran on this change.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| USD 0.00329423 | Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.00329423 | Measured | the wrapper stops the process at the cap |
 
 Copilot CLI stated 0 nano-AI units for this run, which Costroid never converts to dollars.
 
-Unverified: the agent's job wrote these figures.
-
 <details>
-<summary>Cap, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: held by wrapper-watchdog (the wrapper stops the process at the cap). The rows do not record its amount, and the report was not given it.
+Cap: the wrapper stops the process at the cap. The rows do not record its amount, and the report was not given it.
+
+No policy ran on this change.
 
 Agents: `copilot`. Models: `claude-haiku-5-5`. 13 rows, catalog `0.3.0`, prices read 2026-11-08.
 
@@ -32,11 +32,11 @@ Agents: `copilot`. Models: `claude-haiku-5-5`. 13 rows, catalog `0.3.0`, prices 
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.3.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 8 | USD 0.0000008 |
-| `0.3.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per 1,000,000 tokens | 43418 | USD 0.00043418 |
-| `0.3.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per 1,000,000 tokens | 21958 | USD 0.00274475 |
-| `0.3.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 229 | USD 0.0001145 |
-| `0.3.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 43418 | USD 0 |
+| `0.3.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.10 per million tokens | 8 | USD 0.0000008 |
+| `0.3.0` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per million tokens | 43418 | USD 0.00043418 |
+| `0.3.0` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per million tokens | 21958 | USD 0.00274475 |
+| `0.3.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.50 per million tokens | 229 | USD 0.0001145 |
+| `0.3.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 43418 | No amount: not priced |
 
 </details>
 

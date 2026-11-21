@@ -1,0 +1,22 @@
+**Over budget: this pull request's runs cost USD 0.00323945 at list (List-equivalent, not billed), over the USD 0.003 pull request budget.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
+[The approval page](https://docs.costroid.com/approval) says how a reviewer approves a failed check.
+
+### Costroid
+
+| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| USD 0.001619725 | List-equivalent, not billed | `0.4.3` | client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |
+
+<details>
+<summary>Cap, policy, agents, models and catalog</summary>
+
+Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+
+A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
+
+</details>

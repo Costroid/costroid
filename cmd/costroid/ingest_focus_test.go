@@ -184,7 +184,7 @@ func TestMissingOptionalFileSaysWhy(t *testing.T) {
 	if code != 0 || strings.Count(comment, line) != 1 {
 		t.Errorf("the report on those rows: exit %d, %d lines that say why: %s%s", code, strings.Count(comment, line), comment, stderr)
 	}
-	if !strings.Contains(comment, "This run cost USD") {
+	if !strings.Contains(comment, "this run cost USD") {
 		t.Error("the agent's figure left the comment")
 	}
 	found := filepath.Join(t.TempDir(), "infrastructure.csv")

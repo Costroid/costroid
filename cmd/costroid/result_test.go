@@ -155,7 +155,7 @@ func TestActionOutputsAreWrittenWhenNothingIsPosted(t *testing.T) {
 	if got["cost"] != realTotal || got["check_run_id"] != "" || !strings.Contains(got["result"], `"head_sha":"`+headCommit+`"`) {
 		t.Errorf("outputs %v", got)
 	}
-	if text := readFile(t, summary); strings.Contains(text, realTotal) || !strings.Contains(text, "| Basis | Catalog | Attribution | Enforcement |") {
+	if text := readFile(t, summary); strings.Contains(text, realTotal) || !strings.Contains(text, "| Basis | Catalog | Enforcement |") {
 		t.Errorf("a summary whose setting was never read shows amounts:\n%s", text)
 	}
 }
@@ -216,7 +216,7 @@ func TestStepSummaryWithholdsAmountsAndTokenCountsOnAPublicRepository(t *testing
 	_, summaryPath := stepFiles(t)
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	summary := readFile(t, summaryPath)
-	for _, want := range []string{"| Basis | Catalog | Attribution | Enforcement |", "| List-equivalent, not billed | `0.4.3` | unattributed | agent-flag:", "Amounts and token counts are off on this public repository"} {
+	for _, want := range []string{"| Basis | Catalog | Enforcement |", "| List-equivalent, not billed | `0.4.3` | client-side estimate, can pass the cap |", "Amounts and token counts are off on this public repository"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("no %q in\n%s", want, summary)
 		}
@@ -232,12 +232,13 @@ func TestStepSummaryWithholdsNothingWhereAmountsAreShown(t *testing.T) {
 	_, summaryPath := stepFiles(t)
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	summary := readFile(t, summaryPath)
-	table := "| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n" +
-		"| List-equivalent, not billed | `0.4.3` | USD " + realTotal + " | agent-flag: client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |\n"
-	if !strings.HasPrefix(summary, "### Costroid\n\n"+table) {
-		t.Errorf("the summary does not lead with the table:\n%s", summary)
+	sentence := "**No budget set: this run cost USD " + realTotal + " at list (List-equivalent, not billed). No rule decides this check.**\n\n"
+	table := "| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n" +
+		"| USD " + realTotal + " | List-equivalent, not billed | `0.4.3` | client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |\n"
+	if !strings.HasPrefix(summary, sentence) || !strings.Contains(summary, "\n### Costroid\n\n"+table) {
+		t.Errorf("the summary does not open on the sentence, or the table does not follow the reason:\n%s", summary)
 	}
-	if !strings.Contains(summary, "Cap: USD 5 (agent-flag: client-side estimate, can pass the cap).") {
+	if !strings.Contains(summary, "Cap: USD 5.00 (client-side estimate, can pass the cap).") {
 		t.Errorf("no cap line in\n%s", summary)
 	}
 }
@@ -425,7 +426,7 @@ func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
 		start    func(t *testing.T) string
 		sentence string
 	}{
-		{reason.NoUsage, 0, silentClaude, "This report shows no figures. Reason `no_usage`: the agent reported no usage, so the run wrote no rows."},
+		{reason.NoUsage, 0, silentClaude, "**No figure (no_usage): the agent reported no usage, so the run wrote no rows. No rule ran.**"},
 		{reason.ConcurrentRun, exitFailure, func(t *testing.T) string {
 			claude := silentClaude(t)
 			release, err := claudecode.Agent{}.Claim()
@@ -434,7 +435,7 @@ func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
 			}
 			t.Cleanup(release)
 			return claude
-		}, "This report shows no figures. Reason `concurrent_run`: another costroid run holds the agent's state directory, so this run did not start and wrote no rows."},
+		}, "**No figure (concurrent_run): another costroid run holds the agent's state directory, so this run did not start and wrote no rows. No rule ran.**"},
 	}
 	for _, test := range cases {
 		t.Run(string(test.reason), func(t *testing.T) {
@@ -462,7 +463,7 @@ func TestEmptyRunReasonInJSONAndComment(t *testing.T) {
 					t.Errorf("%s lacks %s:\n%s", where, field, text)
 				}
 			}
-			if !strings.Contains(body, test.sentence) || !strings.Contains(stub.Checks[0].Summary, test.sentence) {
+			if !strings.Contains(body, test.sentence) || !strings.Contains(stub.Checks[0].Summary, test.sentence) || stub.Checks[0].Title != strings.Trim(test.sentence, "*") {
 				t.Errorf("no %q in\n%s", test.sentence, body)
 			}
 		})
@@ -487,7 +488,7 @@ func TestReportFindsTheRunsReasonWithNoFlag(t *testing.T) {
 		t.Fatalf("report exit %d: %s", code, stderr)
 	}
 	body := stub.Comments[0].Body
-	if !strings.Contains(body, "Reason `no_usage`: the agent reported no usage") || !strings.Contains(commentBlock(t, body), `"run_reason": "no_usage"`) {
+	if !strings.Contains(body, "**No figure (no_usage): the agent reported no usage") || !strings.Contains(commentBlock(t, body), `"run_reason": "no_usage"`) {
 		t.Errorf("the comment does not carry the run's reason:\n%s", body)
 	}
 }

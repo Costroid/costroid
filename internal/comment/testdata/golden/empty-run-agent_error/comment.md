@@ -1,11 +1,11 @@
 <!-- costroid:comment -->
+**No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran.**
+
+It ended with `authentication_failed`: check the API key the agent runs with, the api-key input in the action.
+
 ### Costroid
 
-**Verdict: neutral.** No policy ran on this change.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-This report shows no figures. Reason `agent_error`: the agent ended in an error before it reported usage, so the run wrote no rows. It ended with `authentication_failed`: check the API key the agent runs with, the api-key input in the action.
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

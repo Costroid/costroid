@@ -69,10 +69,10 @@ func TestAuthFailureNamesItsReasonAndPrintsNoCost(t *testing.T) {
 	}
 	validateResult(t, reported)
 	body := stub.Comments[0].Body
-	sentence := "This report shows no figures. Reason `agent_error`: the agent ended in an error before it reported usage, so the run wrote no rows. " +
-		"It ended with `authentication_failed`: check the API key the agent runs with, the api-key input in the action."
-	if !strings.Contains(body, sentence) || !strings.Contains(stub.Checks[0].Summary, sentence) {
-		t.Errorf("no %q in\n%s", sentence, body)
+	sentence := "No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran."
+	fix := "**" + sentence + "**\n\nIt ended with `authentication_failed`: check the API key the agent runs with, the api-key input in the action.\n"
+	if !strings.Contains(body, fix) || !strings.HasPrefix(stub.Checks[0].Summary, fix) || stub.Checks[0].Title != sentence {
+		t.Errorf("no %q in\n%s", fix, body)
 	}
 	for where, text := range map[string]string{"report --json": reported, "the comment": commentBlock(t, body)} {
 		if !strings.Contains(text, `"run_reason": "agent_error"`) || !strings.Contains(text, `"class": "authentication_failed"`) || !strings.Contains(text, `"agent_skipped": false`) {

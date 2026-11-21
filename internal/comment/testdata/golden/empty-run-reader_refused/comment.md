@@ -1,11 +1,11 @@
 <!-- costroid:comment -->
+**No figure (reader_refused): the reader refused the agent's stream, so the run wrote no rows. No rule ran.**
+
+The reader's first error: `claude-code: the execution file ends inside its array`.
+
 ### Costroid
 
-**Verdict: neutral.** No policy ran on this change.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-This report shows no figures. Reason `reader_refused`: the reader refused the agent's stream, so the run wrote no rows. The reader's first error: `claude-code: the execution file ends inside its array`.
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

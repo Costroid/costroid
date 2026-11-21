@@ -62,5 +62,5 @@ func ApprovedConclusion(verdict string, approval *Approval, head string) string 
 // the check. The login passed loginPattern, so it renders as a code span.
 func approvalLine(approval Approval) string {
 	return fmt.Sprintf("`%s` approved commit `%s` at %s, so the check concludes neutral. The policy's verdict stays failure, and a new push ends the approval.",
-		approval.Approver, approval.HeadSHA[:shortCommitLength], approval.At.UTC().Format("2006-01-02 15:04 MST"))
+		approval.Approver, approval.HeadSHA[:shortCommitLength], approval.At.UTC().Format(instantLayout))
 }

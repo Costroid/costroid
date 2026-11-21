@@ -460,23 +460,30 @@ func refusedArtifact(getenv func(string) string, stderr io.Writer) *comment.Refu
 // is refused: no job ran that could say why.
 func previewReport(ctx context.Context, flags reportFlags, at time.Time, stdout, stderr io.Writer) int {
 	err := previewRowsExist(flags)
-	var body string
 	if err == nil {
 		input := rowsInput(flags, stderr)
 		input.Installation = flags.installation
 		input.Amounts = comment.AmountsShown
 		input.Verdict = previewVerdict(ctx, flags.rows, input.State, at, stderr)
 		input.Preview = true
-		body, err = comment.Comment(input)
-	}
-	if err == nil {
-		_, err = io.WriteString(stdout, body)
+		err = printPreview(stdout, input)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", fmt.Errorf("preview: %w", err))
 		return exitFailure
 	}
 	return 0
+}
+
+// printPreview prints the comment, then the verdict sentence again as the
+// last line, where a terminal leaves the eye.
+func printPreview(stdout io.Writer, input comment.Input) error {
+	body, err := comment.Comment(input)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "%s\n%s\n", body, comment.VerdictSentence(input))
+	return err
 }
 
 // previewRowsExist refuses a rows path with no file at it, unless the agent's

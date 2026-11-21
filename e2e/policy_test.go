@@ -18,7 +18,8 @@ const workflowPath = ".github/workflows/costroid.yml"
 // TestAPolicyHoldsTheRecordedRunToItsBudget reports the recorded run under a
 // budget that costroid.yml sets at the base commit. Over the budget it warns
 // during the warn-only period and fails after it. Under the budget the rows the
-// agent's job wrote cannot pass it.
+// agent's job wrote cannot pass it. The check's title and the comment's first
+// line say which, in one sentence.
 func TestAPolicyHoldsTheRecordedRunToItsBudget(t *testing.T) {
 	job := newWorkspace(t)
 	runAgent(t, job)
@@ -26,25 +27,29 @@ func TestAPolicyHoldsTheRecordedRunToItsBudget(t *testing.T) {
 		name, budget string
 		added        time.Duration
 		conclusion   string
+		opens        string
 		says, omits  []string
 	}{
 		{
 			name: "over the budget inside the period", budget: "0.001", added: 24 * time.Hour, conclusion: "neutral",
+			opens: "Over budget, warn-only: this run cost USD " + recordedTotal + " at list (",
 			says: []string{
-				"Run budget: USD " + recordedTotal + " is over the USD 0.001 budget.",
+				", over the USD 0.001 run budget. After ",
 				"Warn-only until ",
 				"Add `enforce: true` under `policy` in `costroid.yml` to enforce now.",
 			},
 		},
 		{
 			name: "over the budget after the period", budget: "0.001", added: 8 * 24 * time.Hour, conclusion: "failure",
-			says:  []string{"Run budget: USD " + recordedTotal + " is over the USD 0.001 budget."},
-			omits: []string{"Warn-only"},
+			opens: "Over budget: this run cost USD " + recordedTotal + " at list (",
+			says:  []string{", over the USD 0.001 run budget.**"},
+			omits: []string{"Warn-only", "warn-only"},
 		},
 		{
 			name: "under the budget", budget: "5", added: 8 * 24 * time.Hour, conclusion: "neutral",
-			says:  []string{"Run budget: unverified rows cannot satisfy a budget."},
-			omits: []string{"Warn-only"},
+			opens: "Within budget, by the job's own figures: this run cost USD " + recordedTotal + " at list (",
+			says:  []string{" of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**"},
+			omits: []string{"Warn-only", "warn-only"},
 		},
 	}
 	for _, tc := range cases {
@@ -67,7 +72,10 @@ func TestAPolicyHoldsTheRecordedRunToItsBudget(t *testing.T) {
 				t.Errorf("the check concluded %s on %s, want %s", check.Conclusion, check.HeadSHA, tc.conclusion)
 			}
 			body := github.Comments[0].Body
-			for _, want := range append(tc.says, "**Verdict: "+tc.conclusion+".**", "USD "+recordedTotal, `"config_ref": "`+base+`"`) {
+			if !strings.HasPrefix(check.Title, tc.opens) || !strings.HasPrefix(body, "<!-- costroid:comment -->\n**"+check.Title+"**\n") {
+				t.Errorf("the check's title is %q, want it to open %q and the comment to open on it:\n%s", check.Title, tc.opens, body)
+			}
+			for _, want := range append(tc.says, "USD "+recordedTotal, `"config_ref": "`+base+`"`) {
 				if !strings.Contains(body, want) {
 					t.Errorf("comment: want %q in:\n%s", want, body)
 				}

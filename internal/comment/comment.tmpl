@@ -1,18 +1,20 @@
+{{- define "reading" -}}
+**{{.Sentence}}**
+{{- range .Reading}}
+
+{{.}}
+{{- end}}
+{{- end -}}
+
 {{- define "facts" -}}
-{{if .Recorded -}}
-{{.Recorded}}
+{{template "reading" .}}
 
-{{end -}}
-{{if .FirstLine -}}
-{{.FirstLine}}
+{{template "evidence" .}}
+{{- end -}}
 
-{{end -}}
-**Verdict: {{.Conclusion}}.** {{.VerdictLine}}
-
+{{- define "evidence" -}}
 {{.RunLine}}
-
-{{if .Why -}}
-{{.Why}}
+{{- if .NoFigures}}
 {{- if .Infrastructure}}
 
 {{template "infrastructure" .Infrastructure}}
@@ -21,20 +23,25 @@
 
 {{.EstimateUnavailable}}
 {{- end}}
-{{- else -}}
+{{- else}}
+
 {{if .ShowAmounts -}}
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-{{range .Lines -}}
-| {{.Cost}}{{.Mark}} | {{.Basis}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
-{{end}}
-{{- else -}}
-| Basis | Attribution | Enforcement |
+| Cost | Basis | Enforcement |
 | --- | --- | --- |
 {{range .Lines -}}
-| {{.Basis}}{{.Mark}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+| {{.Cost}}{{.Mark}} | {{.Basis}} | {{.Note}} |
+{{end}}
+{{- else -}}
+| Basis | Enforcement |
+| --- | --- |
+{{range .Lines -}}
+| {{.Basis}}{{.Mark}} | {{.Note}} |
 {{end}}
 {{- end}}
+{{if .PastCap -}}
+{{.PastCap}}
+
+{{end -}}
 {{if .Infrastructure}}{{template "infrastructure" .Infrastructure}}
 
 {{end -}}
@@ -53,8 +60,6 @@
 {{.AgentStated}}
 
 {{end -}}
-{{.TrustLine}}
-
 {{if .FiguresOmitted -}}
 {{.FiguresOmitted}} more lines are left out of this table.
 
@@ -70,17 +75,21 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.}}
 
 {{end -}}
+{{template "details" .}}
+{{- range .Traces}}
+
+{{template "trace" .}}
+{{- end}}
+{{- end}}
+{{- end -}}
+
+{{- define "details" -}}
 <details>
 <summary>{{.DetailsSummary}}</summary>
 {{range .Details}}
 {{.}}
 {{end}}
 </details>
-{{- range .Traces}}
-
-{{template "trace" .}}
-{{- end}}
-{{- end}}
 {{- end -}}
 
 {{- define "infrastructure" -}}
@@ -143,9 +152,11 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 
 {{- define "comment" -}}
 {{.Marker}}
+{{template "reading" .}}
+
 ### Costroid
 
-{{template "facts" .}}
+{{template "evidence" .}}
 
 {{range .Lifetime}}{{.}}{{"\n\n"}}{{end -}}
 [Costroid Platform (not open yet)]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
@@ -159,28 +170,27 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{end -}}
 
 {{- define "summary" -}}
+{{template "reading" .}}
+{{if not .NoFigures}}
 ### Costroid
 
-{{if .Recorded -}}
-{{.Recorded}}
-
-{{end -}}
-{{if .Why -}}
-{{.Why}}
-{{- else -}}
 {{if .ShowAmounts -}}
-| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |
+| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 {{range .Lines -}}
-| {{.Basis}}{{.Mark}} | {{.Catalogs}} | {{.Cost}} | {{.Enforcement}}: {{.Note}} | {{.InputUncached}} | {{.CacheRead}} | {{.CacheWrite}} | {{.Output}} |
+| {{.Cost}}{{.Mark}} | {{.Basis}} | {{.Catalogs}} | {{.Note}} | {{.InputUncached}} | {{.CacheRead}} | {{.CacheWrite}} | {{.Output}} |
 {{end}}
 {{- else -}}
-| Basis | Catalog | Attribution | Enforcement |
-| --- | --- | --- | --- |
+| Basis | Catalog | Enforcement |
+| --- | --- | --- |
 {{range .Lines -}}
-| {{.Basis}}{{.Mark}} | {{.Catalogs}} | {{.Attribution}} | {{.Enforcement}}: {{.Note}} |
+| {{.Basis}}{{.Mark}} | {{.Catalogs}} | {{.Note}} |
 {{end}}
 {{- end}}
+{{if .PastCap -}}
+{{.PastCap}}
+
+{{end -}}
 {{if .Fallback -}}
 {{.Fallback}}
 
@@ -189,18 +199,16 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.AgentError}}
 
 {{end -}}
-{{.TrustLine}}
-
 {{if .FiguresOmitted -}}
 {{.FiguresOmitted}} more lines are left out of this table.
 
 {{end -}}
 {{if .ShowAmounts -}}
-{{.CapLine}}
+{{template "details" .}}
 {{- else if .AmountsOff -}}
 Amounts and token counts are off on this public repository (`comment.show_cost: false`). The step's outputs and the check run's machine block carry them.
 {{- else -}}
 Amounts and token counts are withheld, because `comment.show_cost` or the repository's visibility could not be read. The step's outputs and the check run's machine block carry them.
 {{- end}}
-{{- end}}
+{{end -}}
 {{end -}}

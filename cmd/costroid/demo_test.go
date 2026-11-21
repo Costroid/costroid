@@ -22,9 +22,23 @@ const (
 	demoTotal     = "0.0391529"
 )
 
+// demoComment is the comment demo renders for a state, as Markdown.
+func demoComment(t *testing.T, state string) string {
+	t.Helper()
+	input, err := demoStateInput(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := comment.Comment(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 // TestDemoRendersForATerminal reads the demo as a terminal shows it: the
-// comment's first line, its verdict, the cost table and how the cost was
-// computed, in plain text with aligned columns, and no machine block.
+// verdict sentence, its reason, the cost table and how the cost was computed,
+// in plain text with aligned columns, and no machine block.
 func TestDemoRendersForATerminal(t *testing.T) {
 	code, stdout, stderr := execute(t, "demo")
 	if code != 0 || stderr != "" {
@@ -36,14 +50,16 @@ func TestDemoRendersForATerminal(t *testing.T) {
 		}
 	}
 	lines := strings.Split(stdout, "\n")
-	if len(lines) > 45 {
+	if len(lines) > 50 {
 		t.Errorf("the demo prints %d lines", len(lines))
 	}
-	if want := "Costroid\n\nThis run cost USD " + demoTotal + " at list (Measured). No cap held it.\n\nVerdict: neutral."; !strings.HasPrefix(stdout, want) {
-		t.Errorf("the demo does not open on the first line and the verdict:\n%s", stdout)
+	want := "Within budget, by the job's own figures: this run cost USD " + demoTotal + " at list\n(Measured) of the USD 5.00 run budget. Nothing outside the job checked the\nfigures, so the check is neutral.\n\n" +
+		"Unchecked: the agent's own job wrote these figures, and nothing outside it\nchecked them.\n\nCostroid\n\n"
+	if !strings.HasPrefix(stdout, want) {
+		t.Errorf("the demo does not open on the verdict sentence and its reason:\n%s", stdout)
 	}
-	header := "Cost           Basis     Attribution   Enforcement"
-	row := "USD " + demoTotal + "  Measured  unattributed  none: no cap held the run"
+	header := "Cost           Basis     Enforcement"
+	row := "USD " + demoTotal + "  Measured  no cap held the run"
 	if !strings.Contains(stdout, "\n"+header+"\n"+row+"\n") {
 		t.Errorf("no aligned cost table in\n%s", stdout)
 	}
@@ -75,21 +91,86 @@ func TestDemoMarkdownKeepsTheComment(t *testing.T) {
 	if want := readFile(t, docsExample); stdout != want {
 		t.Errorf("costroid demo --markdown does not print %s:\n%s", docsExample, stdout)
 	}
-	if !strings.Contains(stdout, "This run cost USD "+demoTotal+" at list (Measured). No cap held it.") {
+	if !strings.HasPrefix(stdout, comment.Marker+"\n**Within budget, by the job's own figures: this run cost USD "+demoTotal+" at list (Measured) of the USD 5.00 run budget. ") {
 		t.Errorf("the demo does not open on the recorded run's figure:\n%s", stdout)
 	}
 	for _, state := range demoStates {
-		want, err := demoStateComment(context.Background(), state)
-		if err != nil {
-			t.Fatal(err)
-		}
+		want := demoComment(t, state)
 		code, markdown, _ := execute(t, "demo", "--state", state, "--markdown")
 		if code != 0 || markdown != want || !strings.HasPrefix(markdown, comment.Marker+"\n") || !strings.Contains(markdown, "Machine block") {
 			t.Errorf("--state %s --markdown: exit %d, not the comment:\n%s", state, code, markdown)
 		}
 		_, plain, _ := execute(t, "demo", "--state", state)
-		if plain != forTerminal(want) {
+		if !strings.HasPrefix(plain, forTerminal(want)) {
 			t.Errorf("--state %s does not render its comment", state)
+		}
+	}
+}
+
+// TestDemoEndsOnTheVerdictSentence holds the last paragraph the demo prints
+// for a terminal, in every state, to the sentence its comment opens with,
+// wrapped as its prose is. --markdown prints the comment alone.
+func TestDemoEndsOnTheVerdictSentence(t *testing.T) {
+	for _, state := range demoStates {
+		sentence := strings.Trim(lineWith(demoComment(t, state), "**"), "*")
+		if sentence == "" {
+			t.Fatalf("--state %s: the comment opens on no sentence", state)
+		}
+		code, plain, stderr := execute(t, "demo", "--state", state)
+		if code != 0 {
+			t.Fatalf("--state %s: exit %d: %s", state, code, stderr)
+		}
+		paragraphs := strings.Split(strings.TrimSuffix(plain, "\n"), "\n\n")
+		last := paragraphs[len(paragraphs)-1]
+		if strings.ReplaceAll(last, "\n", " ") != sentence {
+			t.Errorf("--state %s ends on\n%s\nand its comment opens on\n%s", state, last, sentence)
+		}
+		for line := range strings.SplitSeq(last, "\n") {
+			if len(line) > terminalWidth {
+				t.Errorf("--state %s: a line of the closing sentence passes %d columns: %q", state, terminalWidth, line)
+			}
+		}
+		if _, markdown, _ := execute(t, "demo", "--state", state, "--markdown"); !strings.HasSuffix(markdown, "\n</details>\n") {
+			t.Errorf("--state %s --markdown prints more than the comment", state)
+		}
+	}
+	if _, plain, _ := execute(t, "demo", "--state", demoFailure); !strings.HasSuffix(plain, "\n\nOver budget: this run cost USD "+demoTotal+" at list (Measured), over the USD 0.01\nrun budget.\n") {
+		t.Errorf("the failure state does not end on its sentence:\n%s", plain)
+	}
+}
+
+// TestPreviewEndsOnTheVerdictSentence holds report --preview to the comment
+// the report would post, byte for byte, and after it one last line: the
+// sentence that comment opens with.
+func TestPreviewEndsOnTheVerdictSentence(t *testing.T) {
+	outsideCI(t)
+	t.Setenv(installationVariable, "")
+	rows := absolute(t, demoRowsFile)
+	directory := t.TempDir()
+	t.Chdir(directory)
+	figure := "this run cost USD " + demoTotal + " at list (Measured)"
+	for config, sentence := range map[string]string{
+		"":                "No budget set: " + figure + ". No rule decides this check.",
+		demoConfig:        "Within budget, by the job's own figures: " + figure + " of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
+		demoFailingConfig: "Over budget, warn-only: " + figure + ", over the USD 0.01 run budget. After the warn-only period this fails the check.",
+		"policy: [\n":     "Not decided: costroid.yml is not valid, so no rule ran. This run cost USD " + demoTotal + " at list (Measured).",
+	} {
+		os.Remove(configFile)
+		if config != "" {
+			if err := os.WriteFile(configFile, []byte(config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		code, stdout, stderr := execute(t, "report", "--preview", "--rows", rows)
+		if code != 0 {
+			t.Fatalf("costroid.yml %q: exit %d: %s", config, code, stderr)
+		}
+		body, closed := strings.CutSuffix(stdout, "\n"+sentence+"\n")
+		if !closed || !strings.HasSuffix(body, "\n```\n\n</details>\n") || lastLine(stdout) != sentence {
+			t.Errorf("costroid.yml %q: after the comment the preview ends on\n%s\nwant\n%s", config, lastLine(stdout), sentence)
+		}
+		if !strings.HasPrefix(body, comment.Marker+"\n**"+sentence+"**\n\n") || strings.Count(stdout, sentence) != 2 {
+			t.Errorf("costroid.yml %q: the comment does not open on the sentence the preview ends on:\n%s", config, stdout)
 		}
 	}
 }
@@ -98,14 +179,14 @@ func TestDemoMarkdownKeepsTheComment(t *testing.T) {
 // terminal shows it and as the check run's object states it.
 func TestDemoStateShowsEachState(t *testing.T) {
 	for state, want := range map[string][]string{
-		demoNeutral: {"Verdict: neutral.", "No cap held it.", "No cap held this run", `"conclusion": "neutral"`},
+		demoNeutral: {"so the check is neutral.", "no cap held the run", "No cap held this run.", `"conclusion": "neutral"`},
 		demoCapped: {
-			"This run cost USD 0.0283136 at list (Measured). Cap: USD 0.001 (wrapper-watchdog",
-			"Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap).\nCost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.",
+			"this run cost USD 0.0283136 at list\n(Measured) of the USD 5.00 run budget.",
+			"Enforcement\nUSD 0.0283136  Measured  the wrapper stops the process at the cap\n\nCap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136,\nMeasured. Over the cap by USD 0.0273136 and 16960 tokens.",
 			`"overshoot": "0.0273136"`,
 		},
-		demoFailure: {"Verdict: failure. Run budget: USD " + demoTotal + " is over the USD 0.01 budget.", `"conclusion": "failure"`},
-		demoSkipped: {"The agent did not run on this pull request", `"agent_skipped": true`},
+		demoFailure: {"Over budget: this run cost USD " + demoTotal + " at list (Measured), over the USD 0.01\nrun budget.", `"conclusion": "failure"`},
+		demoSkipped: {"No agent run: the workflow skipped the agent's job on this pull request", `"agent_skipped": true`},
 	} {
 		_, plain, _ := execute(t, "demo", "--state", state)
 		_, markdown, _ := execute(t, "demo", "--state", state, "--markdown")
@@ -114,7 +195,7 @@ func TestDemoStateShowsEachState(t *testing.T) {
 				t.Errorf("--state %s shows no %q:\n%s", state, line, plain)
 			}
 		}
-		if cost := strings.Contains(plain, "This run cost"); cost == (state == demoSkipped) {
+		if cost := strings.Contains(plain, "this run cost"); cost == (state == demoSkipped) {
 			t.Errorf("--state %s states a cost: %t", state, cost)
 		}
 	}
@@ -184,7 +265,7 @@ func TestPreviewPrintsTheCommentWithoutAHost(t *testing.T) {
 		}
 		assertPreview(t, stdout)
 		for _, want := range []string{
-			"No rule applied: `costroid.yml` in this directory sets no budget and no threshold.",
+			"No rule applied: `costroid.yml` in this directory sets no budget and no limit.",
 			"This is one run, not a total across runs.",
 			"(https://costroid.com/account/)",
 			"Machine block, the check run was not posted",
@@ -208,7 +289,7 @@ func TestPreviewPrintsTheCommentWithoutAHost(t *testing.T) {
 			t.Fatalf("exit %d: %s", code, stderr)
 		}
 		assertPreview(t, stdout)
-		for _, want := range []string{"Run budget: unverified rows cannot satisfy a budget.", "installation=github%3A" + demoInstallation} {
+		for _, want := range []string{"Within budget, by the job's own figures: ", "installation=github%3A" + demoInstallation} {
 			if !strings.Contains(stdout, want) {
 				t.Errorf("no %q in\n%s", want, stdout)
 			}
@@ -224,7 +305,7 @@ func TestPreviewPrintsTheCommentWithoutAHost(t *testing.T) {
 
 func assertPreview(t *testing.T, stdout string) {
 	t.Helper()
-	if !strings.HasPrefix(stdout, comment.Marker+"\n### Costroid\n\nThis run cost USD "+demoTotal+" at list (Measured). No cap held it.\n\n**Verdict: neutral.**") {
+	if !strings.HasPrefix(stdout, comment.Marker+"\n**") || !strings.Contains(stdout, "this run cost USD "+demoTotal+" at list (Measured)") || !strings.Contains(stdout, "\n\n### Costroid\n\n") {
 		t.Errorf("the preview does not open as the comment does:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "```json\n{\n  \"schema\": \"costroid.result/0.9\"") {
@@ -249,7 +330,7 @@ func TestPreviewNamesThisDirectory(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
 	for config, want := range map[string]string{
-		"":                "No rule applied: `costroid.yml` in this directory sets no budget and no threshold.",
+		"":                "No rule applied: `costroid.yml` in this directory sets no budget and no limit.",
 		"policy: [\n":     "No rule ran, so the check concludes neutral: `costroid.yml` in this directory is not valid",
 		demoFailingConfig: "Run budget: USD 0.01, from `policy.run_budget_usd` in `costroid.yml`.",
 	} {
@@ -285,8 +366,8 @@ func TestPreviewShowsTheOvershoot(t *testing.T) {
 	rows := absolute(t, demoRowsFile)
 	t.Chdir(t.TempDir())
 	for budget, want := range map[string]string{
-		"0.01": "No cap held this run: its enforcement grade is none. Cap: USD 0.01, which nothing enforced. Cost: USD " + demoTotal + ", Measured. Over the cap by USD 0.0291529 and 36120 tokens.\n",
-		"5":    "No cap held this run: its enforcement grade is none. Cap: USD 5, which nothing enforced. Cost: USD " + demoTotal + ", Measured. Under the cap by USD 4.9608471.\n",
+		"0.01": "No cap held this run. Cap: USD 0.01, which nothing enforced. Cost: USD " + demoTotal + ", Measured. Over the cap by USD 0.0291529 and 36120 tokens.\n",
+		"5":    "No cap held this run. Cap: USD 5.00, which nothing enforced. Cost: USD " + demoTotal + ", Measured. Under the cap by USD 4.9608471.\n",
 	} {
 		code, stdout, stderr := execute(t, "report", "--preview", "--rows", rows, "--budget-usd", budget)
 		if code != 0 {
@@ -306,7 +387,7 @@ func TestPreviewShowsTheOvershoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := execute(t, "report", "--preview", "--rows", capped, "--budget-usd", demoCap)
-	if code != 0 || !strings.Contains(stdout, "\nCap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.\n") || strings.Contains(stdout, "nothing enforced") {
+	if code != 0 || !strings.Contains(stdout, "\nCap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.\n") || strings.Contains(stdout, "nothing enforced") {
 		t.Errorf("a held run's cap line changed: exit %d:\n%s%s", code, stdout, stderr)
 	}
 }

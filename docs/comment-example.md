@@ -1,24 +1,24 @@
 <!-- costroid:comment -->
+**Within budget, by the job's own figures: this run cost USD 0.0391529 at list (Measured) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
 ### Costroid
-
-This run cost USD 0.0391529 at list (Measured). No cap held it.
-
-**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. The run cost USD 0.0391529 of the USD 5 budget. The verdict is neutral because the agent's own job wrote the rows. Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| USD 0.0391529 | Measured | unattributed | none: no cap held the run |
-
-Unverified: the agent's job wrote these figures.
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.0391529 | Measured | no cap held the run |
 
 <details>
-<summary>Cap, budget, agents, models and catalog</summary>
+<summary>Cap, budget, policy, agents, models and catalog</summary>
 
-No cap held this run: its enforcement grade is none.
+No cap held this run.
 
-Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`.
+Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+
+Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, catalog `0.4.3`, prices read 2026-11-21.
 
@@ -29,13 +29,13 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-opus-5-5`. 12 rows, c
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.4.3` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 1200 | USD 0.00012 |
-| `0.4.3` | `input_uncached` | `anthropic:claude-opus-5-5:global:standard:all:input_uncached` | USD 4 per 1,000,000 tokens | 4 | USD 0.000016 |
-| `0.4.3` | `cache_read` | `anthropic:claude-opus-5-5:global:standard:all:cache_read` | USD 0.2 per 1,000,000 tokens | 28767 | USD 0.0057534 |
-| `0.4.3` | `cache_write_5m` | `anthropic:claude-opus-5-5:global:standard:all:cache_write_5m` | USD 5 per 1,000,000 tokens | 5959 | USD 0.029795 |
-| `0.4.3` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 17 | USD 0.0000085 |
-| `0.4.3` | `output` | `anthropic:claude-opus-5-5:global:standard:all:output` | USD 20 per 1,000,000 tokens | 173 | USD 0.00346 |
-| `0.4.3` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28767 | USD 0 |
+| `0.4.3` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.10 per million tokens | 1200 | USD 0.00012 |
+| `0.4.3` | `input_uncached` | `anthropic:claude-opus-5-5:global:standard:all:input_uncached` | USD 4.00 per million tokens | 4 | USD 0.000016 |
+| `0.4.3` | `cache_read` | `anthropic:claude-opus-5-5:global:standard:all:cache_read` | USD 0.20 per million tokens | 28767 | USD 0.0057534 |
+| `0.4.3` | `cache_write_5m` | `anthropic:claude-opus-5-5:global:standard:all:cache_write_5m` | USD 5.00 per million tokens | 5959 | USD 0.029795 |
+| `0.4.3` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.50 per million tokens | 17 | USD 0.0000085 |
+| `0.4.3` | `output` | `anthropic:claude-opus-5-5:global:standard:all:output` | USD 20.00 per million tokens | 173 | USD 0.00346 |
+| `0.4.3` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28767 | No amount: not priced |
 
 </details>
 

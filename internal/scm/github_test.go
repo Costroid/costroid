@@ -43,14 +43,18 @@ func TestPostCheckCreatesACompletedCheckAndReturnsItsID(t *testing.T) {
 func TestUpdateCheckRewritesTheOutputAndKeepsTheConclusion(t *testing.T) {
 	stub := scmtest.New(t)
 	host := adapter(t, stub)
-	id, err := host.PostCheck(context.Background(), scm.CheckRun{Name: "costroid", HeadSHA: sampleSHA, Conclusion: "neutral", Summary: "s", Text: "first", Completed: time.Unix(0, 0)})
+	const title = "No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check."
+	id, err := host.PostCheck(context.Background(), scm.CheckRun{Name: "costroid", HeadSHA: sampleSHA, Conclusion: "neutral", Title: title, Summary: "s", Text: "first", Completed: time.Unix(0, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := host.UpdateCheck(context.Background(), id, scm.CheckRun{Title: "Verdict: neutral", Summary: "s", Text: "second"}); err != nil {
+	if len(stub.Checks) != 1 || stub.Checks[0].Title != title {
+		t.Fatalf("the check was posted without its title: %+v", stub.Checks)
+	}
+	if err := host.UpdateCheck(context.Background(), id, scm.CheckRun{Title: title, Summary: "s", Text: "second"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(stub.Checks) != 1 || stub.Checks[0].Text != "second" || stub.Checks[0].Conclusion != "neutral" {
+	if len(stub.Checks) != 1 || stub.Checks[0].Text != "second" || stub.Checks[0].Title != title || stub.Checks[0].Conclusion != "neutral" {
 		t.Errorf("checks = %+v", stub.Checks)
 	}
 	if writes := stub.Writes(); len(writes) != 2 || writes[1] != fmt.Sprintf("PATCH /repos/example/widgets/check-runs/%d", id) {

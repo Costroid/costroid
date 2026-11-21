@@ -1,18 +1,18 @@
 # Title
 
-Verdict: neutral
+Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 
 # Summary
 
-This run was priced at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
+**Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
-**Verdict: neutral.** Run budget: unverified rows cannot satisfy a budget. The run is within the budget. The verdict is neutral because the agent's own job wrote the rows. Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Basis | Attribution | Enforcement |
-| --- | --- | --- |
-| List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
+| Basis | Enforcement |
+| --- | --- |
+| List-equivalent, not billed | client-side estimate, can pass the cap |
 
 Infrastructure, estimated, in EUR for 2026-12, from `infrastructure`.
 
@@ -30,12 +30,12 @@ The agent figure and these infrastructure figures are not added together, and no
 
 </details>
 
-Unverified: the agent's job wrote these figures.
-
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
 <details>
-<summary>Agents, models and catalog</summary>
+<summary>Policy, agents, models and catalog</summary>
+
+Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
 

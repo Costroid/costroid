@@ -49,7 +49,7 @@ func plantedResult(checkRun int64) string {
 
 func plantedCheckRun(id int64) string {
 	return fmt.Sprintf(`{"id":%d,"name":"costroid","node_id":"CR_planted","head_sha":%q,"html_url":"https://github.com/%s/widgets/runs/%d",`+
-		`"status":"completed","conclusion":"neutral","output":{"title":"Verdict: neutral","summary":"[CI run](https://github.com/%s/widgets/actions/runs/%d)","text":%q},`+
+		`"status":"completed","conclusion":"neutral","output":{"title":"No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.","summary":"[CI run](https://github.com/%s/widgets/actions/runs/%d)","text":%q},`+
 		`"app":{"slug":"github-actions","owner":{"login":%q}},"pull_requests":[{"number":4,"url":"https://api.github.com/repos/%s/widgets/pulls/4"}]}`,
 		id, plantedCommit, plantedOwner, id, plantedOwner, plantedWorkflow, plantedResult(id), plantedOwner, plantedOwner)
 }

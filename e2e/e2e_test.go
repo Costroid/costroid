@@ -415,7 +415,7 @@ func postReport(t *testing.T, job *workspace) {
 	if want := "USD " + recordedTotal; !strings.Contains(body, want) {
 		t.Errorf("comment: want %q in:\n%s", want, body)
 	}
-	if want := "Unverified: the agent's job wrote these figures."; !strings.Contains(body, want) {
+	if want := "Unchecked: the agent's own job wrote these figures, and nothing outside it checked them."; !strings.Contains(body, want) {
 		t.Errorf("comment: no label in:\n%s", body)
 	}
 }

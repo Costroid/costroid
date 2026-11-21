@@ -1,43 +1,43 @@
 <!-- costroid:comment -->
+**No budget set: this run cost EUR 0.10 at list (Measured) and USD 0.10 at list (Measured). No rule decides this check.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
 ### Costroid
-
-This run cost EUR 0.1 at list (Measured) and USD 0.1 at list (Measured). Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap).
-
-**Verdict: neutral.** No policy ran on this change.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| EUR 0.1 | Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
-| USD 0.1 | Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
-
-Unverified: the agent's job wrote these figures.
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| EUR 0.10 | Measured | the wrapper stops the process at the cap |
+| USD 0.10 | Measured | the wrapper stops the process at the cap |
 
 <details>
-<summary>Cap, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.1, Measured. Under the cap by USD 4.9.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
+
+No policy ran on this change.
 
 Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`, prices read 2026-11-01.
 
 </details>
 
 <details>
-<summary>How EUR 0.1 was computed</summary>
+<summary>How EUR 0.10 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | EUR 0.1 per 1,000,000 tokens | 1000000 | EUR 0.1 |
+| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | EUR 0.10 per million tokens | 1000000 | EUR 0.10 |
 
 </details>
 
 <details>
-<summary>How USD 0.1 was computed</summary>
+<summary>How USD 0.10 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.1 per 1,000,000 tokens | 1000000 | USD 0.1 |
+| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
 

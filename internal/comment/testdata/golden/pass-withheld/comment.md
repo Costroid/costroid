@@ -1,22 +1,22 @@
 <!-- costroid:comment -->
+**Within budget: this run is within its run budget, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.**
+
+Checked: a ledger checked the rows the verdict read against the job's OIDC token.
+
 ### Costroid
-
-This run was priced at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.
-
-**Verdict: success.** Run budget: the run is within the budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Basis | Attribution | Enforcement |
-| --- | --- | --- |
-| Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
-
-Verified: a ledger checked the rows the verdict read against the job's OIDC token.
+| Basis | Enforcement |
+| --- | --- |
+| Measured | the wrapper stops the process at the cap |
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
 <details>
-<summary>Agents, models and catalog</summary>
+<summary>Policy, agents, models and catalog</summary>
+
+A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
 

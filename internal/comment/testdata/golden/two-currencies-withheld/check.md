@@ -1,26 +1,26 @@
 # Title
 
-Verdict: neutral
+No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 
 # Summary
 
-This run was priced at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.
+**No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.**
 
-**Verdict: neutral.** No policy ran on this change.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Basis | Attribution | Enforcement |
-| --- | --- | --- |
-| Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
-| Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
-
-Unverified: the agent's job wrote these figures.
+| Basis | Enforcement |
+| --- | --- |
+| Measured | the wrapper stops the process at the cap |
+| Measured | the wrapper stops the process at the cap |
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
 <details>
-<summary>Agents, models and catalog</summary>
+<summary>Policy, agents, models and catalog</summary>
+
+No policy ran on this change.
 
 Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`, prices read 2026-11-01.
 

@@ -190,7 +190,11 @@ func TestReviewFlipsCheckWithoutPush(t *testing.T) {
 	if object.HeadSHA != headCommit || object.RowsSHA256 != objectOf(t, failed).RowsSHA256 || object.CheckRunID == nil || *object.CheckRunID != flipped.ID {
 		t.Errorf("the object is not the report's, named by its own check run: %+v", object)
 	}
-	for _, want := range []string{"**Verdict: neutral.** `reviewer` approved commit `9f2c6e1`", "The policy's verdict stays failure", fmt.Sprintf("Check run %d carries this report in full.", failed.ID)} {
+	approved := "Over budget, approved by reviewer: this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit 9f2c6e1 and ends with a new push. Amounts are withheld here."
+	if flipped.Title != approved {
+		t.Errorf("the check's title reads %q", flipped.Title)
+	}
+	for _, want := range []string{"**" + approved + "**\n\n`reviewer` approved commit `9f2c6e1`", "so the check concludes neutral", "The policy's verdict stays failure", fmt.Sprintf("Check run %d carries this report in full.", failed.ID)} {
 		if !strings.Contains(flipped.Summary, want) {
 			t.Errorf("no %q in the summary:\n%s", want, flipped.Summary)
 		}
@@ -374,7 +378,8 @@ func TestReportCarriesAnApprovalOfItsHeadAlone(t *testing.T) {
 	repository.Reviews = []map[string]any{review(31, approver, "APPROVED", headCommit, time.Now().Add(-time.Hour))}
 	approved := reportOn(t, repository, headCommit)
 	body := repository.Comments[0].Body
-	if approved.Conclusion != policy.Neutral || objectOf(t, approved).Policy.Conclusion != policy.Failure || !strings.Contains(body, "**Verdict: neutral.** `reviewer` approved commit `9f2c6e1`") {
+	sentence := "Over budget, approved by reviewer: this run cost USD " + realTotal + " at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit 9f2c6e1 and ends with a new push."
+	if approved.Conclusion != policy.Neutral || objectOf(t, approved).Policy.Conclusion != policy.Failure || approved.Title != sentence || !strings.Contains(body, "**"+sentence+"**\n\n`reviewer` approved commit `9f2c6e1`") {
 		t.Fatalf("check %s, comment:\n%s", approved.Conclusion, body)
 	}
 	repository.Head = movedCommit

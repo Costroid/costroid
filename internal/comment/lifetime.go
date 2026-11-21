@@ -58,8 +58,8 @@ func (l Lifetime) sentences() []string {
 	shown := l.Figures[:min(len(l.Figures), maxLifetimeFigures)]
 	var lines []string
 	for _, figure := range shown {
-		line := fmt.Sprintf("Across this pull request: %s %s at list (%s), from %d %s",
-			figure.Currency, figure.Cost, basisLabels[figure.Basis], figure.Reports, plural(figure.Reports, "report", "reports"))
+		line := fmt.Sprintf("Across this pull request: %s at list (%s), from %d %s",
+			money(figure.Currency, figure.Cost.String()), basisLabels[figure.Basis], figure.Reports, plural(figure.Reports, "report", "reports"))
 		if figure.Undigested && figure.Reports > 1 {
 			line += ", which may include a repeated report"
 		}

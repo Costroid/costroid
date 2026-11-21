@@ -1,11 +1,13 @@
-### Costroid
+**Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 
-| Basis | Catalog | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| List-equivalent, not billed | `0.4.3` | unattributed | agent-flag: client-side estimate, can pass the cap |
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
-Unverified: the agent's job wrote these figures.
+### Costroid
+
+| Basis | Catalog | Enforcement |
+| --- | --- | --- |
+| List-equivalent, not billed | `0.4.3` | client-side estimate, can pass the cap |
 
 Amounts and token counts are off on this public repository (`comment.show_cost: false`). The step's outputs and the check run's machine block carry them.

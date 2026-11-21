@@ -76,17 +76,17 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 		shown, held string
 	}{
 		{policy.Result{Rule: policy.RuleRunIncrease, Reason: policy.ReasonOverBaseline, LimitUSD: "0.5", CostUSD: "3", BaselineUSD: "2"},
-			"Increase over baseline: USD 3 is more than USD 0.5 over the USD 2 median of earlier runs.",
+			"Increase over baseline: USD 3.00 is more than USD 0.50 over the USD 2.00 median of earlier runs.",
 			"Increase over baseline: the run is more than the allowed increase over the median of earlier runs."},
 		{policy.Result{Rule: policy.RuleRunIncreasePercent, Reason: policy.ReasonWithinLimit, LimitPercent: "12.5", CostUSD: "2.2", BaselineUSD: "2"},
-			"Percent increase over baseline: USD 2.2 is at most 12.5% over the USD 2 median of earlier runs.",
+			"Percent increase over baseline: USD 2.20 is at most 12.5% over the USD 2.00 median of earlier runs.",
 			"Percent increase over baseline: the run is at most 12.5% over the median of earlier runs."},
 		{policy.Result{Rule: policy.RuleRunIncrease, Reason: policy.ReasonNoBaseline, LimitUSD: "0.5"},
 			"Increase over baseline: no baseline of 10 or more earlier runs reached this check, so the rule did not run.", ""},
 		{policy.Result{Rule: policy.RuleRunIncrease, Reason: policy.ReasonUnverifiedRows, LimitUSD: "0.5", CostUSD: "1", BaselineUSD: "2"},
-			"Increase over baseline: unverified rows cannot satisfy a budget.", ""},
+			"Increase over baseline: unchecked rows cannot satisfy a budget.", ""},
 		{policy.Result{Rule: policy.RulePullRequestBudget, Reason: policy.ReasonOverLimit, LimitUSD: "10", CostUSD: "10.5"},
-			"Pull request budget: USD 10.5 over this pull request's runs is over the USD 10 budget. The total adds every basis together, at list.",
+			"Pull request budget: USD 10.50 over this pull request's runs is over the USD 10.00 budget. The total adds every basis together, at list.",
 			"Pull request budget: this pull request's runs are over the budget. The total adds every basis together, at list."},
 		{policy.Result{Rule: policy.RulePullRequestBudget, Reason: policy.ReasonNoLifetime, LimitUSD: "10"},
 			"Pull request budget: this check read no total for the pull request's earlier runs, so the rule did not run.", ""},
@@ -103,7 +103,7 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 		{policy.Result{Rule: policy.RuleModelAllowlist, Reason: policy.ReasonUnreadableModel},
 			"Model allowlist: a row names no model this check can read, so the rule cannot pass.", ""},
 		{policy.Result{Rule: policy.RuleModelAllowlist, Reason: policy.ReasonUnverifiedRows},
-			"Model allowlist: unverified rows cannot show that every model was on the list.", ""},
+			"Model allowlist: unchecked rows cannot show that every model was on the list.", ""},
 		{policy.Result{Rule: policy.RuleModelAllowlist, Reason: policy.ReasonOnAllowlist},
 			"Model allowlist: every row names a model on the list.", ""},
 	}
@@ -113,10 +113,10 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 			withheld = tc.shown
 		}
 		verdict := policy.Verdict{Results: []policy.Result{tc.result}}
-		if got := VerdictSentences(verdict, true, LocalConfig("costroid.yml"))[0]; got != tc.shown {
+		if got := resultSentence(tc.result, 0, true, nil); got != tc.shown {
 			t.Errorf("shown:\n got %s\nwant %s", got, tc.shown)
 		}
-		if got := VerdictSentences(verdict.WithoutAmounts(), false, LocalConfig("costroid.yml"))[0]; got != withheld {
+		if got := resultSentence(verdict.WithoutAmounts().Results[0], 0, false, nil); got != withheld {
 			t.Errorf("withheld:\n got %s\nwant %s", got, withheld)
 		}
 	}

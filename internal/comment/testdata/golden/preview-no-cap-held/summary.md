@@ -1,9 +1,20 @@
+**No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
 ### Costroid
 
-| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |
+| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Measured | `0.1.0` | USD 0.1 | none: no cap held the run | 0 | 0 | 0 | 1000000 |
+| USD 0.10 | Measured | `0.1.0` | no cap held the run | 0 | 0 | 0 | 1000000 |
 
-Unverified: the agent's job wrote these figures.
+<details>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-No cap held this run: its enforcement grade is none. Cap: USD 0.05, which nothing enforced. Cost: USD 0.1, Measured. Over the cap by USD 0.05 and 1000000 tokens.
+No cap held this run. Cap: USD 0.05, which nothing enforced. Cost: USD 0.10, Measured. Over the cap by USD 0.05 and 1000000 tokens.
+
+No rule applied: `costroid.yml` in this directory sets no budget and no limit. Set `policy.run_budget_usd` to hold each run to a budget.
+
+Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>

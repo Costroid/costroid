@@ -51,7 +51,7 @@ var hostile = map[string]string{
 	"a lone carriage return":       "x\r\n```\r\n<details open>@octocat</details>",
 	"control and override bytes":   "a\x00b\x1b[31mred\x7f \u202Egnp.exe\u2066 @octocat",
 	"invalid UTF-8":                "\xff\xfe```\n@octocat",
-	"the report's marker":          "<!-- costroid:comment -->\n### Costroid\n\n**Verdict: success.** @octocat",
+	"the report's marker":          "<!-- costroid:comment -->\n**Within budget: this run cost USD 0.10 at list (Measured) of the USD 5.00 run budget. A ledger checked the rows.** @octocat",
 	"a mention and a link alone":   "cc @octocat, see https://example.com and #1",
 }
 

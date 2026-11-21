@@ -1,14 +1,12 @@
 # Title
 
-Verdict: neutral
+No figure (empty_rows_file): the rows file holds no rows. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which. No rule ran.
 
 # Summary
 
-**Verdict: neutral.** No policy ran on this change.
+**No figure (empty_rows_file): the rows file holds no rows. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which. No rule ran.**
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-The rows file holds no rows, so this report shows no figures. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which.
 
 # Text
 

@@ -76,7 +76,7 @@ func TestReportPostsOneNeutralCheckAndOneComment(t *testing.T) {
 		t.Errorf("no block in the check:\n%s", check.Text)
 	}
 	body := stub.Comments[0].Body
-	for _, want := range []string{"USD " + realTotal, "List-equivalent, not billed", "Cap: USD 5 (", "agent-flag", "installation=github%3A58120394"} {
+	for _, want := range []string{"USD " + realTotal, "List-equivalent, not billed", "Cap: USD 5.00 (", "agent-flag", "installation=github%3A58120394"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("no %q in\n%s", want, body)
 		}
@@ -130,7 +130,7 @@ func TestZeroRowsStillPostTheCheckAndTheComment(t *testing.T) {
 		t.Fatalf("exit %d, %+v, %+v", code, stub.Checks, stub.Comments)
 	}
 	body := stub.Comments[0].Body
-	if !strings.Contains(body, "The rows file holds no rows, so this report shows no figures.") || !strings.Contains(stub.Checks[0].Text, `"reason": "empty_rows_file"`) {
+	if !strings.Contains(body, "**No figure (empty_rows_file): the rows file holds no rows. ") || !strings.Contains(stub.Checks[0].Text, `"reason": "empty_rows_file"`) {
 		t.Errorf("body:\n%s", body)
 	}
 }
@@ -142,9 +142,9 @@ func TestAnUnreadableRowsFilePostsTheCheckAndSaysWhy(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string]struct{ reason, sentence string }{
-		bad:                                {"invalid_row", "Line 2 of the rows file is not a valid row, so this report shows no figures."},
-		filepath.Join(dir, "absent.jsonl"): {"no_rows_file", "No rows file reached this report, so it shows no figures."},
-		dir:                                {"rows_path_not_a_file", "The rows path is not a regular file, so this report did not read it and shows no figures."},
+		bad:                                {"invalid_row", "**No figure (invalid_row): line 2 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran.**"},
+		filepath.Join(dir, "absent.jsonl"): {"no_rows_file", "**No figure (no_rows_file): no rows file reached this report. The agent's job log says why it wrote none. No rule ran.**"},
+		dir:                                {"rows_path_not_a_file", "**No figure (rows_path_not_a_file): the rows path is not a regular file, so this report did not read it. No rule ran.**"},
 	}
 	for path, want := range cases {
 		stub := reportEnvironment(t, pullRequestEvent())

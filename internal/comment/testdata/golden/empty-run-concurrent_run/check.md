@@ -1,14 +1,12 @@
 # Title
 
-Verdict: neutral
+No figure (concurrent_run): another costroid run holds the agent's state directory, so this run did not start and wrote no rows. No rule ran.
 
 # Summary
 
-**Verdict: neutral.** No policy ran on this change.
+**No figure (concurrent_run): another costroid run holds the agent's state directory, so this run did not start and wrote no rows. No rule ran.**
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-This report shows no figures. Reason `concurrent_run`: another costroid run holds the agent's state directory, so this run did not start and wrote no rows.
 
 # Text
 

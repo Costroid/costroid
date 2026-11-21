@@ -74,7 +74,7 @@ func TestInfrastructureFiguresStandByCurrency(t *testing.T) {
 	}
 	for _, want := range []string{
 		estimatedLineEU,
-		"Infrastructure, estimated: USD 1000 for 2026-12, from `infrastructure`.",
+		"Infrastructure, estimated: USD 1000.00 for 2026-12, from `infrastructure`.",
 		"The agent figure and these infrastructure figures are not added together, and no currency is added to another.",
 	} {
 		if strings.Count(body, want) != 1 {
@@ -177,7 +177,7 @@ func TestEstimatesAloneSayTheReportShowsNoAgentFigures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"The rows file holds no agent rows, so this report shows no agent figures.", estimatedLineEU} {
+	for _, want := range []string{"**No figure (empty_rows_file): the rows file holds no agent rows. ", estimatedLineEU} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the comment lacks %q:\n%s", want, readable(body))
 		}
@@ -220,7 +220,8 @@ func TestAPeriodIsNamedExactly(t *testing.T) {
 		{"2026-12-01T00:00:00Z", "2026-12-15T00:00:00Z", "2026-12-01 to 2026-12-14"},
 		{"2026-12-01T00:00:00Z", "2027-01-02T00:00:00Z", "2026-12-01 to 2027-01-01"},
 		{"2026-12-15T00:00:00Z", "2027-01-15T00:00:00Z", "2026-12-15 to 2027-01-14"},
-		{"2026-12-01T06:00:00Z", "2026-12-01T07:00:00Z", "2026-12-01T06:00:00Z to 2026-12-01T07:00:00Z"},
+		{"2026-12-01T06:00:00Z", "2026-12-01T07:00:00Z", "2026-12-01 06:00 UTC to 2026-12-01 07:00 UTC"},
+		{"2026-12-01T06:00:30Z", "2026-12-02T00:00:00Z", "2026-12-01 06:00:30 UTC to 2026-12-02 00:00 UTC"},
 	} {
 		if got := (Period{Start: at(tc.start), End: at(tc.end)}).String(); got != tc.want {
 			t.Errorf("%s to %s reads %q, want %q", tc.start, tc.end, got, tc.want)

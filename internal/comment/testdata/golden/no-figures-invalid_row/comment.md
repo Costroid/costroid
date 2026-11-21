@@ -1,11 +1,9 @@
 <!-- costroid:comment -->
+**No figure (invalid_row): line 3 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran.**
+
 ### Costroid
 
-**Verdict: neutral.** No policy ran on this change.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-Line 3 of the rows file is not a valid row, so this report shows no figures. A partial total would read as a smaller cost.
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

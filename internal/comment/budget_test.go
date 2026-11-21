@@ -50,7 +50,7 @@ func capLineOf(t *testing.T, input Input) string {
 
 func TestCapLineStatesTheCodexOvershootInUSDAndTokens(t *testing.T) {
 	input := capInput(codexStoppedLedger(t), "0.001")
-	want := "Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens."
+	want := "Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens."
 	if line := capLineOf(t, input); line != want {
 		t.Errorf("cap line\n%s\nwant\n%s", line, want)
 	}
@@ -67,7 +67,7 @@ func TestCapLineStatesTheCodexOvershootInUSDAndTokens(t *testing.T) {
 
 func TestCapLineSaysAnAgentFlagCapIsAClientSideEstimate(t *testing.T) {
 	line := capLineOf(t, realInput(t))
-	want := "Cap: USD 5 (agent-flag: client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275."
+	want := "Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275."
 	if line != want {
 		t.Errorf("cap line\n%s\nwant\n%s", line, want)
 	}
@@ -88,7 +88,7 @@ func TestCapLineShowsNoCapForARunNothingHeld(t *testing.T) {
 	none := sampleFields()
 	none.enforcement = "none"
 	line := capLineOf(t, capInput(ledgerOf(t, none), "5"))
-	if line != "No cap held this run: its enforcement grade is none." {
+	if line != "No cap held this run." {
 		t.Errorf("cap line %q", line)
 	}
 }
@@ -97,7 +97,7 @@ func TestCapLineNeverShowsAGradeStrongerThanTheWeakest(t *testing.T) {
 	watched, flagged := sampleFields(), sampleFields()
 	flagged.enforcement = "agent-flag"
 	line := capLineOf(t, capInput(ledgerOf(t, watched, flagged), "5"))
-	if !strings.HasPrefix(line, "Cap: USD 5 (agent-flag: client-side estimate, can pass the cap). Cost: USD 0.2, Measured.") {
+	if !strings.HasPrefix(line, "Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.20, Measured.") {
 		t.Errorf("cap line %q", line)
 	}
 }
@@ -147,16 +147,16 @@ func TestCapLineLeavesTheReconciliationOutUntilThereIsOne(t *testing.T) {
 	}
 }
 
-func TestCapLineNamesTheGradeOfACapTheReportWasNotGiven(t *testing.T) {
+func TestCapLineSaysWhatHeldACapTheReportWasNotGiven(t *testing.T) {
 	input := realInput(t)
 	input.Budget = nil
-	want := "Cap: held by agent-flag (client-side estimate, can pass the cap). The rows do not record its amount, and the report was not given it."
+	want := "Cap: client-side estimate, can pass the cap. The rows do not record its amount, and the report was not given it."
 	if line := capLineOf(t, input); line != want {
 		t.Errorf("cap line\n%s\nwant\n%s", line, want)
 	}
 	none := sampleFields()
 	none.enforcement = "none"
-	if line := capLineOf(t, Input{Ledger: ledgerOf(t, none), State: Reported, Amounts: AmountsShown}); line != "No cap held this run: its enforcement grade is none." {
+	if line := capLineOf(t, Input{Ledger: ledgerOf(t, none), State: Reported, Amounts: AmountsShown}); line != "No cap held this run." {
 		t.Errorf("cap line %q", line)
 	}
 }
@@ -201,16 +201,20 @@ func TestPolicyBudgetBesideNoCap(t *testing.T) {
 
 // assertNoContradiction reads a comment, folds opened. The line that names the
 // policy's budget and its setting is folded; nothing a reader sees first says
-// that nothing held the run to a budget the verdict checks.
+// that nothing held the run to a budget the verdict checks, and only a report
+// whose policy checks no budget says none is set.
 func assertNoContradiction(t *testing.T, name, body, grade string, policyBudget bool) {
 	t.Helper()
 	text := readable(body)
-	budgetLine := "Run budget: USD 5, from `policy.run_budget_usd` in `costroid.yml`."
+	budgetLine := "Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`."
 	if strings.Contains(text, budgetLine) != policyBudget {
 		t.Errorf("%s: the policy's budget line is %v:\n%s", name, !policyBudget, text)
 	}
-	if regexp.MustCompile(`(?i)budget: not|no budget|not recorded|held (it|the run) to a budget`).MatchString(text) {
+	if regexp.MustCompile(`(?i)budget: not|not recorded|held (it|the run) to a budget`).MatchString(text) {
 		t.Errorf("%s: a budget reads as missing:\n%s", name, text)
+	}
+	if strings.Contains(text, "No budget set") == policyBudget {
+		t.Errorf("%s: the sentence says no budget is set, which is %v:\n%s", name, !policyBudget, text)
 	}
 	if strings.Contains(text, "never the cap") && grade == "none" {
 		t.Errorf("%s: a run nothing held is told of a cap:\n%s", name, text)

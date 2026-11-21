@@ -524,18 +524,23 @@ func TestListingNamesEveryOutputOfTheAction(t *testing.T) {
 	}
 }
 
+// TestReadmeAndListingQuoteTheDemoCommentsFirstLine holds the two pages to
+// the sentence the demo's comment opens with: the README as costroid demo
+// prints it for a terminal, the listing as one quoted line.
 func TestReadmeAndListingQuoteTheDemoCommentsFirstLine(t *testing.T) {
-	body, err := demoStateComment(context.Background(), demoNeutral)
-	if err != nil {
-		t.Fatal(err)
+	body := demoComment(t, demoNeutral)
+	first := strings.Trim(lineWith(body, "**"), "*")
+	if !strings.Contains(first, "this run cost USD "+demoTotal+" at list (Measured)") {
+		t.Fatalf("the demo's comment does not open on what the run cost:\n%s", body)
 	}
-	first := lineWith(body, "This run cost ")
-	if first == "" {
-		t.Fatalf("the demo's comment states no cost line:\n%s", body)
+	_, printed, _ := execute(t, "demo")
+	opening, _, _ := strings.Cut(printed, "\n\n")
+	if strings.ReplaceAll(opening, "\n", " ") != first {
+		t.Fatalf("costroid demo opens on\n%s\nand its comment on\n%s", opening, first)
 	}
-	for _, page := range []string{"README.md", "marketplace/README.md"} {
-		if !strings.Contains(readFile(t, filepath.Join(repositoryRoot, page)), "\n> "+first+"\n") {
-			t.Errorf("%s does not quote the comment's first line %q", page, first)
+	for page, quote := range map[string]string{"README.md": "\n```text\n" + opening + "\n```\n", "marketplace/README.md": "\n> " + first + "\n"} {
+		if !strings.Contains(readFile(t, filepath.Join(repositoryRoot, page)), quote) {
+			t.Errorf("%s does not quote the comment's first line as %q", page, quote)
 		}
 	}
 }

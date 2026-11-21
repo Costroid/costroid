@@ -1,11 +1,9 @@
 <!-- costroid:comment -->
+**No figure (rows_path_not_a_file): the rows path is not a regular file, so this report did not read it. No rule ran.**
+
 ### Costroid
 
-**Verdict: neutral.** No policy ran on this change.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-The rows path is not a regular file, so this report did not read it and shows no figures.
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

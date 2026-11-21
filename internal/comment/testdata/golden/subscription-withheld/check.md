@@ -1,25 +1,25 @@
 # Title
 
-Verdict: neutral
+No budget set: this run was priced at list (List-equivalent, not billed). No rule decides this check. Amounts are withheld here.
 
 # Summary
 
-This run was priced at list (List-equivalent, not billed). No cap held it.
+**No budget set: this run was priced at list (List-equivalent, not billed). No rule decides this check. Amounts are withheld here.**
 
-**Verdict: neutral.** No policy ran on this change.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Basis | Attribution | Enforcement |
-| --- | --- | --- |
-| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | unattributed | none: no cap held the run |
-
-Unverified: the agent's job wrote these figures.
+| Basis | Enforcement |
+| --- | --- |
+| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | no cap held the run |
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
 <details>
-<summary>Agents, models and catalog</summary>
+<summary>Policy, agents, models and catalog</summary>
+
+No policy ran on this change.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-sonnet-5-5`. 12 rows, catalog `0.3.0`, prices read 2026-11-08.
 

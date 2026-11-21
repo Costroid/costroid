@@ -1,33 +1,33 @@
 <!-- costroid:comment -->
+**No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
 ### Costroid
-
-This run cost USD 0.1 at list (Measured). No cap held it.
-
-**Verdict: neutral.** No rule applied: `costroid.yml` on the base branch sets no budget and no threshold. Set `policy.run_budget_usd` to hold each run to a budget.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| USD 0.1 | Measured | unattributed | none: no cap held the run |
-
-Unverified: the agent's job wrote these figures.
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.10 | Measured | no cap held the run |
 
 <details>
-<summary>Cap, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-No cap held this run: its enforcement grade is none.
+No cap held this run.
+
+No rule applied: `costroid.yml` on the base branch sets no budget and no limit. Set `policy.run_budget_usd` to hold each run to a budget.
 
 Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
 
 </details>
 
 <details>
-<summary>How USD 0.1 was computed</summary>
+<summary>How USD 0.10 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.1 per 1,000,000 tokens | 1000000 | USD 0.1 |
+| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
 

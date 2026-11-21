@@ -73,16 +73,64 @@ func TestPolicyGivesTheVerdictTheCheckGives(t *testing.T) {
 	}
 }
 
+// lastLine is the last line a command printed.
+func lastLine(printed string) string {
+	lines := strings.Split(strings.TrimSuffix(printed, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+// TestPolicyEndsOnTheVerdictSentence holds the last line costroid policy
+// prints to the title of the check the report posts for the same rows and the
+// same costroid.yml: over the budget, within it by the job's own figures with
+// a second rule that could not run, and with no rule set. The lines above it
+// are the ones the sentence leaves unsaid.
+func TestPolicyEndsOnTheVerdictSentence(t *testing.T) {
+	figure := "this run cost USD " + realTotal + " at list (List-equivalent, not billed)"
+	for name, tc := range map[string]struct{ config, sentence, above string }{
+		"over the budget": {overBudget, "Over budget, warn-only: " + figure + ", over the USD 0.001 run budget. After the warn-only period this fails the check.",
+			"Warn-only: the commit that added this workflow to the base branch could not be read, so a rule that fails warns. Add `enforce: true` under `policy` in `costroid.yml` to enforce now.\n"},
+		"under the budget": {"policy:\n  run_budget_usd: \"5\"\n  monthly_budget_usd: \"100\"\n",
+			"Within budget, by the job's own figures: " + figure + " of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
+			"Monthly budget: the month to date comes only from a ledger, and this check has none, so the rule did not run.\n"},
+		"no policy": {"comment:\n  show_cost: true\n", "No budget set: " + figure + ". No rule decides this check.", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := reportEnvironment(t, pullRequestEvent())
+			stub.Files[configFile] = tc.config
+			if code, _, stderr := execute(t, "report", "--rows", realRows); code != 0 || len(stub.Checks) != 1 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if stub.Checks[0].Title != tc.sentence {
+				t.Fatalf("the check's title:\n got %s\nwant %s", stub.Checks[0].Title, tc.sentence)
+			}
+			code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", writeBaseConfig(t, tc.config), "--at", checkVerdict(t, stub.Checks[0].Text).EvaluatedAt)
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if got := lastLine(stdout); got != tc.sentence || !strings.HasSuffix(stdout, tc.sentence+"\n") {
+				t.Errorf("policy ends on\n%s\nand the check's title is\n%s", got, tc.sentence)
+			}
+			if above := strings.TrimSuffix(stdout, tc.sentence+"\n"); tc.above != "" && above != tc.above || strings.Contains(above, "Run budget: ") {
+				t.Errorf("above the sentence policy prints\n%swant\n%s", above, tc.above)
+			}
+		})
+	}
+	code, stdout, _ := execute(t, "policy", "--rows", realRows, "--config", writeBaseConfig(t, overBudget), "--json")
+	if code != 0 || strings.Contains(stdout, "Over budget") || !strings.HasSuffix(stdout, "}\n") {
+		t.Errorf("--json prints more than the verdict: exit %d:\n%s", code, stdout)
+	}
+}
+
 func TestPolicyExitsOneOnFailure(t *testing.T) {
 	config := writeBaseConfig(t, overBudget)
 	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", config,
 		"--workflow-added", "2026-10-01T00:00:00Z", "--at", "2026-11-06T00:00:00Z")
-	if code != exitRejected || !strings.HasPrefix(stdout, "Verdict: failure.\n") || !strings.Contains(stdout, "USD "+realTotal+" is over the USD 0.001 budget.") {
+	if want := "Over budget: this run cost USD " + realTotal + " at list (List-equivalent, not billed), over the USD 0.001 run budget.\n"; code != exitRejected || stdout != want {
 		t.Fatalf("exit %d:\n%s%s", code, stdout, stderr)
 	}
 	code, stdout, _ = execute(t, "policy", "--rows", realRows, "--config", config,
 		"--workflow-added", "2026-11-05T00:00:00Z", "--at", "2026-11-06T00:00:00Z")
-	if code != 0 || !strings.HasPrefix(stdout, "Verdict: neutral.\n") || !strings.Contains(stdout, "Warn-only until 2026-11-12 00:00 UTC") {
+	if code != 0 || !strings.HasPrefix(stdout, "Warn-only until 2026-11-12 00:00 UTC") || !strings.HasSuffix(stdout, "\nOver budget, warn-only: this run cost USD "+realTotal+" at list (List-equivalent, not billed), over the USD 0.001 run budget. After 2026-11-12 00:00 UTC this fails the check.\n") {
 		t.Fatalf("exit %d:\n%s", code, stdout)
 	}
 }
@@ -123,10 +171,10 @@ func TestPolicyNamesTheFileItRead(t *testing.T) {
 		args   []string
 		want   string
 	}{
-		"no file":               {"", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no threshold."},
-		"a file with no policy": {"comment:\n  show_cost: true\n", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no threshold."},
+		"no file":               {"", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no limit."},
+		"a file with no policy": {"comment:\n  show_cost: true\n", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no limit."},
 		"an invalid file":       {"policy: [\n", nil, "No rule ran, so the check concludes neutral: `costroid.yml` in this directory is not valid"},
-		"another file":          {"", []string{"--config", other}, "No rule applied: `" + other + "` sets no budget and no threshold."},
+		"another file":          {"", []string{"--config", other}, "No rule applied: `" + other + "` sets no budget and no limit."},
 	} {
 		os.Remove(configFile)
 		if check.config != "" {
@@ -154,7 +202,7 @@ func TestAWithheldCommentStatesTheVerdictWithoutAmounts(t *testing.T) {
 			t.Errorf("the comment holds %q:\n%s", amount, body)
 		}
 	}
-	if !strings.Contains(body, "Run budget: the run is over the budget.") {
+	if !strings.Contains(body, "**Over budget, warn-only: this run is over its run budget, priced at list (List-equivalent, not billed). After the warn-only period this fails the check. Amounts are withheld here.**\n") {
 		t.Errorf("the comment does not state the verdict:\n%s", body)
 	}
 	check := checkVerdict(t, stub.Checks[0].Text)

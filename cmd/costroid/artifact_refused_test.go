@@ -115,8 +115,11 @@ func TestRefusedArtifactFailsTheCheck(t *testing.T) {
 				}
 			}
 			body := stub.Comments[0].Body
+			if want := "No figure (artifact_refused): the rows artifact held files besides the rows and the run object, so this report read none of it and the check fails."; check.Title != want {
+				t.Errorf("the check's title reads %q", check.Title)
+			}
 			for _, want := range []string{
-				"Reason `artifact_refused`: the `costroid-rows` artifact held 4 entries besides the rows and the run object, so the check fails and this report read none of it: ",
+				"The `costroid-rows` artifact held 4 entries besides the rows and the run object: ",
 				"`costroid-bin`", "`costroid-bin/costroid`", "`_github_workflow`", "`_github_workflow/event.json`",
 			} {
 				if !strings.Contains(body, want) {
@@ -157,7 +160,7 @@ func TestARefusalNamesWhatItCanAndCountsAtLeastOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "13 entries besides the rows and the run object, so the check fails and this report read none of it: `a?b`, `c?d`, `" + strings.Repeat("e", 128) + "` and 10 more."; !strings.Contains(body, want) {
+	if want := "The `costroid-rows` artifact held 13 entries besides the rows and the run object: `a?b`, `c?d`, `" + strings.Repeat("e", 128) + "` and 10 more."; !strings.Contains(body, want) {
 		t.Errorf("no %q in\n%s", want, body)
 	}
 }

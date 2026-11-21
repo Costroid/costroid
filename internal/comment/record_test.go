@@ -42,19 +42,19 @@ func readable(body string) string {
 	return body
 }
 
-// factPatterns find the facts a comment states: an amount beside its currency,
-// a number standing alone, a code span (a model, an agent, a catalog, a
-// setting or a reason), a link's target, a table cell that names an
-// enforcement grade and its note or an attribution grade, and a policy rule's
+// factPatterns find the facts a comment states: the verdict sentence, an
+// amount beside its currency, a number standing alone, a code span (a model,
+// an agent, a catalog, a setting or a reason), a link's target, a table cell
+// that says in words how far an enforcement grade held, and a policy rule's
 // sentence.
 var factPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^\*\*(.+)\*\*$`),
 	regexp.MustCompile(`\b[A-Z]{3} [0-9]+(?:\.[0-9]+)?`),
 	regexp.MustCompile(`(?m)(?:^|[\s(|])([0-9]+(?:[.,:-][0-9]+)*%?)(?:$|[\s).,:;|])`),
 	regexp.MustCompile("`[^`\n]+`"),
 	regexp.MustCompile(`\]\([^)\s]+\)`),
-	regexp.MustCompile(`\| (?:none|provider|agent-flag|wrapper-watchdog|gateway-precheck): [^|\n]+ \|`),
-	regexp.MustCompile(`\| (?:unattributed|windowed|exact) \|`),
-	regexp.MustCompile(`(?m)(?:Run budget|Run cost threshold|Increase over baseline|Percent increase over baseline|Pull request budget|Monthly budget|Model allowlist|Attribution): .*?\.(?: |$)`),
+	regexp.MustCompile(`\| (?:no cap held the run|only the vendor's budget applies|client-side estimate, can pass the cap|the wrapper stops the process at the cap|checked before each request|a cap of [^|\n]+) \|`),
+	regexp.MustCompile(`(?m)(?:Run budget|Run cost limit|Increase over baseline|Percent increase over baseline|Pull request budget|Monthly budget|Model allowlist|Attribution): .*?\.(?: |$)`),
 }
 
 // factsOf lists the facts a comment states, sorted and each once.

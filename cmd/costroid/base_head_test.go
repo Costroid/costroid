@@ -210,8 +210,8 @@ func TestRefusedStreamStillReports(t *testing.T) {
 					}
 				}
 			}
-			sentence := "This report shows no figures. Reason `reader_refused`: the reader refused the agent's stream, so the run wrote no rows. The reader's first error: `" + test.line + "`."
-			if !strings.Contains(body, sentence) || !strings.Contains(stub.Checks[0].Summary, sentence) {
+			sentence := "**No figure (reader_refused): the reader refused the agent's stream, so the run wrote no rows. No rule ran.**\n\nThe reader's first error: `" + test.line + "`.\n"
+			if !strings.Contains(body, sentence) || !strings.HasPrefix(stub.Checks[0].Summary, sentence) {
 				t.Errorf("no %q in\n%s", sentence, body)
 			}
 		})

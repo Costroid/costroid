@@ -1,14 +1,12 @@
 # Title
 
-Verdict: neutral
+No figure (rows_path_not_a_file): the rows path is not a regular file, so this report did not read it. No rule ran.
 
 # Summary
 
-**Verdict: neutral.** No policy ran on this change.
+**No figure (rows_path_not_a_file): the rows path is not a regular file, so this report did not read it. No rule ran.**
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-The rows path is not a regular file, so this report did not read it and shows no figures.
 
 # Text
 

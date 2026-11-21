@@ -1,10 +1,21 @@
+**No budget set: this run cost EUR 0.10 at list (Measured) and USD 0.10 at list (Measured). No rule decides this check.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
 ### Costroid
 
-| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |
+| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Measured | `0.1.0` | EUR 0.1 | wrapper-watchdog: the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
-| Measured | `0.1.0` | USD 0.1 | wrapper-watchdog: the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
+| EUR 0.10 | Measured | `0.1.0` | the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
+| USD 0.10 | Measured | `0.1.0` | the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
 
-Unverified: the agent's job wrote these figures.
+<details>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.1, Measured. Under the cap by USD 4.9.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
+
+No policy ran on this change.
+
+Agents: `codex`. Models: `gpt-5.5`. 2 rows, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>

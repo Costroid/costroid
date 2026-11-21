@@ -320,8 +320,8 @@ func TestGhAwFollowUpNamesTheRefusedArtifact(t *testing.T) {
 // the cell reads as any run at grade none.
 func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 	clearCI(t)
-	const capped = "| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
-	const plain = "| none: no cap held the run |"
+	const capped = "| a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
+	const plain = "| no cap held the run |"
 	artifact := copyArtifact(t, "")
 	for _, stated := range []bool{true, false} {
 		if !stated {
@@ -354,8 +354,8 @@ func TestGhAwCommentNamesTheProxyCap(t *testing.T) {
 // that holds another file, or a file in its place, is refused.
 func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
 	clearCI(t)
-	const capped = "| none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
-	const plain = "| none: no cap held the run |"
+	const capped = "| a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |"
+	const plain = "| no cap held the run |"
 	for _, info := range []bool{true, false} {
 		out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
 		code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, recordedGhAw, info), "usage"), "--out", out)
@@ -419,7 +419,8 @@ func TestGhAwReadsTheInfoArtifactsCap(t *testing.T) {
 // the run. The comment states the run's USD figure apart, never in credits.
 func TestGhAwCommentStatesTheCreditsPastTheCap(t *testing.T) {
 	clearCI(t)
-	const passed = "none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid; gh-aw stated 11.80342 AI credits, over the cap by 1.80342 AI credits"
+	const cell = "a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid; gh-aw stated 11.80342 AI credits, over the cap by 1.80342 AI credits"
+	const passed = "none: " + cell
 	out := filepath.Join(t.TempDir(), "costroid-rows.jsonl")
 	code, _, stderr := execute(t, "ingest-run", "--from", "gh-aw="+filepath.Join(downloadRecordedGhAw(t, recordedGhAwClaude, true), "usage"), "--out", out)
 	if code != 0 {
@@ -434,7 +435,7 @@ func TestGhAwCommentStatesTheCreditsPastTheCap(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	for _, want := range []string{"| USD 0.1180342 | Measured | unattributed | " + passed + " |", "gh-aw stated 11.80342 AI credits for this run. Costroid does not convert credits."} {
+	for _, want := range []string{"| USD 0.1180342 | Measured | " + cell + " |", "gh-aw stated 11.80342 AI credits for this run. Costroid does not convert credits."} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("the comment holds no %q:\n%s", want, stdout)
 		}

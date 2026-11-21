@@ -86,7 +86,7 @@ func realLedger(t testing.TB) Ledger {
 }
 
 // artifactLabel marks figures that the agent's own job wrote.
-const artifactLabel = "Unverified: the agent's job wrote these figures."
+const artifactLabel = "Unchecked: the agent's own job wrote these figures, and nothing outside it checked them."
 
 func realInput(t testing.TB) Input {
 	t.Helper()
@@ -234,7 +234,7 @@ func TestSumsAreExactAndNeverCrossACurrency(t *testing.T) {
 		t.Fatalf("figures = %+v", ledger.Figures)
 	}
 	body := commentOf(t, Input{Ledger: ledger, State: Reported, Amounts: AmountsShown})
-	for _, want := range []string{"| USD 0.3 |", "| EUR 0.1 |"} {
+	for _, want := range []string{"| USD 0.30 |", "| EUR 0.10 |"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("no %q in\n%s", want, body)
 		}
@@ -252,10 +252,11 @@ func TestEveryAmountSitsBesideItsCurrency(t *testing.T) {
 			t.Errorf("bare amount %q", found)
 		}
 	}
-	for _, want := range []string{"USD " + realTotal, "Cap: USD 5 ("} {
-		if !strings.Contains(body, want) {
-			t.Errorf("no %q in\n%s", want, body)
-		}
+	if !strings.Contains(body, "USD "+realTotal) {
+		t.Errorf("no figure in\n%s", body)
+	}
+	if folded := commentOf(t, realInput(t)); !strings.Contains(folded, "\nCap: USD 5.00 (") {
+		t.Errorf("no cap beside its currency in\n%s", folded)
 	}
 }
 
@@ -263,8 +264,9 @@ func TestAWeakerGradeReadsBeforeAStrongerOne(t *testing.T) {
 	strong, weak := sampleFields(), sampleFields()
 	weak.enforcement = "none"
 	body := commentOf(t, Input{Ledger: ledgerOf(t, strong, weak), State: Reported, Amounts: AmountsShown})
-	if strings.Index(body, "none:") > strings.Index(body, "wrapper-watchdog:") {
-		t.Errorf("the stronger grade reads first:\n%s", body)
+	weaker, stronger := strings.Index(body, "| no cap held the run |"), strings.Index(body, "| the wrapper stops the process at the cap |")
+	if weaker < 0 || stronger < 0 || weaker > stronger {
+		t.Errorf("the stronger grade reads first, or a grade's note is missing:\n%s", body)
 	}
 }
 
@@ -290,12 +292,18 @@ func TestEveryBasisCarriesItsSpecLabel(t *testing.T) {
 	}
 }
 
-func TestUnattributedIsShownAsSuch(t *testing.T) {
+// TestUnattributedRowsReadUncheckedAndTheBlockKeepsTheGrade holds the one
+// sentence that stands for trust and attribution together: a reader meets it
+// in words, and the grade's id only in the machine block.
+func TestUnattributedRowsReadUncheckedAndTheBlockKeepsTheGrade(t *testing.T) {
 	fields := sampleFields()
 	fields.attribution = "unattributed"
 	body := commentOf(t, Input{Ledger: ledgerOf(t, fields), State: Reported, Amounts: AmountsShown})
-	if !strings.Contains(visiblePart(body), "| unattributed |") {
-		t.Errorf("no unattributed cell:\n%s", body)
+	if !strings.Contains(visiblePart(body), artifactLabel) || strings.Contains(readable(body), "unattributed") {
+		t.Errorf("the reader's part lacks the sentence, or names the grade:\n%s", body)
+	}
+	if !strings.Contains(body, `"attribution_grade": "unattributed"`) {
+		t.Errorf("the block does not name the grade:\n%s", body)
 	}
 }
 
@@ -337,13 +345,15 @@ func TestEveryReasonForNoFiguresIsStatedAndNoneShowsAFigure(t *testing.T) {
 		line     int
 		sentence string
 	}{
-		{NoRows, EmptyRowsFile, 0, "The rows file holds no rows, so this report shows no figures. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."},
-		{Unreadable, NoRowsFile, 0, "No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none."},
-		{Unreadable, NotAFile, 0, "The rows path is not a regular file, so this report did not read it and shows no figures."},
-		{Unreadable, UnreadRowsFile, 0, "The rows file could not be read, so this report shows no figures."},
-		{Unreadable, InvalidRow, 3, "Line 3 of the rows file is not a valid row, so this report shows no figures. A partial total would read as a smaller cost."},
-		{NoRows, "", 0, "The rows file holds no rows, so this report shows no figures."},
-		{Unreadable, "", 0, "The rows file could not be read, so this report shows no figures."},
+		{NoRows, EmptyRowsFile, 0, "No figure (empty_rows_file): the rows file holds no rows. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which. No rule ran."},
+		{Unreadable, NoRowsFile, 0, "No figure (no_rows_file): no rows file reached this report. The agent's job log says why it wrote none. No rule ran."},
+		{Unreadable, ForkNoRows, 0, "No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none. No rule ran."},
+		{Unreadable, NotAFile, 0, "No figure (rows_path_not_a_file): the rows path is not a regular file, so this report did not read it. No rule ran."},
+		{Unreadable, UnreadRowsFile, 0, "No figure (rows_file_unread): the rows file could not be read. No rule ran."},
+		{Unreadable, InvalidRow, 3, "No figure (invalid_row): line 3 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran."},
+		{Unreadable, InvalidRow, 0, "No figure (invalid_row): a line of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran."},
+		{NoRows, "", 0, "No figure (no_rows): the rows file holds no rows."},
+		{Unreadable, "", 0, "No figure (rows_unreadable): the rows file could not be read. No rule ran."},
 	}
 	for _, test := range cases {
 		input := Input{State: test.state, Reason: test.reason, ReasonLine: test.line, Amounts: AmountsShown}
@@ -632,34 +642,31 @@ func TestCommentNeverScolds(t *testing.T) {
 	}
 }
 
-func TestFirstLineStatesTheFigureWithItsBasis(t *testing.T) {
+// TestFirstLineIsTheVerdictSentenceWithTheFigureAndItsBasis reads the first
+// line a person meets: the verdict sentence, in bold, with each figure beside
+// its currency and its basis, the budget it is held to, and how far past its
+// cap the run went.
+func TestFirstLineIsTheVerdictSentenceWithTheFigureAndItsBasis(t *testing.T) {
 	first := func(body string) string {
-		line, _, _ := strings.Cut(strings.TrimPrefix(body, Marker+"\n### Costroid\n\n"), "\n")
+		line, _, _ := strings.Cut(strings.TrimPrefix(body, Marker+"\n"), "\n")
 		return line
 	}
-	if got, want := first(commentOf(t, docsInput(t))), "This run cost USD "+demoTotal+" at list (Measured). No cap held it."; got != want {
+	if got, want := first(commentOf(t, docsInput(t))), "**Within budget, by the job's own figures: this run cost USD "+demoTotal+" at list (Measured) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**"; got != want {
 		t.Errorf("first line %q, want %q", got, want)
 	}
-	if got, want := first(commentOf(t, realInput(t))), "This run cost USD "+realTotal+" at list (List-equivalent, not billed). Cap: USD 5 (agent-flag: client-side estimate, can pass the cap)."; got != want {
-		t.Errorf("first line %q, want %q", got, want)
+	unruled := "**No budget set: this run cost USD " + realTotal + " at list (List-equivalent, not billed). No rule decides this check.**"
+	if got := first(commentOf(t, realInput(t))); got != unruled {
+		t.Errorf("first line %q, want %q", got, unruled)
 	}
-	noCapGiven := realInput(t)
-	noCapGiven.Budget = nil
-	if got, want := first(commentOf(t, noCapGiven)), "This run cost USD "+realTotal+" at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap."; got != want {
+	if got, want := first(commentOf(t, capInput(codexStoppedLedger(t), "0.001"))), "**No budget set: this run cost USD 0.0283136 at list (Measured), USD 0.0273136 over its USD 0.001 cap. No rule decides this check.**"; got != want {
 		t.Errorf("first line %q, want %q", got, want)
-	}
-	if got, want := first(commentOf(t, capInput(codexStoppedLedger(t), "0.001"))), "This run cost USD 0.0283136 at list (Measured). Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Over the cap by USD 0.0273136 and 16960 tokens."; got != want {
-		t.Errorf("first line %q, want %q", got, want)
-	}
-	if !strings.Contains(commentOf(t, realInput(t)), "can pass the cap).\n\n**Verdict: neutral.**") {
-		t.Error("the verdict does not follow the first line")
 	}
 	output, err := Check(realInput(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(output.Summary, "This run cost USD "+realTotal+" at list") {
-		t.Errorf("the check's summary does not open on the figure:\n%s", output.Summary)
+	if !strings.HasPrefix(output.Summary, unruled+"\n") {
+		t.Errorf("the check's summary does not open on the sentence:\n%s", output.Summary)
 	}
 	euro, measured := sampleFields(), sampleFields()
 	euro.currency, euro.cost = "EUR", "0.2"
@@ -667,12 +674,12 @@ func TestFirstLineStatesTheFigureWithItsBasis(t *testing.T) {
 	input := realInput(t)
 	input.Budget = nil
 	input.Ledger = ledgerOf(t, sampleFields(), euro, measured)
-	want := "This run cost EUR 0.2 at list (Measured), USD 0.1 at list (Measured) and USD 0.1 at list (Measured). No cap held it."
+	want := "**No budget set: this run cost EUR 0.20 at list (Measured), USD 0.10 at list (Measured) and USD 0.10 at list (Measured). No rule decides this check.**"
 	if got := first(commentOf(t, input)); got != want {
 		t.Errorf("first line %q, want %q", got, want)
 	}
 	for _, empty := range []Input{{State: NoRows, Amounts: AmountsShown}, {State: Unreadable, Reason: InvalidRow, Amounts: AmountsShown}} {
-		if body := commentOf(t, empty); !strings.HasPrefix(first(body), "**Verdict: ") {
+		if body := commentOf(t, empty); !strings.HasPrefix(first(body), "**No figure (") {
 			t.Errorf("a report with no figures opens on %q", first(body))
 		}
 	}
@@ -683,7 +690,7 @@ func TestFirstLineWithheldWhenShowCostFalse(t *testing.T) {
 		input := docsInput(t)
 		input.Amounts = amounts
 		body := commentOf(t, input)
-		want := Marker + "\n### Costroid\n\nThis run was priced at list (Measured). No cap held it.\n\n**Verdict: neutral.**"
+		want := Marker + "\n**Within budget, by the job's own figures: this run is within its run budget, priced at list (Measured). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**\n"
 		if !strings.HasPrefix(body, want) {
 			t.Errorf("amounts %d:\n%s", amounts, body)
 		}
@@ -698,7 +705,7 @@ func TestFirstLineWithheldWhenShowCostFalse(t *testing.T) {
 	input.Ledger = ledgerOf(t, sampleFields(), euro, fallbackFields())
 	body := commentOf(t, input)
 	assertNoAmount(t, body)
-	if !strings.Contains(body, "This run was priced at list (Measured). Held by wrapper-watchdog: the wrapper stops the process at the cap.\n") {
+	if !strings.Contains(body, "**No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.**\n") {
 		t.Errorf("one basis is not named once:\n%s", body)
 	}
 }
@@ -719,10 +726,10 @@ func TestAccountLinkCarriesInstallation(t *testing.T) {
 
 func TestUnitPricesReadPerMillionTokens(t *testing.T) {
 	body := commentOf(t, docsInput(t))
-	if !strings.Contains(body, " per 1,000,000 tokens |") || strings.Contains(body, "000 Tokens") {
-		t.Errorf("unit prices are not per 1,000,000 tokens:\n%s", body)
+	if !strings.Contains(body, " per million tokens |") || strings.Contains(body, "000 Tokens") || strings.Contains(body, "1,000,000") {
+		t.Errorf("unit prices are not per million tokens:\n%s", body)
 	}
-	for unit, want := range map[string]string{"1 Tokens": "1 tokens", "1000 Tokens": "1,000 tokens", "100000 Tokens": "100,000 tokens", "1000000 Tokens": "1,000,000 tokens", "999999999999 Tokens": "999,999,999,999 tokens"} {
+	for unit, want := range map[string]string{"1 Tokens": "1 tokens", "1000 Tokens": "1000 tokens", "100000 Tokens": "100000 tokens", "1000000 Tokens": "million tokens", "999999999999 Tokens": "999999999999 tokens"} {
 		if got := unitWords(unit); got != want {
 			t.Errorf("unitWords(%q) = %q, want %q", unit, got, want)
 		}
@@ -861,7 +868,7 @@ func TestShowCostOffWithholdsEveryAmountFromTheCommentAndItsBlockCopy(t *testing
 		input.Amounts = amounts
 		body := commentOf(t, input)
 		assertNoAmount(t, body)
-		for _, want := range []string{"**Verdict: neutral.**", "| unattributed |", "agent-flag", `"amounts": "withheld"`, `"attribution_grade": "unattributed"`, `"enforcement_grade": "agent-flag"`} {
+		for _, want := range []string{"**No budget set: this run was priced at list (List-equivalent, not billed). No rule decides this check. Amounts are withheld here.**", "| client-side estimate, can pass the cap |", `"amounts": "withheld"`, `"attribution_grade": "unattributed"`, `"enforcement_grade": "agent-flag"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("no %q in\n%s", want, body)
 			}
@@ -1017,7 +1024,7 @@ func TestAFallbackPricedFigureIsMarkedAndExplainedInTheOpen(t *testing.T) {
 		t.Fatalf("figures = %+v", ledger.Figures)
 	}
 	sentence := "Fallback price: `gpt-9-preview` is not in catalog `0.1.0` for the tier and token class used, so `openai:fallback:output` priced it."
-	marks := map[Amounts]string{AmountsShown: "| USD 180.1, fallback price |", AmountsOff: "| Measured, fallback price |"}
+	marks := map[Amounts]string{AmountsShown: "| USD 180.10, fallback price |", AmountsOff: "| Measured, fallback price |"}
 	for amounts, mark := range marks {
 		input := Input{Ledger: ledger, State: Reported, HeadSHA: sampleHead, Amounts: amounts}
 		output, err := Check(input)
@@ -1057,7 +1064,7 @@ func TestTheFallbackSentenceCountsEveryModel(t *testing.T) {
 	}
 }
 
-var traceRow = regexp.MustCompile("(?m)^\\| `[^`]+` \\| `([a-z0-9_]+)` \\| `[^`]+` \\| (.+?) \\| ([0-9.]+) \\| ([A-Z]{3}) ([0-9.]+) \\|$")
+var traceRow = regexp.MustCompile("(?m)^\\| `[^`]+` \\| `([a-z0-9_]+)` \\| `[^`]+` \\| (.+?) \\| ([0-9.]+) \\| (.+?) \\|$")
 
 // TestTheTraceRecomputesTheFigureByHand redoes the reader's arithmetic from
 // the rendered text alone: each line's price times its tokens over the unit,
@@ -1068,21 +1075,23 @@ func TestTheTraceRecomputesTheFigureByHand(t *testing.T) {
 	if len(lines) != 7 {
 		t.Fatalf("%d trace lines in\n%s", len(lines), body)
 	}
-	unit := regexp.MustCompile(`^USD ([0-9.]+) per ([0-9]{1,3}(?:,[0-9]{3})*) tokens$`)
+	unit := regexp.MustCompile(`^USD ([0-9]+\.[0-9]{2,}) per million tokens$`)
+	size := decimal.MustParse("1000000")
 	var total decimal.Decimal
 	for _, line := range lines {
-		class, price, tokens, amount := line[1], line[2], decimal.MustParse(line[3]), decimal.MustParse(line[5])
+		class, price, tokens := line[1], line[2], decimal.MustParse(line[3])
 		if focus.TokenClass(class).Informational() {
-			if price != "informational, not priced" || amount.Sign() != 0 {
+			if price != "informational, not priced" || line[4] != "No amount: not priced" {
 				t.Errorf("an informational line reads %q", line[0])
 			}
 			continue
 		}
 		parts := unit.FindStringSubmatch(price)
-		if parts == nil {
-			t.Fatalf("unit price %q", price)
+		cost, found := strings.CutPrefix(line[4], "USD ")
+		if parts == nil || !found {
+			t.Fatalf("unit price %q, amount %q", price, line[4])
 		}
-		size := decimal.MustParse(strings.ReplaceAll(parts[2], ",", ""))
+		amount := decimal.MustParse(cost)
 		if got := decimal.MustParse(parts[1]).Mul(tokens); got.Cmp(amount.Mul(size)) != 0 {
 			t.Errorf("%s: %s times %s over %s is not %s", class, parts[1], tokens, size, amount)
 		}

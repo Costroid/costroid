@@ -1,9 +1,22 @@
+**Within budget: this run cost USD 0.10 at list (Measured) of the USD 5.00 run budget. A ledger checked the rows.**
+
+Checked: a ledger checked the rows the verdict read against the job's OIDC token.
+
 ### Costroid
 
-| Basis | Catalog | Cost | Enforcement | Input, uncached | Cache read | Cache write | Output |
+| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Measured | `0.1.0` | USD 0.1 | wrapper-watchdog: the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
+| USD 0.10 | Measured | `0.1.0` | the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
 
-Verified: a ledger checked the rows the verdict read against the job's OIDC token.
+<details>
+<summary>Cap, budget, policy, agents, models and catalog</summary>
 
-Cap: USD 5 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.1, Measured. Under the cap by USD 4.9.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
+
+Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+
+A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+
+Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
+
+</details>

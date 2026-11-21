@@ -1,27 +1,27 @@
 # Title
 
-Verdict: neutral
+No budget set: this run cost USD 0.04974 at list (Measured). No rule decides this check.
 
 # Summary
 
-This run cost USD 0.04974 at list (Measured). No cap held it.
+**No budget set: this run cost USD 0.04974 at list (Measured). No rule decides this check.**
 
-**Verdict: neutral.** No policy ran on this change.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| USD 0.04974 | Measured | unattributed | none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.04974 | Measured | a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid |
 
 gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits.
 
-Unverified: the agent's job wrote these figures.
-
 <details>
-<summary>Cap, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-No cap held this run: its enforcement grade is none.
+No cap held this run.
+
+No policy ran on this change.
 
 Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog `0.1.0`, prices read 2026-11-01.
 
@@ -32,13 +32,13 @@ Agents: `gh-aw`. Models: `claude-haiku-5-5`, `claude-sonnet-5`. 15 rows, catalog
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.1 per 1,000,000 tokens | 310 | USD 0.000031 |
-| `0.1.0` | `input_uncached` | `anthropic:claude-sonnet-5:global:standard:all:input_uncached` | USD 2 per 1,000,000 tokens | 2963 | USD 0.005926 |
-| `0.1.0` | `cache_read` | `anthropic:claude-sonnet-5:global:standard:all:cache_read` | USD 0.2 per 1,000,000 tokens | 24610 | USD 0.004922 |
-| `0.1.0` | `cache_write_5m` | `anthropic:claude-sonnet-5:global:standard:all:cache_write_5m` | USD 2.5 per 1,000,000 tokens | 12770 | USD 0.031925 |
-| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.5 per 1,000,000 tokens | 12 | USD 0.000006 |
-| `0.1.0` | `output` | `anthropic:claude-sonnet-5:global:standard:all:output` | USD 10 per 1,000,000 tokens | 693 | USD 0.00693 |
-| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 64 | USD 0 |
+| `0.1.0` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.10 per million tokens | 310 | USD 0.000031 |
+| `0.1.0` | `input_uncached` | `anthropic:claude-sonnet-5:global:standard:all:input_uncached` | USD 2.00 per million tokens | 2963 | USD 0.005926 |
+| `0.1.0` | `cache_read` | `anthropic:claude-sonnet-5:global:standard:all:cache_read` | USD 0.20 per million tokens | 24610 | USD 0.004922 |
+| `0.1.0` | `cache_write_5m` | `anthropic:claude-sonnet-5:global:standard:all:cache_write_5m` | USD 2.50 per million tokens | 12770 | USD 0.031925 |
+| `0.1.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.50 per million tokens | 12 | USD 0.000006 |
+| `0.1.0` | `output` | `anthropic:claude-sonnet-5:global:standard:all:output` | USD 10.00 per million tokens | 693 | USD 0.00693 |
+| `0.1.0` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 64 | No amount: not priced |
 
 </details>
 

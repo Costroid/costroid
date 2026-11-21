@@ -51,6 +51,7 @@ type Check struct {
 	Name       string
 	HeadSHA    string
 	Conclusion string
+	Title      string
 	Summary    string
 	Text       string
 	App        string
@@ -205,6 +206,7 @@ func (s *Stub) postCheck(w http.ResponseWriter, body []byte) {
 		HeadSHA    string `json:"head_sha"`
 		Conclusion string `json:"conclusion"`
 		Output     struct {
+			Title   string `json:"title"`
 			Summary string `json:"summary"`
 			Text    string `json:"text"`
 		} `json:"output"`
@@ -213,7 +215,7 @@ func (s *Stub) postCheck(w http.ResponseWriter, body []byte) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
-	check := Check{s.next(), request.Name, request.HeadSHA, request.Conclusion, request.Output.Summary, request.Output.Text, s.App}
+	check := Check{s.next(), request.Name, request.HeadSHA, request.Conclusion, request.Output.Title, request.Output.Summary, request.Output.Text, s.App}
 	s.Checks = append(s.Checks, check)
 	w.WriteHeader(http.StatusCreated)
 	s.answer(w, map[string]any{"id": check.ID, "app": map[string]string{"slug": s.App}})
@@ -387,6 +389,7 @@ func (s *Stub) patchCheck(w http.ResponseWriter, path string, body []byte) {
 	}
 	var request struct {
 		Output *struct {
+			Title   string `json:"title"`
 			Summary string `json:"summary"`
 			Text    string `json:"text"`
 		} `json:"output"`
@@ -397,7 +400,7 @@ func (s *Stub) patchCheck(w http.ResponseWriter, path string, body []byte) {
 	}
 	for index := range s.Checks {
 		if s.Checks[index].ID == id {
-			s.Checks[index].Summary, s.Checks[index].Text = request.Output.Summary, request.Output.Text
+			s.Checks[index].Title, s.Checks[index].Summary, s.Checks[index].Text = request.Output.Title, request.Output.Summary, request.Output.Text
 			s.answer(w, map[string]int64{"id": id})
 			return
 		}

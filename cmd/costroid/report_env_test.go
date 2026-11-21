@@ -93,7 +93,7 @@ func TestReportReadsTheCapFromTheRunObject(t *testing.T) {
 			if printed != test.warning {
 				t.Errorf("report --preview printed %q, want %q", printed, test.warning)
 			}
-			if held := strings.Contains(stdout, "Cap: USD "+test.budget+" ("); held != (test.budget != "") {
+			if held := strings.Contains(stdout, "Cap: USD "+test.budget+".00 ("); held != (test.budget != "") {
 				t.Errorf("the comment states the cap: %v, want USD %q:\n%s", held, test.budget, stdout)
 			}
 		})
@@ -126,7 +126,7 @@ func TestReportReadsTheCapFromTheRunObject(t *testing.T) {
 				t.Errorf("%s: the report reads the cap %v, want USD 2 with one warning: %s", filepath.Base(rows), input.Budget, stderr.String())
 			}
 		}
-		if code, stdout, _ := execute(t, "report", "--preview", "--rows", ran); code != 0 || !strings.Contains(stdout, "Cap: USD 2 (") {
+		if code, stdout, _ := execute(t, "report", "--preview", "--rows", ran); code != 0 || !strings.Contains(stdout, "Cap: USD 2.00 (") {
 			t.Errorf("exit %d, and the comment does not state the run's cap of USD 2:\n%s", code, stdout)
 		}
 	})

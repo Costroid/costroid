@@ -165,9 +165,9 @@ func TestLifetimeTotalFromCheckRuns(t *testing.T) {
 	}
 	lines := sentences(t, lifetime)
 	wanted := []string{
-		"Across this pull request: EUR 0.4 at list (List-equivalent, not billed), from 1 report.",
+		"Across this pull request: EUR 0.40 at list (List-equivalent, not billed), from 1 report.",
 		"Across this pull request: EUR 0.25 at list (Measured), from 1 report.",
-		"Across this pull request: USD 1.5 at list (List-equivalent, not billed), from 1 report.",
+		"Across this pull request: USD 1.50 at list (List-equivalent, not billed), from 1 report.",
 		"Across this pull request: USD 0.15 at list (Measured), from 2 reports, which may include a repeated report.",
 	}
 	if strings.Join(lines, "\n") != strings.Join(wanted, "\n") {
@@ -184,7 +184,7 @@ func TestLifetimeDropsRepeats(t *testing.T) {
 		posted(stub, secondCommit, text)
 		lifetime := read(t, stub, secondCommit)
 		assertFigures(t, lifetime.Figures, want{"USD", "measured", "0.1", 1, false})
-		if lines := sentences(t, lifetime); len(lines) != 1 || lines[0] != "Across this pull request: USD 0.1 at list (Measured), from 1 report." {
+		if lines := sentences(t, lifetime); len(lines) != 1 || lines[0] != "Across this pull request: USD 0.10 at list (Measured), from 1 report." {
 			t.Errorf("lines %q", lines)
 		}
 	})
@@ -265,7 +265,7 @@ func TestLifetimeDropsRepeatsByDigest(t *testing.T) {
 		posted(stub, secondCommit, older)
 		totals := readWith(t, stub, secondCommit, digestedReport(t, otherDigest, figure("EUR", "measured", "0.3")))
 		assertFigures(t, totals.Lifetime.Figures, want{"EUR", "measured", "0.3", 1, false}, want{"USD", "measured", "0.2", 2, true})
-		if lines := sentences(t, totals.Lifetime); len(lines) != 2 || lines[1] != "Across this pull request: USD 0.2 at list (Measured), from 2 reports, which may include a repeated report." {
+		if lines := sentences(t, totals.Lifetime); len(lines) != 2 || lines[1] != "Across this pull request: USD 0.20 at list (Measured), from 2 reports, which may include a repeated report." {
 			t.Errorf("lines %q", lines)
 		}
 		if totals.Earlier.USD.String() != "0.2" || !totals.Earlier.MayRepeat {

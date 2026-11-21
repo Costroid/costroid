@@ -65,8 +65,8 @@ func enforcementCell(t *testing.T, report adapter.Report) string {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(text, "\n") {
-		if cells := strings.Split(line, " | "); strings.HasPrefix(line, "| USD ") && len(cells) == 4 {
-			return strings.TrimSuffix(cells[3], " |")
+		if cells := strings.Split(line, " | "); strings.HasPrefix(line, "| USD ") && len(cells) == 3 {
+			return strings.TrimSuffix(cells[2], " |")
 		}
 	}
 	t.Fatalf("the comment has no figure line:\n%s", text)
@@ -108,8 +108,8 @@ func TestGhAwRealCodexRun(t *testing.T) {
 	if want := "none: " + capped; report.Enforcement != (adapter.Enforcement{Grade: adapter.GradeNone, Note: want}) {
 		t.Errorf("enforcement %+v, want grade none with %q", report.Enforcement, want)
 	}
-	if cell := enforcementCell(t, report); cell != "none: "+capped {
-		t.Errorf("the Enforcement cell reads %q, want %q", cell, "none: "+capped)
+	if cell := enforcementCell(t, report); cell != capped {
+		t.Errorf("the Enforcement cell reads %q, want %q", cell, capped)
 	}
 }
 
@@ -146,8 +146,8 @@ func TestGhAwRealClaudeRunPassedItsCap(t *testing.T) {
 	if report.Enforcement != (adapter.Enforcement{Grade: adapter.GradeNone, Note: passed}) {
 		t.Errorf("enforcement %+v, want grade none with %q", report.Enforcement, passed)
 	}
-	if cell := enforcementCell(t, report); cell != passed {
-		t.Errorf("the Enforcement cell reads %q, want %q", cell, passed)
+	if cell := enforcementCell(t, report); "none: "+cell != passed {
+		t.Errorf("the Enforcement cell reads %q, want %q without the grade", cell, passed)
 	}
 }
 

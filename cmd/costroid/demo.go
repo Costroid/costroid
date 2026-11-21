@@ -65,8 +65,9 @@ const (
 var demoStates = []string{demoNeutral, demoCapped, demoFailure, demoSkipped}
 
 // demoCommand prints the comment report posts for a recorded run on a pull
-// request, for a terminal or, under --markdown, as the Markdown it posts. It
-// needs no CI system, no host and no key.
+// request, for a terminal or, under --markdown, as the Markdown it posts. On a
+// terminal it ends on the verdict sentence, the line the check's title
+// carries. It needs no CI system, no host and no key.
 func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("demo", flag.ContinueOnError)
 	set.SetOutput(stderr)
@@ -93,12 +94,16 @@ func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) i
 }
 
 func printDemo(ctx context.Context, state string, markdown bool, stdout io.Writer) error {
-	body, err := demoStateComment(ctx, state)
+	input, err := demoStateInput(ctx, state)
+	var body string
+	if err == nil {
+		body, err = comment.Comment(input)
+	}
 	if err != nil {
 		return fmt.Errorf("demo: %w", err)
 	}
 	if !markdown {
-		body = forTerminal(body)
+		body = forTerminal(body) + "\n" + paragraph(comment.VerdictSentence(input)) + "\n"
 	}
 	if _, err := io.WriteString(stdout, body); err != nil {
 		return fmt.Errorf("demo: print the comment: %w", err)
@@ -106,9 +111,10 @@ func printDemo(ctx context.Context, state string, markdown bool, stdout io.Write
 	return nil
 }
 
-// demoStateComment is the comment for one state. Each state's figures are a
-// recorded run's; its pull request and costroid.yml are the example's.
-func demoStateComment(ctx context.Context, state string) (string, error) {
+// demoStateInput is what the comment for one state is rendered from. Each
+// state's figures are a recorded run's; its pull request and costroid.yml are
+// the example's.
+func demoStateInput(ctx context.Context, state string) (comment.Input, error) {
 	rows, config, at := demoRows, demoConfig, demoCheckedAt
 	switch state {
 	case demoCapped:
@@ -120,11 +126,11 @@ func demoStateComment(ctx context.Context, state string) (string, error) {
 	}
 	ledger, err := comment.ReadRows(strings.NewReader(rows))
 	if err != nil {
-		return "", err
+		return comment.Input{}, err
 	}
 	usage, err := policy.ReadUsage(strings.NewReader(rows))
 	if err != nil {
-		return "", err
+		return comment.Input{}, err
 	}
 	verdict, err := policy.Evaluate(ctx, policy.Request{
 		Usage:  usage,
@@ -134,7 +140,7 @@ func demoStateComment(ctx context.Context, state string) (string, error) {
 		At:     at,
 	})
 	if err != nil {
-		return "", err
+		return comment.Input{}, err
 	}
 	checkRun := demoCheckRun
 	input := comment.Input{
@@ -155,7 +161,7 @@ func demoStateComment(ctx context.Context, state string) (string, error) {
 		skipped := true
 		input.State, input.Reason, input.AgentSkipped = comment.NoRows, comment.AgentSkipped, &skipped
 	}
-	return comment.Comment(input)
+	return input, nil
 }
 
 // terminalWidth is the column prose wraps at. A table is as wide as its

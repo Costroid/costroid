@@ -323,8 +323,9 @@ func (i Input) refused() bool {
 	return i.Refused != nil && i.Refused.Count > 0 && i.State != Reported
 }
 
-// refusedLine names what a refused artifact held, each name cleaned again and
-// shown as code.
+// refusedLine names what a refused artifact held besides the two files, each
+// name cleaned again and shown as code. The verdict sentence says the report
+// read none of it and the check fails.
 func (i Input) refusedLine() string {
 	entries := i.Refused.Entries[:min(len(i.Refused.Entries), maxRefusedEntries, i.Refused.Count)]
 	names := make([]string, len(entries))
@@ -335,8 +336,7 @@ func (i Input) refusedLine() string {
 	if i.Refused.Count == 1 {
 		noun = "entry"
 	}
-	line := fmt.Sprintf("This report shows no figures. Reason `%s`: the `costroid-rows` artifact held %d %s besides the rows and the run object, so the check fails and this report read none of it",
-		ArtifactRefused, i.Refused.Count, noun)
+	line := fmt.Sprintf("The `costroid-rows` artifact held %d %s besides the rows and the run object", i.Refused.Count, noun)
 	if len(names) == 0 {
 		return line + "."
 	}
@@ -476,11 +476,11 @@ func fenced(block string) string {
 }
 
 type figureLine struct {
-	Cost        string
-	Basis       string
-	Attribution string
-	Enforcement string
-	Note        string
+	Cost  string
+	Basis string
+	// Note says how far the figure's enforcement grade held, in words. The
+	// grade's id stays in the machine block.
+	Note string
 	// Mark is the visible flag on a figure with a row at the fallback tier,
 	// or whose rows all note a subscription login.
 	Mark string
@@ -510,40 +510,39 @@ type traceLine struct {
 
 type view struct {
 	Marker string
-	// Recorded opens a report on a recorded run's rows. It is empty on a
-	// report on the pull request's own rows.
-	Recorded string
-	// FirstLine states the figure with its basis and grade, before the
-	// verdict. It is empty when the report has no figures.
-	FirstLine  string
-	Conclusion string
-	// VerdictLine says what the policy found, after the conclusion.
-	VerdictLine string
+	// Sentence is the verdict sentence, the first thing read on every
+	// surface.
+	Sentence string
+	// Reading are the paragraphs between the sentence and the evidence: a
+	// recorded run's line, the reason, the rules the sentence does not name
+	// and the next step.
+	Reading []string
 	// RunLine says the report is one run at one commit, and links the run.
 	RunLine string
-	// Why is the sentence for a report without figures, empty otherwise.
-	Why string
+	// NoFigures says the report has no agent figures, so it has no table.
+	NoFigures bool
 	// AgentError is the sentence for an agent error beside figures, empty
 	// otherwise.
 	AgentError string
 	// AgentStated is the agent's own figure for the run, empty when it states
 	// none or amounts are withheld.
 	AgentStated string
+	// PastCap is the cap line of a run that went past its cap, which stands
+	// under the table. Any other cap line is folded with the details.
+	PastCap string
 	// CheckRuns is false on GitLab, which has no check run to name.
 	CheckRuns   bool
 	ShowAmounts bool
 	AmountsOff  bool
-	CapLine     string
-	// TrustLine says who vouched for the rows, from the verdict's trust.
-	TrustLine string
 	// Reconciliations are closed sentences, one per credential.
 	Reconciliations []string
 	Lines           []figureLine
 	FiguresOmitted  int
 	Fallback        string
 	// Details are the lines folded under the table: the cap against the
-	// cost, each limit the policy checked and where it is set, and the run's
-	// agents, models, rows and catalogs. DetailsSummary names what they hold.
+	// cost, each limit the policy checked and where it is set, what the
+	// policy read, and the run's agents, models, rows and catalogs.
+	// DetailsSummary names what they hold.
 	Details        []string
 	DetailsSummary string
 	Traces         []traceBlock
@@ -571,17 +570,14 @@ func (i Input) view() view {
 	shown := i.Amounts == AmountsShown
 	result := view{
 		Marker:         Marker,
-		Recorded:       i.recordedLine(),
-		FirstLine:      i.firstLine(shown),
-		Conclusion:     i.Conclusion(),
-		VerdictLine:    i.verdictLine(shown),
+		Sentence:       VerdictSentence(i),
+		Reading:        i.reading(shown),
 		RunLine:        runLine(i.runCommit(), i.RunURL),
-		Why:            i.why(),
+		NoFigures:      i.State != Reported,
 		AgentError:     i.agentErrorBesideFigures(),
 		AgentStated:    i.agentStatedLine(shown),
 		ShowAmounts:    shown,
 		AmountsOff:     i.Amounts == AmountsOff,
-		TrustLine:      i.trustLine(),
 		FiguresOmitted: i.Ledger.FiguresOmitted,
 		Fallback:       fallbackSentence(i.Ledger),
 		AccountURL:     i.accountLink(),
@@ -589,18 +585,18 @@ func (i Input) view() view {
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}
-	result.CapLine = i.capLine()
 	result.Infrastructure = i.Ledger.Infrastructure.view(shown, result.CheckRuns)
 	result.EstimateUnavailable = i.estimateUnavailable()
-	result.Details, result.DetailsSummary = i.details(shown, result.CapLine)
+	if shown && i.capCheck().passed() {
+		result.PastCap = i.capLine()
+	}
+	result.Details, result.DetailsSummary = i.details(shown, result.PastCap == "")
 	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
 		line := figureLine{
-			Cost:        figure.Currency + " " + figure.Cost.String(),
-			Basis:       basisLabels[figure.Basis],
-			Attribution: figure.Attribution,
-			Enforcement: figure.Enforcement,
-			Note:        figureNote(figure, i.agentStated(), shown),
+			Cost:  money(figure.Currency, figure.Cost.String()),
+			Basis: basisLabels[figure.Basis],
+			Note:  figureNote(figure, i.agentStated(), shown),
 		}
 		if figure.FallbackRows > 0 {
 			line.Mark = fallbackMark
@@ -625,7 +621,7 @@ func traceOf(figure Figure, number int, shown, checkRuns bool) traceBlock {
 	if !shown {
 		return withheldTrace(figure, number, checkRuns)
 	}
-	block := traceBlock{Shown: true, Summary: fmt.Sprintf("How %s %s was computed", figure.Currency, figure.Cost), Omitted: figure.TraceOmitted}
+	block := traceBlock{Shown: true, Summary: "How " + money(figure.Currency, figure.Cost.String()) + " was computed", Omitted: figure.TraceOmitted}
 	for _, trace := range figure.Trace {
 		block.Lines = append(block.Lines, traceLine{
 			Catalog:   catalogCell(trace.Catalog),
@@ -633,7 +629,7 @@ func traceOf(figure Figure, number int, shown, checkRuns bool) traceBlock {
 			PriceID:   trace.PriceID.Code(),
 			UnitPrice: unitPrice(figure.Currency, trace),
 			Tokens:    trace.Tokens.String(),
-			Cost:      figure.Currency + " " + trace.Cost.String(),
+			Cost:      traceCost(figure.Currency, trace),
 		})
 	}
 	return block
@@ -666,37 +662,42 @@ func unitPrice(currency string, trace Trace) string {
 	if trace.Class.Informational() {
 		return "informational, not priced"
 	}
-	return currency + " " + trace.UnitPrice.String() + " per " + unitWords(trace.Unit)
+	return money(currency, trace.UnitPrice.String()) + " per " + unitWords(trace.Unit)
 }
 
-// unitWords reads a pricing unit such as "1000000 Tokens" as "1,000,000
-// tokens". ReadRows admits no other form for a priced class.
+// traceCost is a trace line's amount. A class that carries no price has no
+// amount, and says so: a zero would read as a price of nothing.
+func traceCost(currency string, trace Trace) string {
+	if trace.Class.Informational() {
+		return "No amount: not priced"
+	}
+	return money(currency, trace.Cost.String())
+}
+
+// millionTokens is the pricing unit every catalog price is stated in.
+const millionTokens = "1000000"
+
+// unitWords reads a pricing unit such as "1000000 Tokens" as "million
+// tokens", which holds no digits to group, and any other count as its digits.
+// ReadRows admits no other form for a priced class.
 func unitWords(unit string) string {
 	match := pricingUnitPattern.FindStringSubmatch(unit)
-	if match == nil {
+	switch {
+	case match == nil:
 		return unit
+	case match[1] == millionTokens:
+		return "million tokens"
 	}
-	return grouped(match[1]) + " tokens"
+	return match[1] + " tokens"
 }
 
-// grouped writes a run of digits with a comma between each group of three.
-func grouped(digits string) string {
-	var out strings.Builder
-	for index, digit := range digits {
-		if index > 0 && (len(digits)-index)%3 == 0 {
-			out.WriteByte(',')
-		}
-		out.WriteRune(digit)
-	}
-	return out.String()
-}
-
-// The lines that say who vouched for the rows. Rows a ledger checked against
-// the job's token read verified only when the verdict says so: a tag inside
-// the rows file proves nothing, because the agent's job wrote it.
+// The lines that say who vouched for the rows, and so how firmly each is tied
+// to its run. Rows a ledger checked against the job's token read checked only
+// when the verdict says so: a tag inside the rows file proves nothing, because
+// the agent's job wrote it.
 const (
-	unverifiedLine = "Unverified: the agent's job wrote these figures."
-	verifiedLine   = "Verified: a ledger checked the rows the verdict read against the job's OIDC token."
+	uncheckedLine = "Unchecked: the agent's own job wrote these figures, and nothing outside it checked them."
+	checkedLine   = "Checked: a ledger checked the rows the verdict read against the job's OIDC token."
 )
 
 // trustLine reads the trust the verdict, and so the machine block's
@@ -704,18 +705,19 @@ const (
 // the agent's job wrote.
 func (i Input) trustLine() string {
 	if i.Verdict != nil && i.Verdict.Trust == policy.TokenVerified {
-		return verifiedLine
+		return checkedLine
 	}
-	return unverifiedLine
+	return uncheckedLine
 }
 
 // details are the lines a reader opens for: the cap against the cost, each
-// limit the policy checked, and the run's agents, models, rows and catalogs.
-// Each repeats a cell of the table or explains one, so they are folded. The
-// summary names what they hold.
-func (i Input) details(shown bool, capLine string) ([]string, string) {
+// limit the policy checked, what the policy read, and the run's agents,
+// models, rows and catalogs. Each repeats a cell of the table or explains the
+// verdict, so they are folded. The summary names what they hold. withCap is
+// false when the cap line stands above the fold.
+func (i Input) details(shown, withCap bool) ([]string, string) {
 	var lines, holds []string
-	if shown && capLine != "" {
+	if capLine := i.capLine(); shown && withCap && capLine != "" {
 		lines, holds = append(lines, capLine), append(holds, "cap")
 	}
 	if shown {
@@ -726,6 +728,9 @@ func (i Input) details(shown bool, capLine string) ([]string, string) {
 				holds = append(holds, noun)
 			}
 		}
+	}
+	if notes := i.policyNotes(); notes != "" {
+		lines, holds = append(lines, notes), append(holds, "policy")
 	}
 	var run []string
 	if len(i.Ledger.Agents) > 0 {
@@ -739,9 +744,6 @@ func (i Input) details(shown bool, capLine string) ([]string, string) {
 		rows, holds = rows+", "+catalogPhrase(i.Ledger.Catalogs), append(holds, "catalog")
 	}
 	lines = append(lines, strings.Join(append(run, rows+"."), " "))
-	if len(holds) == 0 {
-		holds = append(holds, "rows")
-	}
 	summary := listed(holds, 0)
 	return lines, strings.ToUpper(summary[:1]) + summary[1:]
 }
@@ -774,41 +776,9 @@ func catalogPhrase(catalogs []Data) string {
 	return "catalogs " + listed(names, 0)
 }
 
-// firstFigures is how many figures the first line names. The table names
-// every figure.
+// firstFigures is how many figures the verdict sentence names. The table
+// names every figure.
 const firstFigures = 3
-
-// firstLine states what the run cost, at which basis, and the cap that held
-// it or that none did, so the figure reads before the verdict. Withheld, it
-// states the basis and the grade without an amount.
-func (i Input) firstLine(shown bool) string {
-	if i.State != Reported || len(i.Ledger.Figures) == 0 {
-		return ""
-	}
-	figures := i.Ledger.Figures[:min(len(i.Ledger.Figures), firstFigures)]
-	omitted := len(i.Ledger.Figures) - len(figures) + i.Ledger.FiguresOmitted
-	var line string
-	if shown {
-		clauses := make([]string, len(figures))
-		for index, figure := range figures {
-			clauses[index] = fmt.Sprintf("%s %s at list (%s)", figure.Currency, figure.Cost, basisLabels[figure.Basis])
-		}
-		line = "This run cost " + listed(clauses, omitted) + "."
-	} else {
-		var clauses []string
-		for _, figure := range i.Ledger.Figures {
-			clause := "at list (" + basisLabels[figure.Basis] + ")"
-			if !slices.Contains(clauses, clause) {
-				clauses = append(clauses, clause)
-			}
-		}
-		line = "This run was priced " + listed(clauses, 0) + "."
-	}
-	if check := i.capCheck(); shown && check != nil {
-		return line + " " + check.heading()
-	}
-	return line + " " + heldSentence(weakestGrade(i.Ledger.Figures))
-}
 
 // figureNote says how far a figure's grade held. A gh-aw figure at grade none
 // names the cap gh-aw checks, which Costroid did not set and does not price,
@@ -819,15 +789,6 @@ func figureNote(figure Figure, stated *adapter.Stated, shown bool) string {
 		return ghaw.CapSentence(figure.ProxyCap, stated)
 	}
 	return enforcementNotes[figure.Enforcement]
-}
-
-// heldSentence says what held the run to its cap, by the weakest grade. A cap
-// is never called a budget: the budget is the policy's.
-func heldSentence(grade string) string {
-	if grade == "none" {
-		return "No cap held it."
-	}
-	return fmt.Sprintf("Held by %s: %s.", grade, enforcementNotes[grade])
 }
 
 // listed joins items as a sentence does, naming how many more are left out.
@@ -862,39 +823,27 @@ func runLine(head, link string) string {
 	return line
 }
 
-// why states the reason a report has no figures, from the closed list. Beside
-// figures that are not an agent's, it says the report shows no agent figures.
+// why is what the verdict sentence leaves unsaid of a report with no figures:
+// what a refused artifact held, why the workflow skipped the agent, the
+// reader's first error, or what to do about the agent's. When a rule broken
+// on the pull request's earlier runs names the sentence, the reason for no
+// figures opens the paragraph in full.
 func (i Input) why() string {
-	figures, rows := "figures", "rows"
-	if len(i.Ledger.Infrastructure.Figures) > 0 {
-		figures, rows = "agent figures", "agent rows"
+	var said []string
+	if decided, ruled := deciding(i.Verdict); ruled && broken(decided) && !i.refused() {
+		said = append(said, i.fields().noFigure(len(i.Ledger.Infrastructure.Figures) > 0, false))
 	}
-	shows := "so this report shows no " + figures + "."
 	switch {
-	case i.State == Reported:
-		return ""
 	case i.refused():
-		return i.refusedLine()
-	case i.Reason == NoRowsFile || i.Reason == ForkNoRows:
-		return "No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none."
-	case i.Reason == NotAFile:
-		return "The rows path is not a regular file, so this report did not read it and shows no figures."
-	case i.Reason == InvalidRow && i.ReasonLine > 0:
-		return fmt.Sprintf("Line %d of the rows file is not a valid row, %s A partial total would read as a smaller cost.", i.ReasonLine, shows)
-	case i.Reason == InvalidRow:
-		return "A line of the rows file is not a valid row, " + shows + " A partial total would read as a smaller cost."
+		said = append(said, i.refusedLine())
 	case i.Reason == AgentSkipped:
-		return "The agent did not run on this pull request: the workflow skipped its job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request."
+		said = append(said, "The agent did not run on this pull request: the workflow skipped its job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request.")
 	case i.readerLine() != "":
-		return fmt.Sprintf("This report shows no %s. Reason `%s`: %s. The reader's first error: `%s`.", figures, i.RunReason, i.RunReason.Sentence(), i.readerLine())
+		said = append(said, fmt.Sprintf("The reader's first error: `%s`.", i.readerLine()))
 	case i.agentError() != "":
-		return fmt.Sprintf("This report shows no %s. Reason `%s`: %s. It ended with `%s`: %s.", figures, i.RunReason, i.RunReason.Sentence(), i.AgentError, reason.AgentErrorFix(i.AgentError))
-	case i.runReason() != "":
-		return fmt.Sprintf("This report shows no %s. Reason `%s`: %s.", figures, i.RunReason, i.RunReason.Sentence())
-	case i.State == NoRows:
-		return "The rows file holds no " + rows + ", " + shows + " Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
+		said = append(said, fmt.Sprintf("It ended with `%s`: %s.", i.AgentError, reason.AgentErrorFix(i.AgentError)))
 	}
-	return "The rows file could not be read, " + shows
+	return strings.Join(said, " ")
 }
 
 // agentErrorBesideFigures says the agent ended in an error after the requests

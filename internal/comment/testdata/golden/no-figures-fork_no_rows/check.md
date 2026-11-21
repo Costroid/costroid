@@ -1,14 +1,12 @@
 # Title
 
-Verdict: neutral
+No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none. No rule ran.
 
 # Summary
 
-**Verdict: neutral.** No policy ran on this change.
+**No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none. No rule ran.**
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
-
-No rows file reached this report, so it shows no figures. The agent's job log says why it wrote none.
 
 # Text
 

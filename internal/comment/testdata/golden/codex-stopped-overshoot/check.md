@@ -1,25 +1,25 @@
 # Title
 
-Verdict: neutral
+No budget set: this run cost USD 0.0283136 at list (Measured), USD 0.0273136 over its USD 0.001 cap. No rule decides this check.
 
 # Summary
 
-This run cost USD 0.0283136 at list (Measured). Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Over the cap by USD 0.0273136 and 16960 tokens.
+**No budget set: this run cost USD 0.0283136 at list (Measured), USD 0.0273136 over its USD 0.001 cap. No rule decides this check.**
 
-**Verdict: neutral.** No policy ran on this change.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| USD 0.0283136 | Measured | unattributed | wrapper-watchdog: the wrapper stops the process at the cap |
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.0283136 | Measured | the wrapper stops the process at the cap |
 
-Unverified: the agent's job wrote these figures.
+Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.
 
 <details>
-<summary>Cap, agents, models and catalog</summary>
+<summary>Policy, agents, models and catalog</summary>
 
-Cap: USD 0.001 (wrapper-watchdog: the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.
+No policy ran on this change.
 
 Agents: `codex`. Models: `gpt-5.6-sol`. 4 rows, catalog `0.1.0`, prices read 2026-11-01.
 
@@ -30,10 +30,10 @@ Agents: `codex`. Models: `gpt-5.6-sol`. 4 rows, catalog `0.1.0`, prices read 202
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `input_uncached` | `openai:gpt-5.6-sol:global:standard:to-272000:input_uncached` | USD 4 per 1,000,000 tokens | 5632 | USD 0.022528 |
-| `0.1.0` | `cache_read` | `openai:gpt-5.6-sol:global:standard:to-272000:cache_read` | USD 0.4 per 1,000,000 tokens | 11264 | USD 0.0045056 |
-| `0.1.0` | `output` | `openai:gpt-5.6-sol:global:standard:to-272000:output` | USD 20 per 1,000,000 tokens | 64 | USD 0.00128 |
-| `0.1.0` | `cached_input_reported` | `openai/gpt-5.6-sol/cached_input_reported/informational` | informational, not priced | 11264 | USD 0 |
+| `0.1.0` | `input_uncached` | `openai:gpt-5.6-sol:global:standard:to-272000:input_uncached` | USD 4.00 per million tokens | 5632 | USD 0.022528 |
+| `0.1.0` | `cache_read` | `openai:gpt-5.6-sol:global:standard:to-272000:cache_read` | USD 0.40 per million tokens | 11264 | USD 0.0045056 |
+| `0.1.0` | `output` | `openai:gpt-5.6-sol:global:standard:to-272000:output` | USD 20.00 per million tokens | 64 | USD 0.00128 |
+| `0.1.0` | `cached_input_reported` | `openai/gpt-5.6-sol/cached_input_reported/informational` | informational, not priced | 11264 | No amount: not priced |
 
 </details>
 

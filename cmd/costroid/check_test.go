@@ -46,7 +46,7 @@ func recordFlow(t *testing.T, flow checkFlow) string {
 	}
 	out.WriteString("-- stderr\n" + stderr)
 	for _, check := range stub.Checks {
-		fmt.Fprintf(&out, "-- check %d %s %s %s\n%s\n-- text\n%s\n", check.ID, check.Name, check.HeadSHA, check.Conclusion, check.Summary, check.Text)
+		fmt.Fprintf(&out, "-- check %d %s %s %s\n-- title\n%s\n-- summary\n%s\n-- text\n%s\n", check.ID, check.Name, check.HeadSHA, check.Conclusion, check.Title, check.Summary, check.Text)
 	}
 	return goldenTimes.ReplaceAllString(out.String(), "<time>")
 }

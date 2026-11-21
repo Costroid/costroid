@@ -60,7 +60,7 @@ func TestGitLabReportPostsOneNoteWithTheSameComment(t *testing.T) {
 	}
 	body := stub.Notes[0].Body
 	for _, want := range []string{
-		"<!-- costroid:comment -->", "USD " + realTotal, "List-equivalent, not billed", "Cap: USD 5 (",
+		"<!-- costroid:comment -->", "USD " + realTotal, "List-equivalent, not billed", "Cap: USD 5.00 (",
 		"agent-flag", "unattributed", `"head_sha": "` + headCommit + `"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -93,7 +93,7 @@ func TestASecondGitLabReportUpdatesTheOneNote(t *testing.T) {
 	if len(stub.Notes) != 1 || stub.Notes[0].ID != id {
 		t.Fatalf("notes = %+v", stub.Notes)
 	}
-	if stub.Notes[0].Body == first || !strings.Contains(stub.Notes[0].Body, "Cap: USD 7 (") {
+	if stub.Notes[0].Body == first || !strings.Contains(stub.Notes[0].Body, "Cap: USD 7.00 (") {
 		t.Errorf("the note was not updated:\n%s", stub.Notes[0].Body)
 	}
 }

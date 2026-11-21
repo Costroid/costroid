@@ -54,8 +54,9 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	return flags, nil
 }
 
-// policyCommand gives the verdict the check gives, offline. It exits 1 on
-// failure, so a script can stop on it.
+// policyCommand gives the verdict the check gives, offline, and ends on the
+// sentence the check's title carries. It exits 1 on failure, so a script can
+// stop on it.
 func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags, err := parsePolicy(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -73,7 +74,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
-	if err := printVerdict(stdout, verdict, flags.config, flags.json); err != nil {
+	if err := printVerdict(stdout, verdict, flags); err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
@@ -132,8 +133,11 @@ func historyOf(ctx context.Context, flags policyFlags) (earlierRuns, error) {
 	return earlierRunsOf(ctx, checks, 0, historyFileCommit, own)
 }
 
-func printVerdict(stdout io.Writer, verdict policy.Verdict, config string, asJSON bool) error {
-	if asJSON {
+// printVerdict prints what the verdict sentence leaves unsaid, one sentence a
+// line, and last the sentence itself, which names the rows' figures. --json
+// prints the verdict alone.
+func printVerdict(stdout io.Writer, verdict policy.Verdict, flags policyFlags) error {
+	if flags.json {
 		encoded, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
 			return fmt.Errorf("encode the verdict: %w", err)
@@ -141,9 +145,22 @@ func printVerdict(stdout io.Writer, verdict policy.Verdict, config string, asJSO
 		_, err = fmt.Fprintf(stdout, "%s\n", encoded)
 		return err
 	}
-	fmt.Fprintf(stdout, "Verdict: %s.\n", verdict.Conclusion)
-	for _, sentence := range comment.VerdictSentences(verdict, true, comment.LocalConfig(config)) {
-		fmt.Fprintln(stdout, sentence)
+	file, err := os.Open(flags.rows)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer file.Close()
+	ledger, err := comment.ReadRows(file)
+	if err != nil {
+		return err
+	}
+	report := comment.Input{Ledger: ledger, State: comment.Reported, Verdict: &verdict, Amounts: comment.AmountsShown}
+	if ledger.Rows == 0 {
+		report.State, report.Reason = comment.NoRows, comment.EmptyRowsFile
+	}
+	for _, line := range comment.VerdictLines(report, comment.LocalConfig(flags.config)) {
+		fmt.Fprintln(stdout, line)
+	}
+	_, err = fmt.Fprintln(stdout, comment.VerdictSentence(report))
+	return err
 }

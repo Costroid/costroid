@@ -62,11 +62,20 @@ func (p Period) String() string {
 	case p.Start.Day() == 1 && p.Start.Truncate(day).Equal(p.Start) && p.End.Equal(p.Start.AddDate(0, 1, 0)):
 		return p.Start.Format("2006-01")
 	case !p.Start.Truncate(day).Equal(p.Start) || !p.End.Truncate(day).Equal(p.End):
-		return p.Start.Format(focus.InstantLayout) + " to " + p.End.Format(focus.InstantLayout)
+		return instant(p.Start) + " to " + instant(p.End)
 	case p.End.Equal(p.Start.Add(day)):
 		return p.Start.Format(time.DateOnly)
 	}
 	return p.Start.Format(time.DateOnly) + " to " + p.End.Add(-day).Format(time.DateOnly)
+}
+
+// instant names an instant as a person reads one, in UTC, to the minute. An
+// instant off the minute keeps its seconds, so the period stays exact.
+func instant(at time.Time) string {
+	if at.Second() != 0 {
+		return at.UTC().Format("2006-01-02 15:04:05 UTC")
+	}
+	return at.UTC().Format(instantLayout)
 }
 
 func (p Period) compare(other Period) int {
@@ -213,7 +222,7 @@ type infrastructureRowView struct {
 const (
 	apartLine           = "The agent figure and these infrastructure figures are not added together."
 	apartCurrenciesLine = "The agent figure and these infrastructure figures are not added together, and no currency is added to another."
-	notStatedCell       = "not stated"
+	notStatedCell       = "Not stated"
 	// withheldLine says where withheld infrastructure amounts are kept, as the
 	// withheld trace says it of token counts: in the rows, and on GitHub in
 	// the check run's machine block. The comment's copy of the block states
@@ -236,7 +245,7 @@ func (i Infrastructure) view(shown, checkRuns bool) *infrastructureView {
 		currencies[figure.Currency] = true
 		line := fmt.Sprintf("Infrastructure, %s, in %s for %s, from %s.", basisWords[figure.Basis], figure.Currency, figure.Period, figure.Source.Code())
 		if shown {
-			line = fmt.Sprintf("Infrastructure, %s: %s %s for %s, from %s.", basisWords[figure.Basis], figure.Currency, figure.Cost, figure.Period, figure.Source.Code())
+			line = fmt.Sprintf("Infrastructure, %s: %s for %s, from %s.", basisWords[figure.Basis], money(figure.Currency, figure.Cost.String()), figure.Period, figure.Source.Code())
 		}
 		section.Lines = append(section.Lines, line)
 	}
@@ -259,7 +268,7 @@ func (i Infrastructure) view(shown, checkRuns bool) *infrastructureView {
 			cells.Service = row.Service.Code()
 		}
 		if shown {
-			cells.Amount = row.Currency + " " + row.Cost.String()
+			cells.Amount = money(row.Currency, row.Cost.String())
 		}
 		section.Rows = append(section.Rows, cells)
 	}

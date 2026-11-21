@@ -320,14 +320,15 @@ func TestRecordedRowsSayRecordedAndTheDate(t *testing.T) {
 			t.Errorf("the comment went to %v, not pull request 7", posted)
 		}
 		check, body := stub.Checks[0], stub.Comments[0].Body
-		if check.HeadSHA != headCommit || !strings.HasPrefix(check.Summary, line+"\n\n") {
-			t.Errorf("the check on %s does not open with the recorded line:\n%s", check.HeadSHA, check.Summary)
+		opening := "**" + check.Title + "**\n\n" + line + "\n\n"
+		if check.HeadSHA != headCommit || !strings.HasPrefix(check.Summary, opening) {
+			t.Errorf("the check on %s does not state the recorded line under its sentence:\n%s", check.HeadSHA, check.Summary)
 		}
-		if !strings.HasPrefix(body, comment.Marker+"\n### Costroid\n\n"+line+"\n\n") || strings.Count(body, line) != 1 {
-			t.Errorf("the comment does not open with the recorded line once:\n%s", body)
+		if !strings.HasPrefix(body, comment.Marker+"\n"+opening) || strings.Count(body, line) != 1 {
+			t.Errorf("the comment does not state the recorded line under its sentence, once:\n%s", body)
 		}
-		if !strings.HasPrefix(readFile(t, summary), "### Costroid\n\n"+line+"\n\n") {
-			t.Errorf("the job summary does not open with the recorded line:\n%s", readFile(t, summary))
+		if !strings.HasPrefix(readFile(t, summary), opening) {
+			t.Errorf("the job summary does not state the recorded line under its sentence:\n%s", readFile(t, summary))
 		}
 		for name, text := range map[string]string{"check": check.Text, "comment": body, "result": stdout} {
 			if !strings.Contains(text, object) {
@@ -344,7 +345,7 @@ func TestRecordedRowsSayRecordedAndTheDate(t *testing.T) {
 		if read := requestsWith(stub.Requests, "/pulls/7/commits"); len(read) != 0 {
 			t.Errorf("the report read the pull request's total: %v", read)
 		}
-		if !strings.Contains(body, "This run cost USD "+demoTotal+" at list (Measured).") {
+		if !strings.Contains(body, "this run cost USD "+demoTotal+" at list (Measured) of the USD 5.00 run budget.") {
 			t.Errorf("the comment does not state the recorded figure:\n%s", body)
 		}
 	})

@@ -193,7 +193,7 @@ func Check(input Input) (CheckOutput, error) {
 	if err != nil {
 		return CheckOutput{}, err
 	}
-	return CheckOutput{Title: "Verdict: " + input.Conclusion(), Summary: summary, Text: fenced(block)}, nil
+	return CheckOutput{Title: VerdictSentence(input), Summary: summary, Text: fenced(block)}, nil
 }
 
 // Result renders the result object as the check run carries it: every amount
@@ -208,6 +208,12 @@ func Result(input Input) (string, error) {
 }
 
 func (i Input) block() (string, error) {
+	return i.fields().encode()
+}
+
+// fields is the result object before it is written: what the machine block
+// states, and what the verdict sentence is built from.
+func (i Input) fields() Block {
 	block := Block{
 		Schema:         schema,
 		CheckRunID:     i.CheckRunID,
@@ -224,7 +230,7 @@ func (i Input) block() (string, error) {
 		CIRun:          i.ciRun(),
 		RowsSHA256:     i.rowsDigest(),
 		RowsFileSHA256: digestOrNil(i.RowsFileSHA256),
-		Amounts:        "withheld",
+		Amounts:        amountsWithheld,
 		Rows:           i.Ledger.Rows,
 		RunIdentity:    artifactIdentity,
 		Figures:        make([]BlockFigure, 0, len(i.Ledger.Figures)),
@@ -257,7 +263,7 @@ func (i Input) block() (string, error) {
 		block.Figures = append(block.Figures, line)
 	}
 	if shown {
-		block.Amounts = "shown"
+		block.Amounts = amountsShown
 		block.Cap = i.capCheck().block()
 		block.Lifetime = i.Lifetime.block()
 		if stated := i.agentStated(); stated != nil {
@@ -270,7 +276,7 @@ func (i Input) block() (string, error) {
 	if len(block.Estimates) == 0 {
 		block.Schema = schemaV09
 	}
-	return block.encode()
+	return block
 }
 
 // blockEstimates are the estimate figures the comment's infrastructure
@@ -590,7 +596,8 @@ func addedValues(object string, block Block) []addedValue {
 // Reconclude renders a check that repeats an earlier check run's result
 // object with the conclusion an approval gives it: neutral for an approved
 // failure, the policy's verdict when no approval counts. previous names the
-// check run that carries the report in full.
+// check run that carries the report in full. The object does not say whether
+// the report's comment shows amounts, so the title and the summary name none.
 func Reconclude(block Block, approval *Approval, previous int64) (CheckOutput, error) {
 	verdict := block.verdict()
 	conclusion := block.ApprovedConclusion(approval)
@@ -600,9 +607,25 @@ func Reconclude(block Block, approval *Approval, previous int64) (CheckOutput, e
 		return CheckOutput{}, err
 	}
 	line := fmt.Sprintf("No approval binds commit `%s`, so the check concludes as the policy does.", block.HeadSHA[:min(len(block.HeadSHA), shortCommitLength)])
-	if conclusion != verdict {
+	if conclusion == verdict {
+		approval = nil
+	} else {
 		line = approvalLine(*approval)
 	}
-	summary := fmt.Sprintf("**Verdict: %s.** %s\n\nCheck run %d carries this report in full.\n", conclusion, line, previous)
-	return CheckOutput{Title: "Verdict: " + conclusion, Summary: summary, Text: fenced(encoded)}, nil
+	sentence := block.withoutAmounts().sentence(approval, slices.ContainsFunc(block.Estimates, func(estimate BlockEstimate) bool { return estimate.Reason == "" }))
+	summary := fmt.Sprintf("**%s**\n\n%s\n\nCheck run %d carries this report in full.\n", sentence, line, previous)
+	return CheckOutput{Title: sentence, Summary: summary, Text: fenced(encoded)}, nil
+}
+
+// withoutAmounts is the object as a comment that withholds amounts copies
+// it: no figure's cost, no cap, no total and no amount in the verdict.
+func (b Block) withoutAmounts() Block {
+	b.Amounts = amountsWithheld
+	b.Figures = slices.Clone(b.Figures)
+	for index := range b.Figures {
+		b.Figures[index].ListCost, b.Figures[index].Tokens = "", nil
+	}
+	b.Cap, b.Lifetime, b.AgentStated = nil, nil, nil
+	b.Policy = blockVerdict(b.Policy, false)
+	return b
 }

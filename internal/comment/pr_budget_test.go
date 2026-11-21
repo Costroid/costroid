@@ -8,12 +8,14 @@ import (
 	"github.com/Costroid/costroid/internal/policy"
 )
 
-// TestPRBudgetNamesItsBases holds the pull request budget's line to the bases
-// its USD total adds: both when the pull request's runs hold two, the one when
-// they hold one, and every basis when no lifetime names them. A figure in
-// another currency is not in the total, so its basis is not named.
+// TestPRBudgetNamesItsBases holds the pull request budget's sentence to the
+// bases its USD total adds: both when the pull request's runs hold two, the
+// one when they hold one, and every basis when no lifetime names them. A
+// figure in another currency is not in the total, so its basis is not named.
 func TestPRBudgetNamesItsBases(t *testing.T) {
-	over := "Pull request budget: USD 10.5 over this pull request's runs is over the USD 10 budget. "
+	over := func(bases string) string {
+		return "**Over budget: this pull request's runs cost USD 10.50 at list (" + bases + "), over the USD 10.00 pull request budget.**\n"
+	}
 	figure := func(currency, basis, cost string) LifetimeFigure {
 		return LifetimeFigure{Currency: currency, Basis: basis, Cost: decimal.MustParse(cost), Reports: 1}
 	}
@@ -23,10 +25,10 @@ func TestPRBudgetNamesItsBases(t *testing.T) {
 		want     string
 	}{
 		{"two bases", &Lifetime{Figures: []LifetimeFigure{figure("USD", "list_equivalent", "4"), figure("EUR", "billed", "2"), figure("USD", "measured", "6.5")}},
-			over + "The total adds Measured and List-equivalent together, at list."},
+			over("Measured and List-equivalent together")},
 		{"one basis", &Lifetime{Figures: []LifetimeFigure{figure("USD", "list_equivalent", "10.5"), figure("EUR", "measured", "2")}},
-			over + "The total is at list (List-equivalent, not billed)."},
-		{"no lifetime", nil, over + "The total adds every basis together, at list."},
+			over("List-equivalent, not billed")},
+		{"no lifetime", nil, over("every basis together")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := realInput(t)

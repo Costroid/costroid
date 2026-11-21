@@ -2,6 +2,7 @@ package comment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,6 +76,40 @@ func verdictOver(t *testing.T, usage policy.Usage, config string, trust policy.T
 		t.Fatal(err)
 	}
 	return &verdict
+}
+
+// rulesVerdict evaluates the default pack over the golden rows on the Action
+// path, under a costroid.yml read at the base commit, with what the report
+// read of earlier runs.
+func rulesVerdict(t *testing.T, config policy.ConfigFile, at time.Time, baseline *policy.Baseline, earlier *policy.Lifetime) *policy.Verdict {
+	t.Helper()
+	data, err := os.ReadFile(goldenRowsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := policy.ReadUsage(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Ref, config.FromBase = exampleBase, true
+	verdict, err := policy.Evaluate(context.Background(), policy.Request{
+		Usage:    usage,
+		Trust:    policy.Unverified,
+		Config:   config,
+		Start:    policy.Start{At: goldenStart},
+		At:       at,
+		Baseline: baseline,
+		Lifetime: earlier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &verdict
+}
+
+// settings is a costroid.yml found at the base commit.
+func settings(document string) policy.ConfigFile {
+	return policy.ConfigFile{Data: []byte(document), Found: true}
 }
 
 // withVerdict is the recorded subagent run's report under a verdict.
@@ -343,6 +378,37 @@ func goldenStates(t *testing.T) map[string]Input {
 	note := focusfile.NotAvailable(focusfile.DefaultSource)
 	unavailable.EstimateUnavailable = &note
 	states["infrastructure-not-available"] = unavailable
+
+	// A reviewer approved the failure: the check concludes neutral on the
+	// approved commit, and the sentence names the reviewer.
+	approved := fail
+	approved.Approval = &Approval{Approver: "octocat", HeadSHA: sampleHead, At: time.Date(2026, 11, 12, 9, 30, 0, 0, time.UTC)}
+	states["approved-failure"] = approved
+	states["approved-failure-withheld"] = withheld(approved)
+
+	// The action refused the artifact that carried the rows: no rule runs and
+	// the check fails.
+	refused := noFigures(Unreadable, NoRowsFile)
+	refused.Refused = &RefusedArtifact{Count: 2, Entries: []string{"notes.txt", "extra/rows.jsonl"}}
+	states["artifact-refused"] = refused
+
+	// costroid.yml could not be read at the base commit, so no rule ran.
+	states["config-unread"] = withVerdict(t, rulesVerdict(t, policy.ConfigFile{Unread: errors.New("the host did not answer")}, insidePeriod, nil, nil))
+
+	// A rule other than the run budget decides, each with its own noun: the
+	// run cost limit, an increase over the baseline, the pull request budget,
+	// the monthly budget and the model list.
+	states["limit-over"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_run_cost_usd: \"0.001\"\n"), afterPeriod, nil, nil))
+	baseline := &policy.Baseline{Runs: 12, MedianUSD: decimal.MustParse("0.0012"), P95USD: decimal.MustParse("0.002"), Trust: policy.Unverified}
+	states["increase-within"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_increase_usd: \"0.01\"\n"), insidePeriod, baseline, nil))
+	overPullRequest := withVerdict(t, rulesVerdict(t, settings("policy:\n  pr_budget_usd: \"0.003\"\n"), afterPeriod, nil, &policy.Lifetime{USD: decimal.MustParse("0.001619725"), Trust: policy.Unverified}))
+	overPullRequest.Lifetime = &Lifetime{Figures: []LifetimeFigure{{Currency: "USD", Basis: "list_equivalent", Cost: decimal.MustParse("0.00323945"), Reports: 2}}}
+	states["pull-request-budget-over"] = overPullRequest
+	states["monthly-budget-not-decided"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  monthly_budget_usd: \"100\"\n"), insidePeriod, nil, nil))
+	states["model-off-list"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  models:\n    - gpt-*\n"), insidePeriod, nil, nil))
+	// Two rules fail: the sentence names the first the pack lists, and the
+	// other follows in the body.
+	states["two-rules-fail"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_run_cost_usd: \"0.001\"\n  models:\n    - gpt-*\n"), afterPeriod, nil, nil))
 
 	// A report states no cap for a run nothing held. A preview compares the
 	// cost with the cap it was given, and names the costroid.yml it read.

@@ -20,7 +20,7 @@ func blockVerdict(verdict *policy.Verdict, shown bool) *policy.Verdict {
 
 var ruleLabels = map[string]string{
 	policy.RuleRunBudget:          "Run budget",
-	policy.RuleRunCostThreshold:   "Run cost threshold",
+	policy.RuleRunCostThreshold:   "Run cost limit",
 	policy.RuleRunIncrease:        "Increase over baseline",
 	policy.RuleRunIncreasePercent: "Percent increase over baseline",
 	policy.RulePullRequestBudget:  "Pull request budget",
@@ -31,7 +31,7 @@ var ruleLabels = map[string]string{
 
 var limitNouns = map[string]string{
 	policy.RuleRunBudget:          "budget",
-	policy.RuleRunCostThreshold:   "threshold",
+	policy.RuleRunCostThreshold:   "limit",
 	policy.RuleRunIncrease:        "limit",
 	policy.RuleRunIncreasePercent: "limit",
 	policy.RulePullRequestBudget:  "budget",
@@ -53,16 +53,101 @@ func (i Input) configRead() string {
 	return baseBranchConfig
 }
 
-// verdictLine opens with the approval when one turns the check neutral.
-func (i Input) verdictLine(shown bool) string {
+// reading is what stands between the verdict sentence and the evidence, a
+// paragraph each: the line for a recorded run, one sentence of reason, the
+// rules the sentence does not name, and a next step only when the reader must
+// act. The reason is the approval when one turned the check neutral, then who
+// vouched for the rows, or what a report with no figures leaves unsaid.
+func (i Input) reading(shown bool) []string {
+	var paragraphs []string
+	add := func(paragraph string) {
+		if paragraph != "" {
+			paragraphs = append(paragraphs, paragraph)
+		}
+	}
+	add(i.recordedLine())
+	if i.approved() {
+		add(approvalLine(*i.Approval))
+	}
+	if i.State == Reported {
+		add(i.trustLine())
+	} else {
+		add(i.why())
+	}
+	add(strings.Join(i.otherRules(shown), " "))
+	add(i.nextStep())
+	return paragraphs
+}
+
+// named reports a result the verdict sentence states in full: its figure
+// against its limit. A rule that could not be checked is explained by its own
+// line, and so is the model list, whose line names the models.
+func named(result policy.Result) bool {
+	switch {
+	case leadNouns[result.Rule] == "":
+		return false
+	case broken(result) || result.Outcome == policy.Pass:
+		return true
+	}
+	return result.Reason == policy.ReasonUnverifiedRows
+}
+
+// otherRules are the lines of the rules the verdict sentence leaves to the
+// body: every rule but the one it states in full.
+func (i Input) otherRules(shown bool) []string {
+	if i.Verdict == nil {
+		return nil
+	}
+	decided, ruled := deciding(i.Verdict)
+	stated := ruled && named(decided) && (i.State == Reported || broken(decided))
+	var lines []string
+	for _, result := range i.Verdict.Results {
+		if stated && result.Rule == decided.Rule {
+			continue
+		}
+		lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.lifetimeBases()))
+	}
+	return lines
+}
+
+// approvalPage says how a reviewer approves a failed check.
+const approvalPage = "https://docs.costroid.com/approval"
+
+// nextStep is the one sentence for a reader who must act: the file to fix
+// when costroid.yml kept every rule from running, how a failure is approved,
+// or when the warn-only period ends. It is empty for any other verdict. Only
+// GitHub's check takes an approval.
+func (i Input) nextStep() string {
+	switch {
+	case i.Verdict == nil:
+		return ""
+	case configSentence(*i.Verdict, i.configRead()) != "":
+		return configSentence(*i.Verdict, i.configRead())
+	case i.Verdict.Conclusion == policy.Failure && !i.approved() && i.AccountHost != AccountGitLab:
+		return "[The approval page](" + approvalPage + ") says how a reviewer approves a failed check."
+	case slices.ContainsFunc(i.Verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly }):
+		return warnOnlySentence(i.Verdict.WarnOnly)
+	}
+	return ""
+}
+
+// policyNotes are the sentences on the policy that a reader opens the fold
+// for: that no policy ran or no rule applied, what a budget kept on the
+// agent's own rows would conclude when broken, the page that says what lets a
+// rule pass, and where the settings were read.
+func (i Input) policyNotes() string {
 	if i.Verdict == nil {
 		return "No policy ran on this change."
 	}
-	line := strings.Join(verdictSentences(*i.Verdict, shown, i.lifetimeBases(), i.configRead(), true), " ")
-	if i.approved() {
-		return approvalLine(*i.Approval) + " " + line
+	var notes []string
+	if len(i.Verdict.Results) == 0 && configSentence(*i.Verdict, i.configRead()) == "" {
+		notes = append(notes, noRuleApplied(i.configRead()))
 	}
-	return line
+	notes = append(notes, passNotes(*i.Verdict)...)
+	if i.Verdict.ConfigFromBase {
+		notes = append(notes, fromBase)
+	}
+	return strings.Join(notes, " ")
 }
 
 // LocalConfig names a costroid.yml read from the working tree at path: the
@@ -74,46 +159,54 @@ func LocalConfig(path string) string {
 	return "`" + path + "`"
 }
 
-// VerdictSentences says what the policy found, one sentence per fact, in the
-// words the comment uses. shown says whether amounts may be printed, and
-// config names the costroid.yml the verdict read, as LocalConfig does. It
-// reads no lifetime, so a pull request's total is said to add every basis. It
-// carries no link, so a terminal can print it.
-func VerdictSentences(verdict policy.Verdict, shown bool, config string) []string {
-	return verdictSentences(verdict, shown, nil, config, false)
-}
-
-// verdictSentences is built from the verdict's closed fields and its amounts,
-// so no text from the pull request reaches it. It names the bases the pull
-// request's total adds, in basisOrder, or every basis when bases is empty,
-// and config as the costroid.yml the verdict read. linked adds the sentences
-// that say why a verdict on the agent's own rows is neutral, with their link.
-func verdictSentences(verdict policy.Verdict, shown bool, bases []string, config string, linked bool) []string {
-	var sentences []string
-	switch verdict.Config {
-	case policy.ConfigInvalid:
-		sentences = append(sentences, "No rule ran, so the check concludes neutral: "+config+" is not valid, and `costroid validate` names the problem.")
-	case policy.ConfigUnread:
-		sentences = append(sentences, "No rule ran, so the check concludes neutral: "+config+" could not be read, and a missing input never blocks a merge.")
+// VerdictLines are what a terminal prints above the verdict sentence, one
+// sentence a line: why no rule ran, each rule the sentence does not name,
+// that no rule applied, and the warn-only period when it holds a rule. config
+// names the costroid.yml the verdict read, as LocalConfig does. The lines
+// carry no link. They are built from the verdict's closed fields and its
+// amounts, so no text from the pull request reaches them.
+func VerdictLines(input Input, config string) []string {
+	if input.Verdict == nil {
+		return nil
 	}
-	held := false
-	for _, result := range verdict.Results {
-		sentences = append(sentences, resultSentence(result, verdict.JoinableRows, shown, bases))
-		held = held || result.HeldByWarnOnly
+	verdict := *input.Verdict
+	var lines []string
+	if problem := configSentence(verdict, config); problem != "" {
+		lines = append(lines, problem)
 	}
-	if len(sentences) == 0 {
-		sentences = append(sentences, "No rule applied: "+config+" sets no budget and no threshold. "+setBudget)
+	lines = append(lines, input.otherRules(input.Amounts == AmountsShown)...)
+	if len(verdict.Results) == 0 && len(lines) == 0 {
+		lines = append(lines, noRuleApplied(config))
 	}
-	if linked {
-		sentences = append(sentences, trustSentences(verdict)...)
-	}
-	if held {
-		sentences = append(sentences, warnOnlySentence(verdict.WarnOnly))
+	if slices.ContainsFunc(verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly }) {
+		lines = append(lines, warnOnlySentence(verdict.WarnOnly))
 	}
 	if verdict.ConfigFromBase {
-		sentences = append(sentences, "A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.")
+		lines = append(lines, fromBase)
 	}
-	return sentences
+	return lines
+}
+
+// fromBase says why a change to costroid.yml in the pull request does not
+// reach its own verdict.
+const fromBase = "A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file."
+
+// configSentence says why no rule ran when the costroid.yml named could not
+// be used, and is empty when it could.
+func configSentence(verdict policy.Verdict, config string) string {
+	switch verdict.Config {
+	case policy.ConfigInvalid:
+		return "No rule ran, so the check concludes neutral: " + config + " is not valid, and `costroid validate` names the problem."
+	case policy.ConfigUnread:
+		return "No rule ran, so the check concludes neutral: " + config + " could not be read, and a missing input never blocks a merge."
+	}
+	return ""
+}
+
+// noRuleApplied says the costroid.yml named sets nothing a rule reads, and
+// names the key that sets a run budget.
+func noRuleApplied(config string) string {
+	return "No rule applied: " + config + " sets no budget and no limit. " + setBudget
 }
 
 func resultSentence(result policy.Result, joinable int, shown bool, bases []string) string {
@@ -134,16 +227,16 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("%s: USD %s is over the USD %s %s.", label, result.CostUSD, result.LimitUSD, noun)
+			return fmt.Sprintf("%s: %s is over the %s %s.", label, money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), noun)
 		}
 		return fmt.Sprintf("%s: the run is over the %s.", label, noun)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s: USD %s is within the USD %s %s.", label, result.CostUSD, result.LimitUSD, noun)
+			return fmt.Sprintf("%s: %s is within the %s %s.", label, money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), noun)
 		}
 		return fmt.Sprintf("%s: the run is within the %s.", label, noun)
 	case policy.ReasonUnverifiedRows:
-		return label + ": unverified rows cannot satisfy a budget." + standing(result, shown, bases)
+		return label + ": unchecked rows cannot satisfy a budget." + standing(result, shown, bases)
 	case policy.ReasonUnattributedRows:
 		return label + ": unattributed rows cannot satisfy a budget." + standing(result, shown, bases)
 	case policy.ReasonNoRows:
@@ -174,11 +267,11 @@ func standing(result policy.Result, shown bool, bases []string) string {
 	noun := limitNouns[result.Rule]
 	switch {
 	case result.Rule == policy.RulePullRequestBudget && shown:
-		return fmt.Sprintf(" This pull request's runs cost USD %s of the USD %s budget. %s", result.CostUSD, result.LimitUSD, totalBases(bases))
+		return fmt.Sprintf(" This pull request's runs cost %s of the %s budget. %s", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), totalBases(bases))
 	case result.Rule == policy.RulePullRequestBudget:
 		return " This pull request's runs are within the budget. " + totalBases(bases)
 	case shown:
-		return fmt.Sprintf(" The run cost USD %s of the USD %s %s.", result.CostUSD, result.LimitUSD, noun)
+		return fmt.Sprintf(" The run cost %s of the %s %s.", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), noun)
 	}
 	return fmt.Sprintf(" The run is within the %s.", noun)
 }
@@ -209,15 +302,15 @@ func onAgentRows(verdict policy.Verdict) (neutral, budget bool) {
 	return neutral, budget
 }
 
-// trustSentences say that a verdict is neutral because the agent's own job
-// wrote the rows, what a budget broken on them concludes, and which page says
-// what lets a rule pass. They are empty for any other verdict.
-func trustSentences(verdict policy.Verdict) []string {
+// passNotes say what a budget kept on the agent's own rows would conclude
+// when broken, and which page says what lets a rule pass. They are empty for
+// any verdict but one only the agent's own rows kept from success.
+func passNotes(verdict policy.Verdict) []string {
 	neutral, budget := onAgentRows(verdict)
 	if !neutral {
 		return nil
 	}
-	sentences := []string{"The verdict is neutral because the agent's own job wrote the rows."}
+	var notes []string
 	rule := "rule"
 	if budget {
 		rule = "budget"
@@ -225,9 +318,9 @@ func trustSentences(verdict policy.Verdict) []string {
 		if verdict.WarnOnly.Active {
 			over = "Over budget, the rule would warn until the warn-only period ends, then fail."
 		}
-		sentences = append(sentences, over)
+		notes = append(notes, over)
 	}
-	return append(sentences, "[The policy page]("+policyPage+") says what lets a "+rule+" pass.")
+	return append(notes, "[The policy page]("+policyPage+") says what lets a "+rule+" pass.")
 }
 
 // allowlistSentence names the models off the list as code spans, each through
@@ -251,7 +344,7 @@ func allowlistSentence(result policy.Result) string {
 	case policy.ReasonUnreadableModel:
 		return "a row names no model this check can read, so the rule cannot pass."
 	case policy.ReasonUnverifiedRows:
-		return "unverified rows cannot show that every model was on the list."
+		return "unchecked rows cannot show that every model was on the list."
 	case policy.ReasonUnattributedRows:
 		return "unattributed rows cannot show that every model was on the list."
 	}
@@ -267,17 +360,17 @@ func increaseSentence(result policy.Result, shown bool) string {
 	}
 	amounts := shown && result.CostUSD != "" && result.BaselineUSD != ""
 	if amounts && result.LimitUSD != "" {
-		allowed = "USD " + result.LimitUSD
+		allowed = money(budgetCurrency, result.LimitUSD)
 	}
 	switch result.Reason {
 	case policy.ReasonOverBaseline:
 		if amounts {
-			return fmt.Sprintf("USD %s is more than %s over the USD %s median of earlier runs.", result.CostUSD, allowed, result.BaselineUSD)
+			return fmt.Sprintf("%s is more than %s over the %s median of earlier runs.", money(budgetCurrency, result.CostUSD), allowed, money(budgetCurrency, result.BaselineUSD))
 		}
 		return fmt.Sprintf("the run is more than %s over the median of earlier runs.", allowed)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("USD %s is at most %s over the USD %s median of earlier runs.", result.CostUSD, allowed, result.BaselineUSD)
+			return fmt.Sprintf("%s is at most %s over the %s median of earlier runs.", money(budgetCurrency, result.CostUSD), allowed, money(budgetCurrency, result.BaselineUSD))
 		}
 		return fmt.Sprintf("the run is at most %s over the median of earlier runs.", allowed)
 	case policy.ReasonNoBaseline:
@@ -293,12 +386,12 @@ func pullRequestSentence(result policy.Result, shown bool, bases []string) strin
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("USD %s over this pull request's runs is over the USD %s budget. %s", result.CostUSD, result.LimitUSD, totalBases(bases))
+			return fmt.Sprintf("%s over this pull request's runs is over the %s budget. %s", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), totalBases(bases))
 		}
 		return "this pull request's runs are over the budget. " + totalBases(bases)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("USD %s over this pull request's runs is within the USD %s budget. %s", result.CostUSD, result.LimitUSD, totalBases(bases))
+			return fmt.Sprintf("%s over this pull request's runs is within the %s budget. %s", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), totalBases(bases))
 		}
 		return "this pull request's runs are within the budget. " + totalBases(bases)
 	case policy.ReasonNoLifetime:
@@ -358,7 +451,7 @@ func warnOnlySentence(period policy.WarnOnly) string {
 		ends, err := time.Parse(time.RFC3339, period.Ends)
 		if err == nil {
 			return fmt.Sprintf("Warn-only until %s: for %d days from the commit that added this workflow to the base branch, a rule that fails warns. %s",
-				ends.UTC().Format("2006-01-02 15:04 UTC"), int(policy.WarnOnlyPeriod.Hours()/24), enforceNow)
+				ends.UTC().Format(instantLayout), int(policy.WarnOnlyPeriod.Hours()/24), enforceNow)
 		}
 	}
 	return "Warn-only: the commit that added this workflow to the base branch could not be read, so a rule that fails warns. " + enforceNow

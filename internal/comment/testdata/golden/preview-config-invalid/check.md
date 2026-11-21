@@ -1,36 +1,36 @@
 # Title
 
-Verdict: neutral
+Not decided: costroid.yml is not valid, so no rule ran. This run cost USD 0.10 at list (Measured).
 
 # Summary
 
-This run cost USD 0.1 at list (Measured). No cap held it.
+**Not decided: costroid.yml is not valid, so no rule ran. This run cost USD 0.10 at list (Measured).**
 
-**Verdict: neutral.** No rule ran, so the check concludes neutral: `costroid.yml` in this directory is not valid, and `costroid validate` names the problem.
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
+No rule ran, so the check concludes neutral: `costroid.yml` in this directory is not valid, and `costroid validate` names the problem.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Cost | Basis | Attribution | Enforcement |
-| --- | --- | --- | --- |
-| USD 0.1 | Measured | unattributed | none: no cap held the run |
-
-Unverified: the agent's job wrote these figures.
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.10 | Measured | no cap held the run |
 
 <details>
 <summary>Cap, agents, models and catalog</summary>
 
-No cap held this run: its enforcement grade is none. Cap: USD 0.05, which nothing enforced. Cost: USD 0.1, Measured. Over the cap by USD 0.05 and 1000000 tokens.
+No cap held this run. Cap: USD 0.05, which nothing enforced. Cost: USD 0.10, Measured. Over the cap by USD 0.05 and 1000000 tokens.
 
 Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
 
 </details>
 
 <details>
-<summary>How USD 0.1 was computed</summary>
+<summary>How USD 0.10 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.1 per 1,000,000 tokens | 1000000 | USD 0.1 |
+| `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
 

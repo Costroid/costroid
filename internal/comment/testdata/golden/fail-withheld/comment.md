@@ -1,22 +1,24 @@
 <!-- costroid:comment -->
+**Over budget: this run is over its run budget, priced at list (List-equivalent, not billed). Amounts are withheld here.**
+
+Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+
+[The approval page](https://docs.costroid.com/approval) says how a reviewer approves a failed check.
+
 ### Costroid
-
-This run was priced at list (List-equivalent, not billed). Held by agent-flag: client-side estimate, can pass the cap.
-
-**Verdict: failure.** Run budget: the run is over the budget. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
-| Basis | Attribution | Enforcement |
-| --- | --- | --- |
-| List-equivalent, not billed | unattributed | agent-flag: client-side estimate, can pass the cap |
-
-Unverified: the agent's job wrote these figures.
+| Basis | Enforcement |
+| --- | --- |
+| List-equivalent, not billed | client-side estimate, can pass the cap |
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
 <details>
-<summary>Agents, models and catalog</summary>
+<summary>Policy, agents, models and catalog</summary>
+
+A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
 

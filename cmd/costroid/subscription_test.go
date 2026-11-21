@@ -55,7 +55,7 @@ func TestASubscriptionLoginSaysSoBesideItsFigure(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			comment := ingestRecordedAction(t, recordings+tc.dir, "00000000-0000-4000-8000-000000000001")
-			if !strings.Contains(comment, "This run cost "+tc.figure+" at list (") {
+			if !strings.Contains(comment, "this run cost "+tc.figure+" at list (") {
 				t.Errorf("the first line does not state %s:\n%s", tc.figure, comment)
 			}
 			row := "| " + tc.figure + " | "
