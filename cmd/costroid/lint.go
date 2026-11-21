@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/recipelint"
@@ -27,6 +28,7 @@ your key, and what the agent's job holds.`,
 	Exits: []cli.Row{
 		{"0", "no high finding, and with --strict no medium one"},
 		{"1", "a high finding, or with --strict a medium one"},
+		cli.UsageExit,
 		{"125", "costroid could not read a path, or found no YAML file in it"},
 	},
 	Docs: "lint",
@@ -40,17 +42,18 @@ func lintCommand(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("lint", err))
 	}
 	paths := set.Args()
 	if len(paths) == 0 {
 		paths = []string{defaultWorkflows}
 	}
 	report, err := recipelint.LintWith(paths, recipelint.Options{Profile: recipelint.Customer})
+	if errors.Is(err, fs.ErrNotExist) && set.NArg() == 0 {
+		return cli.Fail(stderr, fmt.Errorf("%s does not exist\nlint reads the GitHub workflows of the repository it runs in.\nRun costroid lint at a repository's root, or name the files: costroid lint <paths>.", defaultWorkflows))
+	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.File(err))
 	}
 	for _, note := range report.Notes {
 		fmt.Fprintln(stdout, note)

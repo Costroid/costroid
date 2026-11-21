@@ -288,7 +288,7 @@ func TestReportPostsOnThePullRequestEventAlone(t *testing.T) {
 
 func TestReportNeedsItsRowsFlag(t *testing.T) {
 	code, _, stderr := execute(t, "report")
-	if code != exitFailure || !strings.Contains(stderr, "--rows") {
+	if code != exitUsage || !strings.Contains(stderr, "--rows") {
 		t.Errorf("exit %d: %s", code, stderr)
 	}
 }

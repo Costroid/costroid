@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	errApproveNotGitHubActions = errors.New("approve refused: GitHub Actions was not detected")
+	errApproveNotGitHubActions = errors.New("approve refused: GitHub Actions was not detected\napprove runs in a GitHub Actions job on the pull_request_review event, as recipes/github-approval.yml does.")
 	errApproveArguments        = errors.New("approve takes no arguments")
 	errNoReviews               = errors.New("this host lists no reviews")
 	errHeadMoved               = errors.New("the pull request's head has moved since this run")
@@ -65,7 +65,8 @@ GitHub Actions it refuses and exits 125. docs/approval.md has the workflow.`)}},
 	}},
 	Exits: []cli.Row{
 		{"0", "approve ran, whatever the host answered"},
-		{"125", "GitHub Actions was not detected, or an argument was given"},
+		cli.UsageExit,
+		{"125", "GitHub Actions was not detected"},
 	},
 	Docs: "approval",
 }.String()
@@ -101,30 +102,27 @@ func approveCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err := parseFlags(set, args, approveHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("approve", err))
 	}
 	if set.NArg() > 0 {
-		fmt.Fprintf(stderr, "costroid: %v\n", errApproveArguments)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("approve", errApproveArguments))
 	}
 	if cicontext.Detect(os.Getenv) != cicontext.GitHubActions {
-		fmt.Fprintf(stderr, "costroid: %v\n", errApproveNotGitHubActions)
-		return exitFailure
+		return cli.Fail(stderr, errApproveNotGitHubActions)
 	}
 	number, err := readReviewEvent(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_EVENT_PATH"), os.Getenv("GITHUB_REPOSITORY"))
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		return 0
 	}
 	pull, err := readPullContext()
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		return 0
 	}
 	reporter, err := hostFromEnvironment(pull)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		return 0
 	}
 	host, ok := reporter.(approvalHost)
@@ -135,7 +133,7 @@ func approveCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	if err := reconclude(ctx, host, resolveBaseHead(ctx, host, pull, stderr), number, time.Now(), stderr); err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 	}
 	return 0
 }

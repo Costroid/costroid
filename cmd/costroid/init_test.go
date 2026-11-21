@@ -352,22 +352,23 @@ func TestInitRefusesDevWithoutRef(t *testing.T) {
 		build buildInfo
 		args  []string
 		want  string
+		code  int
 	}{
-		{"dev", buildInfo{version: "dev"}, []string{"github", "--agent", "claude"}, "development build, version dev, which belongs to no release, so init pins nothing: run a released costroid, or name the commit to pin with --action-ref <40 hex>"},
-		{"dev with a commit", buildInfo{version: "dev", commit: testCommit}, []string{"github", "--agent", "codex-action"}, "development build"},
-		{"release with no commit", buildInfo{version: testRelease}, []string{"github", "--agent", "claude"}, "this build of " + testRelease + " records no commit"},
-		{"gitlab dev", buildInfo{version: "dev"}, []string{"gitlab", "--agent", "claude"}, "pins nothing: run a released costroid\n"},
-		{"gitlab ref", buildInfo{version: "dev"}, []string{"gitlab", "--agent", "claude", "--action-ref", otherCommit}, "the GitLab template installs a release by its version"},
-		{"short ref", buildInfo{version: "dev"}, []string{"github", "--agent", "claude", "--action-ref", "0123456"}, "--action-ref must be a full commit SHA"},
-		{"upper-case ref", buildInfo{version: "dev"}, []string{"github", "--agent", "claude", "--action-ref", strings.ToUpper(otherCommit)}, "--action-ref must be a full commit SHA"},
-		{"zero ref", buildInfo{version: "dev"}, []string{"github", "--agent", "claude", "--action-ref", strings.Repeat("0", 40)}, "--action-ref must be a full commit SHA"},
-		{"existing dev", buildInfo{version: "dev"}, []string{"github", "--agent", "claude-code-action", "--existing", "review.yml"}, "development build"},
+		{"dev", buildInfo{version: "dev"}, []string{"github", "--agent", "claude"}, "development build, version dev, which belongs to no release, so init pins nothing: run a released costroid, or name the commit to pin with --action-ref <40 hex>", exitFailure},
+		{"dev with a commit", buildInfo{version: "dev", commit: testCommit}, []string{"github", "--agent", "codex-action"}, "development build", exitFailure},
+		{"release with no commit", buildInfo{version: testRelease}, []string{"github", "--agent", "claude"}, "this build of " + testRelease + " records no commit", exitFailure},
+		{"gitlab dev", buildInfo{version: "dev"}, []string{"gitlab", "--agent", "claude"}, "pins nothing: run a released costroid\n", exitFailure},
+		{"gitlab ref", buildInfo{version: "dev"}, []string{"gitlab", "--agent", "claude", "--action-ref", otherCommit}, "the GitLab template installs a release by its version", exitUsage},
+		{"short ref", buildInfo{version: "dev"}, []string{"github", "--agent", "claude", "--action-ref", "0123456"}, "--action-ref must be a full commit SHA", exitUsage},
+		{"upper-case ref", buildInfo{version: "dev"}, []string{"github", "--agent", "claude", "--action-ref", strings.ToUpper(otherCommit)}, "--action-ref must be a full commit SHA", exitUsage},
+		{"zero ref", buildInfo{version: "dev"}, []string{"github", "--agent", "claude", "--action-ref", strings.Repeat("0", 40)}, "--action-ref must be a full commit SHA", exitUsage},
+		{"existing dev", buildInfo{version: "dev"}, []string{"github", "--agent", "claude-code-action", "--existing", "review.yml"}, "development build", exitFailure},
 	}
 	for _, refusal := range refusals {
 		t.Run(refusal.name, func(t *testing.T) {
 			root := t.TempDir()
 			code, stdout, stderr := runInit(t, root, refusal.build, costroid.Recipes, refusal.args...)
-			if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+			if code != refusal.code || stdout != "" || !strings.Contains(stderr, refusal.want) {
 				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if files := tree(t, root); len(files) != 0 {
@@ -723,19 +724,20 @@ func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 	for _, refusal := range []struct {
 		args []string
 		want string
+		code int
 	}{
-		{nil, "name the host"},
-		{[]string{"bitbucket", "--agent", "claude"}, `not "bitbucket"`},
-		{[]string{"github"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
-		{[]string{"gitlab", "--agent", "claude-code-action"}, "--agent on gitlab is one of claude, codex"},
-		{[]string{"github", "--agent", "claude", "--existing", "x.yml"}, "--existing reads a GitHub workflow that runs claude-code-action"},
-		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--force"}, "--existing writes nothing"},
-		{[]string{"github", "gitlab", "--agent", "claude"}, "init takes one host"},
-		{[]string{"github", "--agent", "claude", "--budget", "5"}, "--budget is not a flag of costroid init"},
+		{nil, "name the host", exitFailure},
+		{[]string{"bitbucket", "--agent", "claude"}, `not "bitbucket"`, exitUsage},
+		{[]string{"github"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk", exitUsage},
+		{[]string{"gitlab", "--agent", "claude-code-action"}, "--agent on gitlab is one of claude, codex", exitUsage},
+		{[]string{"github", "--agent", "claude", "--existing", "x.yml"}, "--existing reads a GitHub workflow that runs claude-code-action", exitUsage},
+		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--force"}, "--existing writes nothing", exitUsage},
+		{[]string{"github", "gitlab", "--agent", "claude"}, "init takes one host", exitUsage},
+		{[]string{"github", "--agent", "claude", "--budget", "5"}, "--budget is not a flag of costroid init", exitUsage},
 	} {
 		root := t.TempDir()
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
-		if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+		if code != refusal.code || stdout != "" || !strings.Contains(stderr, refusal.want) {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", refusal.args, code, stdout, stderr)
 		}
 	}
@@ -884,12 +886,12 @@ func TestInitRefusesOutsideARepository(t *testing.T) {
 	for _, args := range [][]string{{"github", "--agent", "claude"}, {"--agent", "claude"}, {"gitlab", "--agent", "codex"}} {
 		var stdout, stderr bytes.Buffer
 		code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, args, &stdout, &stderr)
-		if code != exitNoRepository || stdout.Len() != 0 || stderr.String() != "costroid: init: "+errNoRepository.Error()+"\n" {
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "costroid: "+errNoRepository.Error()+"\n" {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout.String(), stderr.String())
 		}
 	}
-	if strings.Count(errNoRepository.Error(), ". ") != 0 {
-		t.Errorf("the refusal is more than one sentence: %q", errNoRepository)
+	if lines := strings.Split(errNoRepository.Error(), "\n"); len(lines) != 3 || !strings.Contains(lines[2], "costroid init") {
+		t.Errorf("the refusal is not what is wrong, why, and the command to run next: %q", errNoRepository)
 	}
 	if files := tree(t, dir); len(files) != 0 {
 		t.Errorf("init wrote %v", files)
@@ -925,7 +927,13 @@ func TestInitReadsTheHostFromTheRemote(t *testing.T) {
 			}
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append(test.args, "--agent", "codex")...)
 			if test.want != githubHost && test.want != gitlabHost {
-				if code != exitFailure || !strings.Contains(stderr, test.want) {
+				// A host named twice is the command line's mistake, and a
+				// remote that names none is the repository's.
+				want := exitFailure
+				if len(test.args) > 0 {
+					want = exitUsage
+				}
+				if code != want || !strings.Contains(stderr, test.want) {
 					t.Errorf("exit %d, stderr %q", code, stderr)
 				}
 				return
@@ -1056,11 +1064,12 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 		label string
 		files map[string]string
 		want  string
+		code  int
 	}{
-		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
-		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk"},
-		{"two", map[string]string{"claude.yml": existingReview, "codex.yml": existingCodexReview}, ".github/workflows/claude.yml and .github/workflows/codex.yml each run an agent's action: name the one to report from with --existing"},
-		{"a codex-home it cannot read", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "codex-home: ${{ runner.temp }}/codex-home\n", "codex-home: [a, b]\n", 1)}, "sets a codex-home the read step cannot read: set it to one directory made for the job under runner.temp"},
+		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk", exitUsage},
+		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk", exitUsage},
+		{"two", map[string]string{"claude.yml": existingReview, "codex.yml": existingCodexReview}, ".github/workflows/claude.yml and .github/workflows/codex.yml each run an agent's action: name the one to report from with --existing", exitUsage},
+		{"a codex-home it cannot read", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "codex-home: ${{ runner.temp }}/codex-home\n", "codex-home: [a, b]\n", 1)}, "sets a codex-home the read step cannot read: set it to one directory made for the job under runner.temp", exitFailure},
 	} {
 		t.Run(refusal.label, func(t *testing.T) {
 			root := t.TempDir()
@@ -1069,7 +1078,7 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 			}
 			before := tree(t, root)
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github")
-			if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+			if code != refusal.code || stdout != "" || !strings.Contains(stderr, refusal.want) {
 				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if !reflect.DeepEqual(before, tree(t, root)) {
@@ -1286,7 +1295,7 @@ func TestInitAuthSubscriptionWritesTheOAuthRecipe(t *testing.T) {
 	} {
 		root := t.TempDir()
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
-		if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+		if code != exitUsage || stdout != "" || !strings.Contains(stderr, refusal.want) {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", refusal.args, code, stdout, stderr)
 		}
 		if files := tree(t, root); len(files) != 0 {
@@ -1884,7 +1893,7 @@ func TestInitPRSaysARepositorySecretWins(t *testing.T) {
 		installFakes(t)
 		root := t.TempDir()
 		code, output := runPR(t, root, testPR, refusal.args...)
-		if code != exitFailure || !strings.Contains(output, refusal.want) || len(tree(t, root)) != 0 {
+		if code != exitUsage || !strings.Contains(output, refusal.want) || len(tree(t, root)) != 0 {
 			t.Errorf("%v: exit %d:\n%s", refusal.args, code, output)
 		}
 	}
@@ -1921,7 +1930,7 @@ func TestInitPRStopsAtTheFirstFailedStep(t *testing.T) {
 			if code != exitFailure {
 				t.Fatalf("exit %d:\n%s", code, output)
 			}
-			if failed := "costroid: init: " + prSteps[test.at] + " failed: " + test.want; !strings.Contains(output, failed) {
+			if failed := "costroid: " + prSteps[test.at] + " failed: " + test.want; !strings.Contains(output, failed) {
 				t.Errorf("init does not say %q:\n%s", failed, output)
 			}
 			last := fake.calls(t)[len(fake.calls(t))-1]
@@ -1932,7 +1941,7 @@ func TestInitPRStopsAtTheFirstFailedStep(t *testing.T) {
 			if !found {
 				t.Fatalf("init lists nothing as left:\n%s", output)
 			}
-			list, _, _ = strings.Cut(list, "costroid: init:")
+			list, _, _ = strings.Cut(list, "costroid: ")
 			var left []string
 			for line := range strings.SplitSeq(strings.TrimSpace(list), "\n") {
 				left = append(left, strings.TrimSpace(line))
@@ -1969,23 +1978,24 @@ func TestInitPRRefusesWhatItCannotRun(t *testing.T) {
 	for _, refusal := range []struct {
 		args []string
 		want string
+		code int
 	}{
-		{[]string{"gitlab", "--agent", "claude", "--pr"}, "--pr opens a pull request with gh, which works on GitHub alone"},
-		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--pr"}, "--existing writes nothing, so --pr and --skills do not apply"},
-		{[]string{"github", "--agent", "claude", "--key-env", "KEY"}, "--key-env names the key --pr sets as a secret, so it needs --pr"},
-		{[]string{"github", "--agent", "claude", "--pr", "--key-env", "NOT A NAME"}, `not "NOT A NAME"`},
-		{[]string{"github", "--agent", "claude", "--pr", "--key-env", "COSTROID_TEST_UNSET"}, "gh secret set ANTHROPIC_API_KEY failed: the environment variable COSTROID_TEST_UNSET is empty"},
-		{[]string{"github", "--agent", "claude", "--pr"}, "gh secret set ANTHROPIC_API_KEY failed: no terminal to ask for the key on, so name the environment variable that holds it with --key-env"},
+		{[]string{"gitlab", "--agent", "claude", "--pr"}, "--pr opens a pull request with gh, which works on GitHub alone", exitUsage},
+		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--pr"}, "--existing writes nothing, so --pr and --skills do not apply", exitUsage},
+		{[]string{"github", "--agent", "claude", "--key-env", "KEY"}, "--key-env names the key --pr sets as a secret, so it needs --pr", exitUsage},
+		{[]string{"github", "--agent", "claude", "--pr", "--key-env", "NOT A NAME"}, `not "NOT A NAME"`, exitUsage},
+		{[]string{"github", "--agent", "claude", "--pr", "--key-env", "COSTROID_TEST_UNSET"}, "gh secret set ANTHROPIC_API_KEY failed: the environment variable COSTROID_TEST_UNSET is empty", exitFailure},
+		{[]string{"github", "--agent", "claude", "--pr"}, "gh secret set ANTHROPIC_API_KEY failed: no terminal to ask for the key on, so name the environment variable that holds it with --key-env", exitFailure},
 	} {
 		code, output := runPR(t, t.TempDir(), testPR, refusal.args...)
-		if code != exitFailure || !strings.Contains(output, refusal.want) {
+		if code != refusal.code || !strings.Contains(output, refusal.want) {
 			t.Errorf("%v: exit %d:\n%s", refusal.args, code, output)
 		}
 	}
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, workflowDir, "review.yml"), existingReview)
 	code, output := runPR(t, root, testPR, "github", "--pr")
-	if want := ".github/workflows/review.yml already runs anthropics/claude-code-action, and init reads it as --existing does, which writes nothing: pass --agent to write a new workflow with --pr or --skills"; code != exitFailure || !strings.Contains(output, want) {
+	if want := ".github/workflows/review.yml already runs anthropics/claude-code-action, and init reads it as --existing does, which writes nothing: pass --agent to write a new workflow with --pr or --skills"; code != exitUsage || !strings.Contains(output, want) {
 		t.Errorf("--pr beside a claude-code-action workflow: exit %d:\n%s", code, output)
 	}
 }
@@ -2062,7 +2072,7 @@ func TestInitPostReviewWritesTheOptIn(t *testing.T) {
 		})
 	}
 	code, _, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "gitlab", "--agent", "claude", "--post-review")
-	if code != exitFailure || !strings.Contains(stderr, "--post-review posts the agent's answer on GitHub alone") {
+	if code != exitUsage || !strings.Contains(stderr, "--post-review posts the agent's answer on GitHub alone") {
 		t.Errorf("gitlab: exit %d, stderr %q", code, stderr)
 	}
 }
@@ -2153,7 +2163,7 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 	} {
 		root := t.TempDir()
 		code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
-		if code != exitFailure || !strings.Contains(stderr, refusal.want) || len(tree(t, root)) != 0 {
+		if code != exitUsage || !strings.Contains(stderr, refusal.want) || len(tree(t, root)) != 0 {
 			t.Errorf("%v: exit %d, stderr %q", refusal.args, code, stderr)
 		}
 	}
@@ -2231,7 +2241,7 @@ func TestInitPlatformURLWritesTheConnectWorkflow(t *testing.T) {
 		writeFile(t, filepath.Join(root, connect), "a team's own connect job\n")
 		before := tree(t, root)
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--platform-url", "https://app.costroid.com")
-		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid: init: "+connectWorkflow+" exists: pass --force to replace it\n") {
+		if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid: "+connectWorkflow+" exists: pass --force to replace it\n") {
 			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 		if !reflect.DeepEqual(before, tree(t, root)) {
@@ -2376,7 +2386,7 @@ func TestInitSkillsWritesBothSkillFiles(t *testing.T) {
 	}
 
 	code, _, stderr = runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--existing", "review.yml", "--skills")
-	if code != exitFailure || !strings.Contains(stderr, "--existing writes nothing, so --pr and --skills do not apply") {
+	if code != exitUsage || !strings.Contains(stderr, "--existing writes nothing, so --pr and --skills do not apply") {
 		t.Errorf("--existing --skills: exit %d, stderr %q", code, stderr)
 	}
 }
@@ -2571,14 +2581,15 @@ func TestExistingTakesTheBudgetFlag(t *testing.T) {
 		label, workflow string
 		args            []string
 		want            string
+		code            int
 	}{
-		{"zero", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "0.00"}, `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "0.00"`},
-		{"a negative amount", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "-1"}, `not "-1"`},
-		{"an expression", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "${{ env.CAP }}"}, `not "${{ env.CAP }}"`},
-		{"a word", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "five"}, `not "five"`},
-		{"an exponent", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "1e3"}, `not "1e3"`},
-		{"a recipe", "", []string{"--agent", "claude", "--budget-usd", "3"}, "--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own"},
-		{"codex-action", existingCodexReview, []string{"--existing", "review.yml", "--budget-usd", "3"}, "--budget-usd sets the cap init adds to the claude_args of anthropics/claude-code-action, and the step runs openai/codex-action, which takes none"},
+		{"zero", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "0.00"}, `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "0.00"`, exitUsage},
+		{"a negative amount", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "-1"}, `not "-1"`, exitUsage},
+		{"an expression", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "${{ env.CAP }}"}, `not "${{ env.CAP }}"`, exitUsage},
+		{"a word", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "five"}, `not "five"`, exitUsage},
+		{"an exponent", claudeStep, []string{"--existing", "review.yml", "--budget-usd", "1e3"}, `not "1e3"`, exitUsage},
+		{"a recipe", "", []string{"--agent", "claude", "--budget-usd", "3"}, "--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own", exitUsage},
+		{"codex-action", existingCodexReview, []string{"--existing", "review.yml", "--budget-usd", "3"}, "--budget-usd sets the cap init adds to the claude_args of anthropics/claude-code-action, and the step runs openai/codex-action, which takes none", exitFailure},
 	} {
 		t.Run(refusal.label, func(t *testing.T) {
 			root := t.TempDir()
@@ -2587,7 +2598,7 @@ func TestExistingTakesTheBudgetFlag(t *testing.T) {
 			}
 			before := tree(t, root)
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, append([]string{"github"}, refusal.args...)...)
-			if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) {
+			if code != refusal.code || stdout != "" || !strings.Contains(stderr, refusal.want) {
 				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if !reflect.DeepEqual(before, tree(t, root)) {
@@ -2726,14 +2737,15 @@ func TestInitWritesTheSDKRecipes(t *testing.T) {
 	for _, refusal := range []struct {
 		args []string
 		want string
+		code int
 	}{
-		{[]string{"github", "--agent", "codex-sdk", "--post-review"}, "--post-review posts the agent's answer, and Costroid does not read what a program on --agent codex-sdk prints"},
-		{[]string{"github", "--agent", "claude-agent-sdk", "--pr"}, "--pr opens a pull request whose run installs the program's packages from agent/package-lock.json, and the repository has none"},
-		{[]string{"gitlab", "--agent", "codex-sdk"}, `--agent on gitlab is one of claude, codex, not "codex-sdk"`},
+		{[]string{"github", "--agent", "codex-sdk", "--post-review"}, "--post-review posts the agent's answer, and Costroid does not read what a program on --agent codex-sdk prints", exitUsage},
+		{[]string{"github", "--agent", "claude-agent-sdk", "--pr"}, "--pr opens a pull request whose run installs the program's packages from agent/package-lock.json, and the repository has none", exitFailure},
+		{[]string{"gitlab", "--agent", "codex-sdk"}, `--agent on gitlab is one of claude, codex, not "codex-sdk"`, exitUsage},
 	} {
 		root := t.TempDir()
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
-		if code != exitFailure || stdout != "" || !strings.Contains(stderr, refusal.want) || len(tree(t, root)) != 0 {
+		if code != refusal.code || stdout != "" || !strings.Contains(stderr, refusal.want) || len(tree(t, root)) != 0 {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", refusal.args, code, stdout, stderr)
 		}
 	}

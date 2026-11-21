@@ -249,7 +249,7 @@ func unknownCommand(name string, stderr io.Writer) int {
 		near = "No command is near it."
 	}
 	fmt.Fprintf(stderr, "costroid: unknown command %q\n%s\nRun costroid help to list the commands.\n", name, near)
-	return exitFailure
+	return exitUsage
 }
 
 // accountFlagRows and rowFlagRows are the flags run and ingest-run share.
@@ -357,7 +357,8 @@ says why when FILE is not there. docs/infrastructure.md describes the file.`)}},
 	Environment: []cli.Block{cli.Rows(append(slices.Clone(accountEnvironment), ciEnvironment))},
 	Exits: []cli.Row{
 		{"0", "the rows and the result object are written"},
-		{"125", "costroid could not read the flags or the source, or write the rows"},
+		cli.UsageExit,
+		{"125", "costroid could not read the source or write the rows"},
 	},
 	Docs: "existing-workflow",
 }.String()
@@ -437,8 +438,9 @@ figures. docs/agents.md describes the object.`), resultFileHelp}},
 	Exits: []cli.Row{
 		{"0", "the report ran, whatever the host answered, or --preview printed the comment"},
 		{"1", "with --exit-on-verdict on GitLab CI, the verdict is failure"},
+		cli.UsageExit,
 		{"3", "with --exit-on-verdict on GitLab CI, the verdict is neutral, or the report could not reach GitLab"},
-		{"125", "the flags could not be read, neither GitHub Actions nor GitLab CI was detected, or --preview could not build the comment"},
+		{"125", "neither GitHub Actions nor GitLab CI was detected, or --preview could not build the comment"},
 	},
 	Docs: "policy",
 }.String()
@@ -476,7 +478,8 @@ most.`)}},
 	}},
 	Exits: []cli.Row{
 		{"0", "follow-up ran, whatever the host answered"},
-		{"125", "GitHub Actions was not detected, or the flags could not be read"},
+		cli.UsageExit,
+		{"125", "GitHub Actions was not detected"},
 	},
 	Docs: "security",
 }.String()
@@ -548,6 +551,7 @@ warns and keeps the rows. The admin key never goes to the platform.`)}},
 	Exits: []cli.Row{
 		{"0", "no token miss and no price miss"},
 		{"1", "a token miss or a price miss, each a defect"},
+		cli.UsageExit,
 		{"125", "costroid could not read the rows or a report, a figure stopped its day, or the rows could not be sent"},
 	},
 	Docs: "reconcile",
@@ -599,6 +603,7 @@ prints the verdict as the check's machine block carries it.`)}},
 	Exits: []cli.Row{
 		{"0", "success or neutral"},
 		{"1", "failure"},
+		cli.UsageExit,
 		{"125", "costroid could not read the rows or the file"},
 	},
 	Docs: "policy",
@@ -624,6 +629,7 @@ With - in place of a file, validate reads standard input.`)}},
 	Exits: []cli.Row{
 		{"0", "the file is valid, or there is none and the defaults apply"},
 		{"1", "the file breaks the schema"},
+		cli.UsageExit,
 		{"125", "costroid could not read the file"},
 	},
 	Docs: "configuration",
@@ -646,6 +652,7 @@ rejected line goes to stderr. costroid lint judges your own workflows instead.`)
 	Exits: []cli.Row{
 		{"0", "every file passes"},
 		{"1", "a line is rejected"},
+		cli.UsageExit,
 		{"125", "costroid could not read a path"},
 	},
 	Docs: "recipes",
@@ -658,6 +665,7 @@ var versionHelp = cli.Page{
 	Examples: []string{"costroid version"},
 	Exits: []cli.Row{
 		{"0", "printed"},
+		cli.UsageExit,
 		{"125", "costroid could not load its catalog"},
 	},
 	Docs: "install",
@@ -694,7 +702,8 @@ block the check run carries.`),
 	},
 	Exits: []cli.Row{
 		{"0", "printed"},
-		{"125", "an argument or an unknown --state was given, or costroid could not build the comment"},
+		cli.UsageExit,
+		{"125", "costroid could not build the comment"},
 	},
 	Docs: "comment-example",
 }.String()

@@ -104,9 +104,10 @@ nothing but GitHub.`)}},
 nothing to send, or the platform answered 402 or 409
 INSTALLATION_NOT_BOUND`},
 		{"1", "the platform refused a fact, and the line names its code"},
-		{"125", `costroid could not read the flags, the run or GitHub's
-answer, or reach Costroid Platform, or the platform does
-not serve integration/v0.5 or later`},
+		cli.UsageExit,
+		{"125", `costroid could not read the run or GitHub's answer, or
+reach Costroid Platform, or the platform does not serve
+integration/v0.5 or later`},
 	},
 	Docs: "export",
 }.String()
@@ -173,22 +174,19 @@ func merged(ctx context.Context, args []string, client *http.Client, getenv func
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("merged", err))
 	}
 	push, skip, err := readPush(getenv, stderr)
 	switch {
 	case err != nil:
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	case skip != "":
 		fmt.Fprintf(stderr, "costroid: %s, so nothing was sent\n", skip)
 		return 0
 	}
 	facts, err := closedBy(ctx, push, client, getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	say := stdout
 	if flags.json {
@@ -369,8 +367,7 @@ func (s *mergedSend) open(ctx context.Context, getenv func(string) string) int {
 		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
 		return exitRejected
 	case err != nil:
-		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(s.stderr, err)
 	}
 	s.version = stated
 	fmt.Fprintf(s.stderr, "costroid: Costroid Platform states integration/v%s, so merged sends the merge facts by it\n", stated.Version)
@@ -378,8 +375,7 @@ func (s *mergedSend) open(ctx context.Context, getenv func(string) string) int {
 		return 0
 	}
 	if s.runToken, err = s.target.runToken(ctx, getenv, tenant); err != nil {
-		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(s.stderr, err)
 	}
 	return 0
 }
@@ -444,8 +440,7 @@ func (s *mergedSend) one(ctx context.Context, fact mergeFact) int {
 		return s.refused(fact, refused)
 	}
 	if err != nil {
-		fmt.Fprintf(s.stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(s.stderr, err)
 	}
 	var stored storedFact
 	if json.Unmarshal(data, &stored) != nil || stored.RunIdentity != tokenVerified && stored.RunIdentity != unverified {

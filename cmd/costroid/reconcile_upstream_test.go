@@ -56,7 +56,7 @@ func TestReconcileRefusesAnUpstreamCredentialItCannotRead(t *testing.T) {
 		}
 		doer := &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}
 		code, _, stderr := runReconcile(t, doer, environment, args...)
-		if code != exitFailure || !strings.Contains(stderr, "upstream-credential") || doer.requested != 0 {
+		if code != exitUsage || !strings.Contains(stderr, "upstream-credential") || doer.requested != 0 {
 			t.Errorf("%v: exit %d, %d requests, stderr %q", values, code, doer.requested, stderr)
 		}
 	}

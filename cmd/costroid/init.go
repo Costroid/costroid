@@ -129,9 +129,9 @@ so init reads the commit that tag names on github.com with git ls-remote.
 	Exits: []cli.Row{
 		{"0", "written, or the patch printed"},
 		{"1", "the recipe breaks a rule, which is a defect in costroid"},
-		{"2", "the directory is in no git repository"},
-		{"125", `costroid could not read or write a file, refused to, or
-a command --pr runs failed`},
+		cli.UsageExit,
+		{"125", `the directory is in no git repository, costroid could not
+read or write a file or refused to, or a command --pr runs failed`},
 	},
 	Docs: "install",
 }.String()
@@ -148,7 +148,6 @@ const (
 	gitlabCI           = ".gitlab-ci.yml"
 	subscriptionAuth   = "subscription"
 	apiKeyAuth         = "api-key"
-	exitNoRepository   = 2
 
 	// pullRequestOnly is the report job's condition in a patch. The report
 	// posts on pull_request alone, so no other event starts a runner for it.
@@ -246,7 +245,7 @@ var (
 	copyInstruction = regexp.MustCompile(`Copy (?:to|into) .*?(?:\.(?: |$)|, then )`)
 )
 
-var errNoRepository = errors.New("this directory is in no git repository, and init writes at a repository's root: run it inside your repository")
+var errNoRepository = errors.New("this directory is in no git repository\ninit writes at a repository's root.\nRun costroid init inside your repository.")
 
 // buildInfo is the release this binary belongs to: what the linker stamped,
 // or what the go command recorded. tagCommit reads the commit a release's tag
@@ -357,28 +356,20 @@ func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, 
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
-	if mistake := new(cli.Mistake); errors.As(err, &mistake) {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
-	}
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, cli.Mistaken("init", err))
 	}
 	repo, err := find()
-	if errors.Is(err, errNoRepository) {
-		fmt.Fprintf(stderr, "costroid: init: %v\n", err)
-		return exitNoRepository
-	}
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	flags, switched, err := resolveTarget(repo, flags)
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	release, err := resolvePin(build, flags.actionRef, flags.host)
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	if switched {
 		fmt.Fprintf(stderr, "costroid: %s already runs %s, so init prints the patch that reports from it, as --existing %s does\n", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses, filepath.ToSlash(flags.existing))
@@ -387,11 +378,6 @@ func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, 
 		return printExistingPatch(repo, flags, release, recipes, stdout, stderr)
 	}
 	return writeRecipe(repo, flags, release, recipes, pr, stdout, stderr)
-}
-
-func initFailed(stderr io.Writer, err error) int {
-	fmt.Fprintf(stderr, "costroid: init: %v\n", err)
-	return exitFailure
 }
 
 type initFlags struct {
@@ -472,7 +458,7 @@ func (f initFlags) check() error {
 	case f.keyEnv != "" && !variableName.MatchString(f.keyEnv):
 		return fmt.Errorf("--key-env names an environment variable, such as ANTHROPIC_API_KEY, not %q", f.keyEnv)
 	case f.budgetUSD != "" && (!plainAmount.MatchString(f.budgetUSD) || strings.Trim(f.budgetUSD, "0.") == ""):
-		return fmt.Errorf("--budget-usd is an amount in USD above 0, such as 5 or 2.50, not %q", f.budgetUSD)
+		return fmt.Errorf(budgetForm, f.budgetUSD)
 	}
 	return nil
 }
@@ -529,26 +515,26 @@ func resolveTarget(repo repository, flags initFlags) (initFlags, bool, error) {
 			for i, workflow := range found {
 				names[i] = filepath.ToSlash(workflow.path)
 			}
-			return flags, false, fmt.Errorf("%s each run an agent's action: name the one to report from with --existing", joinNames(names))
+			return flags, false, cli.Mistaken("init", fmt.Errorf("%s each run an agent's action: name the one to report from with --existing", joinNames(names)))
 		}
 	}
 	switch {
 	case flags.existing != "" && flags.host != githubHost:
-		return flags, false, errors.New("--existing reads a GitHub workflow that runs claude-code-action or codex-action, and the host is gitlab")
+		return flags, false, cli.Mistaken("init", errors.New("--existing reads a GitHub workflow that runs claude-code-action or codex-action, and the host is gitlab"))
 	case flags.existing != "" && flags.agent != "" && actionFor(flags.agent).uses == "":
-		return flags, false, errors.New("--existing reads a GitHub workflow that runs claude-code-action or codex-action: pass one of those to --agent, or no --agent")
+		return flags, false, cli.Mistaken("init", errors.New("--existing reads a GitHub workflow that runs claude-code-action or codex-action: pass one of those to --agent, or no --agent"))
 	case flags.existing == "" && flags.budgetUSD != "":
-		return flags, false, errors.New("--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own")
+		return flags, false, cli.Mistaken("init", errors.New("--budget-usd sets the cap the --existing patch adds to claude_args: the recipes init writes hold their own"))
 	case switched && (flags.pr || flags.skills):
-		return flags, false, fmt.Errorf("%s already runs %s, and init reads it as --existing does, which writes nothing: pass --agent to write a new workflow with --pr or --skills", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses)
+		return flags, false, cli.Mistaken("init", fmt.Errorf("%s already runs %s, and init reads it as --existing does, which writes nothing: pass --agent to write a new workflow with --pr or --skills", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses))
 	case flags.existing != "":
-		return flags, switched, errors.Join(flags.checkAuth(), flags.checkHost())
+		return flags, switched, cli.Mistaken("init", errors.Join(flags.checkAuth(), flags.checkHost()))
 	case flags.agent == "":
-		return flags, false, fmt.Errorf("--agent is one of %s", agentNames(agents))
+		return flags, false, cli.Mistaken("init", fmt.Errorf("--agent is one of %s", agentNames(agents)))
 	case agents[flags.agent] == "":
-		return flags, false, fmt.Errorf("--agent on %s is one of %s, not %q", flags.host, agentNames(agents), flags.agent)
+		return flags, false, cli.Mistaken("init", fmt.Errorf("--agent on %s is one of %s, not %q", flags.host, agentNames(agents), flags.agent))
 	}
-	return flags, false, errors.Join(flags.checkAuth(), flags.checkHost(), flags.checkProgram(repo))
+	return flags, false, errors.Join(cli.Mistaken("init", errors.Join(flags.checkAuth(), flags.checkHost())), flags.checkProgram(repo))
 }
 
 // checkProgram refuses what an SDK recipe cannot do. Costroid does not read
@@ -559,7 +545,7 @@ func (f initFlags) checkProgram(repo repository) error {
 		return nil
 	}
 	if f.postReview {
-		return fmt.Errorf("--post-review posts the agent's answer, and Costroid does not read what a program on --agent %s prints", f.agent)
+		return cli.Mistaken("init", fmt.Errorf("--post-review posts the agent's answer, and Costroid does not read what a program on --agent %s prints", f.agent))
 	}
 	if !f.pr {
 		return nil
@@ -707,10 +693,10 @@ func existingWorkflows(root string) ([]existingWorkflow, error) {
 func resolvePin(build buildInfo, actionRef, host string) (pin, error) {
 	if actionRef != "" {
 		if host != githubHost {
-			return pin{}, errors.New("--action-ref names a commit of Costroid's GitHub action, and the GitLab template installs a release by its version")
+			return pin{}, cli.Mistaken("init", errors.New("--action-ref names a commit of Costroid's GitHub action, and the GitLab template installs a release by its version"))
 		}
 		if !fullSHA.MatchString(actionRef) || strings.Trim(actionRef, "0") == "" {
-			return pin{}, fmt.Errorf("--action-ref must be a full commit SHA, 40 lowercase hex characters, not %q", actionRef)
+			return pin{}, cli.Mistaken("init", fmt.Errorf("--action-ref must be a full commit SHA, 40 lowercase hex characters, not %q", actionRef))
 		}
 		return pin{commit: actionRef}, nil
 	}
@@ -747,21 +733,21 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	name := initRecipes[flags.host][flags.agent]
 	source, err := fs.ReadFile(recipes, path.Join("recipes", name))
 	if err != nil {
-		return initFailed(stderr, fmt.Errorf("read the shipped recipe: %w", err))
+		return cli.Fail(stderr, fmt.Errorf("read the shipped recipe: %w", err))
 	}
 	recipe, err := buildRecipe(name, source, release, flags)
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	out := filepath.FromSlash(initOut[flags.host])
 	if flags.out != "" {
 		if out, err = repo.place(flags.out); err != nil {
-			return initFailed(stderr, fmt.Errorf("--out %w", err))
+			return cli.Fail(stderr, fmt.Errorf("--out %w", err))
 		}
 	}
 	shown := filepath.ToSlash(out)
 	if flags.host == gitlabHost && shown == gitlabCI {
-		return initFailed(stderr, fmt.Errorf("--out %s would replace the pipeline that includes the template: name another file", gitlabCI))
+		return cli.Fail(stderr, fmt.Errorf("--out %s would replace the pipeline that includes the template: name another file", gitlabCI))
 	}
 	report := recipelint.LintBytes(shown, recipe)
 	if len(report.Findings) > 0 {
@@ -774,46 +760,46 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	var connect []byte
 	if flags.platformURL != "" {
 		if !bytes.Contains(recipe, []byte("platform-url: ${{ vars."+platformVariable+" }}")) {
-			return initFailed(stderr, fmt.Errorf("recipes/%s has no ingest step that reads %s, which is a defect in costroid", name, platformVariable))
+			return cli.Fail(stderr, fmt.Errorf("recipes/%s has no ingest step that reads %s, which is a defect in costroid", name, platformVariable))
 		}
 		if connect, err = connectRecipe(repo, recipes, release, shown, flags.force, stderr); err != nil {
 			if errors.Is(err, errRecipeRule) {
 				return exitRejected
 			}
-			return initFailed(stderr, err)
+			return cli.Fail(stderr, err)
 		}
 	}
 	var flow *prFlow
 	if flags.pr {
 		if flow, err = newPRFlow(repo, flags, pr, shown, recipe, stdout, stderr); err != nil {
-			return initFailed(stderr, err)
+			return cli.Fail(stderr, err)
 		}
 	}
 	var include *written
 	var pipeline []byte
 	if flags.host == gitlabHost {
 		if pipeline, include, err = planInclude(repo, shown); err != nil {
-			return initFailed(stderr, err)
+			return cli.Fail(stderr, err)
 		}
 	}
 	switch err := createFile(repo.file(out), recipe, flags.force); {
 	case errors.Is(err, fs.ErrExist):
-		return initFailed(stderr, fmt.Errorf("%s exists: pass --force to replace it", shown))
+		return cli.Fail(stderr, fmt.Errorf("%s exists: pass --force to replace it", shown))
 	case err != nil:
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", shown, name, release)
 	changed := []string{shown}
 	if connect != nil {
 		if err := createFile(repo.file(filepath.FromSlash(connectWorkflow)), connect, flags.force); err != nil {
-			return initFailed(stderr, err)
+			return cli.Fail(stderr, err)
 		}
 		fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", connectWorkflow, connectRecipeName, release)
 		changed = append(changed, connectWorkflow)
 	}
 	settings, err := commentedConfig(release)
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	switch err := createFile(repo.file(configFile), settings, false); {
 	case err == nil:
@@ -822,19 +808,19 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	case errors.Is(err, fs.ErrExist):
 		fmt.Fprintf(stdout, "costroid: %s exists, and init left it as it is\n", configFile)
 	default:
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	if flags.skills {
 		wrote, err := writeSkills(repo, stdout)
 		changed = append(changed, wrote...)
 		if err != nil {
-			return initFailed(stderr, err)
+			return cli.Fail(stderr, err)
 		}
 	}
 	if include != nil {
 		if pipeline != nil {
 			if err := createFile(repo.file(gitlabCI), pipeline, true); err != nil {
-				return initFailed(stderr, err)
+				return cli.Fail(stderr, err)
 			}
 			changed = append(changed, gitlabCI)
 		}
@@ -847,7 +833,7 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 		printProgram(stdout, flags, recipe)
 		flow.files = changed
 		if err := flow.run(); err != nil {
-			return initFailed(stderr, err)
+			return cli.Fail(stderr, err)
 		}
 		printAfterSteps(stdout, flags, recipe)
 	}
@@ -1013,10 +999,11 @@ func dropCopyInstruction(recipe []byte) []byte {
 }
 
 // createFile writes data to a new file, or over an old one when replace is
-// set. Without replace, a file that exists answers fs.ErrExist.
+// set. Without replace, a file that exists answers fs.ErrExist. Each error is
+// the file's own, which names the path it failed on.
 func createFile(name string, data []byte, replace bool) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		return fmt.Errorf("make the directory for %s: %w", name, err)
+		return err
 	}
 	mode := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	if !replace {
@@ -1024,16 +1011,13 @@ func createFile(name string, data []byte, replace bool) error {
 	}
 	file, err := os.OpenFile(name, mode, 0o644)
 	if err != nil {
-		return fmt.Errorf("write %s: %w", name, err)
+		return err
 	}
 	if _, err := file.Write(data); err != nil {
 		file.Close()
-		return fmt.Errorf("write %s: %w", name, err)
+		return err
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("write %s: %w", name, err)
-	}
-	return nil
+	return file.Close()
 }
 
 // planInclude reads .gitlab-ci.yml and returns it as it reads with template
@@ -1389,7 +1373,7 @@ func printExistingPatch(repo repository, flags initFlags, release pin, recipes f
 	shown := filepath.ToSlash(flags.existing)
 	source, err := os.ReadFile(repo.file(flags.existing))
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	if bytes.Contains(source, []byte(costroidActionPath+"@")) {
 		fmt.Fprintf(stderr, "costroid: %s already calls %s, so init has nothing to add\n", shown, costroidActionPath)
@@ -1398,14 +1382,14 @@ func printExistingPatch(repo repository, flags initFlags, release pin, recipes f
 	lines, endsWithNewline := splitLines(source)
 	patch, err := existingEdits(source, lines, release, flags)
 	if err != nil {
-		return initFailed(stderr, fmt.Errorf("%s: %w", shown, err))
+		return cli.Fail(stderr, fmt.Errorf("%s: %w", shown, err))
 	}
 	connect, connectLeft, err := existingConnect(repo, flags, recipes, release, stderr)
 	if errors.Is(err, errRecipeRule) {
 		return exitRejected
 	}
 	if err != nil {
-		return initFailed(stderr, err)
+		return cli.Fail(stderr, err)
 	}
 	fmt.Fprint(stdout, unifiedDiff(shown, lines, endsWithNewline, patch.edits))
 	if connect != nil {

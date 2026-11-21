@@ -21,6 +21,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
@@ -52,7 +53,7 @@ const (
 var rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // errNoCISystem is why a report outside a supported CI system refuses to run.
-var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected")
+var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected\nreport posts from a job of one of them.\nRun costroid report --preview --rows FILE to print the comment here.")
 
 // reportEvent is the one GitHub event report posts on. On any other event the
 // event file names no head, and GITHUB_SHA can be the default branch's last
@@ -275,16 +276,14 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("report", err))
 	}
 	if flags.preview {
 		return previewReport(ctx, flags, time.Now(), stdout, stderr)
 	}
 	system := cicontext.Detect(os.Getenv)
 	if system == cicontext.NoSystem {
-		fmt.Fprintf(stderr, "costroid: %v\n", errNoCISystem)
-		return exitFailure
+		return cli.Fail(stderr, errNoCISystem)
 	}
 	if flags.exitOnVerdict && system != cicontext.GitLabCI {
 		fmt.Fprintln(stderr, "costroid: warning: --exit-on-verdict applies on GitLab CI only. On GitHub Actions the costroid check is the gate, so the report exits 0")
@@ -305,7 +304,7 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	target, err := targetFromEnvironment(system, flags, stderr)
 	input.HeadSHA = target.pull.head
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 	} else {
 		input = post(ctx, target, input, flags.rows, stderr)
 	}
@@ -340,7 +339,7 @@ func reportRecordedOnFork(ctx context.Context, flags reportFlags, stdout, stderr
 		pull.pullRequest, err = confirmForkPull(ctx, host, finished, repository)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 	} else {
 		input = post(ctx, reportTarget{host: host, pull: pull, installation: flags.installation, platform: os.Getenv(platformVariable), repository: checkedRepository()}, input, flags.rows, stderr)
 	}
@@ -348,13 +347,11 @@ func reportRecordedOnFork(ctx context.Context, flags reportFlags, stdout, stderr
 	return 0
 }
 
-// The exit codes of report --exit-on-verdict. The GitLab recipe allows the job
-// to fail on exitVerdictNeutral alone, so a neutral verdict shows a warning
-// and exitVerdictFailure fails the pipeline.
-const (
-	exitVerdictFailure = 1
-	exitVerdictNeutral = 3
-)
+// exitVerdictNeutral is report's own code, under --exit-on-verdict on GitLab
+// CI alone. The GitLab recipe allows the job to fail on it and on no other
+// code, so a neutral verdict shows a warning and a failure verdict fails the
+// pipeline.
+const exitVerdictNeutral = 3
 
 // verdictExit maps the check's conclusion to the job's exit code. Neutral
 // covers the warn-only period, a policy that could not run and a report that
@@ -364,7 +361,7 @@ func verdictExit(conclusion string) int {
 	case policy.Success:
 		return 0
 	case policy.Failure:
-		return exitVerdictFailure
+		return exitRejected
 	}
 	return exitVerdictNeutral
 }
@@ -468,8 +465,7 @@ func previewReport(ctx context.Context, flags reportFlags, at time.Time, stdout,
 		err = printPreview(stdout, stderr, input)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", fmt.Errorf("preview: %w", err))
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }
@@ -499,7 +495,7 @@ func previewRowsExist(flags reportFlags) error {
 		os.Getenv(refusedVariable) != "" || os.Getenv(refusedCountVariable) != "" {
 		return nil
 	}
-	return fmt.Errorf("no rows file at %s. costroid run writes one at --out, and costroid demo shows a comment without one", flags.rows)
+	return fmt.Errorf("no rows file at %s\ncostroid run writes one at --out, and costroid demo shows a comment without one.", flags.rows)
 }
 
 // previewVerdict evaluates the policy offline at the given time. It reads no
@@ -834,11 +830,11 @@ func readConfig(ctx context.Context, host scm.Reporter, ref string) (comment.Con
 func postComment(ctx context.Context, host scm.Reporter, input comment.Input, lifetime *comment.Lifetime, pullRequest int, stderr io.Writer) {
 	body, err := comment.CommentWithLifetime(input, lifetime)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: comment not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: comment not posted: %s\n", cli.Plain(err))
 		return
 	}
 	if err := host.UpsertComment(ctx, pullRequest, comment.Marker, body); err != nil {
-		fmt.Fprintf(stderr, "costroid: comment not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: comment not posted: %s\n", cli.Plain(err))
 		return
 	}
 	fmt.Fprintf(stderr, "costroid: comment on %s %d\n", comment.RequestNoun(input.AccountHost), pullRequest)

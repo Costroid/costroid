@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/egress"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/oidc"
@@ -196,7 +197,7 @@ func TestServeRefusesAWildcardOnTheList(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if code := Main(context.Background(), setup(), &stderr); code != exitFailure {
+			if code := Main(context.Background(), setup(), &stderr); code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if !strings.Contains(stderr.String(), "wildcard") {
@@ -237,7 +238,7 @@ func TestAnEmptyReportSaysSo(t *testing.T) {
 func TestEgressNeedsACommandItKnows(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	for _, args := range [][]string{nil, {"delete"}} {
-		if code := EgressMain(context.Background(), args, &stdout, &stderr); code != exitFailure {
+		if code := EgressMain(context.Background(), args, &stdout, &stderr); code != cli.ExitUsage {
 			t.Errorf("%v: exit %d", args, code)
 		}
 	}

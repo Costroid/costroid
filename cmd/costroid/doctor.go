@@ -60,6 +60,7 @@ declared permissions.`)}},
 	Exits: []cli.Row{
 		{"0", "no fail"},
 		{"1", "a fail"},
+		cli.UsageExit,
 		{"125", "costroid could not run the checks"},
 	},
 	Docs: "troubleshooting",
@@ -151,20 +152,15 @@ func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, 
 	if err == nil && set.NArg() > 0 {
 		err = fmt.Errorf("unexpected %q: doctor takes no path, and reads the repository it runs in", set.Arg(0))
 	}
-	if err == nil && *ci && host.getenv("GITHUB_ACTIONS") != "true" {
-		err = errors.New("--ci runs as a step of a GitHub Actions job, and GITHUB_ACTIONS is not true here")
-	}
-	var lines []finding
-	if err == nil {
-		lines, err = examine(ctx, root, build, host, *ci)
-	}
-	if mistake := new(cli.Mistake); errors.As(err, &mistake) {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
-	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: doctor: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("doctor", err))
+	}
+	if *ci && host.getenv("GITHUB_ACTIONS") != "true" {
+		return cli.Fail(stderr, errors.New("--ci runs as a step of a GitHub Actions job, and GITHUB_ACTIONS is not true here"))
+	}
+	lines, err := examine(ctx, root, build, host, *ci)
+	if err != nil {
+		return cli.Fail(stderr, cli.File(err))
 	}
 	counts := map[verdict]int{}
 	for _, line := range lines {

@@ -96,4 +96,5 @@ A code outside this table gets a sentence that points here, and the contract's [
 | --------- | ------- |
 | 0 | The installation is bound to the token's tenant |
 | 1 | The platform refused, and the line names its code |
+| 2 | The command line is wrong |
 | 125 | `connect` could not read its input, get a proof or reach the platform |

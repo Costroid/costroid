@@ -145,13 +145,13 @@ func TestASourceNamesTheEstimatesOrigin(t *testing.T) {
 		{[]string{"--source", "otlp"}, "ingest-run --source takes a name of its own"},
 	} {
 		args := append([]string{"ingest-run", "--from", "focus=" + writeTemp(t, "plan.csv", estimateFile), "--out", filepath.Join(t.TempDir(), "rows.jsonl")}, tc.args...)
-		if code, _, stderr := execute(t, args...); code != exitFailure || !strings.Contains(stderr, tc.want) {
+		if code, _, stderr := execute(t, args...); code != exitUsage || !strings.Contains(stderr, tc.want) {
 			t.Errorf("%v: exit %d: %s", tc.args, code, stderr)
 		}
 	}
 	for _, flag := range [][]string{{"--source", "hcp-terraform"}, {"--source", "infrastructure"}, {"--optional"}, {"--optional=false"}} {
 		args := append([]string{"ingest-run", "--from", "execution-file=" + executionFile, "--out", filepath.Join(t.TempDir(), "rows.jsonl")}, flag...)
-		if code, _, stderr := execute(t, args...); code != exitFailure || !strings.Contains(stderr, "ingest-run takes --source and --optional only with focus") {
+		if code, _, stderr := execute(t, args...); code != exitUsage || !strings.Contains(stderr, "ingest-run takes --source and --optional only with focus") {
 			t.Errorf("%v with execution-file: exit %d: %s", flag, code, stderr)
 		}
 	}

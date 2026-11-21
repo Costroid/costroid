@@ -45,8 +45,10 @@ func TestLintRecipesExitsOneAndNamesTheRule(t *testing.T) {
 }
 
 func TestLintRecipesRefusesAPathWithNoRecipes(t *testing.T) {
+	if code, _, _ := execute(t, "lint-recipes"); code != exitUsage {
+		t.Errorf("no path: exit %d", code)
+	}
 	for name, args := range map[string][]string{
-		"no path":         {"lint-recipes"},
 		"empty directory": {"lint-recipes", t.TempDir()},
 		"missing file":    {"lint-recipes", filepath.Join(t.TempDir(), "absent.yml")},
 	} {

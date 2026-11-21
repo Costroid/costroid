@@ -43,7 +43,7 @@ func TestInstallationIDOtherForms(t *testing.T) {
 	for _, given := range []string{"github:0", "github:12x", "gitlab:4242", "-1"} {
 		stub := newPlatformStub(t, http.StatusAccepted, `{"status":"accepted"}`)
 		code, _, stderr := stub.export(t, stub.githubEnv(), "--installation-id", given)
-		if code != exitFailure || len(stub.exports) != 0 || !strings.Contains(stderr, "--installation-id must be github:<id>, a bare GitHub App installation number") {
+		if code != exitUsage || len(stub.exports) != 0 || !strings.Contains(stderr, "--installation-id must be github:<id>, a bare GitHub App installation number") {
 			t.Errorf("export of %q exited %d: %s", given, code, stderr)
 		}
 	}

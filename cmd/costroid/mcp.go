@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -67,7 +66,8 @@ never a host, so no token goes anywhere the command line did not name.`)}},
 	}},
 	Exits: []cli.Row{
 		{"0", "the client closed the session"},
-		{"125", "costroid could not read the flags or --ledger, or the session failed"},
+		cli.UsageExit,
+		{"125", "costroid could not read --ledger, or the session failed"},
 	},
 	Docs: "agents",
 }.String()
@@ -79,12 +79,10 @@ func mcpCommand(ctx context.Context, args []string, std stdio) int {
 	if err := parseFlags(set, args, mcpHelp, std.stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
-		fmt.Fprintf(std.stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(std.stderr, cli.Mistaken("mcp", err))
 	}
 	if set.NArg() > 0 {
-		fmt.Fprintf(std.stderr, "costroid: %v\n", errMCPArguments)
-		return exitFailure
+		return cli.Fail(std.stderr, cli.Mistaken("mcp", errMCPArguments))
 	}
 	options := mcpserver.Options{
 		Version: version,
@@ -95,15 +93,13 @@ func mcpCommand(ctx context.Context, args []string, std stdio) int {
 	if *ledgerURL != "" {
 		ledger, err := mcpserver.NewLedger(*ledgerURL, os.Getenv(ledgerTokenVariable), ledgerRepository(*repository))
 		if err != nil {
-			fmt.Fprintf(std.stderr, "costroid: %v\n", err)
-			return exitFailure
+			return cli.Fail(std.stderr, err)
 		}
 		options.Ledger = ledger
 	}
 	err := mcpserver.Serve(ctx, options, std.stdin, std.stdout)
 	if err != nil && !errors.Is(err, context.Canceled) {
-		fmt.Fprintf(std.stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(std.stderr, err)
 	}
 	return 0
 }

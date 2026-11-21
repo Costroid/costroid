@@ -47,8 +47,9 @@ and stops the key at the next request.`)}},
 	Environment: []cli.Block{cli.Rows{{envMigration, "the owner role's connection"}}},
 	Exits: []cli.Row{
 		{"0", "the key was created or revoked"},
-		{"125", `costroid could not read the command line, reach the
-database or find the tenant or the key`},
+		cli.UsageExit,
+		{"125", `costroid could not reach the database or find the tenant
+or the key`},
 	},
 	Docs: "serve",
 }.String()
@@ -59,15 +60,14 @@ var keyID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 func KeysMain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, keysGroup)
-		return exitFailure
+		return cli.ExitUsage
 	}
 	err := keysCommand(ctx, args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }
@@ -77,7 +77,7 @@ func keysCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	case "create":
 		return createKey(ctx, args[1:], stdout, stderr)
 	case "revoke":
-		return revokeKey(ctx, args[1:], stderr)
+		return revokeKey(ctx, args[1:])
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, KeysUsage)
 		return flag.ErrHelp
@@ -96,7 +96,7 @@ func createKey(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	owner, err := parseBinding("--owner", *ownerFlag)
 	if err != nil {
-		return err
+		return cli.Mistaken("keys", err)
 	}
 	ownerURL, err := required(envMigration)
 	if err != nil {
@@ -120,10 +120,9 @@ func createKey(ctx context.Context, args []string, stdout, stderr io.Writer) err
 }
 
 // revokeKey never repeats its argument, which may be a key pasted by mistake.
-func revokeKey(ctx context.Context, args []string, stderr io.Writer) error {
+func revokeKey(ctx context.Context, args []string) error {
 	if len(args) != 1 || !keyID.MatchString(args[0]) {
-		fmt.Fprint(stderr, KeysUsage)
-		return errors.New("keys revoke needs one id: the 64 hexadecimal characters create printed")
+		return cli.Mistaken("keys", errors.New("keys revoke needs one id: the 64 hexadecimal characters create printed"))
 	}
 	ownerURL, err := required(envMigration)
 	if err != nil {

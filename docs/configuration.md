@@ -53,6 +53,6 @@ The schema also names `budget_owner`, `assumptions`, `catalog` and `agents`. The
 costroid validate costroid.yml
 ```
 
-It prints `costroid.yml: valid` and exits 0, or names each problem and exits 1. A misspelled key is a problem. With no argument it reads `costroid.yml` in the current directory, and a missing file there is not an error. It exits 125 when it cannot read a file you named.
+It prints `costroid.yml: valid` and exits 0, or names each problem and exits 1. A misspelled key is a problem. With no argument it reads `costroid.yml` in the current directory, and a missing file there is not an error. It exits 125 when it cannot read a file you named, and 2 when its command line is wrong.
 
 The schema is [`costroid.schema.json`](../costroid.schema.json), and the binary embeds the same file, so `validate` works offline.

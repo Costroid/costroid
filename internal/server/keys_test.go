@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/store"
 	"github.com/Costroid/costroid/internal/store/storetest"
@@ -147,7 +148,7 @@ func TestKeysRefuseWhatTheyCannotAct(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := keysCommandLine(t, args...)
-			if code != exitFailure {
+			if code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if stdout != "" {
@@ -169,7 +170,7 @@ func TestKeysRefuseWhatTheyCannotAct(t *testing.T) {
 
 func TestKeysNeedTheOwnerConnection(t *testing.T) {
 	t.Setenv(envMigration, "")
-	if code, _, stderr := keysCommandLine(t, "create", "--owner", "github.com:acme"); code != exitFailure || !strings.Contains(stderr, envMigration) {
+	if code, _, stderr := keysCommandLine(t, "create", "--owner", "github.com:acme"); code != cli.ExitCouldNot || !strings.Contains(stderr, envMigration) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 }

@@ -201,7 +201,7 @@ func TestRunNamesTheArgumentsItLacks(t *testing.T) {
 		"--json":                          "costroid: run needs --budget-usd and an agent command after --\n",
 	} {
 		code, _, stderr := execute(t, append([]string{"run"}, strings.Fields(args)...)...)
-		if code != exitFailure || stderr != want {
+		if want += seeUsage("run"); code != exitFailure || stderr != want {
 			t.Errorf("run %s: exit %d, %q, want %q", args, code, stderr, want)
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/focusfile"
@@ -337,15 +338,16 @@ func ingestRunCommand(args []string, stdout, stderr io.Writer) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
-	switch {
-	case err == nil && flags.source.kind.estimate:
+	if err != nil {
+		return cli.Fail(stderr, cli.Mistaken("ingest-run", err))
+	}
+	if flags.source.kind.estimate {
 		err = ingestEstimate(flags, stderr)
-	case err == nil:
+	} else {
 		err = ingestRun(flags, stderr)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.File(err))
 	}
 	return 0
 }

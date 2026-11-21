@@ -13,34 +13,29 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/mcpserver"
 	"github.com/Costroid/costroid/internal/recipelint"
 )
-
-const exitRejected = 1
 
 func lintRecipes(args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("lint-recipes", flag.ContinueOnError)
 	if err := parseFlags(set, args, lintRecipesHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("lint-recipes", err))
 	}
 	paths := set.Args()
 	if len(paths) == 0 {
-		fmt.Fprint(stderr, "costroid: lint-recipes needs at least one path\n")
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("lint-recipes", errors.New("lint-recipes needs at least one path")))
 	}
 	report, err := recipelint.Lint(paths)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.File(err))
 	}
 	plugins, err := lintMarketplace(".")
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	report.Files += plugins.Files
 	report.Findings = append(report.Findings, plugins.Findings...)

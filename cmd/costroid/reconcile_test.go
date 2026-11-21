@@ -103,8 +103,8 @@ func TestReconcilePassesInsideTheTolerance(t *testing.T) {
 func TestReconcileExitsNonZeroOnATokensMiss(t *testing.T) {
 	doer := &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}
 	code, stdout, _ := runReconcile(t, doer, environment, "--rows", writeLedger(t, 101100), "--from", "2026-10-14", "--to", "2026-10-14")
-	if code != exitTokensMiss {
-		t.Fatalf("exit %d, want %d\n%s", code, exitTokensMiss, stdout)
+	if code != exitRejected {
+		t.Fatalf("exit %d, want %d\n%s", code, exitRejected, stdout)
 	}
 	if !strings.Contains(stdout, "MISS") || !strings.Contains(stdout, "1.10%") {
 		t.Errorf("table:\n%s", stdout)
@@ -194,7 +194,7 @@ func TestReconcileReadsTheRowsARunWrites(t *testing.T) {
 	}
 	stdout.Reset()
 	code = reconcileCommand(context.Background(), []string{"--rows", out, "--from", day, "--to", day, "--credential", "apikey_01ExampleCi"}, environment, client, later, &stdout, &stderr)
-	if code != exitTokensMiss {
+	if code != exitRejected {
 		t.Fatalf("exit %d, want a miss against an empty report: %s", code, stderr.String())
 	}
 	for _, want := range []string{"cache_read", "15605", "MISS", "no API bill"} {
@@ -226,7 +226,7 @@ func recordedDay(t *testing.T, rows []byte) string {
 func TestReconcileRefusesARangeThatRunsBackwards(t *testing.T) {
 	doer := &replayDoer{t: t}
 	code, _, stderr := runReconcile(t, doer, environment, "--rows", "rows.jsonl", "--from", "2026-10-14", "--to", "2026-10-13")
-	if code != exitFailure || !strings.Contains(stderr, "before") {
+	if code != exitUsage || !strings.Contains(stderr, "before") {
 		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
 }
@@ -266,7 +266,7 @@ func TestSavedReportsStillMissAMovedCount(t *testing.T) {
 	code, stdout, _ := runReconcile(t, &replayDoer{t: t}, environment, "--rows", writeLedger(t, 101200),
 		"--from", "2026-10-14", "--to", "2026-10-14", "--credential", "apikey_01ExampleCi",
 		"--reports", saveReports(t, "usage.json", "cost-at-list.json"), "--as-of", "2026-10-20T12:00:00Z")
-	if code != exitTokensMiss {
+	if code != exitRejected {
 		t.Fatalf("exit %d: %s", code, stdout)
 	}
 }
@@ -284,7 +284,7 @@ func TestReportsAndAsOfGoTogether(t *testing.T) {
 	rows := writeLedger(t, 100000)
 	base := []string{"--rows", rows, "--from", "2026-10-14", "--to", "2026-10-14"}
 	for _, extra := range [][]string{{"--reports", "x"}, {"--as-of", "2026-10-20T12:00:00Z"}, {"--reports", "x", "--as-of", "yesterday"}} {
-		if code, _, _ := runReconcile(t, &replayDoer{t: t}, environment, append(base, extra...)...); code != exitFailure {
+		if code, _, _ := runReconcile(t, &replayDoer{t: t}, environment, append(base, extra...)...); code != exitUsage {
 			t.Errorf("%v exited %d", extra, code)
 		}
 	}
@@ -711,7 +711,13 @@ func TestReconcileExportRefusesBeforeAskingTheProvider(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			world := reconcileWorld{getenv: stub.env(check.env), client: doer, now: fixedNow, platform: stub.server.Client(), pace: testPace}
 			code := reconcileThrough(context.Background(), append(slices.Clone(base), check.args...), world, &stdout, &stderr)
-			if code != exitFailure || !strings.Contains(stderr.String(), check.want) || strings.Contains(stderr.String(), "sk-ant") {
+			// The first three are the command line's. The rest are the
+			// environment's, which the flags do not name.
+			want := exitFailure
+			if check.env == nil {
+				want = exitUsage
+			}
+			if code != want || !strings.Contains(stderr.String(), check.want) || strings.Contains(stderr.String(), "sk-ant") {
 				t.Errorf("exit %d, stderr %q, want %q", code, stderr.String(), check.want)
 			}
 			if doer.requested != 0 {

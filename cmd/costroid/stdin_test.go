@@ -35,7 +35,7 @@ func TestValidateTakesAFileWhoseNameOpensWithADashAfterTwoDashes(t *testing.T) {
 	if code, stdout, stderr := execute(t, "validate", "--", "-base.yml"); code != 0 || !strings.HasPrefix(stdout, "-base.yml: valid\n") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
-	if code, _, stderr := execute(t, "validate", "-base.yml"); code != exitFailure || !strings.HasPrefix(stderr, "costroid: -base.yml is not a flag of costroid validate\n") {
+	if code, _, stderr := execute(t, "validate", "-base.yml"); code != exitUsage || !strings.HasPrefix(stderr, "costroid: -base.yml is not a flag of costroid validate\n") {
 		t.Errorf("without the two dashes: exit %d, stderr %q", code, stderr)
 	}
 }

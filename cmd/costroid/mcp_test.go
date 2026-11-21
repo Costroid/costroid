@@ -209,7 +209,9 @@ func TestPolicyCheckMatchesPolicyCommand(t *testing.T) {
 			}
 			answer := result.Content[0].(*mcp.TextContent).Text
 			if test.conclusion == "" {
-				if code != exitFailure || !result.IsError || "costroid: "+answer+"\n" != stderr {
+				// The terminal says a missing file in words, and the tool
+				// answers the error as it is: both name the file.
+				if code != exitFailure || !result.IsError || stderr != "costroid: "+rows+" does not exist\n"+seeTroubleshooting || !strings.Contains(answer, rows) {
 					t.Errorf("policy exited %d with %q, policy_check answered %v %q", code, stderr, result.IsError, answer)
 				}
 				return

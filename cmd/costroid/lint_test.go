@@ -83,12 +83,14 @@ func TestLintRefusesAPathItCannotRead(t *testing.T) {
 		"no workflows directory": nil,
 		"empty directory":        {t.TempDir()},
 		"missing file":           {filepath.Join(t.TempDir(), "absent.yml")},
-		"unknown flag":           {"--loose"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if code, _, stderr := runLint(t, args...); code != exitFailure {
 				t.Fatalf("exit %d: %s", code, stderr)
 			}
 		})
+	}
+	if code, _, stderr := runLint(t, "--loose"); code != exitUsage {
+		t.Errorf("an unknown flag: exit %d: %s", code, stderr)
 	}
 }

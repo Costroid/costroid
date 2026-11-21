@@ -327,7 +327,7 @@ func TestExportSendsTheContractThePlatformStates(t *testing.T) {
 	stub := newPlatformStub(t, http.StatusAccepted, `{}`)
 	stub.states = map[string]contract{v02.path(): {Version: "0.1", TagSet: "tags/v0.1", FocusRow: "focus-row/v0.1"}}
 	code, _, stderr := stub.export(t, stub.githubEnv())
-	if code != exitFailure || len(stub.exports) != 0 || stderr != "costroid: the identity answer of Costroid Platform under /api/integration/v0.2 does not state integration/v0.2\n" {
+	if code != exitFailure || len(stub.exports) != 0 || stderr != "costroid: the identity answer of Costroid Platform under /api/integration/v0.2 does not state integration/v0.2\n"+seeTroubleshooting {
 		t.Errorf("exit %d, %d exports, stderr %q", code, len(stub.exports), stderr)
 	}
 }
@@ -552,7 +552,13 @@ func TestExportRefusesBeforeSending(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			code := exportCommand(context.Background(), check.args, stdio{stdout: &stdout, stderr: &stderr})
-			if code != exitFailure || stdout.Len() != 0 || !strings.Contains(stderr.String(), check.want) || strings.Contains(stderr.String(), "sk-ant") {
+			// The token is the environment's, and every other case is the
+			// command line's.
+			want := exitUsage
+			if name == "a provider key" {
+				want = exitFailure
+			}
+			if code != want || stdout.Len() != 0 || !strings.Contains(stderr.String(), check.want) || strings.Contains(stderr.String(), "sk-ant") {
 				t.Fatalf("exit %d: %s%s", code, stdout.String(), stderr.String())
 			}
 		})
@@ -936,11 +942,11 @@ func TestExportFormatWritesAFileAndSendsNothing(t *testing.T) {
 // is refused, so no file is written by mistake.
 func TestExportWithoutFormatStillSends(t *testing.T) {
 	for _, flag := range []string{"--out", "--root-dir"} {
-		if code, _, stderr := runExport(t, "--rows", exampleRows, flag, filepath.Join(t.TempDir(), "costs")); code != exitFailure || !strings.Contains(stderr, "--out and --root-dir name what --format writes") {
+		if code, _, stderr := runExport(t, "--rows", exampleRows, flag, filepath.Join(t.TempDir(), "costs")); code != exitUsage || !strings.Contains(stderr, "--out and --root-dir name what --format writes") {
 			t.Fatalf("%s: exit %d: %s", flag, code, stderr)
 		}
 	}
-	if code, _, stderr := runExport(t, "--rows", exampleRows); code != exitFailure || !strings.Contains(stderr, "export needs --rows, --platform-url and --installation-id") {
+	if code, _, stderr := runExport(t, "--rows", exampleRows); code != exitUsage || !strings.Contains(stderr, "export needs --rows, --platform-url and --installation-id") {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 }
@@ -960,7 +966,7 @@ func TestExportFormatRefusesBeforeWriting(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := runExport(t, check.args...)
-			if code != exitFailure || stdout != "" || !strings.Contains(stderr, check.want) {
+			if code != exitUsage || stdout != "" || !strings.Contains(stderr, check.want) {
 				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
 			}
 		})

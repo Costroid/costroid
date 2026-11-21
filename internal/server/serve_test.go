@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/store/storetest"
 )
 
@@ -38,7 +39,7 @@ func TestServeRefusesAMissingOrShortConfiguration(t *testing.T) {
 			t.Setenv(envAudience, tc.audience)
 			t.Setenv(envPseudonym, tc.key)
 			var stderr bytes.Buffer
-			if code := Main(context.Background(), nil, &stderr); code != exitFailure {
+			if code := Main(context.Background(), nil, &stderr); code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
@@ -50,7 +51,7 @@ func TestServeRefusesAMissingOrShortConfiguration(t *testing.T) {
 
 func TestServeRefusesABindThatIsNotHostAndOwner(t *testing.T) {
 	var stderr bytes.Buffer
-	if code := Main(context.Background(), []string{"--bind", "acme"}, &stderr); code != exitFailure {
+	if code := Main(context.Background(), []string{"--bind", "acme"}, &stderr); code != cli.ExitUsage {
 		t.Fatalf("exit %d", code)
 	}
 }

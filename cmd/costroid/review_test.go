@@ -194,7 +194,7 @@ func TestReviewRefusesFlagsThatDoNotFit(t *testing.T) {
 		{"--post", "--file", "x", "extra"},
 	} {
 		code, stdout, stderr := execute(t, append([]string{"review"}, args...)...)
-		if code != exitFailure || stdout != "" || !strings.HasPrefix(stderr, "costroid: ") {
+		if code != exitUsage || stdout != "" || !strings.HasPrefix(stderr, "costroid: ") {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
 		}
 	}
@@ -281,7 +281,7 @@ func TestPostReviewIsOffByDefault(t *testing.T) {
 	}
 	// Without --keep or --post the command does nothing at all.
 	stub := reportEnvironment(t, pullRequestEvent())
-	if code, _, _ := execute(t, "review"); code != exitFailure || len(stub.Writes()) != 0 {
+	if code, _, _ := execute(t, "review"); code != exitUsage || len(stub.Writes()) != 0 {
 		t.Fatalf("exit %d, writes %v", code, stub.Writes())
 	}
 }

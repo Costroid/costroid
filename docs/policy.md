@@ -343,4 +343,4 @@ gh api 'repos/OWNER/REPO/pulls?state=closed&base=main&sort=updated&direction=des
 costroid policy --rows rows.jsonl --config base.yml --history earlier.jsonl --baseline merged.jsonl
 ```
 
-It exits 0 on `success` or `neutral`, 1 on `failure`, and 125 when it cannot read a file.
+It exits 0 on `success` or `neutral`, 1 on `failure`, 2 when its command line is wrong, and 125 when it cannot read a file.

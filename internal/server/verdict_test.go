@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
@@ -361,7 +362,7 @@ func TestDefaultAudienceRefused(t *testing.T) {
 			t.Setenv(envAudience, value)
 			t.Setenv(envPseudonym, long)
 			var stderr bytes.Buffer
-			if code := Main(context.Background(), nil, &stderr); code != exitFailure {
+			if code := Main(context.Background(), nil, &stderr); code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if !strings.Contains(stderr.String(), "GitHub's default audience") {

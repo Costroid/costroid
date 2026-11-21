@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Costroid/costroid/internal/agenttest"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/policy"
 )
 
@@ -55,6 +56,25 @@ func TestMainRunsACustomerPackAsItsChild(t *testing.T) {
 	if !slices.Equal(out.Pack, want) || out.Verdict.Conclusion != policy.Neutral || len(out.Verdict.Results) != 0 {
 		t.Fatalf("main did not run the pack: %+v", out)
 	}
+}
+
+// seeTroubleshooting is the line an error that names no next step ends on.
+const seeTroubleshooting = "See " + cli.Troubleshooting + ".\n"
+
+// seeUsage is the line a command's own finding about its command line ends
+// on.
+func seeUsage(command string) string {
+	return "Run costroid help " + command + " to see its usage.\n"
+}
+
+// mistakeExit is the code a wrong command line of command exits with. run
+// passes the agent's code through, so its own mistakes exit above every code
+// an agent returns.
+func mistakeExit(command string) int {
+	if command == "run" {
+		return exitFailure
+	}
+	return exitUsage
 }
 
 func execute(t *testing.T, args ...string) (int, string, string) {
@@ -309,7 +329,7 @@ func TestRefusedRunLeavesNoMisleadingRowsFile(t *testing.T) {
 		{"run", "--budget-usd", "5", "--out", "rows.jsonl", "--json", "--", "echo", "hi"},
 	} {
 		code, stdout, stderr := execute(t, args...)
-		if code != exitFailure || stdout != "" || stderr != "costroid: run: no adapter for \"echo\": costroid runs claude-code, claude-code-sdk, codex, codex-sdk, opencode and copilot; --agent names the one the command starts\n" {
+		if code != exitFailure || stdout != "" || stderr != "costroid: echo is not an agent costroid run reads\nIt reads claude-code, claude-code-sdk, codex, codex-sdk, opencode, copilot.\nName the one the command starts with --agent.\n"+seeUsage("run") {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, stdout, stderr)
 		}
 	}
@@ -339,7 +359,7 @@ func TestTheEgressCommandIsDispatched(t *testing.T) {
 func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
 	for _, args := range [][]string{{"diff"}, {"help", "diff"}} {
 		code, _, stderr := execute(t, args...)
-		if code != exitFailure || stderr != "costroid: unknown command \"diff\"\nNo command is near it.\nRun costroid help to list the commands.\n" {
+		if code != exitUsage || stderr != "costroid: unknown command \"diff\"\nNo command is near it.\nRun costroid help to list the commands.\n" {
 			t.Errorf("%v: exit %d, %q", args, code, stderr)
 		}
 	}

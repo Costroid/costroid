@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/config"
 )
 
@@ -19,12 +20,10 @@ func validateCommand(_ context.Context, args []string, std stdio) int {
 	if err := parseFlags(set, args, validateHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("validate", err))
 	}
 	if set.NArg() > 1 {
-		fmt.Fprintf(stderr, "costroid: validate takes one path\n")
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("validate", errors.New("validate takes one path")))
 	}
 	path := configFile
 	if set.NArg() == 1 {
@@ -39,13 +38,11 @@ func validateCommand(_ context.Context, args []string, std stdio) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	problems, err := config.Validate(data)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	for _, problem := range problems {
 		fmt.Fprintf(stdout, "%s: %s\n", path, problem)

@@ -556,7 +556,7 @@ var flagMistakes = []struct {
 func TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp(t *testing.T) {
 	for _, mistake := range flagMistakes {
 		code, stdout, stderr := execute(t, mistake.args...)
-		if want := strings.Join(mistake.lines, "\n") + "\n"; code != exitFailure || stdout != "" || stderr != want {
+		if want := strings.Join(mistake.lines, "\n") + "\n"; code != mistakeExit(mistake.args[0]) || stdout != "" || stderr != want {
 			t.Errorf("%v: exit %d, stdout %q, stderr:\n%swant:\n%s", mistake.args, code, stdout, stderr, want)
 		}
 	}
@@ -572,7 +572,7 @@ func TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp(t *testing.T) {
 			args := append(slices.Clone(line), "--no-such-flag")
 			code, stdout, stderr := execute(t, args...)
 			said := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-			if code != exitFailure || stdout != "" || len(said) != 2 ||
+			if code != mistakeExit(entry.name) || stdout != "" || len(said) != 2 ||
 				!strings.HasPrefix(said[0], "costroid: --no-such-flag is not a flag of costroid "+entry.name) ||
 				said[1] != "Run costroid help "+entry.name+" to list its flags." {
 				t.Errorf("%v: exit %d, stdout %q, stderr:\n%s", args, code, stdout, stderr)
@@ -598,7 +598,7 @@ func TestAGroupCommandAloneListsItsSubcommands(t *testing.T) {
 	} {
 		entry, _ := lookup(name)
 		code, stdout, stderr := execute(t, name)
-		if code != exitFailure || stderr != "" {
+		if code != exitUsage || stderr != "" {
 			t.Fatalf("%s: exit %d, stderr %q", name, code, stderr)
 		}
 		summary, _, _ := pageParts(entry.help)
@@ -639,7 +639,7 @@ func TestAGroupCommandAloneListsItsSubcommands(t *testing.T) {
 		}
 		code, stdout, stderr = execute(t, name, mistyped[0])
 		want := fmt.Sprintf("costroid: unknown %s command %q\n%s\nRun costroid help %s to list its commands.\n", name, mistyped[0], mistyped[1], name)
-		if code != exitFailure || stdout != "" || stderr != want {
+		if code != exitUsage || stdout != "" || stderr != want {
 			t.Errorf("%s %s: exit %d, stdout %q, stderr:\n%swant:\n%s", name, mistyped[0], code, stdout, stderr, want)
 		}
 	}
@@ -693,13 +693,13 @@ func TestAMistypedCommandGetsASuggestionAndIsNeverRun(t *testing.T) {
 		for _, args := range [][]string{{typed}, {"help", typed}} {
 			code, stdout, stderr := execute(t, args...)
 			want := fmt.Sprintf("costroid: unknown command %q\n%s\nRun costroid help to list the commands.\n", typed, near)
-			if code != exitFailure || stdout != "" || stderr != want {
+			if code != exitUsage || stdout != "" || stderr != want {
 				t.Errorf("%v: exit %d, stdout %q, stderr:\n%swant:\n%s", args, code, stdout, stderr, want)
 			}
 		}
 	}
 	code, stdout, stderr := execute(t, "demmo", "--markdown")
-	if code != exitFailure || stdout != "" || strings.Contains(stderr, "Costroid") {
+	if code != exitUsage || stdout != "" || strings.Contains(stderr, "Costroid") {
 		t.Errorf("a mistyped demo ran: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -759,11 +759,24 @@ func sentences(prose string) []string {
 	return found
 }
 
-// withdrawn are the sentences of an earlier page that were false and are no
-// longer said. validate takes a policy amount such as 5.0, as the schema and
-// the check do.
+// withdrawn are the sentences of an earlier page that are false now and are
+// no longer said. validate takes a policy amount such as 5.0, as the schema
+// and the check do. The rest are rows of an exit code table from when a wrong
+// command line exited 125 and init outside a repository exited 2: each page
+// now gives the command line a row of its own.
 var withdrawn = map[string][]string{
-	"validate": {"A policy amount or approval.expires_days that YAML reads as a float, such as 5.0, is a problem too, because the check refuses it."},
+	"validate":   {"A policy amount or approval.expires_days that YAML reads as a float, such as 5.0, is a problem too, because the check refuses it."},
+	"approve":    {"125 GitHub Actions was not detected, or an argument was given"},
+	"demo":       {"125 an argument or an unknown --state was given, or costroid could not build the comment"},
+	"egress":     {"125 costroid could not read the command line or the database"},
+	"follow-up":  {"125 GitHub Actions was not detected, or the flags could not be read"},
+	"ingest-run": {"125 costroid could not read the flags or the source, or write the rows"},
+	"init":       {"2 the directory is in no git repository", "125 costroid could not read or write a file, refused to, or a command --pr runs failed"},
+	"keys":       {"125 costroid could not read the command line, reach the database or find the tenant or the key"},
+	"mcp":        {"125 costroid could not read the flags or --ledger, or the session failed"},
+	"merged":     {"125 costroid could not read the flags, the run or GitHub's answer, or reach Costroid Platform, or the platform does not serve integration/v0.5 or later"},
+	"report":     {"125 the flags could not be read, neither GitHub Actions nor GitLab CI was detected, or --preview could not build the comment"},
+	"review":     {"125 costroid could not read the flags or write --out, or --post found neither GitHub Actions nor GitLab CI"},
 }
 
 // TestNothingAHelpPageSaidIsDropped holds every sentence and every table row

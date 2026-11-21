@@ -391,7 +391,7 @@ func TestDoctorInCIReadsTheEventAndTheJob(t *testing.T) {
 
 func TestDoctorInCIRefusesOutsideAJob(t *testing.T) {
 	code, stdout, stderr := runDoctor(t, t.TempDir(), ghHost("", ""), "--ci")
-	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid: doctor: --ci runs as a step of a GitHub Actions job") {
+	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "costroid: --ci runs as a step of a GitHub Actions job") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

@@ -465,7 +465,7 @@ func TestForkFollowUpRefusesOutsideGitHubActions(t *testing.T) {
 	if code, _, stderr := execute(t, "follow-up", "--rows", absentRows(t)); code != exitFailure || !strings.Contains(stderr, "GitHub Actions was not detected") {
 		t.Errorf("exit %d: %s", code, stderr)
 	}
-	if code, _, _ := execute(t, "follow-up"); code != exitFailure {
+	if code, _, _ := execute(t, "follow-up"); code != exitUsage {
 		t.Errorf("no --rows: exit %d", code)
 	}
 }

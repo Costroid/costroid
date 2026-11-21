@@ -200,7 +200,7 @@ func TestDemoStateShowsEachState(t *testing.T) {
 		}
 	}
 	code, stdout, stderr := execute(t, "demo", "--state", "passed")
-	if want := "costroid: --state takes neutral, capped, failure, skipped, not \"passed\"\n"; code != exitFailure || stdout != "" || stderr != want {
+	if want := "costroid: --state takes neutral, capped, failure, skipped, not \"passed\"\n" + seeUsage("demo"); code != exitUsage || stdout != "" || stderr != want {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -215,7 +215,7 @@ func TestDemoCappedRowsAreTheRecordedCodexStop(t *testing.T) {
 
 func TestDemoTakesNoArgument(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := demoCommand(context.Background(), []string{"rows.jsonl"}, &stdout, &stderr); code != exitFailure || stdout.Len() > 0 {
+	if code := demoCommand(context.Background(), []string{"rows.jsonl"}, &stdout, &stderr); code != exitUsage || stdout.Len() > 0 {
 		t.Errorf("exit %d, stdout %q", code, stdout.String())
 	}
 }
@@ -315,7 +315,7 @@ func assertPreview(t *testing.T, stdout string) {
 
 func TestPreviewRefusesJSON(t *testing.T) {
 	code, stdout, stderr := execute(t, "report", "--preview", "--json", "--rows", demoRowsFile)
-	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "--preview or --json") {
+	if code != exitUsage || stdout != "" || !strings.Contains(stderr, "--preview or --json") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -348,7 +348,7 @@ func TestPreviewNamesThisDirectory(t *testing.T) {
 
 	missing := filepath.Join(directory, "rows.jsonl")
 	code, stdout, stderr := execute(t, "report", "--preview", "--rows", missing)
-	want := "costroid: preview: no rows file at " + missing + ". costroid run writes one at --out, and costroid demo shows a comment without one\n"
+	want := "costroid: no rows file at " + missing + "\ncostroid run writes one at --out, and costroid demo shows a comment without one.\n"
 	if code != exitFailure || stdout != "" || stderr != want {
 		t.Errorf("a missing rows file: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}

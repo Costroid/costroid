@@ -76,8 +76,9 @@ GitHub Actions and GitLab CI it refuses and exits 125.`)}},
 	Exits: []cli.Row{
 		{"0", `the answer was kept or posted, or there was none to keep,
 or the host refused it`},
-		{"125", `costroid could not read the flags or write --out, or
---post found neither GitHub Actions nor GitLab CI`},
+		cli.UsageExit,
+		{"125", `costroid could not write --out, or --post found neither
+GitHub Actions nor GitLab CI`},
 	},
 	Docs: "review",
 }.String()
@@ -177,8 +178,7 @@ func reviewCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("review", err))
 	}
 	if flags.keep {
 		return keepAnswer(flags, stderr)
@@ -190,12 +190,11 @@ func reviewCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 // removes any file already there, so a run with no answer leaves none.
 func keepAnswer(flags reviewFlags, stderr io.Writer) int {
 	if err := os.Remove(flags.out); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	text, err := flags.source.read(flags.path, flags.since)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: no answer was kept: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: no answer was kept: %s\n", cli.Plain(err))
 		return 0
 	}
 	if len(text) > reviewcomment.MaxFileBytes {
@@ -207,8 +206,7 @@ func keepAnswer(flags reviewFlags, stderr io.Writer) int {
 		text = text[:end]
 	}
 	if err := os.WriteFile(flags.out, []byte(text), 0o600); err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	fmt.Fprintf(stderr, "costroid: kept the agent's answer, %d bytes, for the review comment\n", len(text))
 	return 0
@@ -231,7 +229,7 @@ func postAnswer(ctx context.Context, path string, stderr io.Writer) int {
 		err = errors.New("the event names no pull request")
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		return 0
 	}
 	answer := reviewcomment.Answer{Text: readKeptAnswer(path, stderr), Head: target.pull.head}

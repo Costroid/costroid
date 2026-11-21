@@ -570,7 +570,7 @@ func TestPolicyRefusesHistoryAloneWhereARuleReadsABaseline(t *testing.T) {
 	baseline := writeObjects(t, filepath.Join(directory, "merged.jsonl"), nil)
 	increase := writeBaseConfig(t, "policy:\n  max_increase_percent: 10\n")
 	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", increase, "--history", history)
-	want := "costroid: --history gives no baseline: run_increase, run_increase_percent and run_p95 read the merged pull requests' check runs, which --baseline names\n"
+	want := "costroid: --history gives no baseline: run_increase, run_increase_percent and run_p95 read the merged pull requests' check runs, which --baseline names\n" + seeTroubleshooting
 	if code != exitFailure || stdout != "" || stderr != want {
 		t.Errorf("exit %d: %q %q", code, stdout, stderr)
 	}

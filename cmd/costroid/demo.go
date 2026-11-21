@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
@@ -82,12 +83,11 @@ func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if err == nil && !slices.Contains(demoStates, *state) {
 		err = fmt.Errorf("--state takes %s, not %q", strings.Join(demoStates, ", "), *state)
 	}
-	if err == nil {
-		err = printDemo(ctx, *state, *markdown, stdout)
-	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("demo", err))
+	}
+	if err := printDemo(ctx, *state, *markdown, stdout); err != nil {
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }
@@ -99,13 +99,13 @@ func printDemo(ctx context.Context, state string, markdown bool, stdout io.Write
 		body, err = comment.Comment(input)
 	}
 	if err != nil {
-		return fmt.Errorf("demo: %w", err)
+		return fmt.Errorf("build the example comment: %w", err)
 	}
 	if !markdown {
 		body = forTerminal(body) + "\n" + nextAfterDemo + "\n\n" + paragraph(comment.VerdictSentence(input)) + "\n"
 	}
 	if _, err := io.WriteString(stdout, body); err != nil {
-		return fmt.Errorf("demo: print the comment: %w", err)
+		return fmt.Errorf("print the comment: %w", err)
 	}
 	return nil
 }

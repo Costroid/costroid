@@ -368,7 +368,7 @@ func TestRecordedRowsSayRecordedAndTheDate(t *testing.T) {
 		reportEnvironment(t, pullRequestEvent())
 		for _, bad := range []string{recorded.Run, recorded.Date, "0," + recorded.Date, "run," + recorded.Date, recorded.Run + ",2026-13-01", recorded.Run + ",07/11/2026", recorded.Run + "," + recorded.Date + "T11:33:17Z"} {
 			code, _, stderr := execute(t, "report", "--rows", demoRowsFile, "--recorded", bad)
-			if code != exitFailure || !strings.Contains(stderr, "--recorded takes RUN_ID,DATE") {
+			if code != exitUsage || !strings.Contains(stderr, "--recorded takes RUN_ID,DATE") {
 				t.Errorf("--recorded %s: exit %d: %s", bad, code, stderr)
 			}
 		}

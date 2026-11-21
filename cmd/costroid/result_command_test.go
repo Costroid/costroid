@@ -83,7 +83,7 @@ func TestResultCommandRefusesWithoutAPullRequest(t *testing.T) {
 		"no pull request": {"result"},
 		"an argument":     {"result", "--pr", "7", "extra"},
 	} {
-		if code, _, stderr := execute(t, args...); code != exitFailure || !strings.Contains(stderr, "result needs --pr") {
+		if code, _, stderr := execute(t, args...); code != exitUsage || !strings.Contains(stderr, "result needs --pr") {
 			t.Errorf("%s: exit %d, stderr %q", name, code, stderr)
 		}
 	}
@@ -103,7 +103,7 @@ func TestResultNamesTheFixForAMissingToken(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code, stdout, stderr := execute(t, "result", "--pr", "7")
-	want := `costroid: GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in` + "\n"
+	want := `costroid: GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in` + "\n" + seeTroubleshooting
 	if code != exitFailure || stdout != "" || stderr != want {
 		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
@@ -169,7 +169,7 @@ func TestResultReadsTheRepositoryFromTheRemote(t *testing.T) {
 		t.Run(refusal.label, func(t *testing.T) {
 			repositoryWithRemotes(t, refusal.remotes...)
 			code, stdout, stderr := execute(t, "result", "--pr", "7")
-			want := "costroid: name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY: " + refusal.want + "\n"
+			want := "costroid: name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY: " + refusal.want + "\n" + seeTroubleshooting
 			if code != exitFailure || stdout != "" || stderr != want {
 				t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 			}

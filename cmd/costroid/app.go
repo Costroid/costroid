@@ -88,6 +88,7 @@ with; a key ARN names its own region`},
 	}},
 	Exits: []cli.Row{
 		{"0", "done"},
+		cli.UsageExit,
 		{"125", "not done, and the line on stderr says why"},
 	},
 	Docs: "github-app",
@@ -140,7 +141,7 @@ func appCommand(ctx context.Context, args []string, std stdio) int {
 func appMain(ctx context.Context, args []string, world appWorld, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, appGroup)
-		return exitFailure
+		return exitUsage
 	}
 	var err error
 	switch args[0] {
@@ -158,8 +159,7 @@ func appMain(ctx context.Context, args []string, world appWorld, stdout, stderr 
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }
@@ -182,9 +182,9 @@ func parseApp(command string, args []string, stdout io.Writer) (appFlags, error)
 		return appFlags{}, err
 	}
 	if set.NArg() > 0 {
-		return appFlags{}, fmt.Errorf("app %s takes no arguments", command)
+		return appFlags{}, cli.Mistaken("app", fmt.Errorf("app %s takes no arguments", command))
 	}
-	return flags, flags.check(command)
+	return flags, cli.Mistaken("app", flags.check(command))
 }
 
 func (f appFlags) check(command string) error {

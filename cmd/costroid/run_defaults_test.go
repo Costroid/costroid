@@ -30,7 +30,7 @@ func TestRunDefaultsAreStated(t *testing.T) {
 	if code != 0 || strings.Contains(stderr, "no --out") {
 		t.Errorf("--out given: exit %d:\n%s", code, stderr)
 	}
-	if code, _, stderr := execute(t, "run", "--", agent, "-p", "work"); code != exitFailure || stderr != "costroid: run needs --budget-usd\n" {
+	if code, _, stderr := execute(t, "run", "--", agent, "-p", "work"); code != exitFailure || stderr != "costroid: run needs --budget-usd\n"+seeUsage("run") {
 		t.Errorf("no budget: exit %d, stderr %q", code, stderr)
 	}
 	if !strings.Contains(strings.Join(strings.Fields(runHelp), " "), "Without it, run writes costroid-rows.jsonl in the working directory") {

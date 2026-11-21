@@ -8,9 +8,11 @@ import (
 	"strings"
 )
 
-// Mistake is a command line a flag set refused. Its text opens with the flag
-// as it was typed and what is wrong with it, then names the nearest flag the
-// command has, when one is near, and the command's help.
+// Mistake is a command line that is wrong: a flag the command does not have,
+// a flag without its value, a value of the wrong form, an argument too many
+// or one left out. Its text opens with what was typed and what is wrong with
+// it, then names the nearest name the command has, when one is near, and the
+// command's help. A command that stops on one exits ExitUsage.
 type Mistake struct {
 	lines []string
 }

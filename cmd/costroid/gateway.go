@@ -121,6 +121,7 @@ Only an attested count lets a budget on the run's rows pass.`)}},
 	}},
 	Exits: []cli.Row{
 		{"0", "done"},
+		cli.UsageExit,
 		{"125", "not done, and the line on stderr says why"},
 	},
 	Docs: "gateway",
@@ -155,7 +156,7 @@ const (
 func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, gatewayGroup)
-		return exitFailure
+		return exitUsage
 	}
 	var err error
 	switch args[0] {
@@ -179,8 +180,7 @@ func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }
@@ -210,7 +210,7 @@ func gatewayKeygen(args []string, stdout io.Writer) error {
 		return err
 	}
 	if *out == "" {
-		return errors.New("gateway keygen needs --out: the private half goes to a file, never to the terminal")
+		return cli.Mistaken("gateway", errors.New("gateway keygen needs --out: the private half goes to a file, never to the terminal"))
 	}
 	private, public, err := gateway.NewSealingKey()
 	if err != nil {
@@ -252,7 +252,11 @@ func gatewayRequest(args []string, stdout io.Writer) error {
 	}
 	public := os.Getenv(publicKeyVariable)
 	if *out == "" || public == "" {
-		return fmt.Errorf("gateway request needs --out and %s, the public half costroid gateway keygen printed", publicKeyVariable)
+		needs := fmt.Errorf("gateway request needs --out and %s, the public half costroid gateway keygen printed", publicKeyVariable)
+		if *out == "" {
+			return cli.Mistaken("gateway", needs)
+		}
+		return needs
 	}
 	binding, err := gateway.ReadBinding(os.Getenv)
 	if err != nil {
@@ -302,24 +306,24 @@ func parseMint(args []string, stdout io.Writer) (mintFlags, error) {
 		return mintFlags{}, err
 	}
 	if *address == "" || *budget == "" || *minutes <= 0 || *tokens <= 0 {
-		return mintFlags{}, errors.New("gateway mint needs --url, --budget-usd, --lifetime-minutes and --max-request-tokens")
+		return mintFlags{}, cli.Mistaken("gateway", errors.New("gateway mint needs --url, --budget-usd, --lifetime-minutes and --max-request-tokens"))
 	}
 	if err := gateway.CheckURL(*address); err != nil {
 		return mintFlags{}, err
 	}
 	amount, err := decimal.Parse(*budget)
 	if err != nil {
-		return mintFlags{}, fmt.Errorf("--budget-usd: %w", err)
+		return mintFlags{}, cli.Mistaken("gateway", fmt.Errorf("--budget-usd: %w", err))
 	}
 	flags := mintFlags{
 		url: *address, request: *request, budget: amount,
 		lifetime: time.Duration(*minutes) * time.Minute, parallel: *parallel, requestTokens: *tokens,
 	}
 	if flags.caps.Repository, err = dailyCap("repository-daily-cap-usd", *repository); err != nil {
-		return mintFlags{}, err
+		return mintFlags{}, cli.Mistaken("gateway", err)
 	}
 	if flags.caps.Author, err = dailyCap("author-daily-cap-usd", *author); err != nil {
-		return mintFlags{}, err
+		return mintFlags{}, cli.Mistaken("gateway", err)
 	}
 	return flags, nil
 }
@@ -461,7 +465,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	if *address == "" {
-		return errors.New("gateway close needs --url")
+		return cli.Mistaken("gateway", errors.New("gateway close needs --url"))
 	}
 	if err := gateway.CheckURL(*address); err != nil {
 		return err

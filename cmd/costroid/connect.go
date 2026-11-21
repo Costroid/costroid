@@ -102,6 +102,7 @@ docs/connect.md gives the job.`)}},
 	Exits: []cli.Row{
 		{"0", "the installation is bound to the token's tenant"},
 		{"1", "the platform refused, and the line names its code"},
+		cli.UsageExit,
 		{"125", "costroid could not read its input, get a proof or reach the platform"},
 	},
 	Docs: "connect",
@@ -173,13 +174,11 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("connect", err))
 	}
 	job, err := connectJob(flags.installation, getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	target := platform{client: client, base: flags.base, token: getenv(platformTokenVariable)}
 	bound, err := bind(ctx, target, job, clock, stderr)
@@ -196,8 +195,7 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 		fmt.Fprintf(stderr, "costroid: Costroid Platform refused %s: %d %s. %s\n", refused.what, refused.status, code, refusalSentence(refused.code, bound))
 		return exitRejected
 	default:
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 }
 

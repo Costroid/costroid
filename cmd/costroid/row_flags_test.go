@@ -86,8 +86,9 @@ func TestTagFlag(t *testing.T) {
 			t.Run(name+"/"+refusal, func(t *testing.T) {
 				clearCI(t)
 				out := filepath.Join(t.TempDir(), "rows.jsonl")
-				code, stdout, stderr := execute(t, command(t, out, "--tag", tc.tag)...)
-				if code != exitFailure || !strings.Contains(stderr, tc.stderr) {
+				args := command(t, out, "--tag", tc.tag)
+				code, stdout, stderr := execute(t, args...)
+				if code != mistakeExit(args[0]) || !strings.Contains(stderr, tc.stderr) {
 					t.Errorf("exit %d, stderr %q", code, stderr)
 				}
 				if _, value, _ := strings.Cut(tc.tag, "="); value != "" && strings.Contains(stdout+stderr, value) {
@@ -99,7 +100,7 @@ func TestTagFlag(t *testing.T) {
 			})
 		}
 	}
-	if code, _, stderr := execute(t, "ingest-run", "--execution-file", executionFile, "--out", filepath.Join(t.TempDir(), "rows.jsonl"), "--tag", "team=a", "--tag", "team=b"); code != exitFailure || !strings.Contains(stderr, "--tag team is given twice") {
+	if code, _, stderr := execute(t, "ingest-run", "--execution-file", executionFile, "--out", filepath.Join(t.TempDir(), "rows.jsonl"), "--tag", "team=a", "--tag", "team=b"); code != exitUsage || !strings.Contains(stderr, "--tag team is given twice") {
 		t.Errorf("a key given twice: exit %d, stderr %q", code, stderr)
 	}
 }
@@ -145,7 +146,7 @@ func TestFocusProfileFlagWritesStrictRows(t *testing.T) {
 	if measured == 0 {
 		t.Fatal("no default row carries a figure in EffectiveCost, so the test proves nothing")
 	}
-	if code, _, stderr := execute(t, "ingest-run", "--execution-file", measuredExecutionFile, "--out", filepath.Join(directory, "x.jsonl"), "--focus-profile", "loose"); code != exitFailure || !strings.Contains(stderr, "--focus-profile takes default or strict") {
+	if code, _, stderr := execute(t, "ingest-run", "--execution-file", measuredExecutionFile, "--out", filepath.Join(directory, "x.jsonl"), "--focus-profile", "loose"); code != exitUsage || !strings.Contains(stderr, "--focus-profile takes default or strict") {
 		t.Errorf("an unknown profile: exit %d, stderr %q", code, stderr)
 	}
 }

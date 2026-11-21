@@ -16,13 +16,12 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
 const (
-	exitTokensMiss = 1
-
 	anthropicKeyVariable = "ANTHROPIC_ADMIN_KEY"
 	openAIKeyVariable    = "OPENAI_ADMIN_KEY"
 
@@ -151,28 +150,24 @@ func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, 
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("reconcile", err))
 	}
 	var sender *reconcileSender
 	if flags.export {
 		if sender, err = newReconcileSender(flags, world); err != nil {
-			fmt.Fprintf(stderr, "costroid: %v\n", err)
-			return exitFailure
+			return cli.Fail(stderr, err)
 		}
 	}
 	result, err := reconcileRows(ctx, flags, world.getenv, world.client, world.now, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	if err := reconcile.Render(stdout, result); err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	code := 0
 	if result.Misses() > 0 {
-		code = exitTokensMiss
+		code = exitRejected
 	}
 	for _, refused := range result.Refused {
 		fmt.Fprintf(stderr, "costroid: %v\n", refused)

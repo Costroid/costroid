@@ -181,6 +181,7 @@ OpenAI's older usage responses leave uncached input and 30-minute writes to be d
 | ---- | -------------------------------------------- |
 | 0    | No token miss and no price miss              |
 | 1    | A token miss or a price miss, each a defect  |
+| 2    | The command line is wrong                    |
 | 125  | Costroid could not read the rows or a report, a figure stopped its day, or `--export` could not send the rows |
 
 ## Costroid's own figures

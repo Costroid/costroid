@@ -483,7 +483,7 @@ func TestMergedRefusesAPlatformBeforeV05(t *testing.T) {
 		},
 		"a v0.5 path that states v0.4": {
 			map[string]contract{contractV05.path(): contractV04},
-			"costroid: the identity answer of Costroid Platform under /api/integration/v0.5 does not state integration/v0.5\n",
+			"costroid: the identity answer of Costroid Platform under /api/integration/v0.5 does not state integration/v0.5\n" + seeTroubleshooting,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -673,7 +673,7 @@ func TestMergedOutsideAGitHubPushSendsNothing(t *testing.T) {
 			"costroid: merged runs in a GitHub Actions job on a push, and this is no GitHub Actions run\n"},
 	} {
 		code, stdout, stderr := stub.merged(t, check.env)
-		if code != exitFailure || stdout != "" || stderr != check.want {
+		if code != exitFailure || stdout != "" || stderr != check.want+seeTroubleshooting {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q, want %q", name, code, stdout, stderr, check.want)
 		}
 	}

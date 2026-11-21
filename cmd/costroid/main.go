@@ -30,12 +30,16 @@ import (
 	"github.com/Costroid/costroid/internal/status"
 )
 
+// The codes a command exits with are internal/cli's, under the names this
+// package returns them by.
 const (
-	// exitUsage is a command line that names no command, as with no argument.
-	exitUsage      = 2
-	exitBudgetStop = 124
-	exitFailure    = 125
+	exitRejected   = cli.ExitFailed
+	exitUsage      = cli.ExitUsage
+	exitBudgetStop = cli.ExitCapped
+	exitFailure    = cli.ExitCouldNot
+)
 
+const (
 	billingAccountVariable = "COSTROID_BILLING_ACCOUNT"
 	credentialVariable     = "COSTROID_CREDENTIAL"
 	// maxAccount is the row contract's limit on a text column.
@@ -67,7 +71,7 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	case isHelpFlag(name):
 		return helpCommand(nil, std)
 	case name == "--version":
-		return versionCommand(ctx, nil, std)
+		return versionCommand(ctx, args[1:], std)
 	}
 	entry, ok := lookup(args[0])
 	if !ok {
@@ -80,11 +84,21 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	return entry.run(ctx, args[1:], std)
 }
 
-func versionCommand(_ context.Context, _ []string, std stdio) int {
+func versionCommand(_ context.Context, args []string, std stdio) int {
+	set := flag.NewFlagSet("version", flag.ContinueOnError)
+	err := parseFlags(set, args, versionHelp, std.stdout)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err == nil && set.NArg() > 0 {
+		err = errors.New("version takes no argument")
+	}
+	if err != nil {
+		return cli.Fail(std.stderr, cli.Mistaken("version", err))
+	}
 	pinned, err := catalog.Load()
 	if err != nil {
-		fmt.Fprintf(std.stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(std.stderr, err)
 	}
 	line := fmt.Sprintf("costroid %s, catalog %s", version, pinned.Version())
 	if day, known := catalog.PricesRead(pinned.Version()); known {
@@ -183,9 +197,9 @@ describes the object.`), resultFileHelp}},
 		ciEnvironment,
 	}))},
 	Exits: []cli.Row{
-		{"the agent's own", "the run finished, or the agent stopped itself"},
+		{"the agent's own", "the run finished, or the agent stopped itself: every code below 124 is the agent's"},
 		{"124", "costroid stopped the agent at the cap"},
-		{"125", "costroid could not run the agent or record the run"},
+		{"125", "costroid could not run the agent or record the run, or the command line is wrong, which is 2 on every other command"},
 	},
 	Docs: "adapters",
 }.String()
@@ -226,11 +240,8 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 		return runFlags{}, errors.New("run needs " + missing)
 	}
 	amount, err := decimal.Parse(*budget)
-	if err != nil {
-		return runFlags{}, fmt.Errorf("--budget-usd: %w", err)
-	}
-	if amount.Sign() <= 0 {
-		return runFlags{}, errors.New("--budget-usd must be above 0")
+	if err != nil || amount.Sign() <= 0 {
+		return runFlags{}, fmt.Errorf(budgetForm, *budget)
 	}
 	if err := account.check(); err != nil {
 		return runFlags{}, err
@@ -243,7 +254,7 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	// no empty file is left to read as a run that printed no usage.
 	if *agent == "" {
 		if _, err := run.AgentFor(set.Args()); err != nil {
-			return runFlags{}, err
+			return runFlags{}, fmt.Errorf("%s is not an agent costroid run reads\nIt reads %s.\nName the one the command starts with --agent.", filepath.Base(set.Arg(0)), strings.Join(run.Agents, ", "))
 		}
 	}
 	if *out == "" {
@@ -255,6 +266,9 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 		gateway: *gatewayURL, gatewayKeyFile: *keyFile,
 	}, nil
 }
+
+// budgetForm says what --budget-usd takes, to a value it does not.
+const budgetForm = "--budget-usd is an amount in USD above 0, such as 5 or 2.50, not %q"
 
 // defaultRowsFile is where run writes the rows when --out names no file: the
 // name the action's run stage gives them.
@@ -296,23 +310,19 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return runFailed(stderr, cli.Mistaken("run", err))
 	}
 	pinned, err := catalog.Load()
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return runFailed(stderr, err)
 	}
 	// An object an earlier run left would give this run's rows its reason.
 	if err := os.Remove(runResultPath(flags.out)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return runFailed(stderr, err)
 	}
 	rows, err := os.Create(flags.out)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return runFailed(stderr, err)
 	}
 	// Under --json stdout carries the result object alone.
 	agentOutput := stdout
@@ -323,7 +333,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	record := runRecord{out: flags.out, budget: &flags.budget, head: ci.Head, json: flags.json, ciRun: ciRunFromEnvironment(os.Getenv)}
 	session, err := gatewaySession(flags)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", errors.Join(err, rows.Close()))
+		cli.Explain(stderr, errors.Join(err, rows.Close()))
 		recordRunResult(stdout, stderr, record)
 		return exitFailure
 	}
@@ -346,7 +356,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	}
 	record.reason, record.agentError, record.agentStated = result.Reason, result.AgentError, result.Report.AgentStated
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		cli.Explain(stderr, err)
 		recordRunResult(stdout, stderr, record.failed(err))
 		return exitFailure
 	}
@@ -356,6 +366,15 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		return exitBudgetStop
 	}
 	return result.AgentExit
+}
+
+// runFailed explains what stopped run before the agent started. Every code
+// below exitBudgetStop is the agent's, so run's own mistakes, a wrong command
+// line among them, exit above them: a caller can tell the agent's 2 from
+// costroid's.
+func runFailed(stderr io.Writer, err error) int {
+	cli.Explain(stderr, err)
+	return exitFailure
 }
 
 // gatewaySession reads the run's key from its file. The key goes to the agent

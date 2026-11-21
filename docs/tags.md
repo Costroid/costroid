@@ -26,7 +26,7 @@ Every row's `Tags` then holds the three tags beside the ones Costroid writes:
 
 ## What is refused
 
-The command exits 125 before it writes a row, and prints why, for:
+The command prints why before it writes a row, and exits 2 under `costroid ingest-run` and 125 under `costroid run`, whose own mistakes exit above the agent's codes, for:
 
 - a key other than `work_item`, `arm` and `team`. The row contract defines no other, because a free-form key and value are where content would hide;
 - a value that opens with `sk-`, as provider keys do. `--credential` refuses the same shape. The value is never printed;

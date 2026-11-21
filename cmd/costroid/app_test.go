@@ -146,7 +146,7 @@ func TestAppRefusesFlagsItCannotUse(t *testing.T) {
 		"another command":  {"app", "delete"},
 		"manifest and org": {"app", "manifest", "--name", "Costroid", "--webhook-url", appWebhook, "--org", "example"},
 	} {
-		if code, stdout, stderr := execute(t, args...); code != exitFailure || stdout != "" || !strings.HasPrefix(stderr, "costroid: ") && !strings.Contains(stderr, "flag provided but not defined") {
+		if code, stdout, stderr := execute(t, args...); code != exitUsage || stdout != "" || !strings.HasPrefix(stderr, "costroid: ") && !strings.Contains(stderr, "flag provided but not defined") {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", name, code, stdout, stderr)
 		}
 	}
@@ -334,7 +334,7 @@ func TestAppCreateStopsBeforeGitHubWhenKMSRefuses(t *testing.T) {
 	world := appWorld{web: appWeb, api: "https://api.github.example", client: &http.Client{}, getenv: kms.Getenv, listen: "127.0.0.1:0"}
 	var stdout, stderr bytes.Buffer
 	code := appMain(context.Background(), []string{"create", "--name", "Costroid", "--webhook-url", appWebhook, "--kms-key", kmstest.ImportKey}, world, &stdout, &stderr)
-	want := "costroid: the KMS key cannot take the App's key, and no App was created: scm: KMS GetParametersForImport answered 400 AccessDeniedException\n"
+	want := "costroid: the KMS key cannot take the App's key, and no App was created: scm: KMS GetParametersForImport answered 400 AccessDeniedException\n" + seeTroubleshooting
 	if code != exitFailure || stdout.String() != "" || stderr.String() != want {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}

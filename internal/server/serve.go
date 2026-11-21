@@ -41,7 +41,6 @@ const (
 	keySetTimeout        = 10 * time.Second
 	egressFlushInterval  = 5 * time.Second
 	shutdownTimeout      = 20 * time.Second
-	exitFailure          = 125
 )
 
 // ServeUsage is serve's help page. costroid help serve prints it on stdout,
@@ -110,6 +109,7 @@ with; a key ARN names its own region`},
 	}},
 	Exits: []cli.Row{
 		{"0", "the service stopped on a signal"},
+		cli.UsageExit,
 		{"125", "the service could not start, or stopped on an error"},
 	},
 	Docs: "serve",
@@ -150,7 +150,7 @@ func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	for _, text := range binds {
 		binding, err := parseBinding("--bind", text)
 		if err != nil {
-			return serveOptions{}, err
+			return serveOptions{}, cli.Mistaken("serve", err)
 		}
 		options.bindings = append(options.bindings, binding)
 	}
@@ -180,8 +180,7 @@ func Main(ctx context.Context, args []string, stderr io.Writer) int {
 		err = run(ctx, options, stderr)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }

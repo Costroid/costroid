@@ -318,16 +318,17 @@ func TestConnectRefusesAnInstallationTheJobCannotProve(t *testing.T) {
 		name string
 		env  map[string]string
 		args []string
+		code int
 		want string
 	}{
-		{"another owner on GitHub", stub.githubEnv(), []string{"--installation-id", "github-owner:1"}, "costroid: --installation-id is github-owner:1, and this job runs under github-owner:" + testOwner + ": a job proves only its own owner\n"},
-		{"an App installation", stub.githubEnv(), []string{"--installation-id", "github:58120394"}, "costroid: --installation-id must be github-owner:<id> or gitlab-namespace:<id>, the ids a CI job proves\n"},
-		{"no id outside CI", map[string]string{platformTokenVariable: testIntegrationToken}, nil, "costroid: outside GitHub Actions and GitLab CI, connect needs --installation-id, and only reads whether it is bound\n"},
-		{"a name for the owner", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY_OWNER_ID": "example"}, nil, "costroid: GITHUB_REPOSITORY_OWNER_ID is \"example\", not an owner's number\n"},
+		{"another owner on GitHub", stub.githubEnv(), []string{"--installation-id", "github-owner:1"}, exitFailure, "costroid: --installation-id is github-owner:1, and this job runs under github-owner:" + testOwner + ": a job proves only its own owner\n" + seeTroubleshooting},
+		{"an App installation", stub.githubEnv(), []string{"--installation-id", "github:58120394"}, exitUsage, "costroid: --installation-id must be github-owner:<id> or gitlab-namespace:<id>, the ids a CI job proves\n" + seeUsage("connect")},
+		{"no id outside CI", map[string]string{platformTokenVariable: testIntegrationToken}, nil, exitFailure, "costroid: outside GitHub Actions and GitLab CI, connect needs --installation-id, and only reads whether it is bound\n" + seeTroubleshooting},
+		{"a name for the owner", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY_OWNER_ID": "example"}, nil, exitFailure, "costroid: GITHUB_REPOSITORY_OWNER_ID is \"example\", not an owner's number\n" + seeTroubleshooting},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, stdout, stderr := stub.connect(t, tc.env, tc.args...)
-			if code != exitFailure || stdout != "" || stderr != tc.want {
+			if code != tc.code || stdout != "" || stderr != tc.want {
 				t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, tc.want)
 			}
 		})
@@ -340,7 +341,7 @@ func TestConnectRefusesAnInstallationTheJobCannotProve(t *testing.T) {
 func TestConnectOutsideCINamesTheJobThatCanProve(t *testing.T) {
 	stub := newConnectStub(t)
 	code, stdout, stderr := stub.connect(t, map[string]string{platformTokenVariable: testIntegrationToken}, "--installation-id", "github-owner:"+testOwner)
-	want := "costroid: github-owner:" + testOwner + " has no binding to tenant " + testTenant + " proven in the last 20 hours, and outside GitHub Actions and GitLab CI no proof exists: run connect in a scheduled job\n"
+	want := "costroid: github-owner:" + testOwner + " has no binding to tenant " + testTenant + " proven in the last 20 hours, and outside GitHub Actions and GitLab CI no proof exists: run connect in a scheduled job\n" + seeTroubleshooting
 	if code != exitFailure || stdout != "" || stderr != want || len(stub.proofs) != 0 {
 		t.Errorf("exit %d, %d proofs, stdout %q, stderr %q", code, len(stub.proofs), stdout, stderr)
 	}
@@ -351,7 +352,7 @@ func TestConnectGitLabNamesTheAudienceItNeeds(t *testing.T) {
 	env := gitlabEnv()
 	delete(env, proofVariable)
 	code, _, stderr := stub.connect(t, env)
-	want := "costroid: COSTROID_PLATFORM_PROOF is empty, so this job has no proof: give the job an ID token of that name with aud " + testAudience + "\n"
+	want := "costroid: COSTROID_PLATFORM_PROOF is empty, so this job has no proof: give the job an ID token of that name with aud " + testAudience + "\n" + seeTroubleshooting
 	if code != exitFailure || stderr != want || len(stub.proofs) != 0 {
 		t.Errorf("exit %d, %d proofs, stderr %q, want %q", code, len(stub.proofs), stderr, want)
 	}
@@ -367,7 +368,7 @@ func TestConnectRefusesSelfManagedGitLab(t *testing.T) {
 			env := gitlabEnv()
 			env["CI_SERVER_HOST"] = host
 			code, stdout, stderr := stub.connect(t, env)
-			want := "costroid: CI_SERVER_HOST is \"" + host + "\", and Costroid Platform binds a GitLab namespace only on gitlab.com, because a self-managed instance's namespace ids are not unique\n"
+			want := "costroid: CI_SERVER_HOST is \"" + host + "\", and Costroid Platform binds a GitLab namespace only on gitlab.com, because a self-managed instance's namespace ids are not unique\n" + seeTroubleshooting
 			if code != exitFailure || stdout != "" || stderr != want {
 				t.Errorf("exit %d, stdout %q, stderr %q, want stderr %q", code, stdout, stderr, want)
 			}

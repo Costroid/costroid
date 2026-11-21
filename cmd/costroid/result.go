@@ -49,6 +49,7 @@ so result reads GitHub alone.`)}},
 	Exits: []cli.Row{
 		{"0", "the object was printed"},
 		{"1", "no costroid check run is on the head commit yet"},
+		cli.UsageExit,
 		{"125", "costroid could not read the pull request or its check run"},
 	},
 	Docs: "agents",
@@ -155,12 +156,10 @@ func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err := parseFlags(set, args, resultHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("result", err))
 	}
 	if *number < 1 || set.NArg() > 0 {
-		fmt.Fprintf(stderr, "costroid: %v\n", errResultArguments)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("result", errResultArguments))
 	}
 	posted, err := resultTarget{repository: *repository, said: stderr}.newest(ctx, *number)
 	if errors.Is(err, history.ErrNoCheck) {
@@ -168,8 +167,7 @@ func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return exitRejected
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	if *asJSON {
 		fmt.Fprintln(stdout, posted.Object)

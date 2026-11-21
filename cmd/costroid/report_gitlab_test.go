@@ -417,7 +417,7 @@ func noteConclusion(t *testing.T, stub *scmtest.GitLab) (string, policy.Verdict)
 func TestGitLabExitOnVerdictFailure(t *testing.T) {
 	stub := gitLabGate(t, enforcedOver)
 	code, _, stderr := execute(t, "report", "--rows", realRows, "--exit-on-verdict")
-	if code != exitVerdictFailure || !strings.Contains(stderr, "costroid: the verdict is failure, so the report exits 1\n") {
+	if code != exitRejected || !strings.Contains(stderr, "costroid: the verdict is failure, so the report exits 1\n") {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	conclusion, verdict := noteConclusion(t, stub)
@@ -428,7 +428,7 @@ func TestGitLabExitOnVerdictFailure(t *testing.T) {
 		stub := gitLabGate(t, enforcedOver)
 		stub.Fail["POST /notes"] = http.StatusForbidden
 		code, _, stderr := execute(t, "report", "--rows", realRows, "--exit-on-verdict")
-		if code != exitVerdictFailure || !strings.Contains(stderr, "comment not posted") {
+		if code != exitRejected || !strings.Contains(stderr, "comment not posted") {
 			t.Errorf("exit %d: %s", code, stderr)
 		}
 	})
@@ -505,7 +505,7 @@ func TestReportExitsZeroWithoutOptIn(t *testing.T) {
 func TestVerdictExitGivesEachConclusionItsCode(t *testing.T) {
 	for conclusion, want := range map[string]int{
 		policy.Success: 0,
-		policy.Failure: exitVerdictFailure,
+		policy.Failure: exitRejected,
 		policy.Neutral: exitVerdictNeutral,
 		"":             exitVerdictNeutral,
 	} {
@@ -517,7 +517,7 @@ func TestVerdictExitGivesEachConclusionItsCode(t *testing.T) {
 
 func TestExitOnVerdictRefusesPreview(t *testing.T) {
 	code, stdout, stderr := execute(t, "report", "--preview", "--exit-on-verdict", "--rows", realRows)
-	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "report takes --preview or --exit-on-verdict, not both") {
+	if code != exitUsage || stdout != "" || !strings.Contains(stderr, "report takes --preview or --exit-on-verdict, not both") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

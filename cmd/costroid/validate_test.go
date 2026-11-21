@@ -52,7 +52,7 @@ func TestValidateCannotReadANamedFile(t *testing.T) {
 	if code, _, _ := execute(t, "validate", filepath.Join(t.TempDir(), "gone.yml")); code != exitFailure {
 		t.Fatalf("exit %d", code)
 	}
-	if code, _, _ := execute(t, "validate", "a", "b"); code != exitFailure {
+	if code, _, _ := execute(t, "validate", "a", "b"); code != exitUsage {
 		t.Fatalf("two paths: exit %d", code)
 	}
 }

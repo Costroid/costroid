@@ -102,7 +102,7 @@ func TestAKeyPastedAsACredentialIsRefusedWithoutBeingEchoed(t *testing.T) {
 		{"ingest-run", "--execution-file", executionFile, "--out", out, "--credential", key},
 	} {
 		code, stdout, stderr := execute(t, args...)
-		if code != exitFailure || strings.Contains(stdout+stderr, key) {
+		if code != mistakeExit(args[0]) || strings.Contains(stdout+stderr, key) {
 			t.Errorf("exit %d, %q %q", code, stdout, stderr)
 		}
 	}
@@ -122,7 +122,7 @@ func TestIngestRunRefusesAMissingFileAndWritesNoRows(t *testing.T) {
 
 func TestIngestRunNeedsItsTwoFlags(t *testing.T) {
 	for _, args := range [][]string{{"ingest-run"}, {"ingest-run", "--out", "x"}, {"ingest-run", "--execution-file", "x"}} {
-		if code, _, _ := execute(t, args...); code != exitFailure {
+		if code, _, _ := execute(t, args...); code != exitUsage {
 			t.Errorf("%v exited %d", args, code)
 		}
 	}
@@ -252,7 +252,7 @@ func TestIngestRunFromTableRefusesTwoSources(t *testing.T) {
 	} {
 		out := filepath.Join(t.TempDir(), "rows.jsonl")
 		code, _, stderr := execute(t, append(append([]string{"ingest-run"}, args...), "--out", out)...)
-		if code != exitFailure || !strings.Contains(stderr, "costroid: ingest-run reads one source, and was given 2: ") {
+		if code != exitUsage || !strings.Contains(stderr, "costroid: ingest-run reads one source, and was given 2: ") {
 			t.Errorf("%v: exit %d: %s", args, code, stderr)
 		}
 		if _, err := os.Stat(out); !os.IsNotExist(err) {
@@ -270,7 +270,7 @@ func TestIngestRunFromTableRefusesTwoSources(t *testing.T) {
 		{[]string{}, "ingest-run needs --from KIND=PATH and --out, with KIND one of execution-file, codex-home, gh-aw, focus or example"},
 	} {
 		code, _, stderr := execute(t, append(append([]string{"ingest-run"}, tc.args...), "--out", filepath.Join(t.TempDir(), "rows.jsonl"))...)
-		if code != exitFailure || !strings.Contains(stderr, tc.want) {
+		if code != exitUsage || !strings.Contains(stderr, tc.want) {
 			t.Errorf("%v: exit %d, want %q: %s", tc.args, code, tc.want, stderr)
 		}
 	}

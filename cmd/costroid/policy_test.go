@@ -178,11 +178,17 @@ func TestPolicyRefusesWhatItCannotRead(t *testing.T) {
 	directory := t.TempDir()
 	for name, args := range map[string][]string{
 		"no rows flag":     {"policy"},
-		"a missing rows":   {"policy", "--rows", filepath.Join(directory, "none.jsonl")},
-		"a directory":      {"policy", "--rows", realRows, "--config", directory},
 		"a bad start":      {"policy", "--rows", realRows, "--workflow-added", "yesterday"},
 		"a bad check time": {"policy", "--rows", realRows, "--at", "2026-11-06"},
 		"an argument":      {"policy", "--rows", realRows, "extra"},
+	} {
+		if code, _, _ := execute(t, args...); code != exitUsage {
+			t.Errorf("%s: exit %d", name, code)
+		}
+	}
+	for name, args := range map[string][]string{
+		"a missing rows": {"policy", "--rows", filepath.Join(directory, "none.jsonl")},
+		"a directory":    {"policy", "--rows", realRows, "--config", directory},
 	} {
 		if code, _, _ := execute(t, args...); code != exitFailure {
 			t.Errorf("%s: exit %d", name, code)

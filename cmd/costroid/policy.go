@@ -11,10 +11,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/policy"
 )
+
+// timeForm says what a flag that takes a time takes, to a value it does not.
+const timeForm = "%s takes a time in RFC 3339, such as 2026-11-21T09:00:00Z, not %q"
 
 type policyFlags struct {
 	rows, config, pack, history, baseline string
@@ -45,14 +49,14 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	if *added != "" {
 		start, err := time.Parse(time.RFC3339, *added)
 		if err != nil {
-			return policyFlags{}, fmt.Errorf("--workflow-added: %w", err)
+			return policyFlags{}, fmt.Errorf(timeForm, "--workflow-added", *added)
 		}
 		flags.start = policy.Start{At: start}
 	}
 	if *at != "" {
 		checked, err := time.Parse(time.RFC3339, *at)
 		if err != nil {
-			return policyFlags{}, fmt.Errorf("--at: %w", err)
+			return policyFlags{}, fmt.Errorf(timeForm, "--at", *at)
 		}
 		flags.at = checked
 	}
@@ -68,21 +72,18 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("policy", err))
 	}
 	verdict, runs, err := offlineCheck(ctx, flags)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.File(err))
 	}
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
 	warnPack(verdict, stderr)
 	if err := printVerdict(stdout, verdict, runs.lifetime, flags); err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	if verdict.Conclusion == policy.Failure {
 		return exitRejected

@@ -67,6 +67,7 @@ An agent that sends its own telemetry to the same backend states the same tokens
 | ---- | ------- |
 | 0 | The endpoint took every span, or the rows file holds no rows |
 | 1 | The endpoint refused spans, and the line says how many |
+| 2 | The command line is wrong |
 | 125 | Costroid could not read the rows or the variables, or reach the endpoint |
 
 [`docs/troubleshooting.md`](troubleshooting.md#sending-spans-over-otlp) explains every line `emit-otlp` prints.

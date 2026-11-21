@@ -214,7 +214,7 @@ func TestGatewayKeygenWritesThePrivateHalfAloneAndPrintsThePublicHalf(t *testing
 	if code, _, stderr := execute(t, "gateway", "keygen", "--out", out); code != exitFailure || !strings.Contains(stderr, "exists") {
 		t.Fatalf("keygen over an existing file: exit %d, %s", code, stderr)
 	}
-	if code, _, stderr := execute(t, "gateway", "keygen"); code != exitFailure || !strings.Contains(stderr, "--out") {
+	if code, _, stderr := execute(t, "gateway", "keygen"); code != exitUsage || !strings.Contains(stderr, "--out") {
 		t.Fatalf("keygen with nowhere to write: exit %d, %s", code, stderr)
 	}
 }
@@ -325,7 +325,13 @@ func TestGatewayMintRefusesFlagsItCannotHoldTheKeyTo(t *testing.T) {
 			t.Setenv(adminKeyVariable, gatewayAdmin)
 			t.Setenv(sealingKeyVariable, job.sealing)
 			code, _, stderr := execute(t, append([]string{"gateway", "mint", "--request", request}, c.args...)...)
-			if code != exitFailure || !strings.Contains(stderr, c.want) {
+			// The URL may be the environment's, so it is no mistake of the
+			// command line.
+			want := exitUsage
+			if name == "plain http" {
+				want = exitFailure
+			}
+			if code != want || !strings.Contains(stderr, c.want) {
 				t.Fatalf("exit %d, %s", code, stderr)
 			}
 		})
@@ -648,7 +654,7 @@ func TestCloseAttestsASettledSpend(t *testing.T) {
 func TestGatewayCloseRefusesWhatItCannotCloseSafely(t *testing.T) {
 	newGatewayJob(t)
 	stub := gatewaytest.New(t, gatewayAdmin)
-	if code, _, stderr := execute(t, "gateway", "close"); code != exitFailure || !strings.Contains(stderr, "--url") {
+	if code, _, stderr := execute(t, "gateway", "close"); code != exitUsage || !strings.Contains(stderr, "--url") {
 		t.Errorf("no URL: exit %d, %s", code, stderr)
 	}
 	t.Setenv(adminKeyVariable, gatewayAdmin)
@@ -672,13 +678,13 @@ func TestGatewayCloseRefusesWhatItCannotCloseSafely(t *testing.T) {
 }
 
 func TestGatewayUsage(t *testing.T) {
-	if code, stdout, stderr := execute(t, "gateway"); code != exitFailure || stdout != gatewayGroup.String() || stderr != "" {
+	if code, stdout, stderr := execute(t, "gateway"); code != exitUsage || stdout != gatewayGroup.String() || stderr != "" {
 		t.Errorf("no subcommand: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	if code, stdout, _ := execute(t, "gateway", "help"); code != 0 || !strings.Contains(stdout, "https") {
 		t.Errorf("help: exit %d, %s", code, stdout)
 	}
-	if code, _, stderr := execute(t, "gateway", "open"); code != exitFailure || !strings.Contains(stderr, `unknown gateway command "open"`) {
+	if code, _, stderr := execute(t, "gateway", "open"); code != exitUsage || !strings.Contains(stderr, `unknown gateway command "open"`) {
 		t.Errorf("an unknown subcommand: exit %d, %s", code, stderr)
 	}
 }

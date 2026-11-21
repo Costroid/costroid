@@ -204,6 +204,7 @@ the platform answered 402, 409 INSTALLATION_NOT_BOUND or
 		{"1", `the platform refused or the batch failed, and the line
 names its code, or the format refused rows, and the line
 names them`},
+		cli.UsageExit,
 		{"125", "costroid could not read the rows, reach the platform or write a file"},
 	},
 	Docs: "export",
@@ -283,8 +284,7 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("export", err))
 	}
 	if flags.format != "" {
 		return writeFormat(flags, stdout, stderr)
@@ -311,8 +311,7 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitRejected
 	default:
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	sent.print(flags.rows, stdout, stderr)
 	if sent.rows == 0 {
@@ -394,8 +393,7 @@ func parseFormatFlags(flags exportFlags, format string, sends bool) (exportFlags
 func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
 	file, err := os.Open(flags.rows)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	defer file.Close()
 	written, err := exportformat.Write(flags.format, file, exportformat.Options{Now: time.Now().UTC(), RootDir: flags.rootDir})
@@ -423,8 +421,7 @@ func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
 	}
 	for i, part := range written.Files {
 		if err := writeExportFile(paths[i], part.Body); err != nil {
-			fmt.Fprintf(stderr, "costroid: %v\n", err)
-			return exitFailure
+			return cli.Fail(stderr, err)
 		}
 		printWritten(stdout, flags.format, part, paths[i])
 	}

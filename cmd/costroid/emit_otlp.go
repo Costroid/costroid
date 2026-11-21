@@ -45,6 +45,7 @@ PEM files. Each has an OTEL_EXPORTER_OTLP_TRACES_ form that takes precedence.`)}
 	Exits: []cli.Row{
 		{"0", "the endpoint took every span, or the rows file holds no rows"},
 		{"1", "the endpoint refused spans, and the line says how many"},
+		cli.UsageExit,
 		{"125", `costroid could not read the rows or the variables, or
 reach the endpoint`},
 	},
@@ -62,25 +63,21 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 	if err := parseFlags(set, args, emitOTLPHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("emit-otlp", err))
 	}
 	if *rows == "" || set.NArg() > 0 {
-		fmt.Fprintln(stderr, "costroid: emit-otlp needs --rows, and takes no argument")
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("emit-otlp", errors.New("emit-otlp needs --rows, and takes no argument")))
 	}
 	config, warnings, err := otlpemit.FromEnvironment(getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	for _, warning := range warnings {
 		fmt.Fprintf(stderr, "costroid: warning: %s\n", warning)
 	}
 	data, err := readNamed(*rows, std.stdin)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	endpoint := otlpemit.Redacted(config.Endpoint)
 	result, err := otlpemit.Emitter{Config: config, Version: version}.Emit(ctx, data)
@@ -90,8 +87,7 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 		fmt.Fprintf(stderr, "costroid: %s answered HTTP %d to %d spans, so they were not taken; %d spans went before them\n", endpoint, refused.Status, refused.Spans, result.Spans)
 		return exitRejected
 	case err != nil:
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	case result.Rows == 0:
 		fmt.Fprintf(stderr, "costroid: %s holds no rows, so nothing was sent\n", *rows)
 		return 0

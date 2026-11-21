@@ -58,6 +58,7 @@ A note says something you should know. Many teams need an agent that writes to t
 | ---- | ---------------------------------------------------------- |
 | 0    | No high finding, and under `--strict` no medium one        |
 | 1    | A high finding, or under `--strict` a medium one           |
+| 2    | The command line is wrong                                  |
 | 125  | A path could not be read, or it holds no YAML file         |
 
 ```sh

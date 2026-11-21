@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
@@ -25,7 +26,7 @@ const (
 	followUpTrigger = "workflow_run"
 )
 
-var errNotGitHubActions = errors.New("follow-up refused: GitHub Actions was not detected")
+var errNotGitHubActions = errors.New("follow-up refused: GitHub Actions was not detected\nfollow-up runs in a GitHub Actions job on the workflow_run event, as recipes/github-follow-up.yml does.")
 
 // finishedRun is the part of a workflow_run event the follow-up reads. GitHub
 // writes the event, so the head commit and the head repository are GitHub's,
@@ -79,17 +80,15 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, cli.Mistaken("follow-up", err))
 	}
 	if cicontext.Detect(os.Getenv) != cicontext.GitHubActions {
-		fmt.Fprintf(stderr, "costroid: %v\n", errNotGitHubActions)
-		return exitFailure
+		return cli.Fail(stderr, errNotGitHubActions)
 	}
 	repository := os.Getenv("GITHUB_REPOSITORY")
 	run, head, err := finishedPullRun(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_EVENT_PATH"), repository, flags.ingested)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		return 0
 	}
 	fork := !strings.EqualFold(run.HeadRepository.FullName, repository)
@@ -98,7 +97,7 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	pull := pullContext{head: head, base: os.Getenv("GITHUB_SHA")}
 	host, err := hostFromEnvironment(pull)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		publish(input, false, stdout, stderr)
 		return 0
 	}
@@ -107,7 +106,7 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 		confirm = confirmBranchPull
 	}
 	if _, err := confirm(ctx, host, run, repository); err != nil {
-		fmt.Fprintf(stderr, "costroid: not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: not posted: %s\n", cli.Plain(err))
 		return 0
 	}
 	input = postFollowUp(ctx, host, pull, run.Path, input, flags.rows, fork, stderr)

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -34,8 +33,8 @@ func (g Group) String() string {
 	return text.String()
 }
 
-// Unknown says that typed is no subcommand of the group, names the nearest
-// one when one is near, and runs neither.
+// Unknown is the mistake of a subcommand the group does not have: it names
+// typed and the nearest subcommand, when one is near, and runs neither.
 func (g Group) Unknown(typed string) error {
 	names := make([]string, len(g.Subcommands))
 	for i, sub := range g.Subcommands {
@@ -45,9 +44,9 @@ func (g Group) Unknown(typed string) error {
 	if near == "" {
 		near = "No command is near it."
 	}
-	return errors.New(strings.Join([]string{
+	return &Mistake{lines: []string{
 		fmt.Sprintf("unknown %s command %q", g.Command, typed),
 		near,
 		fmt.Sprintf("Run costroid help %s to list its commands.", g.Command),
-	}, "\n"))
+	}}
 }

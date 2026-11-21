@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm"
@@ -71,7 +72,7 @@ func postInputCheck(ctx context.Context, host scm.Reporter, input comment.Input,
 	render := inputCheck(input)
 	id, err := postCheck(ctx, host, input.HeadSHA, input.Conclusion(), render, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)
+		fmt.Fprintf(stderr, "costroid: check not posted: %s\n", cli.Plain(err))
 		return input
 	}
 	input.CheckRunID = id

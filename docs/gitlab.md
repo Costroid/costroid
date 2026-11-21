@@ -32,7 +32,7 @@ The report's last line names both: `costroid: the verdict is failure, so the rep
 
 The template sets `allow_failure: exit_codes: [3]` on the report's job. GitLab's rule: "The job is `allow_failure: true` for any of the listed exit codes, and `allow_failure` false for any other exit code" ([`allow_failure:exit_codes`](https://docs.gitlab.com/ci/yaml/#allow_failureexit_codes), read 2026-11-07). The rule without the gate sets `allow_failure: true`, and "the rule-level `rules:allow_failure` overrides the job-level `allow_failure`" ([`rules:allow_failure`](https://docs.gitlab.com/ci/yaml/#rulesallow_failure), read 2026-11-07). `costroid lint-recipes` refuses any list but `[3]` on the report's job, because a 1 in it would let a failure verdict pass as a warning.
 
-Any other exit code fails the pipeline while the gate is on. The template's install step exits 1 when it cannot download the release or the signature does not verify, and a flag the report cannot read exits 125.
+Any other exit code fails the pipeline while the gate is on. The template's install step exits 1 when it cannot download the release or the signature does not verify, and a flag the report cannot read exits 2.
 
 ## What concludes neutral
 

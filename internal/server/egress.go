@@ -38,7 +38,8 @@ object.`)}},
 	Environment: []cli.Block{cli.Rows{{envDatabase, "the application role's connection"}}},
 	Exits: []cli.Row{
 		{"0", "the report was printed"},
-		{"125", "costroid could not read the command line or the database"},
+		cli.UsageExit,
+		{"125", "costroid could not read the database"},
 	},
 	Docs: "ledger",
 }.String()
@@ -49,15 +50,14 @@ const noEgress = "No outbound call has been recorded."
 func EgressMain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, egressGroup)
-		return exitFailure
+		return cli.ExitUsage
 	}
 	err := egressCommand(ctx, args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "costroid: %v\n", err)
-		return exitFailure
+		return cli.Fail(stderr, err)
 	}
 	return 0
 }
