@@ -14,6 +14,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/reason"
 )
 
 // sentenceStates are the states a verdict sentence opens with. Each names
@@ -425,5 +426,50 @@ func TestPolicyPageQuotesSentencesTheGoldensHold(t *testing.T) {
 		if !slices.ContainsFunc(slices.Collect(maps.Keys(sentences)), func(sentence string) bool { return strings.HasPrefix(sentence, opening) }) {
 			t.Errorf("docs/policy.md names the opening %q, and no golden state's sentence opens with it", opening)
 		}
+	}
+}
+
+// TestTroubleshootingListsEveryNoFigureCode holds docs/troubleshooting.md to
+// the codes a sentence with no figure can carry: each reason a report gives,
+// each reason a run states and the refused artifact's, and no other.
+func TestTroubleshootingListsEveryNoFigureCode(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", "docs", "troubleshooting.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile("`No figure \\(([a-z_]+)\\)`").FindAllStringSubmatch(string(page), -1) {
+		listed[match[1]] = true
+	}
+	carried := map[string]bool{}
+	for _, why := range []Reason{NoRowsFile, EmptyRowsFile, NotAFile, UnreadRowsFile, InvalidRow, ForkNoRows} {
+		carried[string(why)] = true
+	}
+	for _, why := range []reason.Reason{reason.NoUsage, reason.ConcurrentRun, reason.ReaderRefused, reason.AgentError, ArtifactRefused} {
+		carried[string(why)] = true
+	}
+	for code := range carried {
+		input := noFigures(Unreadable, Reason(code))
+		if why := reason.Reason(code); why.Sentence() != "" {
+			input = emptyRun(why)
+		}
+		if code == string(ArtifactRefused) {
+			input = noFigures(Unreadable, NoRowsFile)
+			input.Refused = &RefusedArtifact{Count: 1}
+		}
+		if sentence := VerdictSentence(input); !strings.HasPrefix(sentence, "No figure ("+code+"): ") {
+			t.Errorf("the sentence for %s opens %q", code, sentence)
+		}
+		if !listed[code] {
+			t.Errorf("docs/troubleshooting.md has no row for No figure (%s)", code)
+		}
+	}
+	for code := range listed {
+		if !carried[code] {
+			t.Errorf("docs/troubleshooting.md lists No figure (%s), which no sentence carries", code)
+		}
+	}
+	if !strings.Contains(string(page), "| `No agent run` |") || !strings.HasPrefix(VerdictSentence(noFigures(NoRows, AgentSkipped)), "No agent run: ") {
+		t.Error("docs/troubleshooting.md has no row for a skipped agent, or its sentence opens otherwise")
 	}
 }

@@ -365,6 +365,21 @@ The action's `agent-result` input passes the agent job's result to the report, a
 | `costroid: warning: <error>` | The event file or the rows file could not be read. The check and the comment still post and say so | Read the reason |
 | `costroid: preview: no rows file at <path>. costroid run writes one at --out, and costroid demo shows a comment without one` | `report --preview` was given a rows path with no file at it. It prints no comment and exits 125. A preview with `--agent-result skipped` prints the comment for a skipped agent instead | Run `costroid run` first, or pass the path it wrote |
 
+### What the check's title says
+
+The check's title, the first line of the comment and the first line of the job summary are one sentence. [`docs/policy.md`](policy.md#what-the-check-says) lists the states it opens with. A title that opens `No figure` names why the report shows no figures, by the code the result object states:
+
+| The title opens | Meaning | Fix |
+| --------------- | ------- | --- |
+| `No figure (no_rows_file)`, `No figure (fork_no_rows)` | No rows file reached the report | Read the agent's job log, which says why it wrote none |
+| `No figure (empty_rows_file)` | The rows file holds no rows: the agent printed no usage, or its job stopped before it wrote a row | Read the agent's job log, which says which |
+| `No figure (rows_path_not_a_file)` | The rows path is not a regular file, so the report did not read it | Write the rows to a plain file, as `costroid run --out` does |
+| `No figure (rows_file_unread)` | The rows file could not be read | Read the report's `costroid: warning:` line, which gives the reason |
+| `No figure (invalid_row)` | A line of the rows file is not a valid row. The report shows no partial total, which would read as a smaller cost | Read the report's `costroid: warning:` line, which names the line |
+| `No figure (no_usage)`, `No figure (concurrent_run)`, `No figure (reader_refused)`, `No figure (agent_error)` | The run stated why it wrote no rows | [Running the agent](#running-the-agent) and [The run's summary](#the-runs-summary) have each reason's line, and [Agent errors](#agent-errors) the fix for each class |
+| `No figure (artifact_refused)` | The `costroid-rows` artifact held entries besides the rows and the run object, so the report read none of it and the check fails | [Installing the binary](#installing-the-binary) has the refused artifact's line |
+| `No agent run` | The workflow skipped the agent's job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request | None |
+
 ## costroid.yml
 
 `costroid report` names each key it does not read. None of these stops the job.
