@@ -2,6 +2,9 @@ package store
 
 import "context"
 
+// CountOverrides is the override query, for the benchmark to show its plan.
+const CountOverrides = countOverrides
+
 // SessionTenant reads the tenant setting on a pooled connection, outside any
 // transaction. A leak from SET LOCAL's scope would show here.
 func (s *Store) SessionTenant(ctx context.Context) (string, error) {

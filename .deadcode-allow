@@ -6,3 +6,11 @@
 # The catalog's Sigstore bundles, catalog.Signatures, are a variable, which
 # deadcode does not judge. Only tests read them until the binary verifies the
 # catalog against Sigstore's trusted root.
+
+2026-11-21 internal/policy.Demotable serve demotes a rule its own override record overrode more than one time in five
+2026-11-21 internal/policy.LedgerOverrides serve demotes a rule its own override record overrode more than one time in five
+2026-11-21 internal/policy.Overrides.demotes serve demotes a rule its own override record overrode more than one time in five
+2026-11-21 internal/policy.Demotion.Until serve demotes a rule its own override record overrode more than one time in five
+2026-11-21 internal/policy.Demotion.Demoted serve demotes a rule its own override record overrode more than one time in five
+2026-11-21 internal/policy.Demotion.Rearm serve demotes a rule its own override record overrode more than one time in five
+2026-11-21 internal/policy.Demotion.Record serve demotes a rule its own override record overrode more than one time in five
