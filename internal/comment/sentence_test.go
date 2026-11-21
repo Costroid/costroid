@@ -155,8 +155,8 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 	}
 	// A figure is a sum of rows, and so are a pull request's total and a
 	// baseline's median and P95. Only a limit in costroid.yml has no longest
-	// form, and the P95 limit's factor is read as an amount is, at most 64
-	// characters.
+	// form. The P95 limit's factor is below 10000, with at most 12 fractional
+	// digits.
 	sum := decimal.MustParse(longAmount).Add(decimal.MustParse(longAmount)).Add(decimal.MustParse(longAmount)).String()
 	runs := policy.MinP95Runs - 1
 	checked := 0
@@ -165,7 +165,7 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 			for _, figures := range []int{1, 3, maxFigures + 3} {
 				result := policy.Result{
 					Rule: rule, Outcome: outcome.outcome, Reason: outcome.reason, LimitUSD: limit, CostUSD: sum, BaselineUSD: sum,
-					LimitPercent: strings.Repeat("9", 40), Models: []string{"a", "b"}, P95USD: sum, LimitFactor: longAmount, BaselineRuns: &runs,
+					LimitPercent: strings.Repeat("9", 40), Models: []string{"a", "b"}, P95USD: sum, LimitFactor: "9999.999999999999", BaselineRuns: &runs,
 				}
 				shown := worstCase(t, figures, result)
 				onGitLab, onFork := asGitLab(shown), shown.OnForkRows()

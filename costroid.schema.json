@@ -52,11 +52,12 @@
           "minimum": 0
         },
         "max_p95_factor": {
-          "description": "How many times the P95 of this agent's latest 20 runs on pull requests merged into the base branch a run may cost, as a plain decimal of at least 1 such as 2 or 1.5, quoted or not. The rule needs 20 earlier runs, because the P95 of fewer is their highest cost, and until a baseline of 20 reaches the check it does not run.",
+          "description": "How many times the P95 of this agent's latest 20 runs on pull requests merged into the base branch a run may cost, as a plain decimal of at least 1 and below 10000 such as 2 or 1.5, quoted or not. The rule needs 20 earlier runs, because the P95 of fewer is their highest cost, and until a baseline of 20 reaches the check it does not run.",
           "type": ["string", "number"],
-          "pattern": "^[1-9][0-9]*(\\.[0-9]{1,12})?$",
-          "maxLength": 64,
-          "minimum": 1
+          "pattern": "^[1-9][0-9]{0,3}(\\.[0-9]{1,12})?$",
+          "maxLength": 17,
+          "minimum": 1,
+          "exclusiveMaximum": 10000
         },
         "pr_budget_usd": {
           "description": "The budget a pull request's runs are held to together, in USD, as a plain decimal such as 5 or 2.50, quoted or not. The report adds this run to the total of the pull request's earlier runs, read from their costroid check runs. Where that total cannot be read, or may count one report twice, the rule concludes unproven.",

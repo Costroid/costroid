@@ -476,13 +476,13 @@ func annotate(results []Result, request Request, settings Settings) []Result {
 	return results
 }
 
-// p95Figures adds the baseline run_p95 was held to: the runs it holds, and its
-// P95 when the rule compared the run with it. The pack compares only beside a
-// baseline of MinP95Runs runs, so a result with any reason but no_baseline
-// had one.
+// p95Figures adds the baseline run_p95 was held to: the runs it holds, none
+// when it is not usable, and its P95 when the rule compared the run with it.
+// The pack compares only beside a usable baseline of MinP95Runs runs, so a
+// result with any reason but no_baseline had one.
 func p95Figures(result *Result, baseline *Baseline) {
 	runs := 0
-	if baseline != nil {
+	if usable(baseline) {
 		runs = baseline.Runs
 	}
 	result.BaselineRuns = &runs

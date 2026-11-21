@@ -306,10 +306,7 @@ func (b telling) against(result policy.Result, said cut, over bool) (figure, lim
 		return b.runCost(said), ", " + reach + Money(budgetCurrency, result.BaselineUSD) + " median of earlier runs"
 	case policy.RuleRunP95:
 		held := standingWord(over) + " " + p95Limit(result, shown)
-		switch {
-		case !shown && !said.limit:
-			return b.subject() + " is " + standingWord(over) + " its " + noun + b.priced(said), ""
-		case !shown:
+		if !shown {
 			return b.subject() + " is " + held + b.priced(said), ""
 		}
 		return b.runCost(said), ", " + held

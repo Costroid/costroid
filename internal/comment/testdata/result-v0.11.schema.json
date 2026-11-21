@@ -1081,9 +1081,9 @@
                 "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
               },
               "limit_factor": {
-                "description": "policy.max_p95_factor as costroid.yml states it, at least 1. A run that costs more than p95_usd times this factor is over its limit. Only under run_p95, where it is required.",
+                "description": "policy.max_p95_factor in its shortest form, at least 1 and below 10,000. A run that costs more than p95_usd times this factor is over its limit. Only under run_p95, where it is required.",
                 "type": "string",
-                "pattern": "^[1-9][0-9]*(\\.[0-9]{1,12})?$"
+                "pattern": "^[1-9][0-9]{0,3}(\\.[0-9]{1,12})?$"
               },
               "baseline_runs": {
                 "description": "The earlier runs the baseline holds, at most 20. Only under run_p95: 20 beside a P95, and fewer with the reason no_baseline, when the rule did not run.",

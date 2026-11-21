@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	schema "github.com/Costroid/costroid/internal/config"
+	"github.com/Costroid/costroid/internal/decimal"
 )
 
 func modelLine(currency, cost, model string) line {
@@ -504,6 +505,40 @@ func TestP95NeverPassesOnAShortHistory(t *testing.T) {
 		want := Result{Rule: RuleRunP95, Outcome: Unproven, Reason: ReasonNoBaseline, LimitFactor: "1000", BaselineRuns: &found}
 		if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) || verdict.Conclusion == Success {
 			t.Errorf("%d runs: %+v concluded %s, want %+v", runs, got, verdict.Conclusion, want)
+		}
+	}
+}
+
+// TestTheLargestP95LimitCompares holds the largest factor the settings admit
+// times the largest P95 a baseline holds, an amount of numeric(38, 12), to a
+// limit the pack still compares: a run within it passes and a run over it
+// fails, with no error. A P95 past that amount, or of more fractional digits,
+// is no run's cost: the baseline is none, and the rule counts no runs.
+func TestTheLargestP95LimitCompares(t *testing.T) {
+	const largest = "9999.999999999999"
+	if _, err := ParseSettings([]byte("policy:\n  max_p95_factor: " + largest + "\n")); err != nil {
+		t.Fatalf("the largest factor is refused: %v", err)
+	}
+	if _, err := ParseSettings([]byte("policy:\n  max_p95_factor: 10000\n")); err == nil {
+		t.Fatal("a factor of 10000 is read")
+	}
+	if product := maxBaselineUSD.Mul(mustAmount(t, largest)).String(); len(product) > decimal.MaxLength {
+		t.Fatalf("the largest limit is %d characters, past %d: %s", len(product), decimal.MaxLength, product)
+	}
+	limits := config("policy:\n  max_p95_factor: " + largest + "\n  enforce: true\n")
+	runs := MinP95Runs
+	for cost, outcome := range map[string]string{maxBaselineUSD.String(): Pass, "1" + strings.Repeat("0", 30): Fail} {
+		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", cost, "m"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: limits, Baseline: p95Baseline(t, runs, maxBaselineUSD.String(), TokenVerified)})
+		if got := result(t, verdict, RuleRunP95); got.Outcome != outcome || got.P95USD != maxBaselineUSD.String() {
+			t.Errorf("USD %s: %+v, want %s", cost, got, outcome)
+		}
+	}
+	none := 0
+	for _, p95 := range []string{"100000000000000000000000000", strings.Repeat("9", 60), "0.0000000000001"} {
+		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", "1", "m"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: limits, Baseline: p95Baseline(t, runs, p95, TokenVerified)})
+		want := Result{Rule: RuleRunP95, Outcome: Unproven, Reason: ReasonNoBaseline, LimitFactor: largest, BaselineRuns: &none}
+		if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) {
+			t.Errorf("a P95 of %s: %+v, want %+v", p95, got, want)
 		}
 	}
 }

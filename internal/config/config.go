@@ -169,10 +169,11 @@ func dayForms(root *yaml.Node) []Problem {
 
 // amountSentence is the policy's own sentence for an amount it cannot read,
 // so validate names it in the same words. factorSentence is its sentence for
-// a key the schema holds to at least 1, the factor of the P95 limit.
+// a key the schema holds to at least 1 and below 10000, the factor of the P95
+// limit.
 const (
 	amountSentence = `policy.%s must be a plain decimal of at most %d fractional digits, such as 5, 2.50 or "2.50"`
-	factorSentence = `policy.%s must be a plain decimal of at least 1 with at most %d fractional digits, such as 2, 1.5 or "1.5"`
+	factorSentence = `policy.%s must be a plain decimal of at least 1 and below 10000 with at most %d fractional digits, such as 2, 1.5 or "1.5"`
 )
 
 // amountTags are the YAML tags a plain decimal resolves to: 5 is an integer,

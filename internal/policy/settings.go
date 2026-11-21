@@ -39,9 +39,10 @@ type Settings struct {
 // same pattern the schema states.
 var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,12})?$`)
 
-// factorPattern is a plain decimal of at least 1 and at most the row
-// contract's scale, the same pattern the schema states.
-var factorPattern = regexp.MustCompile(`^[1-9][0-9]*(\.[0-9]{1,12})?$`)
+// factorPattern is a plain decimal of at least 1 and below 10000, of at most
+// the row contract's scale, the same pattern the schema states. Four digits
+// before the point keep the P95 times the factor short enough to compare.
+var factorPattern = regexp.MustCompile(`^[1-9][0-9]{0,3}(\.[0-9]{1,12})?$`)
 
 // integerPattern is a plain non-negative decimal integer, the only form an
 // integer setting takes.
@@ -248,10 +249,10 @@ func readAmount(key string, value *yaml.Node) (decimal.Decimal, error) {
 }
 
 // readFactor reads policy.max_p95_factor from its source text as an amount is
-// read, and holds it to at least 1: a limit below the P95 would fail a run
-// that costs what most earlier runs cost.
+// read, and holds it to at least 1, since a limit below the P95 would fail a
+// run that costs what most earlier runs cost, and below 10000.
 func readFactor(value *yaml.Node) (decimal.Decimal, error) {
-	refused := fmt.Errorf("policy: policy.%s must be a plain decimal of at least 1 with at most %d fractional digits, such as 2, 1.5 or \"1.5\"", keyMaxP95Factor, focus.MaxScale)
+	refused := fmt.Errorf("policy: policy.%s must be a plain decimal of at least 1 and below 10000 with at most %d fractional digits, such as 2, 1.5 or \"1.5\"", keyMaxP95Factor, focus.MaxScale)
 	return readDecimal(value, factorPattern, refused)
 }
 

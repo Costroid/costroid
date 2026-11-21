@@ -1,11 +1,14 @@
 package history_test
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -361,7 +364,7 @@ func TestLifetimeLeavesOutWhatItCannotAddUp(t *testing.T) {
 	posted(stub, secondCommit, text)
 	for _, unread := range []string{
 		withSchema(text, "costroid.result/0.2"),
-		withSchema(text, "costroid.result/0.11"),
+		withSchema(text, "costroid.result/0.12"),
 		strings.Replace(text, `"amounts": "shown"`, `"amounts": "withheld"`, 1),
 		strings.Replace(text, `"figures_omitted": 0`, `"figures_omitted": 1`, 1),
 		strings.Replace(text, `"currency": "USD"`, `"currency": "usd"`, 1),
@@ -491,5 +494,116 @@ func TestOlderResultsStillRead(t *testing.T) {
 	}
 	if newest.Object != strings.TrimSuffix(strings.TrimPrefix(estimated, "```json\n"), "\n```") || len(newest.Block.Estimates) != 2 {
 		t.Errorf("the newest object reads %d estimates:\n%s", len(newest.Block.Estimates), newest.Object)
+	}
+}
+
+// versionedRun is the check run text of a run of claude-code on its own rows,
+// numbered id, at a synthetic USD cost, beside an infrastructure estimate of
+// USD 1000. With p95 its verdict holds a run_p95 result, so this release
+// writes it as result/0.11; without, as result/0.10. Every figure is
+// synthetic.
+func versionedRun(t *testing.T, id int64, cost string, p95 bool) string {
+	t.Helper()
+	december := comment.Period{Start: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}
+	input := comment.Input{
+		State: comment.Reported,
+		Ledger: comment.Ledger{
+			Rows: 1, Agents: []comment.Data{"claude-code"}, Figures: []comment.Figure{figure("USD", "measured", cost)},
+			Infrastructure: comment.Infrastructure{Figures: []comment.InfrastructureFigure{
+				{Currency: "USD", Basis: "estimate", Source: "infrastructure", Period: december, Cost: decimal.MustParse("1000"), Rows: 1},
+			}},
+		},
+		RowsSHA256: fmt.Sprintf("%064x", id),
+	}
+	version := "costroid.result/0.10"
+	if p95 {
+		runs := policy.MinP95Runs
+		input.Verdict = &policy.Verdict{Conclusion: policy.Failure, Trust: policy.Unverified, Results: []policy.Result{
+			{Rule: policy.RuleRunP95, Outcome: policy.Fail, Reason: policy.ReasonOverBaseline, CostUSD: cost, P95USD: "0.5", LimitFactor: "1.5", BaselineRuns: &runs},
+		}}
+		version = "costroid.result/0.11"
+	}
+	result, err := comment.Result(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, `"schema": "`+version+`"`) {
+		t.Fatalf("the object is not %s:\n%s", version, result)
+	}
+	return "```json\n" + result + "\n```"
+}
+
+// TestABaselineReadsAMergedHeadsV011Object reads a baseline from 20 merged
+// heads whose check runs carry result/0.11 objects, each holding a run_p95
+// result, and from the same runs written as result/0.10. Both give the same
+// 20 runs, and the same P50 and P95.
+func TestABaselineReadsAMergedHeadsV011Object(t *testing.T) {
+	costs := func(p95 bool) []policy.RunCost {
+		t.Helper()
+		stub := scmtest.New(t)
+		for run := 1; run <= policy.BaselineWindow; run++ {
+			number := pullNumber + run
+			pullInto(stub, number, "main", "closed", true, run)
+			id := int64(100 + run)
+			stub.Checks = append(stub.Checks, scmtest.Check{ID: id, Name: comment.CheckName, HeadSHA: headOf(number), Conclusion: "neutral", Text: versionedRun(t, id, fmt.Sprint(run), p95), App: "github-actions"})
+		}
+		reports, err := history.Merged(context.Background(), adapter(t, stub), "main", pullNumber, thirdCommit)
+		if err != nil {
+			t.Fatalf("p95 %t: %v", p95, err)
+		}
+		own := runReport(t, 0, 999, []comment.Data{"claude-code"}, figure("USD", "measured", "9"))
+		runs, err := history.RunCosts(reports, own)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.SortFunc(runs, func(a, b policy.RunCost) int { return cmp.Compare(a.CheckRun, b.CheckRun) })
+		return runs
+	}
+	older, newer := costs(false), costs(true)
+	if len(newer) != policy.BaselineWindow || !reflect.DeepEqual(older, newer) {
+		t.Fatalf("result/0.11 heads give %d runs %+v, result/0.10 heads %+v", len(newer), newer, older)
+	}
+	baseline := policy.BaselineOf(newer, policy.Unverified)
+	if baseline == nil || baseline.Runs != policy.BaselineWindow || baseline.MedianUSD.String() != "10" || baseline.P95USD.String() != "19" {
+		t.Errorf("the baseline is %+v, want 20 runs, P50 10 and P95 19", baseline)
+	}
+}
+
+// TestAPullRequestsTotalCountsAV011Report adds a report written as
+// result/0.11 to the pull request's total beside a result/0.9 one, and never
+// counts it unread.
+func TestAPullRequestsTotalCountsAV011Report(t *testing.T) {
+	stub := scmtest.New(t)
+	pullWith(stub, secondCommit, thirdCommit)
+	posted(stub, secondCommit, withDigest(checkText(t, figure("USD", "measured", "0.1")), plantedDigest))
+	posted(stub, thirdCommit, versionedRun(t, 7, "0.25", true))
+	totals := readWith(t, stub, thirdCommit, ownReport(t))
+	assertFigures(t, totals.Lifetime.Figures, want{"USD", "measured", "0.35", 2, false})
+	if totals.Lifetime.Unread != 0 || totals.Earlier.USD.String() != "0.35" {
+		t.Errorf("unread %d, earlier %+v: the result/0.11 report was not counted", totals.Lifetime.Unread, totals.Earlier)
+	}
+}
+
+// TestEveryVersionAReleaseWritesIsRead holds every reader of check runs to the
+// versions this release writes: the history reader adds each up and reads its
+// rows digest, and comment.ParseResult, which costroid approve, costroid
+// result, the MCP server and serve's webhook read through, never refuses one
+// for its version. A next version the writer gains fails here until each
+// reader reads it.
+func TestEveryVersionAReleaseWritesIsRead(t *testing.T) {
+	written := comment.WrittenSchemas()
+	if len(written) == 0 {
+		t.Fatal("the writer names no version")
+	}
+	for _, version := range written {
+		object := withSchema(withDigest(checkText(t, figure("USD", "measured", "0.1")), plantedDigest), version)
+		object = strings.TrimSuffix(strings.TrimPrefix(object, "```json\n"), "\n```")
+		report, err := history.Parse([]byte(object))
+		if err != nil || report.RowsSHA256 != plantedDigest {
+			t.Errorf("%s: the history reader gives digest %q: %v", version, report.RowsSHA256, err)
+		}
+		if _, err := comment.ParseResult("```json\n" + object + "\n```"); err != nil && strings.Contains(err.Error(), "this release reads") {
+			t.Errorf("%s: comment.ParseResult refuses the version: %v", version, err)
+		}
 	}
 }

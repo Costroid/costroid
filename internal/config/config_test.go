@@ -119,6 +119,9 @@ func TestSchemaAndThePolicyAgree(t *testing.T) {
 		{"policy:\n  max_p95_factor: \"0.99\"\n", false},
 		{"policy:\n  max_p95_factor: 0\n", false},
 		{"policy:\n  max_p95_factor: 1e1\n", false},
+		{"policy:\n  max_p95_factor: 9999.999999999999\n", true},
+		{"policy:\n  max_p95_factor: 10000\n", false},
+		{"policy:\n  max_p95_factor: \"12345.5\"\n", false},
 		{"policy:\n  models: [claude-sonnet-5-5, \"gpt-5*\"]\n", true},
 		{"policy:\n  run_budget_usd: -1\n", false},
 		{"policy:\n  run_budget_usd: 0.5\n", true},
@@ -166,6 +169,7 @@ func TestValidateRefusesANonDecimalAmount(t *testing.T) {
 		{"max_p95_factor", "1e3"},
 		{"max_p95_factor", "0.5"},
 		{"max_p95_factor", "\"02\""},
+		{"max_p95_factor", "10000"},
 	} {
 		body := "policy:\n  " + tc.key + ": " + tc.value + "\n"
 		problems, err := Validate([]byte(body))
@@ -417,11 +421,12 @@ func TestAmountFormsAgreeAcrossReaderValidatorAndSchema(t *testing.T) {
 	}
 	factors := []amountForm{
 		{"1", true, false}, {"2", true, false}, {"1.5", true, false}, {"1.0", true, false}, {`"1.5"`, true, false},
-		{"1.000000000001", true, false}, {long[:64], true, false},
+		{"1.000000000001", true, false}, {"9999.999999999999", true, false}, {`"9999"`, true, false},
 		{"0", false, false}, {"0.5", false, false}, {"0.999999999999", false, false}, {`"0.99"`, false, false}, {`"0"`, false, false},
+		{"10000", false, false}, {"10000.5", false, false}, {`"10000"`, false, false}, {"99999", false, false}, {long, false, false},
 		{"01", false, false}, {"0x10", false, false}, {"1_000", false, false}, {"+5", false, false}, {"-5", false, false},
-		{".inf", false, false}, {"1.", false, false}, {`"1e3"`, false, false}, {"-0", false, false}, {"1e-3", false, false},
-		{"1e3", false, true}, {"1.1234567890123", false, true}, {long, false, true},
+		{".inf", false, false}, {"1.", false, false}, {`"1e3"`, false, false}, {"-0", false, false}, {"1e-3", false, false}, {"1e4", false, false},
+		{"1e3", false, true}, {"1.1234567890123", false, true}, {"9999.9999999999999", false, true},
 	}
 	t.Run("run_budget_usd", func(t *testing.T) { amountFormsAgree(t, "run_budget_usd", cases) })
 	t.Run("max_p95_factor", func(t *testing.T) { amountFormsAgree(t, "max_p95_factor", factors) })

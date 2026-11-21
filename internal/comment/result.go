@@ -360,6 +360,12 @@ var (
 	writtenSchemas = []string{schemaV09, schema, schemaV011}
 )
 
+// WrittenSchemas are the versions of the result object this release writes,
+// oldest first. A reader of the check runs this release posts reads each.
+func WrittenSchemas() []string {
+	return slices.Clone(writtenSchemas)
+}
+
 // versions names a list of versions as a sentence does.
 func versions(list []string) string {
 	return strings.Join(list[:len(list)-1], ", ") + " and " + list[len(list)-1]

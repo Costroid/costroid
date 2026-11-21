@@ -1,6 +1,9 @@
 package policy
 
-import "github.com/Costroid/costroid/internal/decimal"
+import (
+	"github.com/Costroid/costroid/internal/decimal"
+	"github.com/Costroid/costroid/internal/focus"
+)
 
 // MinBaselineRuns is the fewest earlier runs a baseline is read from before a
 // rule holds a run to it. Below it the nearest-rank P95 of 9 runs is their
@@ -12,6 +15,22 @@ const MinBaselineRuns = 10
 // n below 20 is the highest cost, so one costly run would set the limit. At 20
 // it is the 19th, and the window holds no more.
 const MinP95Runs = BaselineWindow
+
+// maxBaselineUSD is the largest amount a ledger holds, numeric(38, 12). A
+// median or a P95 past it, or of more fractional digits, is no run's cost.
+// The largest factor times it is 55 characters, so the pack still compares
+// it as a decimal string.
+var maxBaselineUSD = decimal.MustParse("99999999999999999999999999.999999999999")
+
+// usable reports a baseline whose median and P95 are amounts a ledger holds.
+// Any other is none.
+func usable(baseline *Baseline) bool {
+	return baseline != nil && holdable(baseline.MedianUSD) && holdable(baseline.P95USD)
+}
+
+func holdable(amount decimal.Decimal) bool {
+	return amount.Sign() >= 0 && amount.Scale() <= focus.MaxScale && amount.Cmp(maxBaselineUSD) <= 0
+}
 
 // Baseline is what this agent's earlier runs on the repository cost, in USD.
 type Baseline struct {
@@ -47,9 +66,10 @@ type Lifetime struct {
 // its P50 and P95 in USD, for each increase key that is set, the USD amount a
 // run may reach, and with max_p95_factor set and MinP95Runs runs, the P95
 // times the factor. The pack cannot add or multiply, so the limits are
-// computed here, exactly. A baseline of too few runs is none.
+// computed here, exactly. A baseline of too few runs, or one that is not
+// usable, is none.
 func baselineInput(baseline *Baseline, settings Settings) map[string]any {
-	if baseline == nil || baseline.Runs < MinBaselineRuns || baseline.MedianUSD.Sign() < 0 || baseline.P95USD.Sign() < 0 {
+	if !usable(baseline) || baseline.Runs < MinBaselineRuns {
 		return nil
 	}
 	input := map[string]any{

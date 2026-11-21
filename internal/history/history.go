@@ -32,8 +32,10 @@ const (
 // every figure with its amount in the check run.
 var schemas = append([]string{"costroid.result/0.3", "costroid.result/0.4", "costroid.result/0.5"}, digestSchemas...)
 
-// digestSchemas are the result objects that state the digest of their rows.
-var digestSchemas = []string{"costroid.result/0.6", "costroid.result/0.7", "costroid.result/0.8", "costroid.result/0.9", "costroid.result/0.10"}
+// digestSchemas are the result objects that state the digest of their rows:
+// 0.6 to 0.8, and every version this release writes, so a check run this
+// release posts is always one it adds up again.
+var digestSchemas = append([]string{"costroid.result/0.6", "costroid.result/0.7", "costroid.result/0.8"}, comment.WrittenSchemas()...)
 
 // usd is the one currency the policy's pull request budget is held in.
 const usd = "USD"
