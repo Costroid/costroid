@@ -53,7 +53,7 @@ When a review counts and the newest `costroid` check on the head concludes `fail
 Over budget, approved by octocat: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit 9f2c6e1 and ends with a new push.
 ```
 
-The title names the amount where the report's comment shows amounts. Where the comment withholds them, the title names none and ends "Amounts are withheld here." `costroid approve` reads `comment.show_cost` and the repository's visibility as the report does, at the same commit, so the two never differ. [`docs/configuration.md`](configuration.md) has the setting.
+The title names the amount where the report's comment shows amounts. Where the comment withholds them, the title names none and ends "Amounts are withheld here." `costroid approve` decides it as the report does, from `comment.show_cost` at the head of the base branch and the repository's visibility. [`docs/configuration.md`](configuration.md) has the setting.
 
 The summary opens on the title. It names the time too, and says the policy's verdict stays `failure`. Its machine block is the earlier check's result object with `conclusion` set to `neutral` and `check_run_id` naming the new check run. `policy.conclusion` still reads `failure`. The summary names the check run that carries the report in full.
 
@@ -105,6 +105,7 @@ Each line starts with `costroid:`.
 | --- | --- |
 | `check run <id>, conclusion <conclusion>` | The check was posted again with that conclusion |
 | `warning: no approval counts: <reason>` | No review passed every rule. The reason names the rule the newest approval failed, or the settings or request that could not be read |
+| `warning: costroid.yml: <error>`, `warning: repository visibility: <error>` | `comment.show_cost` or the repository's visibility could not be read. A repository not known to be private then gets a check whose title withholds amounts, as the report's comment does |
 | `not posted: check run <id> already concludes <conclusion>` | The newest check already concludes what the reviews give |
 | `not posted: no costroid check is on commit <commit> yet, and the report applies an approval when it posts` | The report has not posted on this head |
 | `not posted: approve runs on the pull_request_review event, and this run's event is <event>` | The workflow runs on another event |

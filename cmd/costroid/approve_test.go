@@ -164,7 +164,7 @@ func approvedTitles(t *testing.T, config string, private *bool) (approved scmtes
 // TestAnApprovedFailureNamesItsAmountWhereAmountsShow approves a failed check
 // on a repository whose comment shows amounts. The check costroid approve
 // posts names the amount and the budget in its title, and that title is the
-// one the report gives the same approval: the two never differ.
+// one the report gives the same approval when it runs again on the head.
 func TestAnApprovedFailureNamesItsAmountWhereAmountsShow(t *testing.T) {
 	want := "Over budget, approved by " + approver + ": this run cost USD " + realTotal + " at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit " + headCommit[:7] + " and ends with a new push."
 	yes, no := true, false

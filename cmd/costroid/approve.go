@@ -164,8 +164,8 @@ func readReviewEvent(eventName, path, repository string) (int, error) {
 // reconclude posts the newest costroid check on the head again when an
 // approval changes its conclusion, or when one no longer does. The check
 // shows or withholds amounts as the report's comment does: resolveAmounts
-// decides it for both, from the same setting at the same commit. An error
-// says why nothing was posted.
+// decides it for both, from costroid.yml at the settings commit and the
+// repository's visibility. An error says why nothing was posted.
 func reconclude(ctx context.Context, host approvalHost, pull pullContext, number int, now time.Time, stderr io.Writer) error {
 	current, err := host.PullRequest(ctx, number)
 	if err != nil {
