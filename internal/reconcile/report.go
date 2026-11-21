@@ -85,31 +85,34 @@ func (r Report) usageOf(key Key) []Usage {
 }
 
 func (r Report) costLines(key Key) []Cost {
+	return r.costLinesOver(key.Credential, []string{key.Day})
+}
+
+// costLinesOver is one credential's cost lines on any of the days.
+func (r Report) costLinesOver(credential string, days []string) []Cost {
 	var lines []Cost
 	for _, cost := range r.Costs {
-		if cost.Credential == key.Credential && cost.Day == key.Day {
+		if cost.Credential == credential && slices.Contains(days, cost.Day) {
 			lines = append(lines, cost)
 		}
 	}
 	return lines
 }
 
-// costTotal is one credential's day. List is nil unless every token line
+// costTotal is one credential's days. List is nil unless every token line
 // stated a list figure.
 type costTotal struct {
 	amount, other decimal.Decimal
 	list          *decimal.Decimal
 }
 
-func (r Report) costOf(key Key) costTotal {
+// costOver totals one credential's cost lines over the days.
+func (r Report) costOver(credential string, days []string) costTotal {
 	var total costTotal
 	var list decimal.Decimal
 	stated := false
 	missing := false
-	for _, cost := range r.Costs {
-		if cost.Credential != key.Credential || cost.Day != key.Day {
-			continue
-		}
+	for _, cost := range r.costLinesOver(credential, days) {
 		if !cost.Tokens {
 			total.other = total.other.Add(cost.Amount)
 			continue

@@ -115,7 +115,7 @@ func spanLines(ctx context.Context, binary string, group []keptDay, scratch stri
 		if refused != nil {
 			dayLines, err = wholeDay(day, failRefused)
 		} else {
-			dayLines, err = reconciledLines(day, rowsOn(reconciled, day.record.Day))
+			dayLines, err = reconciledLines(day, rowsOn(reconciled, day.record.Day), reconciled)
 		}
 		if err != nil {
 			return nil, err

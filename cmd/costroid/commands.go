@@ -333,6 +333,7 @@ const reconcileHelp = `Usage:
   costroid reconcile --rows rows.jsonl --from D --to D [--credential ID]
                      [--upstream-credential SOURCE=ID]
                      [--out FILE] [--reports DIR --as-of T]
+                     [--export [--installation-id ID]]
 
 reconcile compares rows with the provider's usage and cost reports, per
 credential per UTC day. Tokens must match within 1% by class. List-price dollars
@@ -348,12 +349,28 @@ that is null. A gateway's rows name its run keys, which the provider never
 sees: --upstream-credential names the key the gateway sends with, once per
 source, such as anthropic=apikey_01Example. --out keeps one row per source,
 credential and day, and a rerun replaces it. Rerun through the eighth day after
-month end, when restating stops.
+month end, when restating stops. Every amount is a decimal string in USD, and
+a figure past 30 places or 64 characters stops its day, unrounded.
+
+A run that crosses midnight UTC is compared over the days it spans, for tokens
+and dollars, on the first day's row. A later day's row keeps its own prices
+and carries no tokens or dollars.
+
+--export sends the rows this run wrote to --out to the Costroid Platform
+COSTROID_PLATFORM_URL names, under the integration token in
+COSTROID_PLATFORM_TOKEN, by integration/v0.5. A platform that states an
+earlier version gets nothing. The rows go in bodies cut at the limits
+GET /quotas states, a span's rows in one body. On GitHub Actions with
+id-token: write the job's run token goes with them, beside the installation
+--installation-id names. A server error sends the same body again every 2 s
+for up to 60 s. On 402, 409 INSTALLATION_NOT_BOUND or 429 reconcile warns and
+keeps the rows. The admin key never goes to the platform.
 
 Exit codes of reconcile:
   0                 no token miss and no price miss
   1                 a token miss or a price miss, each a defect
-  125               costroid could not read the rows or a report
+  125               costroid could not read the rows or a report, a figure
+                    stopped its day, or the rows could not be sent
 `
 
 const policyHelp = `Usage:

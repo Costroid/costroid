@@ -128,11 +128,12 @@ func keepServed(t *testing.T, inputs string, d day, rows []byte, served servedDa
 	}
 }
 
-// A run across midnight is judged across its days: the tokens, and each
-// class's dollars, of both days against both days of the provider's report,
-// on the first day's line. Each day's dollar residual is the cause
-// run_spans_days. Read a day at a time, the first day reads pending and the
-// second misses.
+// A run across midnight is judged across its days: the tokens, each class's
+// dollars and the day's dollars, of both days against both days of the
+// provider's report, on the first day's line. Nothing moves out of the days
+// compared, so no residual is left to name. The next day's line reads by the
+// first day's verdict and holds no figure of its own. Read a day at a time,
+// the first day reads pending and the second misses.
 func TestAccuracyJudgesAMidnightRunAcrossItsDays(t *testing.T) {
 	first, next, served := midnightDays()
 	inputs := t.TempDir()
@@ -143,15 +144,18 @@ func TestAccuracyJudgesAMidnightRunAcrossItsDays(t *testing.T) {
 		t.Errorf("-check exited %d: %s", got.code, got.stderr)
 	}
 	for _, date := range []string{first.date, next.date} {
-		if text := dayLine(t, page, date); verdictOf(t, text) != "pass after named causes" || !strings.Contains(text, "| run_spans_days ") {
-			t.Errorf("%s: verdict %q, want a pass after run_spans_days: %s", date, verdictOf(t, text), text)
+		if text := dayLine(t, page, date); verdictOf(t, text) != "pass" || strings.Contains(text, "run_spans_days") {
+			t.Errorf("%s: verdict %q, want a pass with no residual to name: %s", date, verdictOf(t, text), text)
 		}
 	}
 	text := dayLine(t, page, first.date)
-	for _, want := range []string{string(focus.Output) + " 100000 / 100000 (0.00%)", string(focus.Output) + " 1 / 1 (0.00%)"} {
+	for _, want := range []string{string(focus.Output) + " 100000 / 100000 (0.00%)", "| 1.62 / 1.62 (0.00%); ", string(focus.Output) + " 1 / 1 (0.00%)"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the first day does not state both days' %q: %s", want, text)
 		}
+	}
+	if text := dayLine(t, page, next.date); !strings.Contains(text, "| none | none | none | none | pass |") {
+		t.Errorf("the next day holds figures of its own: %s", text)
 	}
 }
 

@@ -75,7 +75,10 @@ const (
 	CauseContractRate CauseName = "contract_rate"
 	// CauseRunSpansDays is a run that crossed midnight UTC. The ledger dates a
 	// run's tokens by the run's start, and the provider dates each request by
-	// when it was served, so the days differ and together they match.
+	// when it was served, so the days differ and together they match. It is
+	// the cause a Span names. As a residual's cause it would be the dollars a
+	// run moved from one day to another, and a span's dollars are compared
+	// over all its days, so no residual names it.
 	CauseRunSpansDays CauseName = "run_spans_days"
 )
 
@@ -89,11 +92,15 @@ type Key struct {
 // Row is one reconciliation of one credential on one UTC day.
 // DataRefreshedAt is the provider's stamp on the reports that carried the day,
 // the earliest when several did, and null when the provider stamps none.
+// Currency is the currency of every amount in the row. Rows and reports in any
+// other currency stop the pass before a row is written, so a row never holds
+// two.
 type Row struct {
 	Key
 	State           State        `json:"state"`
 	Final           bool         `json:"final"`
 	DataRefreshedAt *time.Time   `json:"data_refreshed_at"`
+	Currency        string       `json:"currency"`
 	Tokens          []TokenCheck `json:"tokens"`
 	Prices          []PriceCheck `json:"prices"`
 	Dollars         *DollarCheck `json:"dollars"`
@@ -101,11 +108,18 @@ type Row struct {
 	Notes           []string     `json:"notes"`
 }
 
+// laterInSpan reports a later day of a span, which holds no comparison of its
+// own and reads by the row of the span's first day.
+func (r Row) laterInSpan() bool {
+	return r.Span != nil && r.Day != r.Span.From
+}
+
 // Span names the days a run crossed midnight UTC over, compared as one
 // because a day of them missed on its own and together they matched. The row
-// of From holds the joined token comparison and the joined dollars by class,
-// and the rows of later days hold neither. It is null on a row compared on
-// its own day.
+// of From holds the joined token comparison and the joined dollar comparison,
+// and the rows of later days hold neither. Each day keeps its own prices, and
+// a price that misses on any day makes every day of the span price_miss. It
+// is null on a row compared on its own day.
 type Span struct {
 	Cause CauseName `json:"cause"`
 	From  string    `json:"from"`
@@ -121,7 +135,8 @@ type TokenCheck struct {
 	Within   bool             `json:"within"`
 }
 
-// DollarCheck compares list-price ledger cost with the cost report. Residual
+// DollarCheck compares list-price ledger cost with the cost report, for the
+// day or, on a span's first day, for every day of the span together. Residual
 // is Provider minus Ledger, and it equals the sum of Causes and Unattributed.
 // OtherCost is what the report bills for anything but tokens, which the ledger
 // does not hold and the comparison leaves out.
@@ -133,9 +148,8 @@ type TokenCheck struct {
 // is null when ProviderList is.
 //
 // Classes is the first line: each class at list price on both sides, null
-// when the report does not split token cost by class, and on a later day of a
-// Span, whose first day holds the classes of every day in it. Verdict is the
-// second line, the day within 10%.
+// when the report does not split token cost by class. Verdict is the second
+// line, the day within 10%.
 type DollarCheck struct {
 	Classes           []ClassDollars   `json:"classes"`
 	Verdict           DollarVerdict    `json:"verdict"`
@@ -162,18 +176,20 @@ type Unmatched struct {
 	Credential string
 }
 
-// Result is one reconciliation pass.
+// Result is one reconciliation pass. Refused holds the credential days whose
+// row would carry a figure no row can, which are not in Rows.
 type Result struct {
 	Rows      []Row
 	Unmatched []Unmatched
+	Refused   []*FigureError
 }
 
-// Misses counts the rows that hold a defect: a token miss, a price miss or
-// both.
+// Misses counts the comparisons that hold a defect: a token miss, a price
+// miss or both. A span is one comparison, counted on its first day.
 func (r Result) Misses() int {
 	misses := 0
 	for _, row := range r.Rows {
-		if row.State == TokensMiss || row.State == PriceMiss {
+		if !row.laterInSpan() && (row.State == TokensMiss || row.State == PriceMiss) {
 			misses++
 		}
 	}
@@ -202,10 +218,17 @@ func Reconcile(ctx context.Context, ledger *Ledger, options Options) (Result, er
 		if err != nil {
 			return Result{}, fmt.Errorf("reconcile: %s: %w", provider.Name(), err)
 		}
-		result.Rows = append(result.Rows, rows...)
+		for _, row := range rows {
+			if refused := formOf(row); refused != nil {
+				result.Refused = append(result.Refused, refused)
+				continue
+			}
+			result.Rows = append(result.Rows, row)
+		}
 		result.Unmatched = append(result.Unmatched, pass.unmatched()...)
 	}
 	slices.SortFunc(result.Rows, func(a, b Row) int { return compareKeys(a.Key, b.Key) })
+	slices.SortFunc(result.Refused, func(a, b *FigureError) int { return compareKeys(a.Key, b.Key) })
 	return result, nil
 }
 
@@ -255,11 +278,12 @@ func (c comparison) rows() ([]Row, error) {
 		}
 		rows = append(rows, row)
 	}
+	spanStates(rows)
 	return rows, nil
 }
 
 func (c comparison) row(key Key) (Row, error) {
-	row := Row{Key: key, Final: isFinal(key.Day, c.options.Now), DataRefreshedAt: c.report.refreshedAt(key.Day), Notes: []string{}}
+	row := Row{Key: key, Final: isFinal(key.Day, c.options.Now), DataRefreshedAt: c.report.refreshedAt(key.Day), Currency: currency, Notes: []string{}}
 	if !c.settled(key.Day) {
 		row.State = Pending
 		row.Notes = append(row.Notes, "the provider has not finished reporting this day")
@@ -295,19 +319,57 @@ func (c comparison) row(key Key) (Row, error) {
 		}
 		row.Notes = append(row.Notes, "a price the report implies missed the catalog past the report's last stated digit: this is a defect")
 	}
-	dollars, notes, err := c.dollars(key, group, usage, joined)
+	if row.laterInSpan() {
+		return row, nil
+	}
+	days := []string{key.Day}
+	if row.Span != nil {
+		days = daysFrom(row.Span.From, row.Span.To)
+	}
+	dollars, notes, err := c.dollars(key, days, joined)
 	if err != nil {
 		return Row{}, err
-	}
-	if row.Span != nil {
-		if dollars, err = c.spanCause(key, group, usage, dollars); err != nil {
-			return Row{}, err
-		}
-		dollars.Classes = c.spanClasses(key, *row.Span, dollars)
 	}
 	row.Dollars = &dollars
 	row.Notes = append(row.Notes, notes...)
 	return row, nil
+}
+
+// spanKey is one span of one credential.
+type spanKey struct {
+	source, credential string
+	span               Span
+}
+
+// spanStates gives every day of a span the span's state. A price that misses
+// on any of its days makes each of them price_miss, and each day whose own
+// prices all match names the first day that missed.
+func spanStates(rows []Row) {
+	missed := map[spanKey]string{}
+	for _, row := range rows {
+		if row.Span == nil || !priceMissed(row.Prices) {
+			continue
+		}
+		at := spanKey{row.Source, row.Credential, *row.Span}
+		if day, seen := missed[at]; !seen || row.Day < day {
+			missed[at] = row.Day
+		}
+	}
+	for i, row := range rows {
+		if row.Span == nil {
+			continue
+		}
+		day, found := missed[spanKey{row.Source, row.Credential, *row.Span}]
+		if !found {
+			continue
+		}
+		if row.State == Matched {
+			rows[i].State = PriceMiss
+		}
+		if !priceMissed(row.Prices) {
+			rows[i].Notes = append(rows[i].Notes, fmt.Sprintf("a price the report implies on %s, a day of this span, missed the catalog past the report's last stated digit: this is a defect", day))
+		}
+	}
 }
 
 func missed(checks []TokenCheck) bool {
@@ -349,9 +411,9 @@ func (c comparison) joinSpan(key Key, row *Row) ([]TokenCheck, error) {
 	row.Tokens = nil
 	if key.Day == from {
 		row.Tokens = joined
-		row.Notes = append(row.Notes, fmt.Sprintf("a run crossed midnight UTC: the ledger dates its tokens by its start, and the provider by when each request was served, so %s to %s are compared as one, and every class matched within 1%%", from, to))
+		row.Notes = append(row.Notes, fmt.Sprintf("a run crossed midnight UTC: the ledger dates its tokens by its start, and the provider by when each request was served, so %s to %s are compared as one, for tokens and dollars, and every class matched within 1%%", from, to))
 	} else {
-		row.Notes = append(row.Notes, fmt.Sprintf("a run crossed midnight UTC: this day's tokens are compared with %s's as one, on that day's row", from))
+		row.Notes = append(row.Notes, fmt.Sprintf("a run crossed midnight UTC: this day's tokens and dollars are compared with %s's as one, on that day's row", from))
 	}
 	return joined, nil
 }
@@ -365,46 +427,6 @@ func (c comparison) missesAlone(key Key) func(string) bool {
 		}
 		return missed(compareTokens(key.Source, c.ledger.group(at), c.report.usageOf(at)))
 	}
-}
-
-// spanCause names what the day's tokens moved to or from another day of the
-// run, priced at the standard tier through the pinned catalog, as the cause
-// run_spans_days. A day with no bill has no residual to name.
-func (c comparison) spanCause(key Key, group *ledgerGroup, usage []Usage, check DollarCheck) (DollarCheck, error) {
-	if check.Verdict == NoBill {
-		return check, nil
-	}
-	walk := walker{catalog: c.options.Catalog, source: key.Source, at: parseDay(key.Day)}
-	mine, err := walk.price(group.records())
-	if err != nil {
-		return DollarCheck{}, err
-	}
-	theirs, err := walk.price(usage)
-	if err != nil {
-		return DollarCheck{}, err
-	}
-	amount := theirs.standard.Sub(mine.standard)
-	if amount.Sign() != 0 {
-		check.Causes = append(check.Causes, Cause{CauseRunSpansDays, amount})
-		check.Unattributed = check.Unattributed.Sub(amount)
-	}
-	return check, nil
-}
-
-// spanClasses compares each class's dollars over the days a run crossed, as
-// its tokens are: the span's first day holds the joined classes, and later
-// days hold none. A day alone would set the whole run's cost against the
-// share the provider served that day.
-func (c comparison) spanClasses(key Key, span Span, check DollarCheck) []ClassDollars {
-	if check.Verdict == NoBill || key.Day != span.From {
-		return nil
-	}
-	days := daysFrom(span.From, span.To)
-	var lines []Cost
-	for _, day := range days {
-		lines = append(lines, c.report.costLines(Key{key.Source, key.Credential, day})...)
-	}
-	return c.compareClasses(c.ledger.joined(key.Source, key.Credential, days), lines)
 }
 
 func daysFrom(from, to string) []string {

@@ -189,10 +189,13 @@ func renderFooter(w io.Writer, result Result) {
 	}
 	tokens, prices := 0, 0
 	for _, row := range result.Rows {
+		if row.laterInSpan() {
+			continue
+		}
 		if row.State == TokensMiss {
 			tokens++
 		}
-		if priceMissed(row.Prices) {
+		if row.State == PriceMiss || priceMissed(row.Prices) {
 			prices++
 		}
 	}

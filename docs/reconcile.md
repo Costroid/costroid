@@ -34,6 +34,31 @@ ANTHROPIC_ADMIN_KEY=... costroid reconcile --rows rows.jsonl --from 2026-10-01 -
 
 `OPENAI_ADMIN_KEY` does the same for OpenAI rows. The key stays in the process, and goes in one header to the provider's own host. `--out` keeps one row per source, credential and day, and a rerun replaces it. Rerun through the eighth day after month end, when restating stops.
 
+## What a row holds
+
+Each line of `--out` is one row, a `ReconciliationRow` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-reconciliation-result). Its key is `source`, `credential` and `day`.
+
+| Key | What it holds |
+| --- | --- |
+| `source` | `anthropic` or `openai` |
+| `credential` | The rows' `SubAccountId` |
+| `day` | The UTC day, `YYYY-MM-DD` |
+| `state` | `matched`, `tokens_miss`, `price_miss` or `pending` |
+| `final` | False through the eighth day after the day's month ends, while the provider can restate it |
+| `data_refreshed_at` | The provider's freshness stamp on the reports that carried the day, the earliest when several did. Null on OpenAI, which stamps none |
+| `currency` | `USD`, the currency of every amount in the row, `prices` included |
+| `tokens` | One check per token class. Null on a `pending` row and on a later day of a span |
+| `prices` | One check per model, tier, region and class on the row's own day. Null on a `pending` row |
+| `dollars` | List-price dollars against the cost report, for the day or for a span's days together. Null on a `pending` row and on a later day of a span |
+| `span` | The days a run crossed midnight UTC over, compared as one. Null on a day compared on its own |
+| `notes` | Sentences for people |
+
+Every row and every report line is read in USD. A row or a report line in another currency stops the run before any row is written, so no row holds two currencies, and `dollars.rounding.currency` is always the row's.
+
+Every amount is a decimal string, never a JSON number: an optional minus, digits, and an optional point with 1 to 30 digits, at most 64 characters, with no exponent. A provider's figure is kept as the provider states it, and a delta or a residual keeps its scale. Only `implied_unit_price` is rounded, to six places, and no verdict reads it. A token count is digits only, at most 20 of them, and a difference of two counts may carry a minus.
+
+Nothing is rounded to fit that form. A figure past it stops its own credential's day, and the line names the day, the key and the figure. Anthropic states cents, so a figure past 28 places in cents is past 30 in dollars, and OpenAI writes a JSON number, which can carry an exponent past 30 places. A ledger row of part of a token gives a count that is not whole. Every other day is still written and sent, and `reconcile` exits 125.
+
 ## The pull agent
 
 Where a provider offers only a full admin key, that key never leaves your side. Costroid does not store an Anthropic admin key in a hosted service, so for Anthropic the pull agent is the only path. OpenAI's reports read under an admin key today too, so the same holds until a read-only key is tested.
@@ -45,7 +70,31 @@ docker run --rm --user "$(id -u)" -e ANTHROPIC_ADMIN_KEY -v "$PWD:/work" ghcr.io
   reconcile --rows /work/rows.jsonl --from 2026-10-01 --to 2026-10-31 --out /work/reconciliation.jsonl
 ```
 
-The output holds daily totals per credential: token counts, dollar figures and causes. Nothing schedules it yet, and nothing sends the output anywhere. Run it from your own scheduler.
+The output holds daily totals per credential: token counts, dollar figures and causes. Nothing schedules it yet. Run it from your own scheduler, and add `--export` to send its rows to Costroid Platform.
+
+## Send the rows to Costroid Platform
+
+```sh
+ANTHROPIC_ADMIN_KEY=... COSTROID_PLATFORM_URL=https://app.costroid.com COSTROID_PLATFORM_TOKEN=... \
+  costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-20 --out reconciliation.jsonl --export
+```
+
+`--export` sends the rows this run wrote to `--out`, byte for byte, as the body of `PUT /reconciliations` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-reconciliation-result). It reaches the platform as [`costroid export`](export.md#costroid-platform) does: the origin in `COSTROID_PLATFORM_URL`, https or http on a loopback address, the integration token in `COSTROID_PLATFORM_TOKEN`, and no redirect followed. The token needs `identity:read`, `quotas:read` and `reconciliations:write`. The admin key goes to the provider alone, never to the platform.
+
+It reads `GET /identity` under `integration/v0.5` first. A platform that states an earlier version carries no reconciliation rows, so nothing is sent, the line names the version it states, and `reconcile` exits 125. It reads `GET /quotas` next and cuts the rows into bodies at `max_reconciliation_lines`, `max_reconciliation_bytes` and `max_reconciliation_line_bytes` as stated there. A limit the answer does not state is never guessed. The rows of a span go in one body, its first day first, so a reader never shows a later day `pending` while its first day's row waits in another body.
+
+On GitHub Actions, a job with `id-token: write` sends its run token beside the installation `--installation-id` names, as `costroid export` does, and the token proves which run sent the rows. Any other job sends no run token. The job that reconciles is a scheduled job where the admin key lives, not a pull request's job.
+
+| Answer | What `reconcile` does |
+| --- | --- |
+| 200 | Prints how many rows were `stored`, `unchanged` and `ignored` |
+| 5xx, or a lost connection | Sends the same body again every 2 s for up to 60 s, as `costroid export` asks again for a verdict. The replace rule makes a body sent twice store once |
+| 402, 429, 409 `INSTALLATION_NOT_BOUND` | Warns, keeps `--out` to send again, sends no later body, and leaves the exit code to the comparison |
+| 413 `RECONCILIATION_TOO_LARGE` | Stops, keeps `--out`, and exits 125 |
+| 422 `RECONCILIATION_INVALID` | Stops, names `error.line` and the row on it, keeps `--out`, and exits 125 |
+| Any other refusal | Stops, names the status and the code, and exits 125 |
+
+A body is stored whole or not at all. A rerun sends each day again, and the platform replaces the stored row of its key, except that a `final` row is never replaced by one that is not, and a row whose `data_refreshed_at` is earlier than the stored row's is ignored.
 
 ## Saved reports
 
@@ -70,7 +119,11 @@ Keep each response's body as the provider sent it, or cut to the records of the 
 
 A row is dated by the start of its charge period. A row that covers a whole run or turn and crosses 00:00 UTC puts all its tokens on its first day, while the provider dates each request by when it was served. Each day then misses on its own.
 
-When a day misses and a row in the file ran past midnight on the same credential, `reconcile` compares the days that row spans as one. If every class matches within 1% over those days together, each day reads `matched` and its `span` names the cause `run_spans_days` with the first and last day. The first day's row holds the joined token comparison and the joined dollars by class, and a later day's row holds none. Each day's dollar residual names `run_spans_days` for the tokens that moved, priced at the standard tier through the pinned catalog. If the days miss together too, each day keeps its own verdict.
+When a day misses and a row in the file ran past midnight on the same credential, `reconcile` compares the days that row spans as one, for dollars as for tokens. If every class matches within 1% over those days together, each day's `span` names the cause `run_spans_days` with the first and last day. The first day's row holds the joined token comparison and the joined dollar comparison: `ledger`, `provider`, `provider_effective`, `provider_list`, `other_cost`, `classes`, `rounding`, the residual, its causes and the verdict, each over the span's days together. A later day's row carries the span and the span's state, with `tokens` and `dollars` null, so no later day reads `outside` on its own. If the days miss together too, each day keeps its own verdict.
+
+Each day keeps its own `prices`. A price that misses on any day of a span makes every day of it `price_miss`, and a day whose own prices match names the day that missed. A span is one comparison: the exit code, the count of misses under the table and the dollar table count it once, on its first day.
+
+`run_spans_days` names why the days were joined. As a residual's cause it would be the dollars a run moved from one day to another, and a span's dollars are compared over all the days the run touched, so nothing moves out of them and no residual names it.
 
 The days are joined only when every one of them is in the range and reported. Otherwise the day reads `pending`, and its note names the range to reconcile or the day the provider has not finished. Half a run is not a miss.
 
@@ -128,7 +181,7 @@ OpenAI's older usage responses leave uncached input and 30-minute writes to be d
 | ---- | -------------------------------------------- |
 | 0    | No token miss and no price miss              |
 | 1    | A token miss or a price miss, each a defect  |
-| 125  | Costroid could not read the rows or a report |
+| 125  | Costroid could not read the rows or a report, a figure stopped its day, or `--export` could not send the rows |
 
 ## Costroid's own figures
 

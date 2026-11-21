@@ -18,12 +18,14 @@ const (
 	tierPriority = "priority"
 )
 
-// dollars compares list-price ledger cost with the provider's token cost, then
-// walks from one to the other. Each step of the walk prices the same tokens two
-// ways through the pinned catalog, so a cause is an amount and never a guess.
-// What the walk does not reach stays unattributed.
-func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens []TokenCheck) (DollarCheck, []string, error) {
-	cost := c.report.costOf(key)
+// dollars compares list-price ledger cost with the provider's token cost over
+// the days, the key's own or a span's, then walks from one to the other. Each
+// step of the walk prices the same tokens two ways through the pinned catalog,
+// so a cause is an amount and never a guess. What the walk does not reach
+// stays unattributed. tokens are the checks that judged the days' tokens.
+func (c comparison) dollars(key Key, days []string, tokens []TokenCheck) (DollarCheck, []string, error) {
+	group := c.ledger.joined(key.Source, key.Credential, days)
+	cost := c.report.costOver(key.Credential, days)
 	check := DollarCheck{
 		Verdict:           NoBill,
 		Ledger:            group.list,
@@ -36,7 +38,7 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 	if !group.billed {
 		return check, []string{"every ledger row is list-equivalent, so no API bill exists to compare"}, nil
 	}
-	check.Classes = c.classDollars(key, group)
+	check.Classes = c.compareClasses(group, c.report.costLinesOver(key.Credential, days))
 	check.Verdict = Outside
 	if within(check.Ledger, check.Provider, DollarTolerancePercent) {
 		check.Verdict = Within
@@ -49,12 +51,7 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 		}
 		check.Rounding = &rounding
 	}
-	walk := walker{catalog: c.options.Catalog, source: key.Source, at: parseDay(key.Day)}
-	mine, err := walk.price(group.records())
-	if err != nil {
-		return DollarCheck{}, nil, err
-	}
-	theirs, err := walk.price(usage)
+	mine, theirs, err := c.walk(key, days)
 	if err != nil {
 		return DollarCheck{}, nil, err
 	}
@@ -76,6 +73,26 @@ func (c comparison) dollars(key Key, group *ledgerGroup, usage []Usage, tokens [
 		}
 	}
 	return check, slices.Concat(mine.notes, theirs.notes), nil
+}
+
+// walk prices the ledger's records and the provider's usage on each of the
+// days, each day at the catalog of that day, and totals them.
+func (c comparison) walk(key Key, days []string) (pricing, pricing, error) {
+	var mine, theirs pricing
+	for _, day := range days {
+		at := Key{key.Source, key.Credential, day}
+		walk := walker{catalog: c.options.Catalog, source: key.Source, at: parseDay(day)}
+		own, err := walk.price(c.ledger.group(at).records())
+		if err != nil {
+			return pricing{}, pricing{}, err
+		}
+		served, err := walk.price(c.report.usageOf(at))
+		if err != nil {
+			return pricing{}, pricing{}, err
+		}
+		mine, theirs = mine.plus(own), theirs.plus(served)
+	}
+	return mine, theirs, nil
 }
 
 // roundingOf compares the provider's list figure with the ledger's list cost,
@@ -113,6 +130,21 @@ type pricing struct {
 
 func (p pricing) tierPremium() decimal.Decimal      { return p.tiered.Sub(p.standard) }
 func (p pricing) residencyPremium() decimal.Decimal { return p.served.Sub(p.tiered) }
+
+// plus totals two pricings, each note once, in order.
+func (p pricing) plus(other pricing) pricing {
+	notes := slices.Clone(p.notes)
+	for _, note := range other.notes {
+		notes = appendNote(notes, note)
+	}
+	slices.Sort(notes)
+	return pricing{
+		standard: p.standard.Add(other.standard),
+		tiered:   p.tiered.Add(other.tiered),
+		served:   p.served.Add(other.served),
+		notes:    notes,
+	}
+}
 
 func (w walker) price(records []Usage) (pricing, error) {
 	var total pricing

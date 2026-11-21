@@ -124,6 +124,30 @@ type reconciledRow struct {
 	State      string        `json:"state"`
 	Tokens     []tokenFigure `json:"tokens"`
 	Dollars    *dollarFigure `json:"dollars"`
+	Span       *spanFigure   `json:"span"`
+}
+
+// spanFigure is the days a run crossed midnight UTC over, compared as one on
+// the row of From.
+type spanFigure struct {
+	From string `json:"from"`
+}
+
+// laterInSpan reports a later day of a span, which holds no comparison of its
+// own and reads by its first day's row.
+func (r reconciledRow) laterInSpan() bool {
+	return r.Span != nil && r.Day != r.Span.From
+}
+
+// firstOf is the row of the span's first day a later day reads by.
+func firstOf(row reconciledRow, reconciled []reconciledRow) (reconciledRow, error) {
+	index := slices.IndexFunc(reconciled, func(other reconciledRow) bool {
+		return other.Source == row.Source && other.Credential == row.Credential && other.Day == row.Span.From
+	})
+	if index < 0 {
+		return reconciledRow{}, fmt.Errorf("the row of %s is a later day of a span from %s, and no row of %s was written", row.Day, row.Span.From, row.Span.From)
+	}
+	return reconciled[index], nil
 }
 
 type tokenFigure struct {
@@ -366,7 +390,7 @@ func linesOf(ctx context.Context, binary string, day keptDay, scratch string, st
 	if err != nil {
 		return nil, err
 	}
-	return reconciledLines(day, reconciled)
+	return reconciledLines(day, reconciled, reconciled)
 }
 
 // wholeDay is the one line of a day no reconciliation row stands for.
@@ -385,8 +409,10 @@ func wholeDay(day keptDay, failure string) ([]line, error) {
 	return []line{{day: day.record.Day, named: about, digest: day.digest, failures: []string{failure}}}, nil
 }
 
-// reconciledLines judges the reconciliation rows of one kept day.
-func reconciledLines(day keptDay, reconciled []reconciledRow) ([]line, error) {
+// reconciledLines judges the reconciliation rows of one kept day. pass holds
+// every row of the reconciliation they came from, so a later day of a span
+// reads by its first day's row, as the contract's reader does.
+func reconciledLines(day keptDay, reconciled, pass []reconciledRow) ([]line, error) {
 	if len(reconciled) == 0 {
 		return wholeDay(day, failNoReconciliation)
 	}
@@ -400,7 +426,7 @@ func reconciledLines(day keptDay, reconciled []reconciledRow) ([]line, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", day.record.Day, err)
 		}
-		judged, err := judge(row)
+		judged, err := judgeIn(row, pass)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", day.record.Day, err)
 		}
@@ -424,6 +450,25 @@ const (
 	failClassDollars     = "class dollar miss"
 	failDollars          = "dollar miss"
 )
+
+// judgeIn judges a row, and a later day of a span by its first day's row: it
+// takes that row's verdict and holds no figure of its own, so the span counts
+// once among the days reconciled.
+func judgeIn(row reconciledRow, pass []reconciledRow) (line, error) {
+	if !row.laterInSpan() {
+		return judge(row)
+	}
+	first, err := firstOf(row, pass)
+	if err != nil {
+		return line{}, err
+	}
+	judged, err := judge(first)
+	if err != nil {
+		return line{}, err
+	}
+	judged.day, judged.tokens, judged.dollars = row.Day, nil, nil
+	return judged, nil
+}
 
 // judge reads one reconciliation row. Tokens and prices pass only as
 // `reconcile` judged them. Each class's dollars pass within 1%, as

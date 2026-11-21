@@ -393,14 +393,10 @@ func priceMissed(checks []PriceCheck) bool {
 	return slices.ContainsFunc(checks, func(check PriceCheck) bool { return !check.Match })
 }
 
-// classDollars is the first line of the dollar comparison: each class at list
-// price, the ledger's against the cost report's. It is null when the report
-// does not split token cost by class, or a split line states no list figure.
-func (c comparison) classDollars(key Key, group *ledgerGroup) []ClassDollars {
-	return c.compareClasses(group, c.report.costLines(key))
-}
-
-// compareClasses sets a group's list cost by class beside the cost lines'.
+// compareClasses is the first line of the dollar comparison: each class at
+// list price, a group's list cost beside the cost lines'. It is null when the
+// report does not split token cost by class, or a split line states no list
+// figure.
 func (c comparison) compareClasses(group *ledgerGroup, lines []Cost) []ClassDollars {
 	var provider map[focus.TokenClass]decimal.Decimal
 	for _, line := range lines {

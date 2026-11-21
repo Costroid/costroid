@@ -55,6 +55,10 @@ The platform needs an integration token, which a tenant administrator creates th
 
 The platform takes rows only under an installation its tenant has bound, so bind the owner first, as [Bind the owner](#bind-the-owner) shows.
 
+### Reconciliation rows
+
+`costroid reconcile --export` sends a second kind of statement: how each credential's UTC day compared with the provider's usage and cost reports. It sends the rows `reconcile --out` writes, one per source, credential and day, as newline-delimited JSON to `PUT /reconciliations` of [`integration/v0.5`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.5#the-reconciliation-result), and only to a platform that states that version. It reads the same `COSTROID_PLATFORM_URL` and `COSTROID_PLATFORM_TOKEN` under the same rules, with `quotas:read` and `reconciliations:write` on the token beside `identity:read`, and a GitHub job's run token goes beside the installation as on a batch. The provider's admin key never goes with them. [Send the rows to Costroid Platform](reconcile.md#send-the-rows-to-costroid-platform) says how the rows are cut into bodies and how each answer is read.
+
 ### From the action
 
 Every GitHub recipe that runs an agent has an `ingest` job. It runs when the repository variable `COSTROID_INGEST_URL` or `COSTROID_PLATFORM_URL` is set, and sends to each one that is. To send to the platform, set two things on the repository or its organization:

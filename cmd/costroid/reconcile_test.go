@@ -3,14 +3,24 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/Costroid/costroid/internal/reconcile"
 )
 
 const (
@@ -298,5 +308,425 @@ func TestASavedReportAnswersOneRequestSoARangeCannotCountItTwice(t *testing.T) {
 	}
 	if _, err := reports.Do(other); err == nil {
 		t.Fatal("an unknown path was answered")
+	}
+}
+
+// reconcilePlatform answers as Costroid Platform does for reconcile --export,
+// and as GitHub's OIDC token endpoint, and keeps every request it was sent.
+type reconcilePlatform struct {
+	server *httptest.Server
+	// states holds, by version path, the contract GET /identity states there.
+	states map[string]contract
+	// quotas is the answer to GET /quotas.
+	quotas string
+	// answers answer each PUT /reconciliations in turn. Once they run out,
+	// every row is stored.
+	answers []turn
+
+	mu   sync.Mutex
+	seen []seenRequest
+	puts [][]byte
+}
+
+// seenRequest is what one request carried: its path, its headers and its body.
+type seenRequest struct {
+	method, path string
+	header       http.Header
+	body         []byte
+}
+
+const reconcileQuotas = `{"as_of":"2026-11-21T09:40:03Z","quotas":[{"name":"reconciliations_per_day","limit":48,"used":3,"state":"ok","window_resets_at":"2026-11-22T00:00:00Z"},{"name":"max_reconciliation_lines","limit":500,"used":0,"state":"ok","window_resets_at":null},{"name":"max_reconciliation_bytes","limit":1048576,"used":0,"state":"ok","window_resets_at":null},{"name":"max_reconciliation_line_bytes","limit":16384,"used":0,"state":"ok","window_resets_at":null}]}`
+
+func newReconcilePlatform(t *testing.T) *reconcilePlatform {
+	t.Helper()
+	stub := &reconcilePlatform{states: map[string]contract{contractV05.path(): contractV05}, quotas: reconcileQuotas}
+	for _, version := range exportContracts {
+		stub.states[version.path()] = version
+	}
+	stub.server = httptest.NewTLSServer(http.HandlerFunc(stub.serve))
+	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+func (s *reconcilePlatform) serve(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	body, _ := io.ReadAll(r.Body)
+	s.seen = append(s.seen, seenRequest{r.Method, r.URL.Path, r.Header.Clone(), body})
+	if r.URL.Path == "/oidc" {
+		w.Write([]byte(`{"value":"` + testRunToken + `"}`))
+		return
+	}
+	for prefix, stated := range s.states {
+		rest, found := strings.CutPrefix(r.URL.Path, prefix+"/")
+		if !found {
+			continue
+		}
+		switch {
+		case r.Method == http.MethodGet && rest == "identity":
+			contract, _ := json.Marshal(stated)
+			w.Write([]byte(`{"contract":` + string(contract) + `,"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"}}`))
+		case r.Method == http.MethodGet && rest == "quotas" && prefix == contractV05.path():
+			w.Write([]byte(s.quotas))
+		case r.Method == http.MethodPut && rest == "reconciliations" && prefix == contractV05.path():
+			s.puts = append(s.puts, body)
+			answer := turn{http.StatusOK, fmt.Sprintf(`{"stored":%d,"unchanged":0,"ignored":0}`, bytes.Count(body, []byte("\n")))}
+			if len(s.puts) <= len(s.answers) {
+				answer = s.answers[len(s.puts)-1]
+			}
+			w.WriteHeader(answer.status)
+			w.Write([]byte(answer.body))
+		default:
+			http.Error(w, "", http.StatusNotFound)
+		}
+		return
+	}
+	http.Error(w, "", http.StatusNotFound)
+}
+
+func (s *reconcilePlatform) sent() ([][]byte, []seenRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.puts), slices.Clone(s.seen)
+}
+
+// env is a scheduled job's environment that names the stub: the admin key,
+// the platform and the integration token, with extra set over it.
+func (s *reconcilePlatform) env(extra map[string]string) func(string) string {
+	values := map[string]string{anthropicKeyVariable: sentinelKey, platformVariable: s.server.URL, platformTokenVariable: testIntegrationToken}
+	maps.Copy(values, extra)
+	return func(name string) string { return values[name] }
+}
+
+// githubJob is a GitHub Actions job with id-token: write.
+func (s *reconcilePlatform) githubJob() map[string]string {
+	return map[string]string{
+		"GITHUB_ACTIONS":                 "true",
+		"ACTIONS_ID_TOKEN_REQUEST_URL":   s.server.URL + "/oidc?api-version=2.0",
+		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": testRequestToken,
+	}
+}
+
+// reconcileAndSend runs reconcile --export against the stub with the sample
+// ledger and report, and returns the exit code, the output and the --out file.
+func (s *reconcilePlatform) reconcileAndSend(t *testing.T, doer reconcile.Doer, getenv func(string) string, extra ...string) (int, string, string, string) {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "reconciliation.jsonl")
+	args := append([]string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export"}, extra...)
+	var stdout, stderr bytes.Buffer
+	world := reconcileWorld{getenv: getenv, client: doer, now: fixedNow, platform: s.server.Client(), pace: testPace}
+	code := reconcileThrough(context.Background(), args, world, &stdout, &stderr)
+	for _, secret := range []string{testIntegrationToken, testRunToken, testRequestToken, sentinelKey} {
+		if strings.Contains(stdout.String()+stderr.String(), secret) {
+			t.Fatalf("the output holds a token: %s%s", stdout.String(), stderr.String())
+		}
+	}
+	stored, err := os.ReadFile(out)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	return code, stdout.String(), stderr.String(), string(stored)
+}
+
+const reconcileVersionLine = "costroid: Costroid Platform states integration/v0.5, so reconcile sends the rows by it\n"
+
+// reconciliationRowSchema compiles integration/v0.5's ReconciliationRow.
+func reconciliationRowSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	document, err := jsonschema.UnmarshalJSON(strings.NewReader(readFile(t, filepath.Join("testdata", "integration-v0.5.openapi.json"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("openapi.json", document); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile("openapi.json#/components/schemas/ReconciliationRow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
+}
+
+// reconcile --export sends what --out writes, byte for byte, as the body of
+// PUT /reconciliations under integration/v0.5, and prints what the platform
+// did with it. Each line is a ReconciliationRow. A GitHub job with id-token:
+// write sends its run token beside the installation; any other job sends
+// neither unless --installation-id names one.
+func TestReconcileExportSendsTheRowsOutWrites(t *testing.T) {
+	schema := reconciliationRowSchema(t)
+	stub := newReconcilePlatform(t)
+	doer := &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}
+	code, stdout, stderr, stored := stub.reconcileAndSend(t, doer, stub.env(stub.githubJob()), "--installation-id", testInstallation)
+	if code != 0 || stderr != reconcileVersionLine {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	puts, seen := stub.sent()
+	if len(puts) != 1 || string(puts[0]) != stored || stored == "" {
+		t.Fatalf("%d bodies sent, want --out's rows once:\n%q\n%q", len(puts), puts, stored)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(stored, "\n"), "\n") {
+		instance, err := jsonschema.UnmarshalJSON(strings.NewReader(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(instance); err != nil {
+			t.Errorf("a line is no ReconciliationRow: %v\n%s", err, line)
+		}
+	}
+	put := seen[slices.IndexFunc(seen, func(r seenRequest) bool { return r.method == http.MethodPut })]
+	for name, value := range map[string]string{
+		"Authorization":            "Bearer " + testIntegrationToken,
+		"Content-Type":             "application/x-ndjson",
+		"Costroid-Installation-Id": testInstallation,
+		"Costroid-Run-Token":       testRunToken,
+	} {
+		if got := put.header.Get(name); got != value {
+			t.Errorf("%s: %q, want %q", name, got, value)
+		}
+	}
+	if put.path != "/api/integration/v0.5/reconciliations" {
+		t.Errorf("the body went to %s", put.path)
+	}
+	oidc := seen[slices.IndexFunc(seen, func(r seenRequest) bool { return r.path == "/oidc" })]
+	if !strings.Contains(oidc.header.Get("Authorization"), testRequestToken) {
+		t.Errorf("the run token was asked for without the request token: %v", oidc.header)
+	}
+	if want := "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n"; !strings.HasSuffix(stdout, want) {
+		t.Errorf("stdout ends %q, want %q", stdout[max(0, len(stdout)-200):], want)
+	}
+
+	scheduled := newReconcilePlatform(t)
+	code, _, stderr, _ = scheduled.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, scheduled.env(nil))
+	puts, seen = scheduled.sent()
+	if code != 0 || len(puts) != 1 {
+		t.Fatalf("outside GitHub Actions: exit %d, %d bodies: %s", code, len(puts), stderr)
+	}
+	for _, request := range seen {
+		if request.header.Get("Costroid-Run-Token") != "" || request.header.Get("Costroid-Installation-Id") != "" || request.path == "/oidc" {
+			t.Errorf("outside GitHub Actions %s %s went with a run token or an installation", request.method, request.path)
+		}
+	}
+}
+
+// Bodies are cut at the limits GET /quotas states. A row past
+// max_reconciliation_line_bytes fits no body, and a limit the answer does not
+// state is never guessed: either way nothing is sent.
+func TestReconcileExportCutsAtTheStatedLimits(t *testing.T) {
+	for name, check := range map[string]struct {
+		quotas, want string
+	}{
+		"a line past the limit": {strings.Replace(reconcileQuotas, `"limit":16384`, `"limit":100`, 1), "costroid: the row of anthropic apikey_01ExampleCi 2026-10-14 is "},
+		"a limit not stated":    {strings.Replace(reconcileQuotas, `"max_reconciliation_bytes"`, `"max_batch_bytes"`, 1), "costroid: GET /quotas states no max_reconciliation_bytes, so no body can be cut to it, and nothing was sent\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newReconcilePlatform(t)
+			stub.quotas = check.quotas
+			code, _, stderr, _ := stub.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, stub.env(nil))
+			if puts, _ := stub.sent(); code != exitFailure || len(puts) != 0 || !strings.Contains(stderr, check.want) {
+				t.Errorf("exit %d, %d bodies, stderr %q", code, len(puts), stderr)
+			}
+		})
+	}
+}
+
+// A 5xx sends the same body again, as export asks again for a verdict, until
+// the platform takes it. One that never does fails the send.
+func TestReconcileExportSendsAgainOnAServerError(t *testing.T) {
+	stub := newReconcilePlatform(t)
+	stub.answers = []turn{{http.StatusServiceUnavailable, ``}, {http.StatusBadGateway, `{"error":{"code":"UPSTREAM","message":"x"}}`}}
+	code, stdout, stderr, stored := stub.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, stub.env(nil))
+	puts, _ := stub.sent()
+	if code != 0 || len(puts) != 3 {
+		t.Fatalf("exit %d, %d sends: %s", code, len(puts), stderr)
+	}
+	for i, body := range puts {
+		if string(body) != stored {
+			t.Errorf("send %d differs from --out's rows:\n%s", i+1, body)
+		}
+	}
+	if !strings.Contains(stdout, "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n") {
+		t.Errorf("stdout %q", stdout)
+	}
+
+	down := newReconcilePlatform(t)
+	down.answers = slices.Repeat([]turn{{http.StatusServiceUnavailable, ``}}, 100000)
+	world := reconcileWorld{getenv: down.env(nil), client: &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, now: fixedNow, platform: down.server.Client(), pace: verdictPace{interval: time.Millisecond, limit: 50 * time.Millisecond}}
+	out := filepath.Join(t.TempDir(), "reconciliation.jsonl")
+	var stdoutDown, stderrDown bytes.Buffer
+	code = reconcileThrough(context.Background(), []string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export"}, world, &stdoutDown, &stderrDown)
+	want := "costroid: Costroid Platform refused body 1 of 1: 503 with no refusal code, sent again every 0 s for 0 s. Nothing in the rows is wrong, and " + out + " is kept to send again\n"
+	if puts, _ := down.sent(); code != exitFailure || len(puts) < 2 || !strings.HasSuffix(stderrDown.String(), want) {
+		t.Errorf("exit %d, %d sends, stderr %q", code, len(puts), stderrDown.String())
+	}
+}
+
+// The provider's admin key goes to the provider and nowhere else: no header
+// and no body of any request to the platform, or to GitHub's token endpoint,
+// holds it.
+func TestReconcileExportNeverSendsTheAdminKey(t *testing.T) {
+	stub := newReconcilePlatform(t)
+	doer := &keyedDoer{replayDoer: replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}}
+	code, _, stderr, _ := stub.reconcileAndSend(t, doer, stub.env(stub.githubJob()), "--installation-id", testInstallation)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if doer.keyed == 0 {
+		t.Fatal("no provider request carried the admin key, so this test proves nothing")
+	}
+	_, seen := stub.sent()
+	if len(seen) < 4 {
+		t.Fatalf("the platform saw %d requests, want identity, quotas, the run token and the body", len(seen))
+	}
+	for _, request := range seen {
+		for name, values := range request.header {
+			for _, value := range values {
+				if strings.Contains(value, sentinelKey) {
+					t.Errorf("%s %s: the header %s holds the admin key", request.method, request.path, name)
+				}
+			}
+		}
+		if bytes.Contains(request.body, []byte(sentinelKey)) || strings.Contains(request.path, sentinelKey) {
+			t.Errorf("%s %s: the request holds the admin key", request.method, request.path)
+		}
+	}
+}
+
+// keyedDoer answers as replayDoer does and counts the requests that carried
+// the admin key.
+type keyedDoer struct {
+	replayDoer
+	keyed int
+}
+
+func (d *keyedDoer) Do(request *http.Request) (*http.Response, error) {
+	if request.Header.Get("x-api-key") == sentinelKey {
+		d.keyed++
+	}
+	return d.replayDoer.Do(request)
+}
+
+// A platform that states an earlier version than integration/v0.5 carries no
+// reconciliation rows, so nothing is sent, and the line names the version it
+// states. The command exits as export does for a version it cannot send by.
+func TestReconcileExportRefusesAPlatformBeforeV05(t *testing.T) {
+	for name, states := range map[string]map[string]contract{
+		"a platform of v0.4":                      {contractV04.path(): contractV04, contractV03.path(): contractV03},
+		"a platform whose v0.5 path states v0.4":  {contractV05.path(): contractV04, contractV04.path(): contractV04},
+		"a platform of v0.3 with no v0.4 or v0.5": {contractV03.path(): contractV03},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newReconcilePlatform(t)
+			stub.states = states
+			code, _, stderr, stored := stub.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, stub.env(nil))
+			newest := "0.4"
+			if _, found := states[contractV04.path()]; !found {
+				newest = "0.3"
+			}
+			want := "costroid: the latest version Costroid Platform states is integration/v" + newest + ", and reconcile --export sends by integration/v0.5 or later, the first that carries reconciliation rows, so nothing was sent\n"
+			if puts, _ := stub.sent(); code != exitFailure || len(puts) != 0 || stderr != want {
+				t.Errorf("exit %d, %d bodies, stderr %q, want %q", code, len(puts), stderr, want)
+			}
+			if stored == "" {
+				t.Error("--out kept no rows")
+			}
+		})
+	}
+
+	none := newReconcilePlatform(t)
+	none.states = map[string]contract{}
+	code, _, stderr, _ := none.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, none.env(nil))
+	if want := "costroid: Costroid Platform refused the identity request: 404 with no refusal code\n"; code != exitFailure || stderr != want {
+		t.Errorf("a platform that states none: exit %d, stderr %q, want %q", code, stderr, want)
+	}
+}
+
+// Each refusal of PUT /reconciliations follows the contract: 402, 429 and 409
+// INSTALLATION_NOT_BOUND keep the rows and warn, and change no exit code; 413,
+// 422 and any other refusal fail the send, and 422 names the line and its row.
+func TestReconcileExportFollowsTheContractsRefusals(t *testing.T) {
+	for name, check := range map[string]struct {
+		answer turn
+		retry  string
+		code   int
+		want   string
+	}{
+		"402": {turn{http.StatusPaymentRequired, `{"error":{"code":"PLAN_WRITES_REFUSED","message":"::error::forged"}}`}, "", 0,
+			"costroid: warning: Costroid Platform refused body 1 of 1: 402 PLAN_WRITES_REFUSED. Nothing in the rows is wrong, and OUT is kept to send again\n"},
+		"429": {turn{http.StatusTooManyRequests, `{"error":{"code":"QUOTA_RECONCILIATIONS_PER_DAY","message":"x"}}`}, "3600", 0,
+			"costroid: warning: Costroid Platform refused body 1 of 1: 429 QUOTA_RECONCILIATIONS_PER_DAY, retry after 3600 s. Nothing in the rows is wrong, and OUT is kept to send again\n"},
+		"409": {turn{http.StatusConflict, `{"error":{"code":"INSTALLATION_NOT_BOUND","message":"x"}}`}, "", 0,
+			"costroid: warning: Costroid Platform refused body 1 of 1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as docs/connect.md shows, and OUT is kept to send again\n"},
+		"413": {turn{http.StatusRequestEntityTooLarge, `{"error":{"code":"RECONCILIATION_TOO_LARGE","message":"x"}}`}, "", exitFailure,
+			"costroid: Costroid Platform refused body 1 of 1: 413 RECONCILIATION_TOO_LARGE. The body was cut at the limits GET /quotas stated, which can only rise, and nothing in it was stored. OUT is kept to send again\n"},
+		"422": {turn{http.StatusUnprocessableEntity, `{"error":{"code":"RECONCILIATION_INVALID","message":"::error::forged","line":1}}`}, "", exitFailure,
+			"costroid: Costroid Platform refused body 1 of 1: 422 RECONCILIATION_INVALID at line 1, the row of anthropic apikey_01ExampleCi 2026-10-14. Nothing in the body was stored, and OUT is kept\n"},
+		"403": {turn{http.StatusForbidden, `{"error":{"code":"AUTH_TOKEN_SCOPE","message":"x"}}`}, "", exitFailure,
+			"costroid: Costroid Platform refused body 1 of 1: 403 AUTH_TOKEN_SCOPE\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newReconcilePlatform(t)
+			stub.answers = []turn{check.answer}
+			retry := check.retry
+			stub.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if retry != "" {
+					w.Header().Set("Retry-After", retry)
+				}
+				stub.serve(w, r)
+			})
+			out := filepath.Join(t.TempDir(), "reconciliation.jsonl")
+			world := reconcileWorld{getenv: stub.env(nil), client: &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, now: fixedNow, platform: stub.server.Client(), pace: testPace}
+			var stdout, stderr bytes.Buffer
+			args := []string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export", "--installation-id", testInstallation}
+			code := reconcileThrough(context.Background(), args, world, &stdout, &stderr)
+			want := reconcileVersionLine + strings.ReplaceAll(check.want, "OUT", out)
+			if code != check.code || stderr.String() != want {
+				t.Errorf("exit %d, stderr %q\nwant exit %d, %q", code, stderr.String(), check.code, want)
+			}
+			if puts, _ := stub.sent(); len(puts) != 1 {
+				t.Errorf("%d sends, want 1", len(puts))
+			}
+			if _, err := os.Stat(out); err != nil {
+				t.Errorf("--out was not kept: %v", err)
+			}
+		})
+	}
+}
+
+// What --export needs is read before any provider is asked, so a send that
+// cannot happen costs no report and leaves no partial work.
+func TestReconcileExportRefusesBeforeAskingTheProvider(t *testing.T) {
+	stub := newReconcilePlatform(t)
+	rows := writeLedger(t, 100900)
+	out := filepath.Join(t.TempDir(), "reconciliation.jsonl")
+	base := []string{"--rows", rows, "--from", "2026-10-14", "--to", "2026-10-14"}
+	for name, check := range map[string]struct {
+		args []string
+		env  map[string]string
+		want string
+	}{
+		"no --out":                         {[]string{"--export"}, nil, "--export sends the rows --out keeps, so it needs --out"},
+		"an installation with no export":   {[]string{"--out", out, "--installation-id", testInstallation}, nil, "--installation-id names what --export sends beside the rows, so it goes with --export"},
+		"an installation name":             {[]string{"--out", out, "--export", "--installation-id", "github-owner:example"}, nil, "--installation-id must be"},
+		"no platform":                      {[]string{"--out", out, "--export"}, map[string]string{platformVariable: ""}, "--export sends to the Costroid Platform COSTROID_PLATFORM_URL names, and it is not set"},
+		"plain http":                       {[]string{"--out", out, "--export"}, map[string]string{platformVariable: "http://app.costroid.com"}, "COSTROID_PLATFORM_URL must be an https origin"},
+		"a provider key as the token":      {[]string{"--out", out, "--export"}, map[string]string{platformTokenVariable: "sk-ant-not-an-integration-token"}, "is not an integration token"},
+		"a run token with no installation": {[]string{"--out", out, "--export"}, stub.githubJob(), "pass --installation-id"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			doer := &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}
+			var stdout, stderr bytes.Buffer
+			world := reconcileWorld{getenv: stub.env(check.env), client: doer, now: fixedNow, platform: stub.server.Client(), pace: testPace}
+			code := reconcileThrough(context.Background(), append(slices.Clone(base), check.args...), world, &stdout, &stderr)
+			if code != exitFailure || !strings.Contains(stderr.String(), check.want) || strings.Contains(stderr.String(), "sk-ant") {
+				t.Errorf("exit %d, stderr %q, want %q", code, stderr.String(), check.want)
+			}
+			if doer.requested != 0 {
+				t.Errorf("%d provider requests went out", doer.requested)
+			}
+		})
+	}
+	if _, seen := stub.sent(); len(seen) != 0 {
+		t.Errorf("the platform saw %d requests", len(seen))
 	}
 }

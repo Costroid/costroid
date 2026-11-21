@@ -426,22 +426,30 @@ func (l *Ledger) span(key Key) (from, to string) {
 	return from, to
 }
 
-// joined totals the tokens of a credential's days, and their list cost by
-// class, as one group.
+// joined totals a credential's days as one group: their tokens, and their
+// list cost in all and by class over the rows summed. It is billed when a
+// day's group is, or when no day holds a group, as group answers for one
+// day. It keeps no records or price ids, which are read a day at a time.
 func (l *Ledger) joined(source, credential string, days []string) *ledgerGroup {
 	total := newLedgerGroup()
+	held := false
 	for _, day := range days {
 		group := l.groups[Key{source, credential, day}]
 		if group == nil {
 			continue
 		}
+		held = true
 		for class, tokens := range group.tokens {
 			total.tokens[class] = total.tokens[class].Add(tokens)
 		}
 		for class, list := range group.classList {
 			total.classList[class] = total.classList[class].Add(list)
 		}
+		total.list = total.list.Add(group.list)
+		total.rows += group.rows
+		total.billed = total.billed || group.billed
 		total.assumedLifetime = total.assumedLifetime || group.assumedLifetime
 	}
+	total.billed = total.billed || !held
 	return total
 }

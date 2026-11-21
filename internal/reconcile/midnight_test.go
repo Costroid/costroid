@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +52,14 @@ func anthropicDays(t *testing.T, days []reportedDay) Provider {
 // is one line per token type, at the cents byClass gives that day.
 func anthropicReport(t *testing.T, days []reportedDay, byClass map[string]map[string]string) Provider {
 	t.Helper()
+	return anthropicBilled(t, days, byClass, nil)
+}
+
+// anthropicBilled answers as anthropicReport does, and bills a day billed
+// names at the cents it gives in place of the list figure. It applies to a
+// day whose cost is one line.
+func anthropicBilled(t *testing.T, days []reportedDay, byClass map[string]map[string]string, billed map[string]string) Provider {
+	t.Helper()
 	var usage, cost []map[string]any
 	for _, each := range days {
 		start := each.day + "T00:00:00Z"
@@ -61,12 +71,17 @@ func anthropicReport(t *testing.T, days []reportedDay, byClass map[string]map[st
 			"output_tokens":           each.output,
 		}})
 		if byClass == nil {
+			amount := each.cents
+			if cents, found := billed[each.day]; found {
+				amount = cents
+			}
 			cost = append(cost, map[string]any{"starting_at": start, "group": map[string]any{"api_key_id": anthropicID, "cost_type": "tokens"},
-				"cost": map[string]any{"currency": "USD", "amount": each.cents, "list_amount": each.cents}})
+				"cost": map[string]any{"currency": "USD", "amount": amount, "list_amount": each.cents}})
 			continue
 		}
 		for tokenType, cents := range byClass[each.day] {
-			cost = append(cost, map[string]any{"starting_at": start, "group": map[string]any{"api_key_id": anthropicID, "cost_type": "tokens", "token_type": tokenType},
+			group := map[string]any{"api_key_id": anthropicID, "model": sonnet, "service_tier": "standard", "inference_geo": "global", "speed": "standard", "cost_type": "tokens", "token_type": tokenType}
+			cost = append(cost, map[string]any{"starting_at": start, "group": group,
 				"cost": map[string]any{"currency": "USD", "amount": cents, "list_amount": cents}})
 		}
 	}
@@ -150,18 +165,102 @@ func TestRunAcrossMidnightNamesItsCause(t *testing.T) {
 	if len(second.Tokens) != 0 {
 		t.Errorf("the next day repeats the joined tokens: %+v", second.Tokens)
 	}
-	wantDollars(t, first, "0.81", "0.486", "-0.324", "0", Outside)
-	wantCauses(t, first, cause(CauseRunSpansDays, "-0.324"))
-	wantDollars(t, second, "0", "0.324", "0.324", "0", Outside)
-	wantCauses(t, second, cause(CauseRunSpansDays, "0.324"))
 	text := rendered(t, result)
-	for _, refused := range []string{"MISS", "defect", "shared_key"} {
+	for _, refused := range []string{"MISS", "defect", "shared_key", "outside 10%"} {
 		if strings.Contains(text, refused) {
 			t.Errorf("the table reads %q:\n%s", refused, text)
 		}
 	}
-	if !strings.Contains(text, "run_spans_days -0.324") || !strings.Contains(text, "crossed midnight UTC") {
+	if !strings.Contains(text, "crossed midnight UTC") {
 		t.Errorf("the table does not name the cause:\n%s", text)
+	}
+}
+
+// The ledger holds the whole run, USD 0.81 at list, on its first day, and the
+// provider serves USD 0.486 of it that day and USD 0.324 the next. The first
+// day's dollars are both days' on each side, so the residual is what the
+// report bills apart from list: the next day's USD 0.024 below it, as a
+// contract rate. No residual names run_spans_days, since nothing moved out of
+// the days compared.
+func TestASpanComparesItsDollarsAsOne(t *testing.T) {
+	provider := anthropicBilled(t, split, nil, map[string]string{nextDay: "30.000000"})
+	result := passOver(t, runRows(t, day+"T23:50:00Z", nextDay+"T00:20:00Z"), day, nextDay, provider, settledNow)
+	if len(result.Rows) != 2 {
+		t.Fatalf("got %d rows, want one per day: %+v", len(result.Rows), result.Rows)
+	}
+	first := result.Rows[0]
+	if first.Span == nil || first.Day != first.Span.From {
+		t.Fatalf("the first row is not the span's first day: %+v", first)
+	}
+	wantDollars(t, first, "0.81", "0.786", "-0.024", "0", Within)
+	wantCauses(t, first, cause(CauseContractRate, "-0.024"))
+	check := first.Dollars
+	if check.ProviderEffective.String() != "0.786" || check.ProviderList == nil || check.ProviderList.String() != "0.81" {
+		t.Errorf("provider_effective %s, provider_list %v, want both days' USD 0.786 and 0.81", check.ProviderEffective, check.ProviderList)
+	}
+	if check.Rounding == nil || check.Rounding.Rows != 4 || check.Rounding.Variance.Sign() != 0 || !check.Rounding.Within {
+		t.Errorf("rounding %+v, want the 4 rows of both days and no variance", check.Rounding)
+	}
+	if text := rendered(t, result); strings.Contains(text, string(CauseRunSpansDays)+" ") {
+		t.Errorf("a residual names run_spans_days:\n%s", text)
+	}
+	if result.Misses() != 0 {
+		t.Errorf("Misses = %d, want 0", result.Misses())
+	}
+}
+
+// A later day of a span holds no comparison of its own: its tokens and its
+// dollars are on the first day's row, and it keeps the span, the span's state
+// and its own prices. The dollar table prints the span once.
+func TestALaterSpanDayCarriesNoDollars(t *testing.T) {
+	result := passOver(t, runRows(t, day+"T23:50:00Z", nextDay+"T00:20:00Z"), day, nextDay, anthropicReport(t, split, splitByClass), settledNow)
+	if len(result.Rows) != 2 {
+		t.Fatalf("got %d rows, want one per day: %+v", len(result.Rows), result.Rows)
+	}
+	later := result.Rows[1]
+	if later.Day != nextDay || later.Span == nil || *later.Span != (Span{CauseRunSpansDays, day, nextDay}) {
+		t.Fatalf("the next day's row is %+v", later)
+	}
+	if later.Dollars != nil || later.Tokens != nil {
+		t.Errorf("the next day holds tokens %+v and dollars %+v of its own", later.Tokens, later.Dollars)
+	}
+	if later.State != Matched || len(later.Prices) == 0 {
+		t.Errorf("the next day reads %s with prices %+v, want the span's state and its own prices", later.State, later.Prices)
+	}
+	if want := "this day's tokens and dollars are compared with " + day + "'s as one, on that day's row"; !slices.ContainsFunc(later.Notes, func(note string) bool { return strings.Contains(note, want) }) {
+		t.Errorf("the next day's notes %q do not say %q", later.Notes, want)
+	}
+	if text := rendered(t, result); strings.Count(text, "within 10%") != 1 {
+		t.Errorf("the dollar table does not print the span once:\n%s", text)
+	}
+}
+
+// A price that misses on a later day of a span makes the span price_miss, on
+// every day of it, and the span is one defect.
+func TestASpanIsAPriceMissWhenAnyOfItsDaysMisses(t *testing.T) {
+	byClass := map[string]map[string]string{day: splitByClass[day], nextDay: maps.Clone(splitByClass[nextDay])}
+	byClass[nextDay]["output_tokens"] = "20.020000"
+	result := passOver(t, runRows(t, day+"T23:50:00Z", nextDay+"T00:20:00Z"), day, nextDay, anthropicReport(t, split, byClass), settledNow)
+	if len(result.Rows) != 2 {
+		t.Fatalf("got %d rows, want one per day: %+v", len(result.Rows), result.Rows)
+	}
+	first, later := result.Rows[0], result.Rows[1]
+	if priceMissed(first.Prices) || !priceMissed(later.Prices) {
+		t.Fatalf("prices: first day missed %t, next day %t; want the next day's alone", priceMissed(first.Prices), priceMissed(later.Prices))
+	}
+	for _, got := range result.Rows {
+		if got.State != PriceMiss || got.Span == nil {
+			t.Errorf("%s: state %s, span %+v; want %s in the span", got.Day, got.State, got.Span, PriceMiss)
+		}
+	}
+	if want := "a price the report implies on " + nextDay + ", a day of this span, missed the catalog"; !slices.ContainsFunc(first.Notes, func(note string) bool { return strings.HasPrefix(note, want) }) {
+		t.Errorf("the first day's notes %q do not name the day that missed", first.Notes)
+	}
+	if result.Misses() != 1 {
+		t.Errorf("Misses = %d, want the span once", result.Misses())
+	}
+	if text := rendered(t, result); !strings.Contains(text, "Credential days with a price miss: 1.") {
+		t.Errorf("the table does not count the span once:\n%s", text)
 	}
 }
 
@@ -234,7 +333,7 @@ func TestClassDollarsJudgeAMidnightRunAcrossItsDays(t *testing.T) {
 			t.Errorf("%s: ledger USD %s, provider USD %s, within %t; want USD %s on both sides of both days", check.Class, check.Ledger, check.Provider, check.Within, want[check.Class])
 		}
 	}
-	if second.Dollars == nil || second.Dollars.Classes != nil {
+	if second.Dollars != nil {
 		t.Errorf("the next day repeats the classes: %+v", second.Dollars)
 	}
 }
