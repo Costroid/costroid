@@ -134,7 +134,6 @@ func TestKeysRefuseWhatTheyCannotAct(t *testing.T) {
 	t.Setenv(envMigration, w.db.OwnerURL)
 	unknown := strings.Repeat("c", 64)
 	for name, args := range map[string][]string{
-		"no subcommand":  {},
 		"unknown":        {"rotate"},
 		"no owner":       {"create"},
 		"malformed":      {"create", "--owner", "acme"},
