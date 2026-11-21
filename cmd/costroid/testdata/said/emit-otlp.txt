@@ -1,0 +1,33 @@
+Usage:
+  costroid emit-otlp --rows rows.jsonl
+
+emit-otlp sends a rows file to an OpenTelemetry Collector or backend as
+traces over OTLP/HTTP, one span per model request. A span carries the
+OpenTelemetry GenAI token counts as integers, and the repository, pull
+request, commit and run its rows name as vcs.* and cicd.* attributes. Its
+cost travels as three strings: costroid.cost.amount, the exact sum of the
+request's ListCost, costroid.cost.currency and costroid.cost.basis. No cost
+goes out as a number, so no backend rounds it, and no amount is added to one
+in another currency.
+
+emit-otlp reads the variables an OpenTelemetry SDK's OTLP exporter reads.
+OTEL_EXPORTER_OTLP_ENDPOINT is a base URL, and v1/traces is appended to it;
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used as it is. With neither, spans go
+to http://localhost:4318/v1/traces. OTEL_EXPORTER_OTLP_HEADERS holds
+key=value pairs separated by commas. OTEL_EXPORTER_OTLP_PROTOCOL is
+http/protobuf, the default, or http/json; grpc is refused.
+OTEL_EXPORTER_OTLP_TIMEOUT is in milliseconds, 10000 by default.
+OTEL_EXPORTER_OTLP_COMPRESSION is gzip or none. OTEL_EXPORTER_OTLP_CERTIFICATE,
+OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE and OTEL_EXPORTER_OTLP_CLIENT_KEY name
+PEM files. Each has an OTEL_EXPORTER_OTLP_TRACES_ form that takes precedence.
+
+The spans name service.name costroid. An agent that sends its own telemetry
+to the same backend states the same tokens there, so filter on service.name
+before adding token counts up.
+
+Exit codes of emit-otlp:
+  0                 the endpoint took every span, or the rows file holds no
+                    rows
+  1                 the endpoint refused spans, and the line says how many
+  125               costroid could not read the rows or the variables, or
+                    reach the endpoint

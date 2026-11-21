@@ -9,28 +9,32 @@ import (
 	"io"
 	"text/tabwriter"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/egress"
 	"github.com/Costroid/costroid/internal/store"
 )
 
 // EgressUsage is egress' help page. costroid help egress prints it on stdout,
 // and a command line egress cannot read prints it on stderr.
-const EgressUsage = `Usage:
-  costroid egress report [--json]
-
-egress report prints the service's outbound calls: one line per UTC day, host
-and outcome, which is completed, failed or refused. A refused call never
+var EgressUsage = cli.Page{
+	Command:  "egress",
+	Summary:  "egress report prints the service's outbound calls: one line per UTC day, host and outcome, which is completed, failed or refused.",
+	Usage:    []string{"costroid egress report [--json]"},
+	Examples: []string{"costroid egress report", "costroid egress report --json"},
+	Flags:    []cli.Row{{"--json", "print JSON"}},
+	Sections: []cli.Section{
+		{Heading: "What the report holds", Body: []cli.Block{cli.Text(`A refused call never
 opened a socket. The report holds no path, query, header or body. A service
 writes its counters every 5 seconds. --json prints the counters as one JSON
-object.
-
-Environment:
-  COSTROID_DATABASE_URL  the application role's connection
-
-Exit codes of egress:
-  0                 the report was printed
-  125               costroid could not read the command line or the database
-`
+object.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{{envDatabase, "the application role's connection"}}},
+	Exits: []cli.Row{
+		{"0", "the report was printed"},
+		{"125", "costroid could not read the command line or the database"},
+	},
+	Docs: "ledger",
+}.String()
 
 const noEgress = "No outbound call has been recorded."
 
@@ -64,10 +68,11 @@ func egressCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 func egressReport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	set := flag.NewFlagSet("egress report", flag.ContinueOnError)
-	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, EgressUsage) }
 	asJSON := set.Bool("json", false, "print JSON")
-	if err := set.Parse(args); err != nil {
+	if err := cli.Parse(set, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stdout, EgressUsage)
+		}
 		return err
 	}
 	databaseURL, err := required(envDatabase)

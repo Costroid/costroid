@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/catalog"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/egress"
 	"github.com/Costroid/costroid/internal/oidc"
 	"github.com/Costroid/costroid/internal/scm"
@@ -45,58 +46,73 @@ const (
 
 // ServeUsage is serve's help page. costroid help serve prints it on stdout,
 // and a flag serve cannot parse prints it on stderr.
-const ServeUsage = `Usage:
-  costroid serve [--addr :8080] [--gitlab-host HOST]... [--bind HOST:OWNER]...
-                 [--egress-allow HOST]...
-
-serve runs the ingest service. --addr is the address it listens on, :8080 by
+var ServeUsage = cli.Page{
+	Command: "serve",
+	Summary: "serve runs the ingest service.",
+	Usage: []string{
+		"costroid serve [--addr :8080] [--gitlab-host HOST]... [--bind HOST:OWNER]...",
+		"               [--egress-allow HOST]...",
+	},
+	Examples: []string{
+		"costroid serve",
+		"costroid serve --addr :8080 --bind github.com:example",
+		"costroid serve --gitlab-host gitlab.example.com \\",
+		"    --egress-allow gitlab.example.com",
+	},
+	Flags: []cli.Row{
+		{"--addr ADDRESS", "the address to listen on"},
+		{"--gitlab-host HOST", "a GitLab host whose CI tokens are trusted"},
+		{"--bind HOST:OWNER", "an SCM owner for this instance's tenant, host:owner"},
+		{"--egress-allow HOST", "an exact host the service may call"},
+	},
+	Sections: []cli.Section{
+		{Heading: "The address, the hosts and the tenant", Body: []cli.Block{cli.Text(`--addr is the address it listens on, :8080 by
 default.
-
-Environment:
-  COSTROID_DATABASE_URL            the application role's connection
-  COSTROID_MIGRATION_DATABASE_URL  the owner role's connection; when set,
-                                   migrations run before the service starts
-  COSTROID_OIDC_AUDIENCE           the audience CI tokens must name, never
-                                   GitHub's default, https://github.com/<owner>
-  COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
-                                   for per-tenant address pseudonyms
-  COSTROID_EGRESS_ALLOW            hosts for the egress allowlist,
-                                   comma-separated
-  COSTROID_GATEWAY_ENVIRONMENT     the GitHub environment whose jobs may attest
-                                   a minted gateway key, costroid-gateway by
-                                   default
-  COSTROID_GITHUB_WEBHOOK_SECRET   at least 32 bytes, the secret the
-                                   GitHub App signs its webhook deliveries
-                                   with; unset, POST /webhooks/github is not
-                                   served
-  COSTROID_GITHUB_APP_ID           the GitHub App's id
-  COSTROID_GITHUB_APP_KMS_KEY      the AWS KMS key that holds the App's
-                                   private key; set with the App's id, the
-                                   approve button posts as the App, and unset,
-                                   a press posts nothing
-  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION
-                                   the credentials and region KMS is called
-                                   with; a key ARN names its own region
 
 --gitlab-host trusts the CI tokens of one more GitLab instance. GitHub Actions
 and gitlab.com are trusted by default.
 
---bind gives an SCM owner to this instance's tenant, and needs the owner role.
-
---egress-allow adds one exact host to the egress allowlist, and adds to
+--bind gives an SCM owner to this instance's tenant, and needs the owner role.`)}},
+		{Heading: "Outbound calls", Body: []cli.Block{cli.Text(`--egress-allow adds one exact host to the egress allowlist, and adds to
 COSTROID_EGRESS_ALLOW. The list starts empty, and an empty list refuses every
 outbound call. OIDC ingest needs each issuer's host on it, the default issuers
 included. Without one, a token from that issuer answers EGRESS_REFUSED. costroid
-egress report prints what was attempted.
-
-A row reads exact only when its SubAccountId is a gateway key that a job in
+egress report prints what was attempted.`)}},
+		{Heading: "Exact rows", Body: []cli.Block{cli.Text(`A row reads exact only when its SubAccountId is a gateway key that a job in
 that environment attested as minted for the run the row's CI token names.
-docs/serve.md says why.
-
-Exit codes of serve:
-  0                 the service stopped on a signal
-  125               the service could not start, or stopped on an error
-`
+docs/serve.md says why.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{envDatabase, "the application role's connection"},
+		{envMigration, `the owner role's connection; when set,
+migrations run before the service starts`},
+		{envAudience, `the audience CI tokens must name, never
+GitHub's default, https://github.com/<owner>`},
+		{envPseudonym, `at least 32 bytes in base64, the master key
+for per-tenant address pseudonyms`},
+		{envEgress, `hosts for the egress allowlist,
+comma-separated`},
+		{envGatewayEnv, `the GitHub environment whose jobs may attest
+a minted gateway key, costroid-gateway by
+default`},
+		{envWebhook, `at least 32 bytes, the secret the
+GitHub App signs its webhook deliveries
+with; unset, POST /webhooks/github is not
+served`},
+		{envAppID, "the GitHub App's id"},
+		{envAppKey, `the AWS KMS key that holds the App's
+private key; set with the App's id, the
+approve button posts as the App, and unset,
+a press posts nothing`},
+		{"AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION", `the credentials and region KMS is called
+with; a key ARN names its own region`},
+	}},
+	Exits: []cli.Row{
+		{"0", "the service stopped on a signal"},
+		{"125", "the service could not start, or stopped on an error"},
+	},
+	Docs: "serve",
+}.String()
 
 type serveOptions struct {
 	addr        string
@@ -117,15 +133,16 @@ func (r *repeated) Set(value string) error {
 
 func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	set := flag.NewFlagSet("serve", flag.ContinueOnError)
-	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, ServeUsage) }
 	options := serveOptions{}
 	var gitlab, binds, allow repeated
 	set.StringVar(&options.addr, "addr", ":8080", "the address to listen on")
 	set.Var(&gitlab, "gitlab-host", "a GitLab host whose CI tokens are trusted")
 	set.Var(&binds, "bind", "an SCM owner for this instance's tenant, host:owner")
 	set.Var(&allow, "egress-allow", "an exact host the service may call")
-	if err := set.Parse(args); err != nil {
+	if err := cli.Parse(set, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stderr, ServeUsage)
+		}
 		return serveOptions{}, err
 	}
 	options.gitlabHosts = gitlab

@@ -1,0 +1,31 @@
+Usage:
+  costroid mcp [--repo OWNER/NAME] [--ledger URL]
+
+mcp answers the Model Context Protocol on stdin and stdout, so an agent can
+ask what its run has cost while it works. Its four tools only read:
+
+  run_status        the status file costroid run writes: the spend so far,
+                    the cap, what is left and what holds it
+  pull_result       the result object of the newest costroid check run on a
+                    pull request's head commit, as costroid result reads it
+  policy_check      the verdict costroid policy gives on a rows file and a
+                    costroid.yml
+  ledger_pull       GET /v1/pulls/{pr} on the costroid serve --ledger names
+
+Every amount in an answer is a decimal string beside its currency.
+
+pull_result reads GitHub with GITHUB_TOKEN, and the repository from --repo,
+else GITHUB_REPOSITORY, else the GitHub repository the git remote origin
+names, or the only remote. ledger_pull sends COSTROID_LEDGER_TOKEN, an ingest
+key or a CI job's OIDC token, as its bearer, and asks for
+github.com/OWNER/NAME unless the agent names another repository. --ledger must
+be https, or http on a loopback address. The agent names a pull request and
+never a host, so no token goes anywhere the command line did not name.
+
+To add it to Claude Code:
+  claude mcp add costroid -- costroid mcp
+
+Exit codes of mcp:
+  0                 the client closed the session
+  125               costroid could not read the flags or --ledger, or the
+                    session failed

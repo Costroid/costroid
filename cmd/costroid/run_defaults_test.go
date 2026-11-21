@@ -33,7 +33,7 @@ func TestRunDefaultsAreStated(t *testing.T) {
 	if code, _, stderr := execute(t, "run", "--", agent, "-p", "work"); code != exitFailure || stderr != "costroid: run needs --budget-usd\n" {
 		t.Errorf("no budget: exit %d, stderr %q", code, stderr)
 	}
-	if !strings.Contains(runHelp, "Without it, run writes\ncostroid-rows.jsonl in the working directory") {
+	if !strings.Contains(strings.Join(strings.Fields(runHelp), " "), "Without it, run writes costroid-rows.jsonl in the working directory") {
 		t.Error("run's help does not state the default rows file")
 	}
 }

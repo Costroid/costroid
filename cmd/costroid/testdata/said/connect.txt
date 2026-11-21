@@ -1,0 +1,34 @@
+Usage:
+  costroid connect --platform-url URL [--installation-id ID]
+
+connect binds the job's owner to the Costroid Platform tenant of the
+integration token in COSTROID_PLATFORM_TOKEN, so that costroid export can send
+rows under it. The token needs identity:read and installations:write.
+--platform-url is the platform's https origin.
+
+On GitHub Actions the installation is github-owner: and
+GITHUB_REPOSITORY_OWNER_ID. connect reads the tenant from GET /identity, and
+asks GitHub for the job's OIDC token with the tenant's audience, which needs
+id-token: write. On GitLab CI it is gitlab-namespace: and
+CI_PROJECT_NAMESPACE_ID, and the proof is the job's ID token in
+COSTROID_PLATFORM_PROOF, which id_tokens sets with the tenant's audience.
+connect binds a GitLab namespace only when CI_SERVER_HOST is gitlab.com.
+--installation-id states the same id, and connect refuses any other. Outside
+both, --installation-id is needed, and connect only reads whether it is bound.
+
+The platform takes a proof from a scheduled run or a push to a protected
+branch. A binding stays current for 7 days after its last proof, so a daily
+schedule keeps it. When the installation was proven in the last 20 hours,
+connect sends nothing. A binding made through the GitHub App does not stop
+it: the recipes export under github-owner:, so connect proves that binding
+beside the App's. When the platform cannot read the CI system's keys,
+connect sends the proof once more after the Retry-After the platform names,
+when that is 120 seconds or less, or after 60 seconds when it names no whole
+seconds. The token and the proof are never printed.
+docs/connect.md gives the job.
+
+Exit codes of connect:
+  0                 the installation is bound to the token's tenant
+  1                 the platform refused, and the line names its code
+  125               costroid could not read its input, get a proof or reach the
+                    platform

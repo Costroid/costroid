@@ -1,0 +1,30 @@
+Usage:
+  costroid app manifest --name NAME --webhook-url URL
+  costroid app create --name NAME --webhook-url URL --kms-key KEY [--org ORG]
+
+app registers the GitHub App that costroid serve posts the approve button's
+checks as. docs/github-app.md walks through it.
+
+manifest prints the App's manifest as JSON: --name, the webhook at
+--webhook-url, the check_run event and the four permissions an installation
+token asks for, checks and pull_requests to write, contents and metadata to
+read. The App is private to the account that creates it.
+
+create runs GitHub's manifest flow. It prints an address on this machine to
+open in a browser signed in to GitHub. That page sends the manifest to
+GitHub, where you create the App, and GitHub sends a code back to the
+address. create exchanges the code for the App and imports the App's private
+key into the AWS KMS key --kms-key names: a key ID or ARN. The private key
+reaches no file, log or terminal, and its bytes are zeroed after the import.
+--org creates the App for an organization you administer; without it, the
+App is your account's.
+
+Create the KMS key first, with origin EXTERNAL, key spec RSA_2048 and key
+usage SIGN_VERIFY. create reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+AWS_SESSION_TOKEN and AWS_REGION, as costroid serve does. It asks KMS for
+the import's wrapping key before GitHub creates the App, so a key KMS will
+not import into stops it early.
+
+Exit codes of app:
+  0                 done
+  125               not done, and the line on stderr says why

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	costroid "github.com/Costroid/costroid"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/recipelint"
 	"go.yaml.in/yaml/v3"
 )
@@ -27,29 +28,60 @@ import (
 // development build has none.
 var commit string
 
-const initHelp = `Usage:
-  costroid init [github|gitlab] --agent AGENT [--out PATH] [--force]
-                [--action-ref SHA] [--skills]
-  costroid init github --agent AGENT [--post-review] [--platform-url URL]
-                [--pr [--key-env NAME | --keep-org-secret]]
-  costroid init github --agent claude-code-action --auth subscription
-  costroid init github --existing PATH [--action-ref SHA] [--post-review]
-                [--platform-url URL] [--budget-usd AMOUNT]
-
-init writes the recipe for a host and an agent as this release ships it, with
+var initHelp = cli.Page{
+	Command: "init",
+	Summary: `init writes the recipe for a host and an agent as this release ships it, with
 Costroid pinned to the commit and version of the release this binary belongs
-to. It runs anywhere inside a git repository and writes at its root:
+to.`,
+	Usage: []string{
+		"costroid init [github|gitlab] --agent AGENT [--out PATH] [--force]",
+		"              [--action-ref SHA] [--skills]",
+		"costroid init github --agent AGENT [--post-review] [--platform-url URL]",
+		"              [--pr [--key-env NAME | --keep-org-secret]]",
+		"costroid init github --agent claude-code-action --auth subscription",
+		"costroid init github --existing PATH [--action-ref SHA] [--post-review]",
+		"              [--platform-url URL] [--budget-usd AMOUNT]",
+	},
+	Examples: []string{
+		"costroid init github --agent claude",
+		"costroid init github --agent claude --pr",
+		"costroid init gitlab --agent codex",
+		"costroid init github --existing .github/workflows/claude.yml > costroid.patch",
+	},
+	Flags: []cli.Row{
+		{"--agent AGENT", "the agent the recipe runs or reads"},
+		{"--host HOST", "the host the recipe runs on"},
+		{"--out PATH", "the file to write the recipe to"},
+		{"--force", "replace a file that exists"},
+		{"--action-ref SHA", "the commit of Costroid's action to pin"},
+		{"--skills", "write the skill for Codex and Claude Code"},
+		{"--post-review", "post the agent's answer as a second comment"},
+		{"--platform-url URL", "Costroid Platform's address, for the ingest job"},
+		{"--pr", "run the commands that are left and open the pull request"},
+		{"--key-env NAME", "the environment variable that holds the agent's key, for --pr"},
+		{"--keep-org-secret", "set no repository secret, so the run reads the organization's, for --pr"},
+		{"--auth AUTH", "how the agent signs in: api-key or subscription"},
+		{"--existing PATH", "a workflow to print a patch for"},
+		{"--budget-usd AMOUNT", "the cap in USD --existing adds to claude_args that hold none"},
+	},
+	Sections: []cli.Section{
+		{Heading: "What it writes", Body: []cli.Block{cli.Text(`It runs anywhere inside a git repository and writes at its root:
 .github/workflows/costroid.yml on GitHub and .gitlab/costroid.yml on GitLab,
 or --out, a path inside the repository. It refuses to replace a file without
 --force. It writes costroid.yml, with every key it reads commented out, only
 when there is none. On GitLab it adds the template to the include of
 .gitlab-ci.yml, and writes that file when there is none.
 
-The host is the one the repository's remote names. github, gitlab or --host
+It holds the recipe to the rules of lint-recipes before it writes it. Then it
+prints what each push can spend and the commands that are left. It runs none
+of them, unless --pr is given.`)}},
+		{Heading: "The host and the agent", Body: []cli.Block{cli.Text(`The host is the one the repository's remote names. github, gitlab or --host
 names it instead. --agent is claude, codex, claude-code-action, codex-action,
 claude-agent-sdk or codex-sdk on GitHub, and claude or codex on GitLab.
 
-With no --agent, a workflow that already runs anthropics/claude-code-action or
+--auth subscription writes the claude-code-action recipe with a Claude
+subscription's token, CLAUDE_CODE_OAUTH_TOKEN, in place of an API key.`)}},
+		{Heading: "A workflow you already run", Body: []cli.Block{cli.Text(`With no --agent, a workflow that already runs anthropics/claude-code-action or
 openai/codex-action switches init to --existing, and init says so. --existing
 reads such a workflow and prints a patch that adds a read step after the
 agent's step and a report job that runs on pull requests. It writes nothing.
@@ -58,12 +90,8 @@ when they hold no cap, or the amount in USD --budget-usd names, and gives the
 read step and the report job the cap they hold. On a codex-action step that
 sets no codex-home, the patch adds a step before it that makes one for the
 job under runner.temp, and gives the action that codex-home.
-docs/existing-workflow.md shows the result.
-
---auth subscription writes the claude-code-action recipe with a Claude
-subscription's token, CLAUDE_CODE_OAUTH_TOKEN, in place of an API key.
-
---post-review adds post-review: "true" to the agent's step and the report's
+docs/existing-workflow.md shows the result.`)}},
+		{Heading: "What it can add", Body: []cli.Block{cli.Text(`--post-review adds post-review: "true" to the agent's step and the report's
 step, so the agent's own answer is posted as a second comment. docs/review.md
 says what that comment shows.
 
@@ -78,13 +106,8 @@ what else the platform needs.
 --skills writes .agents/skills/costroid/SKILL.md for Codex and
 .claude/skills/costroid/SKILL.md for Claude Code: a skill that reads a run's
 status and the costroid check's result. A skill file that exists is left as
-it is.
-
-It holds the recipe to the rules of lint-recipes before it writes it. Then it
-prints what each push can spend and the commands that are left. It runs none
-of them, unless --pr is given.
-
---pr runs the commands that are left on GitHub, and prints each before it
+it is.`)}},
+		{Heading: "Opening the pull request", Body: []cli.Block{cli.Text(`--pr runs the commands that are left on GitHub, and prints each before it
 runs it. It sets the agent's key as a repository secret unless gh secret list
 names that secret already, then switches to the branch try-costroid, commits,
 pushes, opens the pull request, watches its run and prints the URL of
@@ -94,20 +117,24 @@ terminal that does not echo it. init never prints it, logs it or writes it to
 a file. A repository secret takes precedence over an organization secret of
 the same name, so --keep-org-secret sets none and the run reads the
 organization's. It stops at the first command that fails and lists the ones
-left.
-
-A development build belongs to no release, so it pins nothing and refuses.
+left.`)}},
+		{Heading: "The release it pins", Body: []cli.Block{cli.Text(`A development build belongs to no release, so it pins nothing and refuses.
 go install at a release's tag records the release's version and no commit,
 so init reads the commit that tag names on github.com with git ls-remote.
---action-ref names the commit of Costroid's action to pin on GitHub instead.
-
-Exit codes of init:
-  0                 written, or the patch printed
-  1                 the recipe breaks a rule, which is a defect in costroid
-  2                 the directory is in no git repository
-  125               costroid could not read or write a file, refused to, or
-                    a command --pr runs failed
-`
+--action-ref names the commit of Costroid's action to pin on GitHub instead.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"the variable --key-env names", "with --pr, the agent's key"},
+	}},
+	Exits: []cli.Row{
+		{"0", "written, or the patch printed"},
+		{"1", "the recipe breaks a rule, which is a defect in costroid"},
+		{"2", "the directory is in no git repository"},
+		{"125", `costroid could not read or write a file, refused to, or
+a command --pr runs failed`},
+	},
+	Docs: "install",
+}.String()
 
 const (
 	githubHost         = "github"
@@ -330,6 +357,10 @@ func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, 
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
+	if mistake := new(cli.Mistake); errors.As(err, &mistake) {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		return initFailed(stderr, err)
 	}
@@ -371,7 +402,6 @@ type initFlags struct {
 
 func parseInit(args []string, stdout, stderr io.Writer) (initFlags, error) {
 	set := flag.NewFlagSet("init", flag.ContinueOnError)
-	set.SetOutput(io.Discard)
 	var flags initFlags
 	var host string
 	set.StringVar(&host, "host", "", "the host the recipe runs on")
@@ -391,7 +421,7 @@ func parseInit(args []string, stdout, stderr io.Writer) (initFlags, error) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		flags.host, args = args[0], args[1:]
 	}
-	if err := parseFlags(set, args, initHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, initHelp, stdout); err != nil {
 		return flags, err
 	}
 	rest := set.Args()
@@ -823,6 +853,9 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	}
 	for _, note := range report.Notes {
 		fmt.Fprintf(stdout, "\nnote: %s\n", note)
+	}
+	if flow == nil {
+		fmt.Fprintf(stdout, "\n%s\n", nextAfterInit)
 	}
 	return 0
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/vcs"
 )
@@ -41,23 +42,36 @@ var mergeRefusals = map[string]string{
 	"MERGE_FACT_INVALID":           "A key is missing, unknown or of the wrong form",
 }
 
-const mergedHelp = `Usage:
-  costroid merged --platform-url URL --installation-id ID [--json]
-  costroid merged --dry-run
-
-Example, in a job on a push to the default branch:
-
-  costroid merged --platform-url https://app.costroid.com \
-    --installation-id github-owner:7204411
-
-merged sends Costroid Platform one merge fact for each pull request a push
+var mergedHelp = cli.Page{
+	Command: "merged",
+	Summary: `merged sends Costroid Platform one merge fact for each pull request a push
 closed: this pull request of this repository merged at this instant as this
-commit. It runs on GitHub Actions, on a push. It asks GitHub, under
+commit.`,
+	Usage: []string{
+		"costroid merged --platform-url URL --installation-id ID [--json]",
+		"costroid merged --dry-run",
+	},
+	Examples: []string{
+		"Example, in a job on a push to the default branch:",
+		"costroid merged --platform-url https://app.costroid.com \\",
+		"    --installation-id github-owner:7204411",
+		"costroid merged --dry-run",
+	},
+	Flags: []cli.Row{
+		{"--platform-url URL", "Costroid Platform's https origin"},
+		{"--installation-id ID", "the installation the facts come through"},
+		{"--json", "print one object per fact sent"},
+		{"--dry-run", "print the documents and send nothing"},
+	},
+	Sections: []cli.Section{
+		{Heading: "Where it runs", Body: []cli.Block{cli.Text(`It runs on GitHub Actions, on a push. It asks GitHub, under
 GITHUB_TOKEN, which merged pull requests each commit the push event lists
 closed, and sends nothing when they closed none. On any other event it sends
 nothing and says so.
 
-It sends by integration/v0.6, or by v0.5 to a platform that states no later
+On GitLab CI merged sends nothing: it reads the pull requests a commit closed
+from GitHub alone.`)}},
+		{Heading: "What it sends", Body: []cli.Block{cli.Text(`It sends by integration/v0.6, or by v0.5 to a platform that states no later
 version, under the integration token in COSTROID_PLATFORM_TOKEN, and names the
 version on standard error. --platform-url and --installation-id are read as
 export reads them. The token needs identity:read and merges:write. The merge
@@ -68,32 +82,34 @@ stores a fact as token_verified when the run token names the fact's commit,
 which is the tip of the push, and, by v0.6, a protected branch, which merged
 then names. A fact sent without a run token, a fact of a merge queue's group
 whose commit is not the tip, or by v0.6 a fact of a push to a branch that is
-not protected, is stored as unverified, and merged says why.
-
-A server error or a lost connection is sent again every 2 s for up to 60 s.
+not protected, is stored as unverified, and merged says why.`)}},
+		{Heading: "When the platform does not take a fact", Body: []cli.Block{cli.Text(`A server error or a lost connection is sent again every 2 s for up to 60 s.
 On 402 or 409 INSTALLATION_NOT_BOUND nothing in the fact is wrong, and
 nothing keeps it: merged warns and exits 0, and the job sends it when it runs
 again. On 409 MERGE_FACT_CONFLICT the pull request already holds a different
-fact, and merged does not send it again. docs/export.md lists every answer.
-
---json prints, on standard output, one object per fact sent: its merge id,
+fact, and merged does not send it again. docs/export.md lists every answer.`)}},
+		{Heading: "What it prints", Body: []cli.Block{cli.Text(`--json prints, on standard output, one object per fact sent: its merge id,
 its pull request, the status the platform answered, the fact's run_identity
 and, on a token_verified fact by v0.6, the ref of its branch, or the refusal's
 code. --dry-run prints each fact's merge id and document instead, and reaches
-nothing but GitHub.
-
-On GitLab CI merged sends nothing: it reads the pull requests a commit closed
-from GitHub alone.
-
-Exit codes of merged:
-  0                 every fact was stored or already held, or there was
-                    nothing to send, or the platform answered 402 or 409
-                    INSTALLATION_NOT_BOUND
-  1                 the platform refused a fact, and the line names its code
-  125               costroid could not read the flags, the run or GitHub's
-                    answer, or reach Costroid Platform, or the platform does
-                    not serve integration/v0.5 or later
-`
+nothing but GitHub.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"GITHUB_TOKEN", "the token GitHub is asked with"},
+		{platformTokenVariable, "the integration token"},
+		{"GITHUB_*", "what GitHub Actions sets about the push"},
+	}},
+	Exits: []cli.Row{
+		{"0", `every fact was stored or already held, or there was
+nothing to send, or the platform answered 402 or 409
+INSTALLATION_NOT_BOUND`},
+		{"1", "the platform refused a fact, and the line names its code"},
+		{"125", `costroid could not read the flags, the run or GitHub's
+answer, or reach Costroid Platform, or the platform does
+not serve integration/v0.5 or later`},
+	},
+	Docs: "export",
+}.String()
 
 type mergedFlags struct {
 	origin, installation string
@@ -195,12 +211,11 @@ func merged(ctx context.Context, args []string, client *http.Client, getenv func
 
 func parseMerged(args []string, stdout, stderr io.Writer) (mergedFlags, error) {
 	set := flag.NewFlagSet("merged", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation the facts come through")
 	asJSON := set.Bool("json", false, "print one object per fact sent")
 	dryRun := set.Bool("dry-run", false, "print the documents and send nothing")
-	if err := parseFlags(set, args, mergedHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, mergedHelp, stdout); err != nil {
 		return mergedFlags{}, err
 	}
 	if set.NArg() > 0 {

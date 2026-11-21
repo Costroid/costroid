@@ -1,0 +1,58 @@
+Usage:
+  costroid gateway keygen --out FILE
+  costroid gateway public-key
+  costroid gateway request --out DIR
+  costroid gateway mint --url URL --budget-usd N --lifetime-minutes N
+                        --max-request-tokens N [--max-parallel-requests N]
+                        [--repository-daily-cap-usd N]
+                        [--author-daily-cap-usd N] [--request FILE]
+  costroid gateway close --url URL [--retry-after DURATION]
+
+gateway gives one CI run its own key on a LiteLLM proxy.
+
+keygen draws a sealing key pair at random. It writes the private half to FILE,
+which must not exist, for this user alone, and prints the public half. Store
+FILE's content as the secret COSTROID_GATEWAY_SEALING_KEY of the environment
+the mint job names, store the public half as the repository variable
+COSTROID_GATEWAY_PUBLIC_KEY, then delete FILE. Nothing about the pair comes
+from the admin key.
+
+public-key prints the public half of the sealing key in
+COSTROID_GATEWAY_SEALING_KEY, to check the repository variable against it.
+
+request runs in the agent's job. It draws the run's key and writes it to
+DIR/key for this user alone. It writes DIR/costroid-gateway-request.json, the
+key sealed to COSTROID_GATEWAY_PUBLIC_KEY for this repository, run and
+attempt. It prints the key's id, never the key.
+
+mint runs in a job that holds COSTROID_GATEWAY_SEALING_KEY and
+COSTROID_GATEWAY_ADMIN_KEY and never runs the agent. It opens the request, from
+--request or from this run's artifact costroid-gateway-request-<attempt> with
+GITHUB_TOKEN, and registers the key with the budget, an expiry, the
+parallel-request limit, and the repository, pull request, head commit, run and
+largest request in its metadata. It prints the key's id. When
+COSTROID_INGEST_URL is set, it then attests the key to that ledger under the
+job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
+Only an attested key lets the run's rows read exact.
+--repository-daily-cap-usd puts the key in a team for the repository with that
+budget per day, and --author-daily-cap-usd in a user for the pull request's
+author with that budget per day. The pull request, its head commit and its
+author come from the event file GITHUB_EVENT_PATH names. When mint cannot read
+it, it warns and names the file: the key then names none of the three, and no
+author's budget applies.
+
+close deletes the run's key by its alias, and prints deleted, or absent when no
+key was left. Run it when the job ends, also on failure. When it finds no key,
+mint may still be waiting for the request, so close waits --retry-after, no
+time by default, and deletes once more. The recipe runs close after mint, so
+it waits none. When COSTROID_INGEST_URL is set,
+close first reads what the gateway counted on the key, waiting up to 30 seconds
+for the figure to settle, and after the delete attests it to that ledger under
+the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
+Only an attested count lets a budget on the run's rows pass.
+
+The gateway's URL must be https, except on localhost and 127.0.0.1.
+
+Exit codes of gateway:
+  0                 done
+  125               not done, and the line on stderr says why

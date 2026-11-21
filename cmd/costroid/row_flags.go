@@ -7,10 +7,16 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/focus"
 )
 
-const rowFlagsHelp = `--tag KEY=VALUE puts the tag costroid/KEY on every row, once per key. KEY is
+var rowFlagRows = []cli.Row{
+	{"--tag KEY=VALUE", "a tag on every row, with KEY one of work_item, arm and team"},
+	{"--focus-profile PROFILE", "default or strict: strict writes EffectiveCost as 0 and the figure in x_CostroidMeasuredCost"},
+}
+
+const rowFlagsHelp cli.Text = `--tag KEY=VALUE puts the tag costroid/KEY on every row, once per key. KEY is
 work_item, an issue key such as ENG-142; arm, an experiment's arm; or team.
 A value is 1 to 128 letters, digits and . _ : / + -, opens with a letter or a
 digit, and is never a key.
@@ -19,8 +25,7 @@ digit, and is never a key.
 always is, and the measured figure in x_CostroidMeasuredCost, for a reader that
 adds these rows to the provider's own FOCUS data. The default profile keeps the
 figure in EffectiveCost. Send default rows to Costroid Platform and costroid
-export. docs/tags.md and docs/focus-profile.md describe both.
-`
+export. docs/tags.md and docs/focus-profile.md describe both.`
 
 // rowFlags are what a caller adds to every row a command writes.
 type rowFlags struct {

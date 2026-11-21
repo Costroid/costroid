@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	exportformat "github.com/Costroid/costroid/internal/export"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
@@ -101,14 +102,35 @@ var (
 	pullNumberPattern     = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
 )
 
-const exportHelp = `Usage:
-  costroid export --rows rows.jsonl --platform-url URL --installation-id ID
-                  [--batch-id ID]
-  costroid export --rows rows.jsonl --format FORMAT [--out PATH]
-                  [--root-dir BUCKET]
-
-export sends a rows file to Costroid Platform as one batch of CSV, under the
-integration token in COSTROID_PLATFORM_TOKEN. It reads GET /identity first and
+var exportHelp = cli.Page{
+	Command: "export",
+	Summary: `export sends a rows file to Costroid Platform as one batch of CSV, under the
+integration token in COSTROID_PLATFORM_TOKEN.`,
+	Usage: []string{
+		"costroid export --rows rows.jsonl --platform-url URL --installation-id ID",
+		"                [--batch-id ID]",
+		"costroid export --rows rows.jsonl --format FORMAT [--out PATH]",
+		"                [--root-dir BUCKET]",
+	},
+	Examples: []string{
+		"costroid export --rows rows.jsonl --platform-url https://app.costroid.com \\",
+		"    --installation-id github-owner:7204411",
+		"costroid export --rows rows.jsonl --format focus-csv --out rows.csv",
+		"costroid export --rows rows.jsonl --format datadog --out costs.csv",
+		"costroid export --rows month.jsonl --format cloudability --out drops \\",
+		"    --root-dir example-focus-drops",
+	},
+	Flags: []cli.Row{
+		{"--rows FILE", "the rows file costroid run wrote"},
+		{"--platform-url URL", "Costroid Platform's https origin"},
+		{"--installation-id ID", "the installation the rows came through"},
+		{"--batch-id ID", "the batch id; GitHub Actions derives one from the run"},
+		{"--format FORMAT", "the file format to write instead of sending"},
+		{"--out PATH", "the file --format writes; standard output when absent"},
+		{"--root-dir BUCKET", "the bucket or container a cloudability manifest names"},
+	},
+	Sections: []cli.Section{
+		{Heading: "Sending a batch", Body: []cli.Block{cli.Text(`It reads GET /identity first and
 sends by integration/v0.4, or by v0.3 or v0.2 to a platform that states no
 later version, and names the version on standard error. Outside GitHub
 Actions a token without identity:read still sends, by v0.2, with a warning.
@@ -130,58 +152,62 @@ as unverified.
 
 Once the platform takes the batch, export asks for its verdict every 2 s for
 up to 60 s, and prints ingested with a link to each pull request, or the code
-the batch failed on.
-
-On 402 or 429 the platform took nothing for now and nothing in the rows is
+the batch failed on.`)}},
+		{Heading: "When the platform takes nothing", Body: []cli.Block{cli.Text(`On 402 or 429 the platform took nothing for now and nothing in the rows is
 wrong. On 409 INSTALLATION_NOT_BOUND the tenant holds no binding of the
 installation, which costroid connect makes. In each case export warns, keeps
 the rows file and exits 0, so it can be sent later.
 
 On 409 EXPORT_BATCH_RUN_BOUND the batch holds token_verified rows, so it is
 bound to the run that sent it, and only that run restates it. Export keeps
-the rows file and exits 1. docs/export.md lists every answer.
-
-With --format, export sends nothing and writes the rows as a file another
+the rows file and exits 1. docs/export.md lists every answer.`)}},
+		{Heading: "Writing a file for another tool", Body: []cli.Block{
+			cli.Text(`With --format, export sends nothing and writes the rows as a file another
 tool imports, to --out or to standard output. Every amount is written as the
-row states it: none is converted, rounded or added up.
-
-  focus-csv         FOCUS 1.4 CSV: the row contract's 40 columns, the CSV
-                    the platform takes
-  vantage           a Vantage custom provider's CSV. Past 10,000 rows or
-                    2,000,000 bytes the rows go to more than one file, so
-                    costs.csv becomes costs-1.csv, costs-2.csv and on, and
-                    standard output is refused
-  datadog           Datadog's Custom Costs CSV. It takes USD only, so a row in
-                    another currency refuses the file, and the line names it.
-                    Each tag that every row carries is a column
-  harness           Harness's custom cost CSV, in FOCUS 1.1 columns: one file
-                    for each billing period, and another past 20,000,000
-                    bytes, numbered as vantage numbers its files
-  cloudability      a Cloudability FOCUS 1.1 drop: under the directory --out
-                    names, a gzip CSV and its manifest for each billing
-                    period. --root-dir names the bucket the manifest names
-  ternary           Ternary's FOCUS 1.2 CSV: under the directory --out names,
-                    one file for each UTC day a charge starts on
-  focus-1.5-cr      FOCUS 1.5's candidate release, with its token and
-                    credential columns and its metadata, under the directory
-                    --out names. Ratification may change it, and the format
-                    is then named focus-1.5
-
-In vantage and datadog, BilledCost is the row's EffectiveCost, because a row's
+row states it: none is converted, rounded or added up.`),
+			cli.Rows{
+				{"focus-csv", "FOCUS 1.4 CSV: the row contract's 40 columns, the CSV the platform takes"},
+				{"vantage", `a Vantage custom provider's CSV. Past 10,000 rows or
+2,000,000 bytes the rows go to more than one file, so
+costs.csv becomes costs-1.csv, costs-2.csv and on, and
+standard output is refused`},
+				{"datadog", `Datadog's Custom Costs CSV. It takes USD only, so a row in
+another currency refuses the file, and the line names it.
+Each tag that every row carries is a column`},
+				{"harness", `Harness's custom cost CSV, in FOCUS 1.1 columns: one file
+for each billing period, and another past 20,000,000
+bytes, numbered as vantage numbers its files`},
+				{"cloudability", `a Cloudability FOCUS 1.1 drop: under the directory --out
+names, a gzip CSV and its manifest for each billing
+period. --root-dir names the bucket the manifest names`},
+				{"ternary", `Ternary's FOCUS 1.2 CSV: under the directory --out names,
+one file for each UTC day a charge starts on`},
+				{"focus-1.5-cr", `FOCUS 1.5's candidate release, with its token and
+credential columns and its metadata, under the directory
+--out names. Ratification may change it, and the format
+is then named focus-1.5`},
+			},
+			cli.Text(`In vantage and datadog, BilledCost is the row's EffectiveCost, because a row's
 own BilledCost is 0: Costroid issues no invoice.
 
-docs/export.md says which column each format takes from the row.
-
-Exit codes of export:
-  0                 the batch ingested or its verdict did not come in 60 s, or
-                    the platform answered 402, 409 INSTALLATION_NOT_BOUND or
-                    429, or --format wrote its files
-  1                 the platform refused or the batch failed, and the line
-                    names its code, or the format refused rows, and the line
-                    names them
-  125               costroid could not read the rows, reach the platform or
-                    write a file
-`
+docs/export.md says which column each format takes from the row.`),
+		}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{platformTokenVariable, "the integration token"},
+		{"GITHUB_*", "on GitHub Actions, the repository, the run and its attempt"},
+	}},
+	Exits: []cli.Row{
+		{"0", `the batch ingested or its verdict did not come in 60 s, or
+the platform answered 402, 409 INSTALLATION_NOT_BOUND or
+429, or --format wrote its files`},
+		{"1", `the platform refused or the batch failed, and the line
+names its code, or the format refused rows, and the line
+names them`},
+		{"125", "costroid could not read the rows, reach the platform or write a file"},
+	},
+	Docs: "export",
+}.String()
 
 type exportFlags struct {
 	rows, origin, installation, batch string
@@ -302,7 +328,6 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 
 func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 	set := flag.NewFlagSet("export", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation the rows came through")
@@ -310,7 +335,7 @@ func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 	format := set.String("format", "", "the file format to write instead of sending")
 	out := set.String("out", "", "the file --format writes; standard output when absent")
 	rootDir := set.String("root-dir", "", "the bucket or container a cloudability manifest names")
-	if err := parseFlags(set, args, exportHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, exportHelp, stdout); err != nil {
 		return exportFlags{}, err
 	}
 	if set.NArg() > 0 {

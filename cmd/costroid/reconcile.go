@@ -69,7 +69,6 @@ func upstreamFlag(into map[string]string) func(string) error {
 
 func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, error) {
 	set := flag.NewFlagSet("reconcile", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the FOCUS rows, as JSON lines")
 	from := set.String("from", "", "the first UTC day, YYYY-MM-DD")
 	to := set.String("to", "", "the last UTC day, YYYY-MM-DD")
@@ -81,7 +80,7 @@ func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, er
 	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
 	send := set.Bool("export", false, "send the rows --out keeps to Costroid Platform, by integration/v0.6 or v0.5")
 	installation := set.String("installation-id", "", "with --export, the installation the job runs under")
-	if err := parseFlags(set, args, reconcileHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, reconcileHelp, stdout); err != nil {
 		return reconcileFlags{}, err
 	}
 	if *rows == "" || *from == "" || *to == "" || set.NArg() != 0 {

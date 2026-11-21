@@ -1,0 +1,14 @@
+Usage:
+  costroid validate [costroid.yml]
+
+validate checks costroid.yml, or the file named, against the schema this
+release ships, costroid.schema.json: every key and every value must be one
+the schema allows. A policy amount or approval.expires_days that YAML reads as
+a float, such as 5.0, is a problem too, because the check refuses it. validate
+prints one line per problem, or valid. With no file named and no costroid.yml
+here, it says the defaults apply.
+
+Exit codes of validate:
+  0                 the file is valid, or there is none and the defaults apply
+  1                 the file breaks the schema
+  125               costroid could not read the file

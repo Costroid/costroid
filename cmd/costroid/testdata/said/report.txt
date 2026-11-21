@@ -1,0 +1,61 @@
+Usage:
+  costroid report --rows rows.jsonl [--budget-usd N] [--installation-id ID]
+                  [--agent-result RESULT] [--json] [--exit-on-verdict]
+  costroid report --preview --rows rows.jsonl
+  costroid report --recorded RUN_ID,DATE --rows rows.jsonl
+
+report posts from CI, and selects the host from the job's variables. On a pull
+request it reads costroid.yml at the head of the base branch when it runs, and
+at the event's base commit when that head cannot be read. On GitHub
+Actions it posts one check run and one sticky comment, with GITHUB_TOKEN and the
+GITHUB_* variables, then writes the step's outputs and a job summary. The
+summary withholds amounts and token counts where the comment does. On GitLab CI
+it posts one sticky merge request note, with COSTROID_GITLAB_TOKEN and the CI_*
+variables, and no check. It exits 0 whatever the host answers, so a failed post
+never fails the job. Outside both it refuses and exits 125. The run's cap
+comes from its result object; --budget-usd is read only when there is none.
+--installation-id puts the GitHub App installation, github:<id> or the bare
+number, on the account link; COSTROID_INSTALLATION_ID does the same. A value
+in neither form is skipped with a warning. GitLab's link names the project id.
+--exit-on-verdict, on GitLab CI alone, ends the report with the verdict's exit
+code instead of 0: 1 on failure, 3 on neutral, 0 on success. On GitHub Actions
+the check is the gate, and the flag is ignored with a warning.
+
+--agent-result is the agent job's result as CI states it: success, failure,
+cancelled or skipped. Without it, COSTROID_AGENT_RESULT does. When the job was
+skipped and left no rows, the comment says the agent did not run on the pull
+request, in place of a report with no rows.
+
+--preview prints, as Markdown, the comment report would post for the rows, and
+reads and posts nothing on any host. Its verdict holds the rows to costroid.yml
+in the working directory, as costroid policy does. Standard output is the
+comment alone. The last line, on standard error, is the verdict sentence the
+comment opens with.
+
+--recorded says the rows are a recorded run's, not the pull request's: CI run
+RUN_ID's, recorded on DATE, written YYYY-MM-DD. The check, the comment and the
+job summary say so in the line under their first, without the head commit, and
+the result object names the run under recorded. The pull request's total neither
+reads these figures nor counts them. On the workflow_run event of a fork's
+pull request, whose own run holds a read-only token, report posts the check
+and the comment there, on the one open pull request follow-up would find.
+
+--json prints on stdout the result object the check run carries, byte for
+byte: the conclusion, figures per currency and basis, token counts by class,
+grades, the cap and what is left or over, and a reason when there are no
+figures. docs/agents.md describes the object.
+
+run and ingest-run write the same object beside the rows file they created,
+whether or not --json is given and whatever their exit: --out rows.jsonl gives
+rows.run.json. report reads the run's reason for an empty rows file from it,
+and a reader that refused the agent's output adds its first error line.
+
+Exit codes of report:
+  0                 the report ran, whatever the host answered, or --preview
+                    printed the comment
+  1                 with --exit-on-verdict on GitLab CI, the verdict is failure
+  3                 with --exit-on-verdict on GitLab CI, the verdict is
+                    neutral, or the report could not reach GitLab
+  125               the flags could not be read, neither GitHub Actions nor
+                    GitLab CI was detected, or --preview could not build the
+                    comment

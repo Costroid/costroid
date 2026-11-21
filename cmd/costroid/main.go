@@ -19,6 +19,7 @@ import (
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
@@ -26,6 +27,7 @@ import (
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/run"
+	"github.com/Costroid/costroid/internal/status"
 )
 
 const (
@@ -118,16 +120,31 @@ func (a accountFlags) check() error {
 	return nil
 }
 
-const runHelp = `Usage:
-  costroid run --budget-usd N [--out FILE] [--agent NAME]
-               [--billing-account ID] [--credential ID]
-               [--tag KEY=VALUE]... [--focus-profile strict]
-               [--gateway URL --gateway-key-file F] [--json] -- <agent command>
-
-The agent command is claude -p or codex exec. Costroid adds the flags it needs.
-
---out names the file the rows go to. Without it, run writes
-costroid-rows.jsonl in the working directory and says so on stderr.
+var runHelp = cli.Page{
+	Command: "run",
+	Summary: "run runs a coding agent under a cap and writes what the run cost as FOCUS rows.",
+	Usage: []string{
+		"costroid run --budget-usd N [--out FILE] [--agent NAME]",
+		"             [--billing-account ID] [--credential ID]",
+		"             [--tag KEY=VALUE]... [--focus-profile strict]",
+		"             [--gateway URL --gateway-key-file F] [--json] -- <agent command>",
+	},
+	Examples: []string{
+		`costroid run --budget-usd 5 -- claude -p "Fix the failing test."`,
+		`costroid run --budget-usd 5 --out rows.jsonl -- codex exec "Review the diff."`,
+		"costroid run --budget-usd 5 --agent codex-sdk --json -- node dist/agent.js",
+	},
+	Flags: slices.Concat([]cli.Row{
+		{"--budget-usd N", "the run's cap in USD"},
+		{"--out FILE", "the file the FOCUS rows go to, as JSON lines: " + defaultRowsFile + " when not given"},
+		{"--agent NAME", "the agent, when the command's name does not say: " + strings.Join(run.Agents, ", ")},
+	}, accountFlagRows, rowFlagRows, []cli.Row{
+		{"--gateway URL", "the LiteLLM gateway the agent runs through"},
+		{"--gateway-key-file F", "the file costroid gateway request wrote the run's key to"},
+		{"--json", "print the result object on stdout, and the agent's stream on stderr"},
+	}),
+	Sections: []cli.Section{
+		{Heading: "The agent command", Body: []cli.Block{cli.Text(`The agent command is claude -p or codex exec. Costroid adds the flags it needs.
 
 --agent names the agent when the command's name does not: claude-code or codex
 for a command that starts the agent through npx, bunx or node, with the flags
@@ -136,11 +153,10 @@ that runs the agent through its SDK. An SDK program runs as it is, and its
 output is not read. The rows come from every Claude Code session or Codex
 thread the program started while it ran. A claude-code-sdk run grades none
 unless a gateway holds it, because the budget sits in the program's own
-maxBudgetUsd. A codex-sdk run stops the program at the cap, as codex exec does.
-
-` + accountHelp + `
-` + rowFlagsHelp + `
---gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
+maxBudgetUsd. A codex-sdk run stops the program at the cap, as codex exec does.`)}},
+		{Heading: "The rows", Body: []cli.Block{cli.Text(`--out names the file the rows go to. Without it, run writes
+costroid-rows.jsonl in the working directory and says so on stderr.`), accountHelp, rowFlagsHelp, ciHelp}},
+		{Heading: "A gateway", Body: []cli.Block{cli.Text(`--gateway and --gateway-key-file run Claude Code through a LiteLLM gateway on
 the run's own key, which costroid gateway request drew and costroid gateway
 mint registered. Without them, COSTROID_GATEWAY_URL and
 COSTROID_GATEWAY_KEY_FILE do. run waits for the key, reads it back, and gives
@@ -149,23 +165,30 @@ The key's id fills SubAccountId. The rows read gateway-precheck when the key
 has a budget at or under --budget-usd, an expiry, a parallel-request limit, a
 largest request and this run's id, and when the gateway's store answered
 before, during and after the run. Otherwise they read none and say why.
-costroid gateway help describes the other steps.
-
-` + ciHelp + `
---json prints one result object on stdout when run ends: figures per currency
+costroid gateway help describes the other steps.`)}},
+		{Heading: "The result object", Body: []cli.Block{cli.Text(`--json prints one result object on stdout when run ends: figures per currency
 and basis, token counts by class, grades, the cap and what is left or over, and
 a reason when there are no figures. The agent's stream then goes to stderr,
 and the object says why run wrote no rows when it wrote none. run prints no
 object when it exits 125 before it creates the rows file. docs/agents.md
-describes the object.
-
-` + resultFileHelp + `
-` + statusFileHelp + `
-Exit codes of run:
-  the agent's own   the run finished, or the agent stopped itself
-  124               costroid stopped the agent at the cap
-  125               costroid could not run the agent or record the run
-`
+describes the object.`), resultFileHelp}},
+		{Heading: "The status file", Body: []cli.Block{statusFileHelp}},
+	},
+	Environment: []cli.Block{cli.Rows(slices.Concat(accountEnvironment, []cli.Row{
+		{gatewayURLVar, "the gateway, when --gateway is not given"},
+		{gatewayKeyFileVar, "the key file, when --gateway-key-file is not given"},
+		{status.FileVariable, "where the status file goes"},
+		{"RUNNER_TEMP", "where costroid-status.json goes when " + status.FileVariable + " is unset"},
+		{cicontext.ResourceAttributesVariable, "the attributes the agent already has, which run adds to"},
+		ciEnvironment,
+	}))},
+	Exits: []cli.Row{
+		{"the agent's own", "the run finished, or the agent stopped itself"},
+		{"124", "costroid stopped the agent at the cap"},
+		{"125", "costroid could not run the agent or record the run"},
+	},
+	Docs: "adapters",
+}.String()
 
 type runFlags struct {
 	agent   string
@@ -182,7 +205,6 @@ type runFlags struct {
 
 func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	set := flag.NewFlagSet("run", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	budget := set.String("budget-usd", "", "the run's cap in USD")
 	agent := set.String("agent", "", "the agent, when the command's name does not say: "+strings.Join(run.Agents, ", "))
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines: "+defaultRowsFile+" when not given")
@@ -191,7 +213,7 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
 	account := addAccountFlags(set)
 	shaping := addRowFlags(set)
-	if err := parseFlags(set, args, runHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, runHelp, stdout); err != nil {
 		return runFlags{}, err
 	}
 	if (*gatewayURL == "") != (*keyFile == "") {

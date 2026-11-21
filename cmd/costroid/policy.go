@@ -27,7 +27,6 @@ type policyFlags struct {
 
 func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	set := flag.NewFlagSet("policy", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	config := set.String("config", configFile, "costroid.yml as the base branch holds it")
 	pack := set.String("pack", "", "the policy pack policy_pack names, as the base branch holds it; the path it names, beside --config, when empty")
@@ -36,7 +35,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	added := set.String("workflow-added", "", "when the workflow reached the base branch, as RFC 3339")
 	at := set.String("at", "", "the time of the check, as RFC 3339; now when empty")
 	asJSON := set.Bool("json", false, "print the verdict as the machine block carries it")
-	if err := parseFlags(set, args, policyHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, policyHelp, stdout); err != nil {
 		return policyFlags{}, err
 	}
 	if *rows == "" || set.NArg() > 0 {

@@ -1,0 +1,28 @@
+Usage:
+  costroid doctor [--ci]
+
+doctor checks a repository, from its root, before a pull request runs
+Costroid: this binary's release, costroid.yml, the workflows and their pins,
+the agents and keys on this machine, and the repository's secrets and
+variables. It prints one line per check: ok, warn or fail, the fact and, after
+warn or fail, the fix. It reads secret names through gh secret list when gh is
+on PATH, and those of the environment a job names through gh secret list
+--env. It never prints a secret's value, prefix or length.
+
+On GitLab it checks the template that installs Costroid, .gitlab/costroid.yml
+or a local file .gitlab-ci.yml includes, and its pins, in place of the
+workflows. It reads no CI/CD variable there and runs no gh. Outside a git
+repository it checks this machine alone, and says so in a fail line.
+
+With COSTROID_PLATFORM_URL set in the shell, doctor asks Costroid Platform for
+the scopes of the integration token in COSTROID_PLATFORM_TOKEN and for the
+binding of the repository's owner. It names the token by that variable alone.
+
+--ci runs it as a step of a GitHub Actions job, and adds what only the job
+sees: the event, whether the head is a fork, the OIDC token and the job's
+declared permissions.
+
+Exit codes of doctor:
+  0                 no fail
+  1                 a fail
+  125               costroid could not run the checks

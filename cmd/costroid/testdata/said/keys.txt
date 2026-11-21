@@ -1,0 +1,20 @@
+Usage:
+  costroid keys create --owner HOST:OWNER
+  costroid keys revoke <id>
+
+keys issues and revokes tenant ingest keys.
+
+create prints the new key on stdout, once, and its id on stderr. The ledger
+keeps the key's SHA-256, which is the id, so a lost key cannot be read back.
+--owner names an SCM owner of the tenant the key is for. revoke takes the id
+and stops the key at the next request.
+
+A key's rows stay unverified and unattributed, and never reach a budget.
+
+Environment:
+  COSTROID_MIGRATION_DATABASE_URL  the owner role's connection
+
+Exit codes of keys:
+  0                 the key was created or revoked
+  125               costroid could not read the command line, reach the
+                    database or find the tenant or the key

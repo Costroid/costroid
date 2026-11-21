@@ -22,22 +22,38 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
-const appHelp = `Usage:
-  costroid app manifest --name NAME --webhook-url URL
-  costroid app create --name NAME --webhook-url URL --kms-key KEY [--org ORG]
-
-app registers the GitHub App that costroid serve posts the approve button's
-checks as. docs/github-app.md walks through it.
-
-manifest prints the App's manifest as JSON: --name, the webhook at
+var appHelp = cli.Page{
+	Command: "app",
+	Summary: `app registers the GitHub App that costroid serve posts the approve button's
+checks as.`,
+	Usage: []string{
+		"costroid app manifest --name NAME --webhook-url URL",
+		"costroid app create --name NAME --webhook-url URL --kms-key KEY [--org ORG]",
+	},
+	Examples: []string{
+		`costroid app manifest --name "Costroid for example" \`,
+		"    --webhook-url https://costroid.example.com/webhooks/github",
+		`costroid app create --name "Costroid for example" \`,
+		"    --webhook-url https://costroid.example.com/webhooks/github \\",
+		"    --kms-key 1234abcd-12ab-34cd-56ef-1234567890ab --org example",
+	},
+	Flags: []cli.Row{
+		{"--name NAME", "the App's name"},
+		{"--webhook-url URL", "where GitHub delivers the App's events"},
+		{"--kms-key KEY", "the KMS key to import the App's private key into"},
+		{"--org ORG", "the organization that owns the App"},
+	},
+	Sections: []cli.Section{
+		{Heading: "Where it is described", Body: []cli.Block{cli.Text("docs/github-app.md walks through it.")}},
+		{Heading: "manifest", Body: []cli.Block{cli.Text(`manifest prints the App's manifest as JSON: --name, the webhook at
 --webhook-url, the check_run event and the four permissions an installation
 token asks for, checks and pull_requests to write, contents and metadata to
-read. The App is private to the account that creates it.
-
-create runs GitHub's manifest flow. It prints an address on this machine to
+read. The App is private to the account that creates it.`)}},
+		{Heading: "create", Body: []cli.Block{cli.Text(`create runs GitHub's manifest flow. It prints an address on this machine to
 open in a browser signed in to GitHub. That page sends the manifest to
 GitHub, where you create the App, and GitHub sends a code back to the
 address. create exchanges the code for the App and imports the App's private
@@ -50,12 +66,18 @@ Create the KMS key first, with origin EXTERNAL, key spec RSA_2048 and key
 usage SIGN_VERIFY. create reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 AWS_SESSION_TOKEN and AWS_REGION, as costroid serve does. It asks KMS for
 the import's wrapping key before GitHub creates the App, so a key KMS will
-not import into stops it early.
-
-Exit codes of app:
-  0                 done
-  125               not done, and the line on stderr says why
-`
+not import into stops it early.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION", `the credentials and region KMS is called
+with; a key ARN names its own region`},
+	}},
+	Exits: []cli.Row{
+		{"0", "done"},
+		{"125", "not done, and the line on stderr says why"},
+	},
+	Docs: "github-app",
+}.String()
 
 const (
 	githubWeb = "https://github.com"
@@ -135,7 +157,6 @@ type appFlags struct {
 
 func parseApp(command string, args []string, stdout, stderr io.Writer) (appFlags, error) {
 	set := flag.NewFlagSet("app "+command, flag.ContinueOnError)
-	set.SetOutput(stderr)
 	var flags appFlags
 	set.StringVar(&flags.name, "name", "", "the App's name")
 	set.StringVar(&flags.webhook, "webhook-url", "", "where GitHub delivers the App's events")
@@ -143,7 +164,7 @@ func parseApp(command string, args []string, stdout, stderr io.Writer) (appFlags
 		set.StringVar(&flags.kmsKey, "kms-key", "", "the KMS key to import the App's private key into")
 		set.StringVar(&flags.org, "org", "", "the organization that owns the App")
 	}
-	if err := parseFlags(set, args, appHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, appHelp, stdout); err != nil {
 		return appFlags{}, err
 	}
 	if set.NArg() > 0 {

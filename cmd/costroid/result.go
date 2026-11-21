@@ -12,32 +12,47 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
-const resultHelp = `Usage:
-  costroid result --pr N [--repo OWNER/NAME] [--json]
-
-result prints the result object of the newest costroid check run on the pull
+var resultHelp = cli.Page{
+	Command: "result",
+	Summary: `result prints the result object of the newest costroid check run on the pull
 request's head commit: its conclusion and its figures per currency and cost
-basis. It reads the check run, never the comment, whose copy can withhold
+basis.`,
+	Usage:    []string{"costroid result --pr N [--repo OWNER/NAME] [--json]"},
+	Examples: []string{"costroid result --pr 42", "costroid result --pr 42 --repo example/api --json"},
+	Flags: []cli.Row{
+		{"--pr N", "the pull request's number"},
+		{"--repo OWNER/NAME", "the repository as owner/name"},
+		{"--json", "print the result object whole"},
+	},
+	Sections: []cli.Section{
+		{Heading: "What it reads and prints", Body: []cli.Block{cli.Text(`It reads the check run, never the comment, whose copy can withhold
 amounts. --json prints the object whole, byte for byte as the check run
-carries it. docs/agents.md describes the object.
-
-result reads GitHub with GITHUB_TOKEN, and the repository from --repo, else
+carries it. docs/agents.md describes the object.`)}},
+		{Heading: "The repository and the token", Body: []cli.Block{cli.Text(`result reads GitHub with GITHUB_TOKEN, and the repository from --repo, else
 GITHUB_REPOSITORY, else the GitHub repository the git remote origin names, or
 the only remote, which result says on stderr. It never asks gh for a token:
 export GITHUB_TOKEN="$(gh auth token)" sets one with gh signed in.
 GITHUB_API_URL names a GitHub Enterprise Server's API. GitLab takes no check,
-so result reads GitHub alone.
-
-Exit codes of result:
-  0                 the object was printed
-  1                 no costroid check run is on the head commit yet
-  125               costroid could not read the pull request or its check run
-`
+so result reads GitHub alone.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"GITHUB_TOKEN", "the token GitHub is read with"},
+		{"GITHUB_REPOSITORY", "the repository, when --repo is not given"},
+		{"GITHUB_API_URL", "a GitHub Enterprise Server's API"},
+	}},
+	Exits: []cli.Row{
+		{"0", "the object was printed"},
+		{"1", "no costroid check run is on the head commit yet"},
+		{"125", "costroid could not read the pull request or its check run"},
+	},
+	Docs: "agents",
+}.String()
 
 var errResultArguments = errors.New("result needs --pr with the pull request's number, and takes no argument")
 
@@ -134,13 +149,13 @@ func (r resultTarget) host() (pullHost, error) {
 
 func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("result", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	number := set.Int("pr", 0, "the pull request's number")
 	repository := set.String("repo", os.Getenv("GITHUB_REPOSITORY"), "the repository as owner/name")
 	asJSON := set.Bool("json", false, "print the result object whole")
-	if err := parseFlags(set, args, resultHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, resultHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
 	if *number < 1 || set.NArg() > 0 {

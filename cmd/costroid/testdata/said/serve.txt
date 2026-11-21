@@ -1,0 +1,51 @@
+Usage:
+  costroid serve [--addr :8080] [--gitlab-host HOST]... [--bind HOST:OWNER]...
+                 [--egress-allow HOST]...
+
+serve runs the ingest service. --addr is the address it listens on, :8080 by
+default.
+
+Environment:
+  COSTROID_DATABASE_URL            the application role's connection
+  COSTROID_MIGRATION_DATABASE_URL  the owner role's connection; when set,
+                                   migrations run before the service starts
+  COSTROID_OIDC_AUDIENCE           the audience CI tokens must name, never
+                                   GitHub's default, https://github.com/<owner>
+  COSTROID_PSEUDONYM_KEY           at least 32 bytes in base64, the master key
+                                   for per-tenant address pseudonyms
+  COSTROID_EGRESS_ALLOW            hosts for the egress allowlist,
+                                   comma-separated
+  COSTROID_GATEWAY_ENVIRONMENT     the GitHub environment whose jobs may attest
+                                   a minted gateway key, costroid-gateway by
+                                   default
+  COSTROID_GITHUB_WEBHOOK_SECRET   at least 32 bytes, the secret the
+                                   GitHub App signs its webhook deliveries
+                                   with; unset, POST /webhooks/github is not
+                                   served
+  COSTROID_GITHUB_APP_ID           the GitHub App's id
+  COSTROID_GITHUB_APP_KMS_KEY      the AWS KMS key that holds the App's
+                                   private key; set with the App's id, the
+                                   approve button posts as the App, and unset,
+                                   a press posts nothing
+  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION
+                                   the credentials and region KMS is called
+                                   with; a key ARN names its own region
+
+--gitlab-host trusts the CI tokens of one more GitLab instance. GitHub Actions
+and gitlab.com are trusted by default.
+
+--bind gives an SCM owner to this instance's tenant, and needs the owner role.
+
+--egress-allow adds one exact host to the egress allowlist, and adds to
+COSTROID_EGRESS_ALLOW. The list starts empty, and an empty list refuses every
+outbound call. OIDC ingest needs each issuer's host on it, the default issuers
+included. Without one, a token from that issuer answers EGRESS_REFUSED. costroid
+egress report prints what was attempted.
+
+A row reads exact only when its SubAccountId is a gateway key that a job in
+that environment attested as minted for the run the row's CI token names.
+docs/serve.md says why.
+
+Exit codes of serve:
+  0                 the service stopped on a signal
+  125               the service could not start, or stopped on an error

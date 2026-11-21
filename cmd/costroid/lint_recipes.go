@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,7 +19,15 @@ import (
 
 const exitRejected = 1
 
-func lintRecipes(paths []string, stdout, stderr io.Writer) int {
+func lintRecipes(args []string, stdout, stderr io.Writer) int {
+	set := flag.NewFlagSet("lint-recipes", flag.ContinueOnError)
+	if err := parseFlags(set, args, lintRecipesHelp, stdout); errors.Is(err, flag.ErrHelp) {
+		return 0
+	} else if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
+	paths := set.Args()
 	if len(paths) == 0 {
 		fmt.Fprint(stderr, "costroid: lint-recipes needs at least one path\n")
 		return exitFailure

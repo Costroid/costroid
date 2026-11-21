@@ -1,18 +1,23 @@
-costroid runs a coding agent under a budget and records what it cost.
+Costroid is the cost check for pull requests.
 
-Usage:
-  costroid demo
-  costroid lint [--strict] [paths]
-  costroid init [github|gitlab] --agent AGENT
-  costroid doctor
-  costroid run --budget-usd N -- <agent command>
-  costroid report --rows rows.jsonl
-  costroid validate [costroid.yml]
-  costroid help <command>
-  costroid --version
+On your machine                       In a workflow job
+  demo      print an example comment    report        post the check and comment
+  lint      judge agent workflows       ingest-run    write rows after a run
+  init      write the workflow          follow-up     post a fork's check
+  doctor    check a repository          approve       post an approved check
+  run       run an agent under a cap    review        post the agent's answer
+  policy    give the verdict offline    result        print a check's result
+  validate  check costroid.yml          mcp           answer an agent over MCP
+  version   print the release           lint-recipes  check Costroid's recipes
 
-The agent command is claude -p or codex exec. Costroid adds the flags it needs.
+To a platform                         For a ledger of your own
+  export     send or convert rows       serve      run the ingest service
+  merged     send merge facts           keys       issue and revoke keys
+  connect    bind an owner              egress     report outbound calls
+  emit-otlp  send rows as OTLP spans    gateway    give a run its own key
+                                        app        register the GitHub App
+                                        reconcile  compare with a provider
 
-Other commands: ingest-run, follow-up, approve, reconcile, export, merged,
-connect, review, policy, lint-recipes, version, result, mcp, emit-otlp, app.
-Ledger commands: gateway, serve, keys, egress.
+Example, with nothing set up:  costroid demo
+Help for one command:          costroid help <command>
+Documentation:                 https://docs.costroid.com

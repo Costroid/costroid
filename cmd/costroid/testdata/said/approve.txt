@@ -1,0 +1,24 @@
+Usage:
+  costroid approve
+
+approve runs in a workflow that a pull request review starts. It reads the
+pull request's reviews, and when one approves the head commit it posts the
+costroid check again: an approved failure concludes neutral and names the
+approver. When no approval counts any more, as after a dismissal, it posts
+the policy's verdict again. It posts nothing when the newest check already
+concludes so.
+
+A review counts only when it approves, names the head commit the API answers
+now, comes from an account that can write to the repository and is not an
+App, is not the pull request's author's unless approval.allow_author is true,
+and is younger than approval.expires_days, 7 by default. Each reviewer's
+latest approval, request for changes or dismissal is their standing.
+
+The settings are read from costroid.yml at the head of the base branch. A
+review on a fork's pull request runs with a read-only token, so approve posts
+nothing there. Like report, it exits 0 whatever the host answers, and outside
+GitHub Actions it refuses and exits 125. docs/approval.md has the workflow.
+
+Exit codes of approve:
+  0                 approve ran, whatever the host answered
+  125               GitHub Actions was not detected, or an argument was given

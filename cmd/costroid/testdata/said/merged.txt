@@ -1,0 +1,52 @@
+Usage:
+  costroid merged --platform-url URL --installation-id ID [--json]
+  costroid merged --dry-run
+
+Example, in a job on a push to the default branch:
+
+  costroid merged --platform-url https://app.costroid.com \
+    --installation-id github-owner:7204411
+
+merged sends Costroid Platform one merge fact for each pull request a push
+closed: this pull request of this repository merged at this instant as this
+commit. It runs on GitHub Actions, on a push. It asks GitHub, under
+GITHUB_TOKEN, which merged pull requests each commit the push event lists
+closed, and sends nothing when they closed none. On any other event it sends
+nothing and says so.
+
+It sends by integration/v0.6, or by v0.5 to a platform that states no later
+version, under the integration token in COSTROID_PLATFORM_TOKEN, and names the
+version on standard error. --platform-url and --installation-id are read as
+export reads them. The token needs identity:read and merges:write. The merge
+id is the repository id and the pull request's number, joined by a hyphen, so
+the same fact sent again changes nothing. The job's OIDC token rides with each
+fact, as with a batch, and needs id-token: write on the job. The platform
+stores a fact as token_verified when the run token names the fact's commit,
+which is the tip of the push, and, by v0.6, a protected branch, which merged
+then names. A fact sent without a run token, a fact of a merge queue's group
+whose commit is not the tip, or by v0.6 a fact of a push to a branch that is
+not protected, is stored as unverified, and merged says why.
+
+A server error or a lost connection is sent again every 2 s for up to 60 s.
+On 402 or 409 INSTALLATION_NOT_BOUND nothing in the fact is wrong, and
+nothing keeps it: merged warns and exits 0, and the job sends it when it runs
+again. On 409 MERGE_FACT_CONFLICT the pull request already holds a different
+fact, and merged does not send it again. docs/export.md lists every answer.
+
+--json prints, on standard output, one object per fact sent: its merge id,
+its pull request, the status the platform answered, the fact's run_identity
+and, on a token_verified fact by v0.6, the ref of its branch, or the refusal's
+code. --dry-run prints each fact's merge id and document instead, and reaches
+nothing but GitHub.
+
+On GitLab CI merged sends nothing: it reads the pull requests a commit closed
+from GitHub alone.
+
+Exit codes of merged:
+  0                 every fact was stored or already held, or there was
+                    nothing to send, or the platform answered 402 or 409
+                    INSTALLATION_NOT_BOUND
+  1                 the platform refused a fact, and the line names its code
+  125               costroid could not read the flags, the run or GitHub's
+                    answer, or reach Costroid Platform, or the platform does
+                    not serve integration/v0.5 or later

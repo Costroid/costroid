@@ -1,0 +1,23 @@
+Usage:
+  costroid demo [--state STATE] [--markdown]
+
+demo prints the comment Costroid posts on a pull request, built from the rows of
+a recorded run, as plain text for a terminal. It ends on the verdict sentence
+the comment opens with. It reads nothing and posts nothing.
+
+--state picks the comment:
+  neutral           a recorded claude-code-action run that nothing held to a
+                    budget (the default)
+  capped            a recorded Codex run that costroid stopped at a USD 0.001
+                    cap, and what it spent past it
+  failure           the claude-code-action run over a USD 0.01 run budget, after
+                    the seven days in which a broken rule only warns
+  skipped           a pull request on which the workflow skipped the agent
+
+--markdown prints the comment as the Markdown report posts, with the machine
+block the check run carries.
+
+Exit codes of demo:
+  0                 printed
+  125               an argument or an unknown --state was given, or costroid
+                    could not build the comment

@@ -8,14 +8,19 @@ import (
 	"io"
 	"os"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/otlpemit"
 )
 
-const emitOTLPHelp = `Usage:
-  costroid emit-otlp --rows rows.jsonl
-
-emit-otlp sends a rows file to an OpenTelemetry Collector or backend as
-traces over OTLP/HTTP, one span per model request. A span carries the
+var emitOTLPHelp = cli.Page{
+	Command: "emit-otlp",
+	Summary: `emit-otlp sends a rows file to an OpenTelemetry Collector or backend as
+traces over OTLP/HTTP, one span per model request.`,
+	Usage:    []string{"costroid emit-otlp --rows rows.jsonl"},
+	Examples: []string{"costroid emit-otlp --rows rows.jsonl"},
+	Flags:    []cli.Row{{"--rows FILE", "the rows file costroid run wrote"}},
+	Sections: []cli.Section{
+		{Heading: "What a span carries", Body: []cli.Block{cli.Text(`A span carries the
 OpenTelemetry GenAI token counts as integers, and the repository, pull
 request, commit and run its rows name as vcs.* and cicd.* attributes. Its
 cost travels as three strings: costroid.cost.amount, the exact sum of the
@@ -23,7 +28,11 @@ request's ListCost, costroid.cost.currency and costroid.cost.basis. No cost
 goes out as a number, so no backend rounds it, and no amount is added to one
 in another currency.
 
-emit-otlp reads the variables an OpenTelemetry SDK's OTLP exporter reads.
+The spans name service.name costroid. An agent that sends its own telemetry
+to the same backend states the same tokens there, so filter on service.name
+before adding token counts up.`)}},
+	},
+	Environment: []cli.Block{cli.Text(`emit-otlp reads the variables an OpenTelemetry SDK's OTLP exporter reads.
 OTEL_EXPORTER_OTLP_ENDPOINT is a base URL, and v1/traces is appended to it;
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used as it is. With neither, spans go
 to http://localhost:4318/v1/traces. OTEL_EXPORTER_OTLP_HEADERS holds
@@ -32,19 +41,15 @@ http/protobuf, the default, or http/json; grpc is refused.
 OTEL_EXPORTER_OTLP_TIMEOUT is in milliseconds, 10000 by default.
 OTEL_EXPORTER_OTLP_COMPRESSION is gzip or none. OTEL_EXPORTER_OTLP_CERTIFICATE,
 OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE and OTEL_EXPORTER_OTLP_CLIENT_KEY name
-PEM files. Each has an OTEL_EXPORTER_OTLP_TRACES_ form that takes precedence.
-
-The spans name service.name costroid. An agent that sends its own telemetry
-to the same backend states the same tokens there, so filter on service.name
-before adding token counts up.
-
-Exit codes of emit-otlp:
-  0                 the endpoint took every span, or the rows file holds no
-                    rows
-  1                 the endpoint refused spans, and the line says how many
-  125               costroid could not read the rows or the variables, or
-                    reach the endpoint
-`
+PEM files. Each has an OTEL_EXPORTER_OTLP_TRACES_ form that takes precedence.`)},
+	Exits: []cli.Row{
+		{"0", "the endpoint took every span, or the rows file holds no rows"},
+		{"1", "the endpoint refused spans, and the line says how many"},
+		{"125", `costroid could not read the rows or the variables, or
+reach the endpoint`},
+	},
+	Docs: "otlp",
+}.String()
 
 func emitOTLPCommand(ctx context.Context, args []string, std stdio) int {
 	return emitOTLP(ctx, args, os.Getenv, std.stdout, std.stderr)
@@ -52,11 +57,11 @@ func emitOTLPCommand(ctx context.Context, args []string, std stdio) int {
 
 func emitOTLP(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("emit-otlp", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
-	if err := parseFlags(set, args, emitOTLPHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, emitOTLPHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
 	if *rows == "" || set.NArg() > 0 {

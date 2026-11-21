@@ -1,0 +1,9 @@
+Usage:
+  costroid version
+  costroid --version
+
+version prints this binary's release and the price catalog it carries.
+
+Exit codes of version:
+  0                 printed
+  125               costroid could not load its catalog

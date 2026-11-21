@@ -107,7 +107,6 @@ func kindNames(kinds []sourceKind, word string) string {
 
 func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, error) {
 	set := flag.NewFlagSet("ingest-run", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	var sources sourcesFlag
 	set.Func("from", "KIND=PATH, the source to read", sources.from)
 	var sinceKinds, cappedKinds []sourceKind
@@ -131,7 +130,7 @@ func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, er
 	optional := set.Bool("optional", false, "with focus, add no rows and say why when the file is not there")
 	account := addAccountFlags(set)
 	shaping := addRowFlags(set)
-	if err := parseFlags(set, args, ingestRunHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, ingestRunHelp, stdout); err != nil {
 		return ingestRunFlags{}, err
 	}
 	given := sources.given

@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/mcpserver"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/status"
 )
 
 // ledgerTokenVariable holds the bearer ledger_pull sends to the ledger.
@@ -18,47 +20,66 @@ const ledgerTokenVariable = "COSTROID_LEDGER_TOKEN"
 
 var errMCPArguments = errors.New("mcp takes no argument")
 
-const mcpHelp = `Usage:
-  costroid mcp [--repo OWNER/NAME] [--ledger URL]
-
-mcp answers the Model Context Protocol on stdin and stdout, so an agent can
-ask what its run has cost while it works. Its four tools only read:
-
-  run_status        the status file costroid run writes: the spend so far,
-                    the cap, what is left and what holds it
-  pull_result       the result object of the newest costroid check run on a
-                    pull request's head commit, as costroid result reads it
-  policy_check      the verdict costroid policy gives on a rows file and a
-                    costroid.yml
-  ledger_pull       GET /v1/pulls/{pr} on the costroid serve --ledger names
-
-Every amount in an answer is a decimal string beside its currency.
-
-pull_result reads GitHub with GITHUB_TOKEN, and the repository from --repo,
+var mcpHelp = cli.Page{
+	Command: "mcp",
+	Summary: `mcp answers the Model Context Protocol on stdin and stdout, so an agent can
+ask what its run has cost while it works.`,
+	Usage: []string{"costroid mcp [--repo OWNER/NAME] [--ledger URL]"},
+	Examples: []string{
+		"costroid mcp",
+		"costroid mcp --repo example/api --ledger https://ledger.example",
+	},
+	Flags: []cli.Row{
+		{"--repo OWNER/NAME", "the repository as owner/name"},
+		{"--ledger URL", "the URL of a costroid serve"},
+	},
+	Sections: []cli.Section{
+		{Heading: "Tools", Body: []cli.Block{
+			cli.Text("Its four tools only read:"),
+			cli.Rows{
+				{"run_status", `the status file costroid run writes: the spend so far,
+the cap, what is left and what holds it`},
+				{"pull_result", `the result object of the newest costroid check run on a
+pull request's head commit, as costroid result reads it`},
+				{"policy_check", `the verdict costroid policy gives on a rows file and a
+costroid.yml`},
+				{"ledger_pull", "GET /v1/pulls/{pr} on the costroid serve --ledger names"},
+			},
+			cli.Text("Every amount in an answer is a decimal string beside its currency."),
+		}},
+		{Heading: "What each tool reaches", Body: []cli.Block{cli.Text(`pull_result reads GitHub with GITHUB_TOKEN, and the repository from --repo,
 else GITHUB_REPOSITORY, else the GitHub repository the git remote origin
 names, or the only remote. ledger_pull sends COSTROID_LEDGER_TOKEN, an ingest
 key or a CI job's OIDC token, as its bearer, and asks for
 github.com/OWNER/NAME unless the agent names another repository. --ledger must
 be https, or http on a loopback address. The agent names a pull request and
-never a host, so no token goes anywhere the command line did not name.
-
-To add it to Claude Code:
-  claude mcp add costroid -- costroid mcp
-
-Exit codes of mcp:
-  0                 the client closed the session
-  125               costroid could not read the flags or --ledger, or the
-                    session failed
-`
+never a host, so no token goes anywhere the command line did not name.`)}},
+		{Heading: "In Claude Code", Body: []cli.Block{
+			cli.Text("To add it to Claude Code:"),
+			cli.Lines{"claude mcp add costroid -- costroid mcp"},
+		}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"GITHUB_TOKEN", "the token pull_result reads GitHub with"},
+		{"GITHUB_REPOSITORY", "the repository, when --repo is not given"},
+		{ledgerTokenVariable, "the bearer ledger_pull sends"},
+		{status.FileVariable, "the status file run_status reads"},
+	}},
+	Exits: []cli.Row{
+		{"0", "the client closed the session"},
+		{"125", "costroid could not read the flags or --ledger, or the session failed"},
+	},
+	Docs: "agents",
+}.String()
 
 func mcpCommand(ctx context.Context, args []string, std stdio) int {
 	set := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	set.SetOutput(std.stderr)
 	repository := set.String("repo", os.Getenv("GITHUB_REPOSITORY"), "the repository as owner/name")
 	ledgerURL := set.String("ledger", "", "the URL of a costroid serve")
-	if err := parseFlags(set, args, mcpHelp, std.stdout, std.stderr); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, mcpHelp, std.stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
+		fmt.Fprintf(std.stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
 	if set.NArg() > 0 {

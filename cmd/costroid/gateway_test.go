@@ -319,7 +319,7 @@ func TestGatewayMintRefusesFlagsItCannotHoldTheKeyTo(t *testing.T) {
 		"a budget with a sign":  {[]string{"--url", stub.URL, "--budget-usd", "-5", "--lifetime-minutes", "30", "--max-request-tokens", "1"}, "--budget-usd"},
 		"a zero repository cap": {[]string{"--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1", "--repository-daily-cap-usd", "0"}, "--repository-daily-cap-usd must be a decimal above 0"},
 		"an author cap of text": {[]string{"--url", stub.URL, "--budget-usd", "5", "--lifetime-minutes", "30", "--max-request-tokens", "1", "--author-daily-cap-usd", "five"}, "--author-daily-cap-usd must be a decimal above 0"},
-		"an unknown flag":       {[]string{"--budget", "5"}, "flag provided but not defined"},
+		"an unknown flag":       {[]string{"--budget", "5"}, "--budget is not a flag of costroid gateway mint"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(adminKeyVariable, gatewayAdmin)

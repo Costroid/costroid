@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/gateway"
 )
 
@@ -53,15 +54,25 @@ var (
 	compactJWSPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
 )
 
-const connectHelp = `Usage:
-  costroid connect --platform-url URL [--installation-id ID]
-
-connect binds the job's owner to the Costroid Platform tenant of the
+var connectHelp = cli.Page{
+	Command: "connect",
+	Summary: `connect binds the job's owner to the Costroid Platform tenant of the
 integration token in COSTROID_PLATFORM_TOKEN, so that costroid export can send
-rows under it. The token needs identity:read and installations:write.
---platform-url is the platform's https origin.
-
-On GitHub Actions the installation is github-owner: and
+rows under it.`,
+	Usage: []string{"costroid connect --platform-url URL [--installation-id ID]"},
+	Examples: []string{
+		"costroid connect --platform-url https://app.costroid.com",
+		"costroid connect --platform-url https://app.costroid.com \\",
+		"    --installation-id github-owner:7204411",
+	},
+	Flags: []cli.Row{
+		{"--platform-url URL", "Costroid Platform's https origin"},
+		{"--installation-id ID", "the installation to bind: github-owner:<id> or gitlab-namespace:<id>"},
+	},
+	Sections: []cli.Section{
+		{Heading: "The token and the address", Body: []cli.Block{cli.Text(`The token needs identity:read and installations:write.
+--platform-url is the platform's https origin.`)}},
+		{Heading: "The installation and its proof", Body: []cli.Block{cli.Text(`On GitHub Actions the installation is github-owner: and
 GITHUB_REPOSITORY_OWNER_ID. connect reads the tenant from GET /identity, and
 asks GitHub for the job's OIDC token with the tenant's audience, which needs
 id-token: write. On GitLab CI it is gitlab-namespace: and
@@ -69,9 +80,8 @@ CI_PROJECT_NAMESPACE_ID, and the proof is the job's ID token in
 COSTROID_PLATFORM_PROOF, which id_tokens sets with the tenant's audience.
 connect binds a GitLab namespace only when CI_SERVER_HOST is gitlab.com.
 --installation-id states the same id, and connect refuses any other. Outside
-both, --installation-id is needed, and connect only reads whether it is bound.
-
-The platform takes a proof from a scheduled run or a push to a protected
+both, --installation-id is needed, and connect only reads whether it is bound.`)}},
+		{Heading: "When a proof is sent", Body: []cli.Block{cli.Text(`The platform takes a proof from a scheduled run or a push to a protected
 branch. A binding stays current for 7 days after its last proof, so a daily
 schedule keeps it. When the installation was proven in the last 20 hours,
 connect sends nothing. A binding made through the GitHub App does not stop
@@ -80,14 +90,22 @@ beside the App's. When the platform cannot read the CI system's keys,
 connect sends the proof once more after the Retry-After the platform names,
 when that is 120 seconds or less, or after 60 seconds when it names no whole
 seconds. The token and the proof are never printed.
-docs/connect.md gives the job.
-
-Exit codes of connect:
-  0                 the installation is bound to the token's tenant
-  1                 the platform refused, and the line names its code
-  125               costroid could not read its input, get a proof or reach the
-                    platform
-`
+docs/connect.md gives the job.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{platformTokenVariable, "the integration token"},
+		{proofVariable, "on GitLab CI, the job's ID token"},
+		{"GITHUB_REPOSITORY_OWNER_ID", "on GitHub Actions, the owner's id"},
+		{"CI_PROJECT_NAMESPACE_ID", "on GitLab CI, the namespace's id"},
+		{"CI_SERVER_HOST", "on GitLab CI, the GitLab host"},
+	}},
+	Exits: []cli.Row{
+		{"0", "the installation is bound to the token's tenant"},
+		{"1", "the platform refused, and the line names its code"},
+		{"125", "costroid could not read its input, get a proof or reach the platform"},
+	},
+	Docs: "connect",
+}.String()
 
 type connectFlags struct {
 	base, installation string
@@ -185,10 +203,9 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 
 func parseConnect(args []string, stdout, stderr io.Writer) (connectFlags, error) {
 	set := flag.NewFlagSet("connect", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation to bind: github-owner:<id> or gitlab-namespace:<id>")
-	if err := parseFlags(set, args, connectHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, connectHelp, stdout); err != nil {
 		return connectFlags{}, err
 	}
 	if set.NArg() > 0 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/gateway/gatewaytest"
 )
@@ -95,20 +97,190 @@ func TestHelpAfterFlagsPrintsOnStdout(t *testing.T) {
 	}
 }
 
-func TestHelpAfterAMistakePrintsOnStderr(t *testing.T) {
-	code, stdout, stderr := execute(t, "report", "--rows", "rows.jsonl", "--no-such-flag")
-	if code != exitFailure || stdout != "" || !strings.Contains(stderr, "flag provided but not defined: -no-such-flag\n"+reportHelp) {
-		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+// screenLines is the height of the screen the bare call must fit.
+const screenLines = 24
+
+// TestBareCallFitsOneScreenAndListsEveryCommandOnce holds what costroid alone
+// prints: a line of purpose, each command once under a group with what it
+// does and none in a list, a command that needs nothing set up, how to read
+// one command's help and where the documentation is, in one screen.
+func TestBareCallFitsOneScreenAndListsEveryCommandOnce(t *testing.T) {
+	code, stdout, stderr := execute(t)
+	if code != exitUsage || stderr != "" || stdout != usage.String() {
+		t.Fatalf("exit %d, stderr %q, stdout:\n%s", code, stderr, stdout)
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(lines) > screenLines {
+		t.Errorf("the bare call prints %d lines, more than a screen of %d", len(lines), screenLines)
+	}
+	for number, line := range lines {
+		if width := utf8.RuneCountInString(line); width > usageWidth {
+			t.Errorf("line %d is %d columns: %s", number+1, width, line)
+		}
+	}
+	if !oneSentence.MatchString(lines[0]) || lines[1] != "" {
+		t.Errorf("the bare call does not open with one line of purpose: %q, %q", lines[0], lines[1])
+	}
+	var names []string
+	for _, entry := range commands {
+		names = append(names, regexp.QuoteMeta(entry.name))
+		cell := regexp.MustCompile(`(?m)(?:^| {2})` + regexp.QuoteMeta(entry.name) + ` {2,}` + regexp.QuoteMeta(entry.does) + `(?: {2}|$)`)
+		if found := len(cell.FindAllString(stdout, -1)); found != 1 {
+			t.Errorf("%s stands beside what it does %d times, want once:\n%s", entry.name, found, stdout)
+		}
+		if int(entry.where) >= len(groupNames) {
+			t.Errorf("%s is in no group", entry.name)
+		}
+	}
+	name := `(?:` + strings.Join(names, "|") + `)`
+	if list := regexp.MustCompile(`\b` + name + `,? (?:and )?` + name + `\b`).FindString(strings.Join(lines[:len(lines)-3], "\n")); list != "" {
+		t.Errorf("the bare call lists commands with no word on what each does: %q", list)
+	}
+	for _, heading := range groupNames {
+		if strings.Count(stdout, heading) != 1 {
+			t.Errorf("the group %q does not head its commands once:\n%s", heading, stdout)
+		}
+	}
+	for _, want := range []string{"  costroid demo\n", "  costroid help <command>\n", "  " + cli.Documentation + "\n"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the bare call lacks %q:\n%s", want, stdout)
+		}
 	}
 }
 
-func TestEveryHelpOpensWithUsageOnStdout(t *testing.T) {
+// oneSentence is a line that ends its one sentence where the line ends.
+var oneSentence = regexp.MustCompile(`^[^.]*(?:\.\S[^.]*)*\.$`)
+
+// pageHeading is a heading of a help page: every other line below the first
+// paragraph is indented.
+var pageHeading = regexp.MustCompile(`(?m)^(\S.*):$`)
+
+// pageParts cuts a help page into its first paragraph and the body under each
+// heading, in order.
+func pageParts(page string) (summary string, headings, bodies []string) {
+	summary, rest, _ := strings.Cut(page, "\n\n")
+	summary += "\n\n"
+	found := pageHeading.FindAllStringSubmatchIndex(rest, -1)
+	for i, at := range found {
+		end := len(rest)
+		if i+1 < len(found) {
+			end = found[i+1][0]
+		}
+		headings = append(headings, rest[at[2]:at[3]])
+		bodies = append(bodies, rest[at[1]+1:end])
+	}
+	return summary, headings, bodies
+}
+
+// part answers the body under heading, empty when the page has none.
+func part(page, heading string) string {
+	_, headings, bodies := pageParts(page)
+	if i := slices.Index(headings, heading); i >= 0 {
+		return bodies[i]
+	}
+	return ""
+}
+
+// TestEveryHelpPageHasItsPartsInOrder holds each page to one sentence of what
+// the command does, its usage, at least one example, a line for each flag,
+// then what the environment gives it, its exit codes and the address of its
+// page in the documentation, with whatever else it says under headings
+// between the flags and the environment.
+func TestEveryHelpPageHasItsPartsInOrder(t *testing.T) {
+	flags := commandFlags(t)
 	for _, entry := range commands {
 		t.Run(entry.name, func(t *testing.T) {
-			if !strings.HasPrefix(entry.help, "Usage:\n  costroid "+entry.name+" ") && !strings.HasPrefix(entry.help, "Usage:\n  costroid "+entry.name+"\n") {
-				t.Errorf("help %s does not open with its usage:\n%s", entry.name, entry.help)
+			summary, headings, bodies := pageParts(entry.help)
+			if sentence := strings.Join(strings.Fields(summary), " "); !oneSentence.MatchString(sentence) || !strings.HasPrefix(sentence, entry.name+" ") {
+				t.Errorf("the page does not open with one sentence of what %s does:\n%s", entry.name, summary)
 			}
-			asks := [][]string{{"help", entry.name}, {entry.name, "-h"}, {entry.name, "-help"}, {entry.name, "--help"}}
+			if len(headings) == 0 || !strings.HasPrefix(entry.help, summary+headings[0]+":\n") {
+				t.Fatalf("the first heading does not stand one blank line below the first sentence:\n%s", entry.help)
+			}
+			for i, body := range bodies {
+				for line := range strings.SplitSeq(strings.TrimSuffix(body, "\n"), "\n") {
+					if line != "" && !strings.HasPrefix(line, "  ") {
+						t.Errorf("under %q, a line is not indented: %q", headings[i], line)
+					}
+				}
+				if strings.TrimSpace(body) == "" {
+					t.Errorf("nothing stands under %q", headings[i])
+				}
+				if i+1 < len(bodies) && !strings.HasSuffix(body, "\n\n") || strings.HasSuffix(body, "\n\n\n") {
+					t.Errorf("%q is not one blank line above the next heading", headings[i])
+				}
+			}
+			want := []string{"Usage", "Examples"}
+			if len(flags[entry.name]) > 0 {
+				want = append(want, "Flags")
+			}
+			if len(headings) < len(want) || !slices.Equal(headings[:len(want)], want) {
+				t.Fatalf("the page opens with the headings %q, want %q", headings, want)
+			}
+			last := []string{"Exit codes of " + entry.name, "Documentation"}
+			rest := headings[len(want):]
+			if len(rest) < len(last) || !slices.Equal(rest[len(rest)-len(last):], last) {
+				t.Fatalf("the page ends with the headings %q, want %q", rest, last)
+			}
+			between := rest[:len(rest)-len(last)]
+			for i, heading := range between {
+				if slices.Contains(append(slices.Clone(want), "Flags"), heading) || strings.HasPrefix(heading, "Exit codes") ||
+					heading == "Environment" && i != len(between)-1 || slices.Index(between, heading) != i {
+					t.Errorf("the heading %q is out of its place among %q", heading, headings)
+				}
+			}
+			for i, form := range strings.Split(strings.TrimSuffix(part(entry.help, "Usage"), "\n\n"), "\n") {
+				if i == 0 && !strings.HasPrefix(form, "  costroid "+entry.name) || !strings.HasPrefix(form, "  costroid ") && !strings.HasPrefix(form, "    ") {
+					t.Errorf("a usage line is no form of the command: %q", form)
+				}
+			}
+			if len(pageExamples(entry.help)) == 0 {
+				t.Error("the page has no example")
+			}
+			for _, defined := range flags[entry.name] {
+				if !regexp.MustCompile(`(?m)^  --` + regexp.QuoteMeta(defined.name) + `(?: \S+)?(?: {2,}\S|$)`).MatchString(part(entry.help, "Flags")) {
+					t.Errorf("--%s has no line under Flags", defined.name)
+				}
+			}
+			address := strings.TrimSpace(part(entry.help, "Documentation"))
+			name, found := strings.CutPrefix(address, cli.Documentation+"/")
+			if !found || strings.ContainsAny(name, "/ \n") {
+				t.Fatalf("the page ends on %q, which is no page under %s", address, cli.Documentation)
+			}
+			if _, err := os.Stat(filepath.Join(repositoryRoot, "docs", name+".md")); err != nil {
+				t.Errorf("the page's address names %s, and docs holds no such page: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestEveryHelpPageFitsEightyColumns(t *testing.T) {
+	pages := map[string]string{"the bare call": usage.String()}
+	for _, entry := range commands {
+		pages["help "+entry.name] = entry.help
+	}
+	for name, page := range pages {
+		for number, line := range strings.Split(page, "\n") {
+			if width := utf8.RuneCountInString(line); width > usageWidth {
+				t.Errorf("%s, line %d, is %d columns: %s", name, number+1, width, line)
+			}
+			if strings.TrimRight(line, " ") != line {
+				t.Errorf("%s, line %d, ends in a space: %q", name, number+1, line)
+			}
+		}
+	}
+}
+
+// TestHelpIsTheSameBytesThreeWays asks for each command's help as costroid
+// help <command>, <command> --help and <command> -h, and wants the page each
+// time, whole, on stdout, with exit 0.
+func TestHelpIsTheSameBytesThreeWays(t *testing.T) {
+	for _, entry := range commands {
+		t.Run(entry.name, func(t *testing.T) {
+			if strings.TrimSpace(entry.help) == "" {
+				t.Fatal("the command has no help page")
+			}
+			asks := [][]string{{"help", entry.name}, {entry.name, "--help"}, {entry.name, "-h"}, {entry.name, "-help"}}
 			if slices.Contains(subcommandHelp, entry.name) {
 				asks = append(asks, []string{entry.name, "help"})
 			}
@@ -130,15 +302,14 @@ var (
 	exitRowStart = 20
 )
 
-func TestEveryHelpEndsWithItsExitCodes(t *testing.T) {
+func TestEveryHelpStatesItsExitCodes(t *testing.T) {
 	for _, entry := range commands {
-		header := "\nExit codes of " + entry.name + ":\n"
-		_, table, found := strings.Cut(entry.help, header)
-		if !found {
-			t.Errorf("help %s has no %q", entry.name, strings.TrimSpace(header))
+		table := strings.TrimSuffix(part(entry.help, "Exit codes of "+entry.name), "\n\n")
+		if table == "" {
+			t.Errorf("help %s has no exit code table", entry.name)
 			continue
 		}
-		rows := strings.Split(strings.TrimSuffix(table, "\n"), "\n")
+		rows := strings.Split(table, "\n")
 		if !exitRow.MatchString(rows[0]) {
 			t.Errorf("help %s: the table opens with %q", entry.name, rows[0])
 		}
@@ -151,20 +322,6 @@ func TestEveryHelpEndsWithItsExitCodes(t *testing.T) {
 	}
 }
 
-func TestHelpLinesFitEightyColumns(t *testing.T) {
-	pages := map[string]string{"the short usage": usage.String()}
-	for _, entry := range commands {
-		pages["help "+entry.name] = entry.help
-	}
-	for name, page := range pages {
-		for number, line := range strings.Split(page, "\n") {
-			if width := utf8.RuneCountInString(line); width > usageWidth {
-				t.Errorf("%s, line %d, is %d columns: %s", name, number+1, width, line)
-			}
-		}
-	}
-}
-
 func TestNoArgumentsExitsTwo(t *testing.T) {
 	code, stdout, stderr := execute(t)
 	if code != 2 || stderr != "" || stdout != usage.String() {
@@ -172,15 +329,372 @@ func TestNoArgumentsExitsTwo(t *testing.T) {
 	}
 }
 
-func TestShortUsageGroupsTheLedgerCommands(t *testing.T) {
-	text := usage.String()
-	if !strings.Contains(text, "\nLedger commands: gateway, serve, keys, egress.\n") {
-		t.Errorf("the short usage does not group the ledger commands:\n%s", text)
+// pageExamples reads the command lines under a page's Examples: each line
+// that opens with costroid, joined with the lines a backslash carries it on
+// to. A line that ends in a colon says what the lines below it are for.
+func pageExamples(page string) []string {
+	var examples []string
+	carried := false
+	for line := range strings.SplitSeq(strings.TrimSpace(part(page, "Examples")), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case carried:
+			examples[len(examples)-1] += " " + strings.TrimSuffix(line, `\`)
+		case strings.HasSuffix(line, ":"):
+			continue
+		default:
+			examples = append(examples, strings.TrimSuffix(line, `\`))
+		}
+		carried = strings.HasSuffix(line, `\`)
 	}
-	others := text[strings.Index(text, "Other commands:"):strings.Index(text, "Ledger commands:")]
-	for _, name := range []string{"gateway", "serve", "keys", "egress"} {
-		if regexp.MustCompile(`\b` + name + `\b`).MatchString(others) {
-			t.Errorf("%s is named under other commands too", name)
+	return examples
+}
+
+// shellWords cuts a command line into its words as a shell would, as far as
+// the examples go: quotes group, and a redirection ends the command.
+func shellWords(t *testing.T, line string) []string {
+	t.Helper()
+	var words []string
+	word, quote, open := "", rune(0), false
+	for _, r := range line {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				word += string(r)
+			}
+		case r == '"' || r == '\'':
+			quote, open = r, true
+		case r == ' ':
+			if open {
+				words = append(words, word)
+			}
+			word, open = "", false
+		default:
+			word += string(r)
+			open = true
+		}
+	}
+	if quote != 0 {
+		t.Fatalf("%q leaves a quote open", line)
+	}
+	if open {
+		words = append(words, word)
+	}
+	if end := slices.Index(words, ">"); end >= 0 {
+		words = words[:end]
+	}
+	return words
+}
+
+// usageForm is one way to call a command, read from a usage line: the words
+// it must hold as they are, the flags it must and may hold, whether the flags
+// end with --, and how many values it needs beside them.
+type usageForm struct {
+	words    []string
+	required []string
+	allowed  []string
+	dashes   bool
+	values   int
+}
+
+// usageForms reads the forms under a page's Usage. A word in brackets is
+// optional; a flag's value follows it.
+func usageForms(page string, valued func(name string) bool) []usageForm {
+	var texts []string
+	for line := range strings.SplitSeq(strings.TrimSuffix(part(page, "Usage"), "\n\n"), "\n") {
+		if strings.HasPrefix(line, "    ") {
+			texts[len(texts)-1] += " " + strings.TrimSpace(line)
+		} else {
+			texts = append(texts, strings.TrimSpace(line))
+		}
+	}
+	var forms []usageForm
+	for _, text := range texts {
+		form, depth, skip, inside := usageForm{}, 0, false, false
+		for _, word := range strings.Fields(text)[2:] {
+			outer := depth == 0 && !strings.HasPrefix(word, "[")
+			depth += strings.Count(word, "[") - strings.Count(word, "]")
+			bare := strings.Trim(word, "[].|")
+			switch {
+			case bare == "":
+			case inside:
+				inside = !strings.HasSuffix(bare, ">")
+			case bare == "--":
+				form.dashes = form.dashes || outer
+			case strings.HasPrefix(bare, "--"):
+				name := strings.TrimPrefix(bare, "--")
+				form.allowed = append(form.allowed, name)
+				if outer {
+					form.required = append(form.required, name)
+				}
+				skip = valued(name)
+				continue
+			case skip:
+			case !outer:
+			case strings.HasPrefix(bare, "<") || strings.ToUpper(bare) == bare:
+				form.values++
+				inside = strings.HasPrefix(bare, "<") && !strings.HasSuffix(bare, ">")
+			default:
+				form.words = append(form.words, bare)
+			}
+			skip = false
+		}
+		forms = append(forms, form)
+	}
+	return forms
+}
+
+// TestEveryHelpExampleParsesWithItsCommandsFlags reads each example of each
+// page as a command line. Its command must be in the table. Its flags must
+// parse with the command's own flag set, which the test reaches by asking for
+// help where the flags end, so nothing runs. And one of the command's usage
+// forms must hold it: every flag that form requires, and no flag it lacks.
+func TestEveryHelpExampleParsesWithItsCommandsFlags(t *testing.T) {
+	flags := commandFlags(t)
+	for _, entry := range commands {
+		for _, example := range pageExamples(entry.help) {
+			t.Run(example, func(t *testing.T) {
+				words := shellWords(t, example)
+				if len(words) < 2 || words[0] != "costroid" {
+					t.Fatalf("the example is no costroid command line")
+				}
+				called, ok := lookup(words[1])
+				if !ok {
+					t.Fatalf("the example calls %s, which is no command", words[1])
+				}
+				boolean := map[string]bool{}
+				for _, defined := range flags[called.name] {
+					boolean[defined.name] = defined.boolean
+				}
+				valued := func(name string) bool { return !boolean[name] }
+				var given, values []string
+				args, end, dashes := words[2:], 0, false
+				for i := 0; i < len(args); i++ {
+					arg := args[i]
+					switch name, _, inline := strings.Cut(strings.TrimPrefix(arg, "--"), "="); {
+					case arg == "--":
+						dashes = true
+						values = append(values, args[i+1:]...)
+						i = len(args)
+					case !strings.HasPrefix(arg, "--"):
+						values = append(values, arg)
+					default:
+						if _, defined := boolean[name]; !defined {
+							t.Fatalf("the example gives --%s, which %s does not have", name, called.name)
+						}
+						given = append(given, name)
+						if valued(name) && !inline {
+							i++
+							if i >= len(args) {
+								t.Fatalf("--%s has no value", name)
+							}
+						}
+						end = i + 1
+					}
+				}
+				if end > 0 {
+					code, stdout, stderr := execute(t, append(slices.Concat([]string{called.name}, args[:end]), "--help")...)
+					if code != 0 || stdout+stderr != called.help {
+						t.Fatalf("%s does not parse the example's flags: exit %d, %s", called.name, code, stderr)
+					}
+				}
+				var why []string
+				for _, form := range usageForms(called.help, valued) {
+					missing := slices.DeleteFunc(slices.Clone(form.required), func(name string) bool { return slices.Contains(given, name) })
+					extra := slices.DeleteFunc(slices.Clone(given), func(name string) bool { return slices.Contains(form.allowed, name) })
+					words := slices.DeleteFunc(slices.Clone(form.words), func(word string) bool { return slices.Contains(values, word) })
+					switch {
+					case len(missing) > 0:
+						why = append(why, fmt.Sprintf("it lacks --%s", strings.Join(missing, ", --")))
+					case len(extra) > 0:
+						why = append(why, fmt.Sprintf("the form has no --%s", strings.Join(extra, ", --")))
+					case len(words) > 0:
+						why = append(why, fmt.Sprintf("it lacks %s", strings.Join(words, ", ")))
+					case form.dashes && !dashes:
+						why = append(why, "it lacks --")
+					case len(values)-len(form.words) < form.values:
+						why = append(why, fmt.Sprintf("it gives %d values of %d", len(values)-len(form.words), form.values))
+					default:
+						return
+					}
+				}
+				t.Errorf("no usage form of %s holds the example: %s", called.name, strings.Join(why, "; "))
+			})
+		}
+	}
+}
+
+// flagMistakes are command lines with one flag wrong, and the lines each
+// prints: the flag as it was typed and what is wrong with it, the nearest flag
+// when one is near, and the command whose help lists the flags.
+var flagMistakes = []struct {
+	args  []string
+	lines []string
+}{
+	{[]string{"run", "--frob"}, []string{"costroid: --frob is not a flag of costroid run", "Run costroid help run to list its flags."}},
+	{[]string{"run", "-budget", "5"}, []string{"costroid: -budget is not a flag of costroid run", "The nearest flag is --budget-usd.", "Run costroid help run to list its flags."}},
+	{[]string{"run", "--buget-usd=5"}, []string{"costroid: --buget-usd is not a flag of costroid run", "The nearest flag is --budget-usd.", "Run costroid help run to list its flags."}},
+	{[]string{"report", "--preview", "--rows"}, []string{"costroid: --rows needs a value", "Run costroid help report to list its flags."}},
+	{[]string{"result", "--pr", "abc"}, []string{`costroid: --pr takes a whole number, not "abc"`, "Run costroid help result to list its flags."}},
+	{[]string{"report", "--json=maybe"}, []string{`costroid: --json takes true or false, not "maybe"`, "Run costroid help report to list its flags."}},
+	{[]string{"gateway", "close", "--retry-after", "soon"}, []string{`costroid: --retry-after takes a duration, such as 30s, not "soon"`, "Run costroid help gateway to list its flags."}},
+	{[]string{"ingest-run", "--from", "nowhere"}, []string{"costroid: --from: takes KIND=PATH, with KIND one of execution-file, codex-home, gh-aw or focus", "Run costroid help ingest-run to list its flags."}},
+	{[]string{"gateway", "mint", "--budget", "5"}, []string{"costroid: --budget is not a flag of costroid gateway mint", "The nearest flag is --budget-usd.", "Run costroid help gateway to list its flags."}},
+	{[]string{"init", "github", "--agnet", "claude"}, []string{"costroid: --agnet is not a flag of costroid init", "The nearest flag is --agent.", "Run costroid help init to list its flags."}},
+	{[]string{"doctor", "--cli"}, []string{"costroid: --cli is not a flag of costroid doctor", "The nearest flag is --ci.", "Run costroid help doctor to list its flags."}},
+	{[]string{"validate", "--frob"}, []string{"costroid: --frob is not a flag of costroid validate", "Run costroid help validate to list its flags."}},
+	{[]string{"serve", "--adr", ":1"}, []string{"costroid: --adr is not a flag of costroid serve", "The nearest flag is --addr.", "Run costroid help serve to list its flags."}},
+	{[]string{"keys", "create", "--ownr", "github.com:example"}, []string{"costroid: --ownr is not a flag of costroid keys create", "The nearest flag is --owner.", "Run costroid help keys to list its flags."}},
+	{[]string{"egress", "report", "--jsn"}, []string{"costroid: --jsn is not a flag of costroid egress report", "The nearest flag is --json.", "Run costroid help egress to list its flags."}},
+}
+
+// TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp holds what a wrong
+// flag prints, on every command that takes flags: its own lines on stderr, the
+// flag first, and never the help page or the flag package's own message.
+func TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp(t *testing.T) {
+	for _, mistake := range flagMistakes {
+		code, stdout, stderr := execute(t, mistake.args...)
+		if want := strings.Join(mistake.lines, "\n") + "\n"; code != exitFailure || stdout != "" || stderr != want {
+			t.Errorf("%v: exit %d, stdout %q, stderr:\n%swant:\n%s", mistake.args, code, stdout, stderr, want)
+		}
+	}
+	lines := map[string][][]string{"serve": {{"serve"}}, "keys": {{"keys", "create"}}, "egress": {{"egress", "report"}}, "validate": {{"validate"}}, "lint-recipes": {{"lint-recipes"}}}
+	for name, given := range helpAfterFlags {
+		lines[name] = given
+	}
+	for _, entry := range commands {
+		if len(lines[entry.name]) == 0 && entry.name != "version" {
+			t.Errorf("%s has no command line to get a flag wrong on", entry.name)
+		}
+		for _, line := range lines[entry.name] {
+			args := append(slices.Clone(line), "--no-such-flag")
+			code, stdout, stderr := execute(t, args...)
+			said := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+			if code != exitFailure || stdout != "" || len(said) != 2 ||
+				!strings.HasPrefix(said[0], "costroid: --no-such-flag is not a flag of costroid "+entry.name) ||
+				said[1] != "Run costroid help "+entry.name+" to list its flags." {
+				t.Errorf("%v: exit %d, stdout %q, stderr:\n%s", args, code, stdout, stderr)
+			}
+			if strings.Contains(stderr, "Usage:") || strings.Contains(stderr, "flag provided but not defined") {
+				t.Errorf("%v prints the help page or the flag package's message:\n%s", args, stderr)
+			}
+		}
+	}
+}
+
+// TestAMistypedCommandGetsASuggestionAndIsNeverRun holds what an unknown
+// command prints: the command as typed, the nearest command when one is near,
+// and how to list the commands. The nearest command is named, never run.
+func TestAMistypedCommandGetsASuggestionAndIsNeverRun(t *testing.T) {
+	for typed, near := range map[string]string{
+		"lnit":       "The nearest commands are lint and init.",
+		"innit":      "The nearest command is init.",
+		"demmo":      "The nearest command is demo.",
+		"vresion":    "The nearest command is version.",
+		"follow":     "The nearest command is follow-up.",
+		"reconsile":  "The nearest command is reconcile.",
+		"frobnicate": "No command is near it.",
+		"-v":         "No command is near it.",
+		"x":          "No command is near it.",
+	} {
+		for _, args := range [][]string{{typed}, {"help", typed}} {
+			code, stdout, stderr := execute(t, args...)
+			want := fmt.Sprintf("costroid: unknown command %q\n%s\nRun costroid help to list the commands.\n", typed, near)
+			if code != exitFailure || stdout != "" || stderr != want {
+				t.Errorf("%v: exit %d, stdout %q, stderr:\n%swant:\n%s", args, code, stdout, stderr, want)
+			}
+		}
+	}
+	code, stdout, stderr := execute(t, "demmo", "--markdown")
+	if code != exitFailure || stdout != "" || strings.Contains(stderr, "Costroid") {
+		t.Errorf("a mistyped demo ran: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// said is the directory that holds each command's help page as it was before
+// help took its parts: what a page said then, it says now.
+const said = "testdata/said"
+
+// saidUnits cuts a page of that time into what it said, piece by piece: each
+// sentence of its prose, and each row of a table or line of a usage with the
+// lines that carry it on. White space is folded, so a unit reads the same
+// however it wraps.
+func saidUnits(page string) []string {
+	var units []string
+	prose, row := "", ""
+	flush := func() {
+		if row != "" {
+			units = append(units, strings.Join(strings.Fields(row), " "))
+		}
+		units = append(units, sentences(strings.Join(strings.Fields(prose), " "))...)
+		prose, row = "", ""
+	}
+	for line := range strings.SplitSeq(page, "\n") {
+		switch {
+		case strings.TrimSpace(line) == "":
+			flush()
+		case !strings.HasPrefix(line, " "):
+			if row != "" {
+				flush()
+			}
+			prose += " " + line
+		case strings.HasPrefix(line, "   ") && row != "":
+			row += " " + line
+		default:
+			flush()
+			row = line
+		}
+	}
+	flush()
+	return units
+}
+
+// sentences cuts prose after each full stop that ends a word and has a space
+// behind it.
+func sentences(prose string) []string {
+	var found []string
+	start := 0
+	for i := 1; i+1 < len(prose); i++ {
+		if prose[i] == '.' && prose[i-1] != ' ' && prose[i+1] == ' ' {
+			found = append(found, prose[start:i+1])
+			start = i + 2
+		}
+	}
+	if start < len(prose) {
+		found = append(found, prose[start:])
+	}
+	return found
+}
+
+// TestNothingAHelpPageSaidIsDropped holds every sentence and every table row
+// of each command's earlier help page to the page the command prints now:
+// each stands there whole, wherever it moved to.
+func TestNothingAHelpPageSaidIsDropped(t *testing.T) {
+	pages, err := filepath.Glob(filepath.Join(said, "*.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) < 26 {
+		t.Fatalf("%s holds %d pages, which is fewer than the commands that had one", said, len(pages))
+	}
+	for _, path := range pages {
+		name := strings.TrimSuffix(filepath.Base(path), ".txt")
+		entry, ok := lookup(name)
+		if !ok {
+			t.Errorf("%s had a help page, and is no command now", name)
+			continue
+		}
+		now := strings.Join(strings.Fields(entry.help), " ")
+		units := saidUnits(readFile(t, path))
+		if len(units) < 5 {
+			t.Errorf("%s: %d units read from %s, which is too few to be a page", name, len(units), path)
+		}
+		for _, unit := range units {
+			if !strings.Contains(now, unit) {
+				t.Errorf("help %s no longer says: %s", name, unit)
+			}
 		}
 	}
 }
@@ -192,9 +706,9 @@ func TestEveryFlagIsNamedInItsHelp(t *testing.T) {
 		if len(names) == 0 != slices.Contains(flagless, entry.name) {
 			t.Errorf("%s: %d flags found, and flagless lists it: %t", entry.name, len(names), slices.Contains(flagless, entry.name))
 		}
-		for _, name := range names {
-			if !regexp.MustCompile(`--` + regexp.QuoteMeta(name) + `([^a-z0-9-]|$)`).MatchString(entry.help) {
-				t.Errorf("help %s does not name --%s", entry.name, name)
+		for _, defined := range names {
+			if !regexp.MustCompile(`--` + regexp.QuoteMeta(defined.name) + `([^a-z0-9-]|$)`).MatchString(entry.help) {
+				t.Errorf("help %s does not name --%s", entry.name, defined.name)
 			}
 		}
 		delete(flags, entry.name)
@@ -212,11 +726,18 @@ var flagDefiners = map[string]int{
 	"Int64Var": 1, "IntVar": 1, "StringVar": 1, "TextVar": 1, "Uint64Var": 1, "UintVar": 1, "Var": 1,
 }
 
+// definedFlag is a flag a command defines, and whether it stands without a
+// value.
+type definedFlag struct {
+	name    string
+	boolean bool
+}
+
 // commandFlags reads, from the source, the flags every command's flag sets
 // define. A flag set belongs to the command its name opens with. A function
 // that takes a flag set, such as addAccountFlags, gives its flags to every
 // command whose set is passed to it.
-func commandFlags(t *testing.T) map[string][]string {
+func commandFlags(t *testing.T) map[string][]definedFlag {
 	t.Helper()
 	var funcs []*ast.FuncDecl
 	for _, dir := range flagSources {
@@ -247,8 +768,8 @@ func commandFlags(t *testing.T) map[string][]string {
 			makers[fn.Name.Name] = command
 		}
 	}
-	flags := map[string][]string{}
-	helpers := map[string][]string{}
+	flags := map[string][]definedFlag{}
+	helpers := map[string][]definedFlag{}
 	passes := map[string][]string{}
 	for _, fn := range funcs {
 		sets := map[string]string{}
@@ -271,11 +792,11 @@ func commandFlags(t *testing.T) map[string][]string {
 					}
 				}
 			case *ast.CallExpr:
-				if command, name, ok := flagDefinition(t, node, sets); ok {
+				if command, defined, ok := flagDefinition(t, node, sets); ok {
 					if command == "" {
-						helpers[fn.Name.Name] = append(helpers[fn.Name.Name], name)
+						helpers[fn.Name.Name] = append(helpers[fn.Name.Name], defined)
 					} else {
-						flags[command] = append(flags[command], name)
+						flags[command] = append(flags[command], defined)
 					}
 				}
 				if callee, ok := node.Fun.(*ast.Ident); ok {
@@ -294,13 +815,18 @@ func commandFlags(t *testing.T) map[string][]string {
 			flags[command] = append(flags[command], helpers[callee]...)
 		}
 	}
-	for command, names := range flags {
-		if i := slices.Index(names, computed); i >= 0 {
+	for command, defined := range flags {
+		isComputed := func(defined definedFlag) bool { return defined.name == computed }
+		if slices.ContainsFunc(defined, isComputed) {
 			compute, ok := computedFlags[command]
 			if !ok {
 				t.Fatalf("%s defines a flag whose name is not a literal, and computedFlags does not list it", command)
 			}
-			flags[command] = append(slices.DeleteFunc(names, func(name string) bool { return name == computed }), compute()...)
+			defined = slices.DeleteFunc(defined, isComputed)
+			for _, name := range compute() {
+				defined = append(defined, definedFlag{name: name})
+			}
+			flags[command] = defined
 		}
 	}
 	return flags
@@ -310,30 +836,30 @@ func commandFlags(t *testing.T) map[string][]string {
 const computed = "\x00computed"
 
 // flagDefinition reads a call that defines a flag on one of sets, and answers
-// the set's command and the flag's name.
-func flagDefinition(t *testing.T, call *ast.CallExpr, sets map[string]string) (string, string, bool) {
+// the set's command and the flag.
+func flagDefinition(t *testing.T, call *ast.CallExpr, sets map[string]string) (string, definedFlag, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
-		return "", "", false
+		return "", definedFlag{}, false
 	}
 	receiver, ok := selector.X.(*ast.Ident)
 	if !ok {
-		return "", "", false
+		return "", definedFlag{}, false
 	}
 	command, isSet := sets[receiver.Name]
 	index, defines := flagDefiners[selector.Sel.Name]
 	if !isSet || !defines {
-		return "", "", false
+		return "", definedFlag{}, false
 	}
 	literal, ok := call.Args[index].(*ast.BasicLit)
 	if !ok {
-		return command, computed, true
+		return command, definedFlag{name: computed}, true
 	}
 	name, err := strconv.Unquote(literal.Value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return command, name, true
+	return command, definedFlag{name: name, boolean: strings.HasPrefix(selector.Sel.Name, "Bool")}, true
 }
 
 // setCommand answers the command of a new flag set an expression makes, or

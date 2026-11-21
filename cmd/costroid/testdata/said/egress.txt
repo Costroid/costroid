@@ -1,0 +1,15 @@
+Usage:
+  costroid egress report [--json]
+
+egress report prints the service's outbound calls: one line per UTC day, host
+and outcome, which is completed, failed or refused. A refused call never
+opened a socket. The report holds no path, query, header or body. A service
+writes its counters every 5 seconds. --json prints the counters as one JSON
+object.
+
+Environment:
+  COSTROID_DATABASE_URL  the application role's connection
+
+Exit codes of egress:
+  0                 the report was printed
+  125               costroid could not read the command line or the database

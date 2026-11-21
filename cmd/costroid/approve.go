@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/policy"
@@ -36,31 +37,38 @@ var (
 	errHeadMoved               = errors.New("the pull request's head has moved since this run")
 )
 
-const approveHelp = `Usage:
-  costroid approve
-
-approve runs in a workflow that a pull request review starts. It reads the
+var approveHelp = cli.Page{
+	Command:  "approve",
+	Summary:  "approve runs in a workflow that a pull request review starts.",
+	Usage:    []string{"costroid approve"},
+	Examples: []string{"costroid approve"},
+	Sections: []cli.Section{
+		{Heading: "What it posts", Body: []cli.Block{cli.Text(`It reads the
 pull request's reviews, and when one approves the head commit it posts the
 costroid check again: an approved failure concludes neutral and names the
 approver. When no approval counts any more, as after a dismissal, it posts
 the policy's verdict again. It posts nothing when the newest check already
-concludes so.
-
-A review counts only when it approves, names the head commit the API answers
+concludes so.`)}},
+		{Heading: "Which review counts", Body: []cli.Block{cli.Text(`A review counts only when it approves, names the head commit the API answers
 now, comes from an account that can write to the repository and is not an
 App, is not the pull request's author's unless approval.allow_author is true,
 and is younger than approval.expires_days, 7 by default. Each reviewer's
-latest approval, request for changes or dismissal is their standing.
-
-The settings are read from costroid.yml at the head of the base branch. A
+latest approval, request for changes or dismissal is their standing.`)}},
+		{Heading: "Settings, forks and hosts", Body: []cli.Block{cli.Text(`The settings are read from costroid.yml at the head of the base branch. A
 review on a fork's pull request runs with a read-only token, so approve posts
 nothing there. Like report, it exits 0 whatever the host answers, and outside
-GitHub Actions it refuses and exits 125. docs/approval.md has the workflow.
-
-Exit codes of approve:
-  0                 approve ran, whatever the host answered
-  125               GitHub Actions was not detected, or an argument was given
-`
+GitHub Actions it refuses and exits 125. docs/approval.md has the workflow.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"GITHUB_TOKEN", "the token the reviews are read and the check is posted with"},
+		{"GITHUB_*", "what GitHub Actions sets about the review's job"},
+	}},
+	Exits: []cli.Row{
+		{"0", "approve ran, whatever the host answered"},
+		{"125", "GitHub Actions was not detected, or an argument was given"},
+	},
+	Docs: "approval",
+}.String()
 
 // reviewEvent is the part of a pull_request_review event approve reads.
 type reviewEvent struct {
@@ -90,10 +98,10 @@ type approvalHost interface {
 
 func approveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("approve", flag.ContinueOnError)
-	set.SetOutput(stderr)
-	if err := parseFlags(set, args, approveHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, approveHelp, stdout); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
 	if set.NArg() > 0 {

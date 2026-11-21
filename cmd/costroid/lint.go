@@ -6,35 +6,41 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/recipelint"
 )
 
 // defaultWorkflows is where GitHub reads a repository's workflows.
 const defaultWorkflows = ".github/workflows"
 
-const lintHelp = `Usage:
-  costroid lint [--strict] [paths]
-
-lint reads your own GitHub workflows, .github/workflows when no path is named,
+var lintHelp = cli.Page{
+	Command: "lint",
+	Summary: `lint reads your own GitHub workflows, .github/workflows when no path is named,
 and judges each one that starts a coding agent: who can start a run that spends
-your key, and what the agent's job holds. Each finding is high, medium or a
-note. docs/lint.md lists the rules.
-
-Exit codes of lint:
-  0                 no high finding, and with --strict no medium one
-  1                 a high finding, or with --strict a medium one
-  125               costroid could not read a path, or found no YAML file in it
-`
+your key, and what the agent's job holds.`,
+	Usage:    []string{"costroid lint [--strict] [paths]"},
+	Examples: []string{"costroid lint", "costroid lint --strict .github/workflows/claude.yml"},
+	Flags:    []cli.Row{{"--strict", "fail on a medium finding too"}},
+	Sections: []cli.Section{
+		{Heading: "Findings", Body: []cli.Block{cli.Text("Each finding is high, medium or a\nnote. docs/lint.md lists the rules.")}},
+	},
+	Exits: []cli.Row{
+		{"0", "no high finding, and with --strict no medium one"},
+		{"1", "a high finding, or with --strict a medium one"},
+		{"125", "costroid could not read a path, or found no YAML file in it"},
+	},
+	Docs: "lint",
+}.String()
 
 func lintCommand(args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("lint", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	strict := set.Bool("strict", false, "fail on a medium finding too")
-	err := parseFlags(set, args, lintHelp, stdout, stderr)
+	err := parseFlags(set, args, lintHelp, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if err != nil {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
 	paths := set.Args()

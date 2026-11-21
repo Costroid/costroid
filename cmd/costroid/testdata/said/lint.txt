@@ -1,0 +1,12 @@
+Usage:
+  costroid lint [--strict] [paths]
+
+lint reads your own GitHub workflows, .github/workflows when no path is named,
+and judges each one that starts a coding agent: who can start a run that spends
+your key, and what the agent's job holds. Each finding is high, medium or a
+note. docs/lint.md lists the rules.
+
+Exit codes of lint:
+  0                 no high finding, and with --strict no medium one
+  1                 a high finding, or with --strict a medium one
+  125               costroid could not read a path, or found no YAML file in it

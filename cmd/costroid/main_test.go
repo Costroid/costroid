@@ -339,7 +339,7 @@ func TestTheEgressCommandIsDispatched(t *testing.T) {
 func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
 	for _, args := range [][]string{{"diff"}, {"help", "diff"}} {
 		code, _, stderr := execute(t, args...)
-		if code != exitFailure || stderr != "costroid: unknown command \"diff\"\nRun costroid help to list the commands.\n" {
+		if code != exitFailure || stderr != "costroid: unknown command \"diff\"\nNo command is near it.\nRun costroid help to list the commands.\n" {
 			t.Errorf("%v: exit %d, %q", args, code, stderr)
 		}
 	}
@@ -347,53 +347,27 @@ func TestUnknownCommandExitsAsAFailureAndNamesHelp(t *testing.T) {
 
 var update = flag.Bool("update", false, "rewrite testdata/usage.golden and testdata/existing-claude.golden")
 
-const maxUsageLines = 18
-
-func TestBareCommandPrintsShortUsage(t *testing.T) {
-	code, stdout, stderr := execute(t)
-	if code != exitUsage || stderr != "" {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
-	}
-	if stdout != usage.String() {
-		t.Errorf("stdout is not the short usage:\n%s", stdout)
-	}
-	if lines := strings.Count(stdout, "\n"); lines > maxUsageLines {
-		t.Errorf("the short usage has %d lines", lines)
-	}
-	for _, line := range []string{"  costroid run --budget-usd N -- <agent command>\n", "  costroid report --rows rows.jsonl\n", "  costroid validate [costroid.yml]\n", "  costroid help <command>\n", "  costroid --version\n"} {
-		if !strings.Contains(stdout, line) {
-			t.Errorf("the short usage lacks %q", line)
-		}
-	}
-	for _, entry := range commands {
-		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(entry.name) + `\b`).MatchString(stdout) {
-			t.Errorf("the short usage does not name %s", entry.name)
-		}
-	}
-}
-
-// TestShortUsageListsTheFirstCommandsFirst holds the usage block to the
-// order a first reader meets the commands: demo and lint, which need no key,
-// then init and doctor, which add the check to a repository, then run. None
-// of the four is named again under other commands.
-func TestShortUsageListsTheFirstCommandsFirst(t *testing.T) {
-	text := usage.String()
-	block, others, _ := strings.Cut(text, "\nOther commands:")
-	_, block, _ = strings.Cut(block, "Usage:\n")
+// TestBareCallListsTheFirstCommandsFirst holds the first group to the order a
+// first reader meets the commands: demo and lint, which need no key, then init
+// and doctor, which add the check to a repository, then run.
+func TestBareCallListsTheFirstCommandsFirst(t *testing.T) {
 	var named []string
-	for line := range strings.SplitSeq(block, "\n") {
-		if fields := strings.Fields(line); len(fields) > 1 && fields[0] == "costroid" {
-			named = append(named, fields[1])
+	for _, entry := range commands {
+		if entry.where == onYourMachine {
+			named = append(named, entry.name)
 		}
 	}
 	if want := []string{"demo", "lint", "init", "doctor", "run"}; len(named) < len(want) || !slices.Equal(named[:len(want)], want) {
-		t.Errorf("the usage block names %v, want it to open with %v:\n%s", named, want, text)
+		t.Errorf("the first group names %v, want it to open with %v", named, want)
 	}
-	others, _, _ = strings.Cut(others, "Ledger commands:")
-	for _, name := range []string{"demo", "lint", "init", "doctor"} {
-		if regexp.MustCompile(`[ ,]` + name + `[,.]`).MatchString(others) {
-			t.Errorf("%s is named under other commands:\n%s", name, text)
+	text := usage.String()
+	at := 0
+	for _, name := range named {
+		next := strings.Index(text[at:], "\n  "+name+" ")
+		if next < 0 {
+			t.Fatalf("%s does not open a line below the command before it:\n%s", name, text)
 		}
+		at += next + 1
 	}
 }
 
@@ -410,7 +384,7 @@ func TestHelpPerCommand(t *testing.T) {
 			if entry.help == "" {
 				return
 			}
-			if stdout != entry.help || !strings.HasPrefix(stdout, "Usage:\n  costroid "+entry.name) {
+			if stdout != entry.help || !strings.Contains(stdout, "\nUsage:\n  costroid "+entry.name) {
 				t.Errorf("help %s printed:\n%s", entry.name, stdout)
 			}
 			for _, option := range []string{"-h", "-help", "--help"} {

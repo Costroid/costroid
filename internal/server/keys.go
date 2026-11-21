@@ -8,32 +8,39 @@ import (
 	"io"
 	"regexp"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/store"
 )
 
 // KeysUsage is keys' help page. costroid help keys prints it on stdout, and a
 // command line keys cannot read prints it on stderr.
-const KeysUsage = `Usage:
-  costroid keys create --owner HOST:OWNER
-  costroid keys revoke <id>
-
-keys issues and revokes tenant ingest keys.
-
-create prints the new key on stdout, once, and its id on stderr. The ledger
+var KeysUsage = cli.Page{
+	Command: "keys",
+	Summary: "keys issues and revokes tenant ingest keys.",
+	Usage: []string{
+		"costroid keys create --owner HOST:OWNER",
+		"costroid keys revoke <id>",
+	},
+	Examples: []string{
+		"costroid keys create --owner github.com:example > key",
+		`costroid keys revoke "$KEY_ID"`,
+	},
+	Flags: []cli.Row{{"--owner HOST:OWNER", "an SCM owner of the tenant, host:owner"}},
+	Sections: []cli.Section{
+		{Heading: "create and revoke", Body: []cli.Block{cli.Text(`create prints the new key on stdout, once, and its id on stderr. The ledger
 keeps the key's SHA-256, which is the id, so a lost key cannot be read back.
 --owner names an SCM owner of the tenant the key is for. revoke takes the id
-and stops the key at the next request.
-
-A key's rows stay unverified and unattributed, and never reach a budget.
-
-Environment:
-  COSTROID_MIGRATION_DATABASE_URL  the owner role's connection
-
-Exit codes of keys:
-  0                 the key was created or revoked
-  125               costroid could not read the command line, reach the
-                    database or find the tenant or the key
-`
+and stops the key at the next request.`)}},
+		{Heading: "What a key's rows read", Body: []cli.Block{cli.Text("A key's rows stay unverified and unattributed, and never reach a budget.")}},
+	},
+	Environment: []cli.Block{cli.Rows{{envMigration, "the owner role's connection"}}},
+	Exits: []cli.Row{
+		{"0", "the key was created or revoked"},
+		{"125", `costroid could not read the command line, reach the
+database or find the tenant or the key`},
+	},
+	Docs: "serve",
+}.String()
 
 var keyID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -69,10 +76,11 @@ func keysCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 
 func createKey(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	set := flag.NewFlagSet("keys create", flag.ContinueOnError)
-	set.SetOutput(stderr)
-	set.Usage = func() { fmt.Fprint(stderr, KeysUsage) }
 	ownerFlag := set.String("owner", "", "an SCM owner of the tenant, host:owner")
-	if err := set.Parse(args); err != nil {
+	if err := cli.Parse(set, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stdout, KeysUsage)
+		}
 		return err
 	}
 	owner, err := parseBinding("--owner", *ownerFlag)

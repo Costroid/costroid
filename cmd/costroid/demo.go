@@ -70,10 +70,9 @@ var demoStates = []string{demoNeutral, demoCapped, demoFailure, demoSkipped}
 // carries. It needs no CI system, no host and no key.
 func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("demo", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	markdown := set.Bool("markdown", false, "print the comment as the Markdown report posts")
 	state := set.String("state", demoNeutral, "the comment to show: "+strings.Join(demoStates, ", "))
-	err := parseFlags(set, args, demoHelp, stdout, stderr)
+	err := parseFlags(set, args, demoHelp, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -103,7 +102,7 @@ func printDemo(ctx context.Context, state string, markdown bool, stdout io.Write
 		return fmt.Errorf("demo: %w", err)
 	}
 	if !markdown {
-		body = forTerminal(body) + "\n" + paragraph(comment.VerdictSentence(input)) + "\n"
+		body = forTerminal(body) + "\n" + nextAfterDemo + "\n\n" + paragraph(comment.VerdictSentence(input)) + "\n"
 	}
 	if _, err := io.WriteString(stdout, body); err != nil {
 		return fmt.Errorf("demo: print the comment: %w", err)

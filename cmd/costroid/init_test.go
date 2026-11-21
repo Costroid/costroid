@@ -731,7 +731,7 @@ func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 		{[]string{"github", "--agent", "claude", "--existing", "x.yml"}, "--existing reads a GitHub workflow that runs claude-code-action"},
 		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--force"}, "--existing writes nothing"},
 		{[]string{"github", "gitlab", "--agent", "claude"}, "init takes one host"},
-		{[]string{"github", "--agent", "claude", "--budget", "5"}, "flag provided but not defined"},
+		{[]string{"github", "--agent", "claude", "--budget", "5"}, "--budget is not a flag of costroid init"},
 	} {
 		root := t.TempDir()
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)

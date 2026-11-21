@@ -15,23 +15,47 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/gateway"
 )
 
-const gatewayUsage = `Usage:
-  costroid gateway keygen --out FILE
-  costroid gateway public-key
-  costroid gateway request --out DIR
-  costroid gateway mint --url URL --budget-usd N --lifetime-minutes N
-                        --max-request-tokens N [--max-parallel-requests N]
-                        [--repository-daily-cap-usd N]
-                        [--author-daily-cap-usd N] [--request FILE]
-  costroid gateway close --url URL [--retry-after DURATION]
-
-gateway gives one CI run its own key on a LiteLLM proxy.
-
-keygen draws a sealing key pair at random. It writes the private half to FILE,
+var gatewayUsage = cli.Page{
+	Command: "gateway",
+	Summary: "gateway gives one CI run its own key on a LiteLLM proxy.",
+	Usage: []string{
+		"costroid gateway keygen --out FILE",
+		"costroid gateway public-key",
+		"costroid gateway request --out DIR",
+		"costroid gateway mint --url URL --budget-usd N --lifetime-minutes N",
+		"                      --max-request-tokens N [--max-parallel-requests N]",
+		"                      [--repository-daily-cap-usd N]",
+		"                      [--author-daily-cap-usd N] [--request FILE]",
+		"costroid gateway close --url URL [--retry-after DURATION]",
+	},
+	Examples: []string{
+		"costroid gateway keygen --out sealing-key",
+		"costroid gateway public-key",
+		"costroid gateway request --out gateway",
+		"costroid gateway mint --url https://gateway.example --budget-usd 5 \\",
+		"    --lifetime-minutes 30 --max-request-tokens 200000",
+		"costroid gateway close --url https://gateway.example",
+	},
+	Flags: []cli.Row{
+		{"--out FILE", "with keygen, the file the private half goes to; it must not exist"},
+		{"--out DIR", "with request, the directory the key and the sealed request go to"},
+		{"--url URL", "the gateway's URL"},
+		{"--budget-usd N", "the run's budget in USD, the key's max_budget"},
+		{"--lifetime-minutes N", "the key's lifetime: the agent job's timeout"},
+		{"--max-request-tokens N", "the most tokens one request may hold, input and output together"},
+		{"--max-parallel-requests N", "the requests the key may have in flight at once"},
+		{"--repository-daily-cap-usd N", "the repository's budget per day, as a team's"},
+		{"--author-daily-cap-usd N", "the author's budget per day, as a user's"},
+		{"--request FILE", "a sealed request file, in place of this run's artifact"},
+		{"--retry-after DURATION", "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none"},
+	},
+	Sections: []cli.Section{
+		{Heading: "keygen and public-key", Body: []cli.Block{cli.Text(`keygen draws a sealing key pair at random. It writes the private half to FILE,
 which must not exist, for this user alone, and prints the public half. Store
 FILE's content as the secret COSTROID_GATEWAY_SEALING_KEY of the environment
 the mint job names, store the public half as the repository variable
@@ -39,14 +63,12 @@ COSTROID_GATEWAY_PUBLIC_KEY, then delete FILE. Nothing about the pair comes
 from the admin key.
 
 public-key prints the public half of the sealing key in
-COSTROID_GATEWAY_SEALING_KEY, to check the repository variable against it.
-
-request runs in the agent's job. It draws the run's key and writes it to
-DIR/key for this user alone. It writes DIR/` + gateway.RequestFile + `, the
+COSTROID_GATEWAY_SEALING_KEY, to check the repository variable against it.`)}},
+		{Heading: "request", Body: []cli.Block{cli.Text(`request runs in the agent's job. It draws the run's key and writes it to
+DIR/key for this user alone. It writes DIR/costroid-gateway-request.json, the
 key sealed to COSTROID_GATEWAY_PUBLIC_KEY for this repository, run and
-attempt. It prints the key's id, never the key.
-
-mint runs in a job that holds COSTROID_GATEWAY_SEALING_KEY and
+attempt. It prints the key's id, never the key.`)}},
+		{Heading: "mint", Body: []cli.Block{cli.Text(`mint runs in a job that holds COSTROID_GATEWAY_SEALING_KEY and
 COSTROID_GATEWAY_ADMIN_KEY and never runs the agent. It opens the request, from
 --request or from this run's artifact costroid-gateway-request-<attempt> with
 GITHUB_TOKEN, and registers the key with the budget, an expiry, the
@@ -60,9 +82,8 @@ budget per day, and --author-daily-cap-usd in a user for the pull request's
 author with that budget per day. The pull request, its head commit and its
 author come from the event file GITHUB_EVENT_PATH names. When mint cannot read
 it, it warns and names the file: the key then names none of the three, and no
-author's budget applies.
-
-close deletes the run's key by its alias, and prints deleted, or absent when no
+author's budget applies.`)}},
+		{Heading: "close", Body: []cli.Block{cli.Text(`close deletes the run's key by its alias, and prints deleted, or absent when no
 key was left. Run it when the job ends, also on failure. When it finds no key,
 mint may still be waiting for the request, so close waits --retry-after, no
 time by default, and deletes once more. The recipe runs close after mint, so
@@ -70,14 +91,26 @@ it waits none. When COSTROID_INGEST_URL is set,
 close first reads what the gateway counted on the key, waiting up to 30 seconds
 for the figure to settle, and after the delete attests it to that ledger under
 the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
-Only an attested count lets a budget on the run's rows pass.
-
-The gateway's URL must be https, except on localhost and 127.0.0.1.
-
-Exit codes of gateway:
-  0                 done
-  125               not done, and the line on stderr says why
-`
+Only an attested count lets a budget on the run's rows pass.`)}},
+		{Heading: "The gateway's URL", Body: []cli.Block{cli.Text("The gateway's URL must be https, except on localhost and 127.0.0.1.")}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{sealingKeyVariable, "the private half of the sealing key, for public-key and mint"},
+		{publicKeyVariable, "the public half, which request seals the key to"},
+		{adminKeyVariable, "the gateway's admin key, for mint and close"},
+		{gatewayURLVar, "the gateway's URL, when --url is not given"},
+		{ingestURLVariable, "the ledger mint and close attest to"},
+		{ingestAudienceVariable, "the audience of the OIDC token they attest under"},
+		{"GITHUB_TOKEN", "the token mint reads this run's artifact with"},
+		{"GITHUB_EVENT_PATH", "the event file mint reads the pull request from"},
+		{"GITHUB_*", "what GitHub Actions sets about the run"},
+	}},
+	Exits: []cli.Row{
+		{"0", "done"},
+		{"125", "not done, and the line on stderr says why"},
+	},
+	Docs: "gateway",
+}.String()
 
 const (
 	adminKeyVariable   = "COSTROID_GATEWAY_ADMIN_KEY"
@@ -157,9 +190,9 @@ func sealingKey() (string, error) {
 }
 
 func gatewayKeygen(args []string, stdout, stderr io.Writer) error {
-	set := gatewayFlags("keygen", stderr)
+	set := flag.NewFlagSet("gateway keygen", flag.ContinueOnError)
 	out := set.String("out", "", "the file the private half goes to; it must not exist")
-	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
 		return err
 	}
 	if *out == "" {
@@ -197,16 +230,10 @@ func gatewayPublicKey(stdout io.Writer) error {
 	return nil
 }
 
-func gatewayFlags(name string, stderr io.Writer) *flag.FlagSet {
-	set := flag.NewFlagSet("gateway "+name, flag.ContinueOnError)
-	set.SetOutput(stderr)
-	return set
-}
-
 func gatewayRequest(args []string, stdout, stderr io.Writer) error {
-	set := gatewayFlags("request", stderr)
+	set := flag.NewFlagSet("gateway request", flag.ContinueOnError)
 	out := set.String("out", "", "the directory the key and the sealed request go to")
-	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
 		return err
 	}
 	public := os.Getenv(publicKeyVariable)
@@ -248,7 +275,7 @@ type mintFlags struct {
 }
 
 func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
-	set := gatewayFlags("mint", stderr)
+	set := flag.NewFlagSet("gateway mint", flag.ContinueOnError)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	budget := set.String("budget-usd", "", "the run's budget in USD, the key's max_budget")
 	minutes := set.Int("lifetime-minutes", 0, "the key's lifetime: the agent job's timeout")
@@ -257,7 +284,7 @@ func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
 	repository := set.String("repository-daily-cap-usd", "", "the repository's budget per day, as a team's")
 	author := set.String("author-daily-cap-usd", "", "the author's budget per day, as a user's")
 	request := set.String("request", "", "a sealed request file, in place of this run's artifact")
-	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
 		return mintFlags{}, err
 	}
 	if *address == "" || *budget == "" || *minutes <= 0 || *tokens <= 0 {
@@ -413,10 +440,10 @@ func eventAuthor(path string) string {
 }
 
 func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	set := gatewayFlags("close", stderr)
+	set := flag.NewFlagSet("gateway close", flag.ContinueOnError)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	retry := set.Duration("retry-after", 0, "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none")
-	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
 		return err
 	}
 	if *address == "" {

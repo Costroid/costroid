@@ -1,0 +1,15 @@
+Usage:
+  costroid lint-recipes <paths>
+
+lint-recipes holds the CI recipes Costroid ships, and its action, to their
+security rules: no pull_request_target trigger, every action pinned by commit
+SHA, explicit permissions, an agent's job that holds read access to the code
+and no OIDC token, agent telemetry that carries no prompt or response, and no
+expression inside a script. When the working directory holds a plugin
+marketplace, it holds the marketplace and its plugins to their rules too. Each
+rejected line goes to stderr. costroid lint judges your own workflows instead.
+
+Exit codes of lint-recipes:
+  0                 every file passes
+  1                 a line is rejected
+  125               costroid could not read a path

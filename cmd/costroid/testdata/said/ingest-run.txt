@@ -1,0 +1,71 @@
+Usage:
+  costroid ingest-run --from KIND=PATH --out rows.jsonl [--since T]
+                      [--billing-account ID] [--credential ID]
+                      [--tag KEY=VALUE]... [--focus-profile strict]
+  costroid ingest-run --from execution-file=F --out rows.jsonl --cap-usd N
+                      [--claude-args TEXT]
+  costroid ingest-run --from focus=FILE --out rows.jsonl [--source NAME]
+                      [--optional] [--billing-account ID]
+
+ingest-run writes the rows of an agent's run after the run ended, from what
+the run left at PATH. KIND is one of:
+
+  execution-file  the execution_file output of anthropics/claude-code-action
+  codex-home      the codex-home given to openai/codex-action
+  gh-aw           the directory a gh-aw run's usage artifact was downloaded to
+  focus           a FOCUS cost file, as CSV, that a step of the workflow wrote
+
+--since, with codex-home, is when the job started, in RFC 3339: a file last
+written before it belongs to an earlier job and is not read. --execution-file F
+and --codex-home D read as --from execution-file=F and --from codex-home=D.
+ingest-run reads one source. Costroid did not start the run, so the grade reads
+none unless the workflow states a cap.
+
+--cap-usd, with execution-file, is the cap the workflow gave Claude Code as
+--max-budget-usd, and --claude-args the step's claude_args. The grade reads
+agent-flag when the run stopped at that cap, or ended under it with
+claude_args stating it; otherwise it reads none, with the reason. The result
+object states the cap.
+
+--from focus=FILE adds one row per row of FILE after the rows the rows file
+holds, each with the basis estimate, and leaves the run's object as it is. The
+figure is read from ListCost, or else from the one of EffectiveCost,
+ContractedCost and BilledCost the file holds. Every row needs BillingCurrency,
+ChargePeriodStart and ChargePeriodEnd. The file's Tags are dropped, and
+--credential is not read: SubAccountId is the file's. --source names the
+estimate's origin, infrastructure unless given. --optional adds no rows and
+says why when FILE is not there. docs/infrastructure.md describes the file.
+
+--billing-account fills BillingAccountId on every row. Without it, the
+COSTROID_BILLING_ACCOUNT variable does. With neither, the rows read unknown.
+
+--credential fills SubAccountId: the id of the key, workspace or project the run
+spends on, never the key itself. Without it, COSTROID_CREDENTIAL does. With
+neither, the column is null and reconcile asks for one.
+
+--tag KEY=VALUE puts the tag costroid/KEY on every row, once per key. KEY is
+work_item, an issue key such as ENG-142; arm, an experiment's arm; or team.
+A value is 1 to 128 letters, digits and . _ : / + -, opens with a letter or a
+digit, and is never a key.
+
+--focus-profile strict writes EffectiveCost as 0 on every row, as BilledCost
+always is, and the measured figure in x_CostroidMeasuredCost, for a reader that
+adds these rows to the provider's own FOCUS data. The default profile keeps the
+figure in EffectiveCost. Send default rows to Costroid Platform and costroid
+export. docs/tags.md and docs/focus-profile.md describe both.
+
+Inside GitHub Actions or GitLab CI, run and ingest-run state the repository,
+the pull request, the head commit and the CI run on every row, and run sets the
+vcs.* and cicd.* attributes through OTEL_RESOURCE_ATTRIBUTES for the agent.
+These are claims. Rows stay unverified and unattributed until a ledger checks
+them against the job's OIDC token.
+
+run and ingest-run write the same object beside the rows file they created,
+whether or not --json is given and whatever their exit: --out rows.jsonl gives
+rows.run.json. report reads the run's reason for an empty rows file from it,
+and a reader that refused the agent's output adds its first error line.
+
+Exit codes of ingest-run:
+  0                 the rows and the result object are written
+  125               costroid could not read the flags or the source, or write
+                    the rows

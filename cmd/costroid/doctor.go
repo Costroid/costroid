@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/config"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/recipelint"
@@ -26,35 +27,43 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const doctorHelp = `Usage:
-  costroid doctor [--ci]
-
-doctor checks a repository, from its root, before a pull request runs
+var doctorHelp = cli.Page{
+	Command: "doctor",
+	Summary: `doctor checks a repository, from its root, before a pull request runs
 Costroid: this binary's release, costroid.yml, the workflows and their pins,
 the agents and keys on this machine, and the repository's secrets and
-variables. It prints one line per check: ok, warn or fail, the fact and, after
+variables.`,
+	Usage:    []string{"costroid doctor [--ci]"},
+	Examples: []string{"costroid doctor", "costroid doctor --ci"},
+	Flags:    []cli.Row{{"--ci", "add the checks only a GitHub Actions job can make"}},
+	Sections: []cli.Section{
+		{Heading: "What it prints", Body: []cli.Block{cli.Text(`It prints one line per check: ok, warn or fail, the fact and, after
 warn or fail, the fix. It reads secret names through gh secret list when gh is
 on PATH, and those of the environment a job names through gh secret list
---env. It never prints a secret's value, prefix or length.
-
-On GitLab it checks the template that installs Costroid, .gitlab/costroid.yml
+--env. It never prints a secret's value, prefix or length.`)}},
+		{Heading: "On GitLab, and outside a repository", Body: []cli.Block{cli.Text(`On GitLab it checks the template that installs Costroid, .gitlab/costroid.yml
 or a local file .gitlab-ci.yml includes, and its pins, in place of the
 workflows. It reads no CI/CD variable there and runs no gh. Outside a git
-repository it checks this machine alone, and says so in a fail line.
-
-With COSTROID_PLATFORM_URL set in the shell, doctor asks Costroid Platform for
+repository it checks this machine alone, and says so in a fail line.`)}},
+		{Heading: "Costroid Platform", Body: []cli.Block{cli.Text(`With COSTROID_PLATFORM_URL set in the shell, doctor asks Costroid Platform for
 the scopes of the integration token in COSTROID_PLATFORM_TOKEN and for the
-binding of the repository's owner. It names the token by that variable alone.
-
---ci runs it as a step of a GitHub Actions job, and adds what only the job
+binding of the repository's owner. It names the token by that variable alone.`)}},
+		{Heading: "In a workflow job", Body: []cli.Block{cli.Text(`--ci runs it as a step of a GitHub Actions job, and adds what only the job
 sees: the event, whether the head is a fork, the OIDC token and the job's
-declared permissions.
-
-Exit codes of doctor:
-  0                 no fail
-  1                 a fail
-  125               costroid could not run the checks
-`
+declared permissions.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{platformVariable, "Costroid Platform's origin; when set, doctor asks the platform"},
+		{platformTokenVariable, "the integration token whose scopes doctor asks for"},
+		{"GITHUB_*", "with --ci, what GitHub Actions sets about the job"},
+	}},
+	Exits: []cli.Row{
+		{"0", "no fail"},
+		{"1", "a fail"},
+		{"125", "costroid could not run the checks"},
+	},
+	Docs: "troubleshooting",
+}.String()
 
 // verdict is how one check ended.
 type verdict string
@@ -134,9 +143,8 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 // doctor checks the repository at root and prints its table.
 func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	set.SetOutput(io.Discard)
 	ci := set.Bool("ci", false, "add the checks only a GitHub Actions job can make")
-	err := parseFlags(set, args, doctorHelp, stdout, stderr)
+	err := parseFlags(set, args, doctorHelp, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -150,6 +158,10 @@ func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, 
 	if err == nil {
 		lines, err = examine(ctx, root, build, host, *ci)
 	}
+	if mistake := new(cli.Mistake); errors.As(err, &mistake) {
+		fmt.Fprintf(stderr, "costroid: %v\n", err)
+		return exitFailure
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: doctor: %v\n", err)
 		return exitFailure
@@ -162,6 +174,9 @@ func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, 
 	fmt.Fprintf(stdout, "costroid: doctor: %d fail, %d warn, %d ok\n", counts[verdictFail], counts[verdictWarn], counts[verdictOK])
 	if counts[verdictFail] > 0 {
 		return exitRejected
+	}
+	if counts[verdictWarn] == 0 && !*ci {
+		fmt.Fprintln(stdout, nextAfterDoctor)
 	}
 	return 0
 }

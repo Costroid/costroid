@@ -95,7 +95,6 @@ type reportFlags struct {
 
 func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	set := flag.NewFlagSet("report", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	budget := set.String("budget-usd", "", "the run's cap in USD, read only when the run left no result object")
 	installation := set.String("installation-id", os.Getenv(installationVariable), "the GitHub App installation, github:<id> or the bare number; GitLab uses the project id")
@@ -104,7 +103,7 @@ func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
 	exitOnVerdict := set.Bool("exit-on-verdict", false, "on GitLab CI, exit 1 on a failure verdict and 3 on a neutral one")
 	recorded := set.String("recorded", "", "RUN_ID,DATE: the rows are the recorded run RUN_ID's from DATE, not the pull request's")
-	if err := parseFlags(set, args, reportHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, reportHelp, stdout); err != nil {
 		return reportFlags{}, err
 	}
 	if *rows == "" {

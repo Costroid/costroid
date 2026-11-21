@@ -15,48 +15,72 @@ import (
 	"github.com/Costroid/costroid/internal/adapter/claudecode"
 	"github.com/Costroid/costroid/internal/adapter/codex"
 	"github.com/Costroid/costroid/internal/cicontext"
+	"github.com/Costroid/costroid/internal/cli"
 	reviewcomment "github.com/Costroid/costroid/internal/review"
 	"github.com/Costroid/costroid/internal/scm"
 )
 
-const reviewHelp = `Usage:
-  costroid review --keep --from KIND=PATH --out FILE [--since T]
-  costroid review --post --file FILE
-
-review posts the agent's own answer as a second comment on the pull request,
-apart from the report's. Nothing runs it by default: the action runs it only
-with post-review: "true". docs/review.md says how to turn it on.
-
---keep runs in the agent's job, after the run. It reads the answer the run
+var reviewHelp = cli.Page{
+	Command: "review",
+	Summary: `review posts the agent's own answer as a second comment on the pull request,
+apart from the report's.`,
+	Usage: []string{
+		"costroid review --keep --from KIND=PATH --out FILE [--since T]",
+		"costroid review --post --file FILE",
+	},
+	Examples: []string{
+		"costroid review --keep --from claude-stream=claude.jsonl --out answer.txt",
+		"costroid review --post --file answer.txt",
+	},
+	Flags: []cli.Row{
+		{"--keep", "read the run's answer and write it to --out"},
+		{"--from KIND=PATH", "where the run left its answer"},
+		{"--out FILE", "the file the answer goes to"},
+		{"--since T", "when the job started, in RFC 3339"},
+		{"--post", "post the answer in --file as the review comment"},
+		{"--file FILE", "the file the agent's job kept the answer in"},
+	},
+	Sections: []cli.Section{
+		{Heading: "Turning it on", Body: []cli.Block{cli.Text(`Nothing runs it by default: the action runs it only
+with post-review: "true". docs/review.md says how to turn it on.`)}},
+		{Heading: "Keeping the answer", Body: []cli.Block{
+			cli.Text(`--keep runs in the agent's job, after the run. It reads the answer the run
 ended with from PATH and writes that text, and nothing else, to --out. KIND is
-one of:
-
-  claude-stream   the stream costroid run kept from claude -p
-  execution-file  the execution_file output of anthropics/claude-code-action
-  codex-stream    the stream costroid run kept from codex exec
-  codex-home      the codex-home given to openai/codex-action
-
-Claude Code's answer is the result field of its last result message, and
+one of:`),
+			cli.Rows{
+				{"claude-stream", "the stream costroid run kept from claude -p"},
+				{"execution-file", "the execution_file output of anthropics/claude-code-action"},
+				{"codex-stream", "the stream costroid run kept from codex exec"},
+				{"codex-home", "the codex-home given to openai/codex-action"},
+			},
+			cli.Text(`Claude Code's answer is the result field of its last result message, and
 Codex's is the last agent message of its last completed turn. Neither reads
 what the agent wrote on the way. --since, with codex-home, is when the job
 started, in RFC 3339: a rollout file last written before it is not read. A run
 that ended without an answer, at a cap or on an error, leaves no file at
---out, and keep says why and exits 0.
-
---post runs in the report's job. It reads FILE as data, up to 1 MiB, and posts
+--out, and keep says why and exits 0.`),
+		}},
+		{Heading: "Posting the answer", Body: []cli.Block{cli.Text(`--post runs in the report's job. It reads FILE as data, up to 1 MiB, and posts
 one comment of its own, or edits the one an earlier run posted. The comment
 fences the answer as plain text, so no link, mention, image or HTML in it
 renders, cuts it to 30000 bytes and says the words are the agent's. With no
 answer in FILE, it creates no comment, and edits an earlier run's to say this
 run kept none. Like report, it exits 0 whatever the host answers, and outside
-GitHub Actions and GitLab CI it refuses and exits 125.
-
-Exit codes of review:
-  0                 the answer was kept or posted, or there was none to keep,
-                    or the host refused it
-  125               costroid could not read the flags or write --out, or
-                    --post found neither GitHub Actions nor GitLab CI
-`
+GitHub Actions and GitLab CI it refuses and exits 125.`)}},
+	},
+	Environment: []cli.Block{cli.Rows{
+		{"GITHUB_TOKEN", "with --post on GitHub Actions, the token the comment is posted with"},
+		{gitLabTokenVariable, "with --post on GitLab CI, the token the note is posted with"},
+		ciEnvironment,
+	}},
+	Exits: []cli.Row{
+		{"0", `the answer was kept or posted, or there was none to keep,
+or the host refused it`},
+		{"125", `costroid could not read the flags or write --out, or
+--post found neither GitHub Actions nor GitLab CI`},
+	},
+	Docs: "review",
+}.String()
 
 // answerSource is one kind of file an answer is read from.
 type answerSource struct {
@@ -94,14 +118,13 @@ type reviewFlags struct {
 
 func parseReview(args []string, stdout, stderr io.Writer) (reviewFlags, error) {
 	set := flag.NewFlagSet("review", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	keep := set.Bool("keep", false, "read the run's answer and write it to --out")
 	post := set.Bool("post", false, "post the answer in --file as the review comment")
 	from := set.String("from", "", "KIND=PATH, where the run left its answer")
 	since := set.String("since", "", "when the job started, in RFC 3339")
 	out := set.String("out", "", "the file the answer goes to")
 	file := set.String("file", "", "the file the agent's job kept the answer in")
-	if err := parseFlags(set, args, reviewHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, reviewHelp, stdout); err != nil {
 		return reviewFlags{}, err
 	}
 	flags := reviewFlags{keep: *keep, post: *post, out: *out, file: *file}

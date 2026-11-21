@@ -54,10 +54,9 @@ type followUpFlags struct {
 
 func parseFollowUp(args []string, stdout, stderr io.Writer) (followUpFlags, error) {
 	set := flag.NewFlagSet("follow-up", flag.ContinueOnError)
-	set.SetOutput(stderr)
 	rows := set.String("rows", "", "the rows file the finished run kept, read as data")
 	ingested := set.Bool("ingested", false, "the rows are ones costroid ingest-run wrote in this job, for a workflow with no report job")
-	if err := parseFlags(set, args, followUpHelp, stdout, stderr); err != nil {
+	if err := parseFlags(set, args, followUpHelp, stdout); err != nil {
 		return followUpFlags{}, err
 	}
 	if *rows == "" {
