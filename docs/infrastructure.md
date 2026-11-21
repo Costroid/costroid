@@ -98,7 +98,7 @@ Under the agent's figure and its table, the comment adds one line per currency, 
 ```markdown
 Infrastructure, estimated: EUR 25.488 for 2026-12, from `infrastructure`.
 
-Infrastructure, estimated: USD 1000 for 2026-12, from `infrastructure`.
+Infrastructure, estimated: USD 1000.00 for 2026-12, from `infrastructure`.
 
 The agent figure and these infrastructure figures are not added together, and no currency is added to another.
 
@@ -108,7 +108,7 @@ The agent figure and these infrastructure figures are not added together, and no
 | Resource | Service | Period | Amount |
 | --- | --- | --- | --- |
 | `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 |
-| `google_compute_instance.batch` | `Compute Engine` | 2026-12 | USD 1000 |
+| `google_compute_instance.batch` | `Compute Engine` | 2026-12 | USD 1000.00 |
 
 </details>
 ```

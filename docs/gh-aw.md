@@ -78,7 +78,7 @@ gh-aw runs Claude on `ANTHROPIC_API_KEY` and Codex on `OPENAI_API_KEY` or `CODEX
 
 ## Grade
 
-The grade is `none`. Costroid did not start the run and minted no cap. gh-aw checks a cap of its own, `max-ai-credits`, in AI credits it prices itself. The note names the cap `aw_info.json` states, and the comment's Enforcement cell reads the same: `none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid`.
+The grade is `none`. Costroid did not start the run and minted no cap. gh-aw checks a cap of its own, `max-ai-credits`, in AI credits it prices itself. The note names the cap `aw_info.json` states: `none: a cap of 10 AI credits that gh-aw checks, priced by gh-aw, not by Costroid`. The comment's Enforcement cell reads the same words after the grade.
 
 The cap does not hold a run to its figure. gh-aw hands it to its firewall's API proxy. The proxy adds a response's credits to the run's total when the response comes back, and checks the total before it forwards each request. Once the total is at or past the cap, it refuses the request with HTTP 403 and `ai_credits_limit_exceeded` (`getAiCreditsBlockState` in `containers/api-proxy/guards/ai-credits-guard.js` and `enforceGuards` in `containers/api-proxy/proxy-guards.js` of `github/gh-aw-firewall` v0.29.0, the firewall gh-aw v1.0.1 runs, read 2026-11-08). A request forwarded under the cap completes, so a run can end past it. The recorded Claude run below did: its first request came to 8.87465 AI credits, and its second took the run to 11.80342 against a cap of 10.
 

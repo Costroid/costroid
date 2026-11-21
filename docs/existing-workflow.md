@@ -76,7 +76,7 @@ Your job keeps the permissions you gave it. The `read` step runs inside it and a
 
 The `report` job holds `checks: write` and `pull-requests: write`, and runs nothing your pull request wrote. It reads `costroid.yml` from the base branch.
 
-Your job wrote the rows, so the comment says the figures are unverified.
+Your job wrote the rows, so the comment says the figures are unchecked.
 
 ## Hold each run to a cap
 
@@ -86,7 +86,7 @@ The `read` step cannot see your step's inputs, so the patch tells it the cap: `b
 
 `init` writes the same cap in four places: `claude_args`, `claude-args` and both `budget-usd` inputs. To change the cap, change all four. It adds `--max-budget-usd 5` to `claude_args` that hold no cap, and `--budget-usd` names another amount in USD, such as `--budget-usd 2.50`. When it cannot read `claude_args`, it leaves them as they are and the patch states no cap: add the four lines by hand, as the example above shows them.
 
-The comment's grade then reads `agent-flag` when the run stopped at that cap, or ended under it by Claude Code's own total. It reads `none`, with the reason, when `budget-usd` and the flag differ, when `claude-args` holds no `--max-budget-usd`, or when the run passed the cap without a stop. Without `budget-usd` it reads `none`, because Costroid did not start the run.
+The run's grade then reads `agent-flag` when the run stopped at that cap, or ended under it by Claude Code's own total. It reads `none`, with the reason, when `budget-usd` and the flag differ, when `claude-args` holds no `--max-budget-usd`, or when the run passed the cap without a stop. Without `budget-usd` it reads `none`, because Costroid did not start the run.
 
 `costroid lint` prints a note for a `claude-code-action` step whose `claude_args` hold no `--max-budget-usd`.
 
@@ -128,7 +128,7 @@ A step that sets no `codex-home` gets one, as [`recipes/github-codex-action.yml`
 
 A test runs `init --existing` on such a workflow and holds this block to the start of the patch it prints, line for line.
 
-The step runs `costroid ingest-run --from codex-home=D --since T`, where `T` is when the job started, so a file an earlier job left in that directory is not read. The `report` job is the one above. `openai/codex-action` holds no cap Costroid can read, so the comment's grade reads `none`. The action takes only an API key, so the rows read `measured`.
+The step runs `costroid ingest-run --from codex-home=D --since T`, where `T` is when the job started, so a file an earlier job left in that directory is not read. The `report` job is the one above. `openai/codex-action` holds no cap Costroid can read, so the run's grade reads `none`. The action takes only an API key, so the rows read `measured`.
 
 The optional `OTEL_RESOURCE_ATTRIBUTES` line goes on your Codex step in the same way, under its `env`.
 

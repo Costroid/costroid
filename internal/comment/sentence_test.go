@@ -2,7 +2,11 @@ package comment
 
 import (
 	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -340,6 +344,53 @@ func TestAmountsShowTwoDecimalsAndEveryDigit(t *testing.T) {
 			if shown := figure.Currency + " " + places(exact); !strings.Contains(readable(r.comment), "| "+shown) {
 				t.Errorf("%s: the comment's table does not show %s", name, shown)
 			}
+		}
+	}
+}
+
+// TestPolicyPageQuotesSentencesTheGoldensHold reads the section of
+// docs/policy.md that says what the check says. Each sentence it quotes is a
+// golden state's, word for word, and its table names the opening of every
+// golden state's sentence.
+func TestPolicyPageQuotesSentencesTheGoldensHold(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", "docs", "policy.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, found := strings.Cut(string(page), "\n## What the check says\n")
+	section, _, _ = strings.Cut(section, "\n## ")
+	_, quoted, fenced := strings.Cut(section, "```text\n")
+	quoted, table, closed := strings.Cut(quoted, "\n```\n")
+	if !found || !fenced || !closed {
+		t.Fatal("docs/policy.md has no section that quotes the check's sentences")
+	}
+	sentences := map[string]bool{}
+	for _, input := range goldenStates(t) {
+		sentences[VerdictSentence(input)] = true
+	}
+	for line := range strings.SplitSeq(quoted, "\n") {
+		if !sentences[line] {
+			t.Errorf("docs/policy.md quotes a sentence no golden state holds: %q", line)
+		}
+	}
+	var openings []string
+	for row := range strings.SplitSeq(table, "\n") {
+		cell, _, isRow := strings.Cut(strings.TrimPrefix(row, "| "), " |")
+		if !strings.HasPrefix(row, "| `") || !isRow {
+			continue
+		}
+		for _, opening := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(cell, -1) {
+			openings = append(openings, opening[1])
+		}
+	}
+	for sentence := range sentences {
+		if !slices.ContainsFunc(openings, func(opening string) bool { return strings.HasPrefix(sentence, opening) }) {
+			t.Errorf("the table of docs/policy.md names no opening of %q: %q", sentence, openings)
+		}
+	}
+	for _, opening := range openings {
+		if !slices.ContainsFunc(slices.Collect(maps.Keys(sentences)), func(sentence string) bool { return strings.HasPrefix(sentence, opening) }) {
+			t.Errorf("docs/policy.md names the opening %q, and no golden state's sentence opens with it", opening)
 		}
 	}
 }

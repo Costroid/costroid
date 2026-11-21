@@ -7,7 +7,7 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | Rule                   | Setting in `costroid.yml`     | What it checks |
 | ---------------------- | ----------------------------- | -------------- |
 | `run_budget`           | `policy.run_budget_usd`       | The run's cost at list, in USD, against the budget |
-| `run_cost_threshold`   | `policy.max_run_cost_usd`     | The run's cost at list, in USD, against the threshold |
+| `run_cost_threshold`   | `policy.max_run_cost_usd`     | The run's cost at list, in USD, against the limit |
 | `run_increase`         | `policy.max_increase_usd`     | The run's cost at list, in USD, against the median of this agent's earlier runs plus the amount set |
 | `run_increase_percent` | `policy.max_increase_percent` | The run's cost at list, in USD, against the median of this agent's earlier runs plus the percent set |
 | `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, over every basis, this run included, against the budget |
@@ -56,7 +56,7 @@ Who wrote the rows decides what a rule can conclude. A row whose run identity no
 
 | Outcome of a budget, increase or model rule | Rows the agent's job wrote (the Action path)                               | Rows a ledger checked against the job's OIDC token                            |
 | ------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`: "unverified rows cannot satisfy a budget" | A budget, increase or model rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
+| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`, and its title opens "Within budget, by the job's own figures" | A budget, increase or model rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
 | Over the limit, or a model off the list     | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
 | No rows reached the check                   | Cannot pass                                                                | Cannot pass                                                                   |
 
@@ -85,6 +85,39 @@ The report stage reads a rows file that the agent's own job wrote. An agent that
 | No rule ran                                            | `neutral`  |
 
 GitHub counts `neutral` as passing: "Required status checks must have a `successful`, `skipped`, or `neutral` status" ([About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches), retrieved 2026-11-06). Only `failure` blocks a merge, and only on a branch that requires the check. [`docs/required-check.md`](required-check.md) says how to require it.
+
+## What the check says
+
+One sentence says what is true of the run. It is the check's title, the first line of the comment and of the job summary, and the last line that `costroid policy`, `costroid report --preview` and `costroid demo` print. It opens with a state, then gives the figure with its currency and basis, the budget, and what was checked or what follows:
+
+```text
+Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+Over budget: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget.
+No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
+No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran.
+```
+
+| The sentence opens                                     | What is true                                                                                 | Conclusion |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ---------- |
+| `Within budget`, `Within limit`                        | The cost is within the budget or the limit, on rows a ledger checked                         | `success`  |
+| Either, then ", by the job's own figures"              | The cost is within it, and only the agent's own job wrote the rows                           | `neutral`  |
+| `Over budget`, `Over limit`, `Model not on the list`   | The cost is over it, or a row names a model off the list                                     | `failure`  |
+| Any of the three, then ", warn-only"                   | The warn-only period holds that failure back                                                 | `neutral`  |
+| Any of the three, then ", approved by" and a login     | A reviewer approved that failure on this commit                                              | `neutral`  |
+| `No budget set`                                        | `costroid.yml` sets nothing a rule reads                                                     | `neutral`  |
+| `Not decided`                                          | `costroid.yml` could not be used, or the rule named could not be checked                     | `neutral`  |
+| `No figure` and a code in brackets                     | The report has no figures. The code is the result object's `run_reason`, `reason` or `state` | `neutral`, or `failure` for `artifact_refused` |
+| `No agent run`                                         | The workflow skipped the agent's job                                                         | `neutral`  |
+
+`Over limit` and `Within limit` name `run_cost_threshold` and the two increase rules, whose amounts are limits. A budget is `run_budget`, `pr_budget` or `monthly_budget`.
+
+When several rules ran, the sentence names one: the first, in the order of the table of rules above, of the worst outcome the verdict holds. A rule that fails comes before one the warn-only period holds, that before one that cannot pass, and that before one that passed. `attribution` never names the sentence alone. Every other rule's line follows in the comment, above the folds.
+
+An amount shows at least two decimal places and every digit, such as `USD 5.00` and `USD 0.001619725`. Where amounts are withheld, the sentence names none and ends "Amounts are withheld here."
+
+The sentence is at most 255 characters. A longer one is cut in a fixed order: the figures after the first are counted, then the last clause goes, then the budget. The state and the first figure are never cut.
+
+The sentence is written for a reader, and its words can change between releases. A script reads the `conclusion` output or the result object, never the title.
 
 ## The warn-only period
 
@@ -147,7 +180,7 @@ git show origin/main:costroid.yml > base.yml
 costroid policy --rows rows.jsonl --config base.yml
 ```
 
-It prints the conclusion, then the verdict's sentences one per line, in the comment's words. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
+It prints one sentence per line, in the comment's words: each rule the last line does not name, then the verdict sentence, which is the title the check gets. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
 
 `--history` takes the result objects of the pull request's earlier check runs, one object per line, each with its `check_run_id`. The command reads the pull request's total, the count that ends the warn-only period and the baseline from them, as the report reads them from the check runs, with the rows as this run's report. A line that is not a JSON object, or that names no check run, refuses the file with its line number. An object the report would skip, such as one that withholds its amounts, is skipped. This collects the objects on one commit:
 

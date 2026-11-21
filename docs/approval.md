@@ -47,11 +47,11 @@ approval:
 
 ## What the check shows
 
-When a review counts and the newest `costroid` check on the head concludes `failure`, `costroid approve` posts the check again on the same commit. The new check concludes `neutral`. Its summary names the approver, the commit and the time, and says the policy's verdict stays `failure`. Its machine block is the earlier check's result object with `conclusion` set to `neutral` and `check_run_id` naming the new check run. `policy.conclusion` still reads `failure`. The summary names the check run that carries the report in full.
+When a review counts and the newest `costroid` check on the head concludes `failure`, `costroid approve` posts the check again on the same commit. The new check concludes `neutral`. Its title names the approver and the commit. Its summary names the time too, and says the policy's verdict stays `failure`. Neither names an amount: the earlier check run carries the report in full. Its machine block is the earlier check's result object with `conclusion` set to `neutral` and `check_run_id` naming the new check run. `policy.conclusion` still reads `failure`. The summary names the check run that carries the report in full.
 
 When an approval is dismissed, or no longer counts, `costroid approve` posts the policy's verdict again. When the newest check already concludes what the reviews give, it posts nothing.
 
-`costroid approve` writes no comment. The sticky comment keeps the report's verdict until the report runs again on the same head, for example when the job is re-run. That report reads the reviews too, and its comment and check open with the approval.
+`costroid approve` writes no comment. The sticky comment keeps the report's verdict until the report runs again on the same head, for example when the job is re-run. That report reads the reviews too, and its comment and check open on a sentence that names the approver.
 
 The result object names no approver. The check's summary is where the approval is recorded.
 

@@ -165,7 +165,7 @@ An agent can fail after some requests, so `agent_error` can sit beside figures. 
 
 Costroid never converts it and never adds it to `figures`, `cap` or `lifetime`. OpenCode's figure is in USD and is still not Costroid's: never add it to a figure in USD, and never set the two against each other.
 
-`recorded` names a recorded run whose rows the figures are, in place of the pull request's own: `{"run_id": 42368537950, "date": "2026-11-07"}`. `costroid report --recorded` fills it, and the comment then opens with a line that says the figures are that run's, not the pull request's. It is null on every other report. The pull request's total never counts a recorded report.
+`recorded` names a recorded run whose rows the figures are, in place of the pull request's own: `{"run_id": 42368537950, "date": "2026-11-07"}`. `costroid report --recorded` fills it, and the comment then says, in the line under its first, that the figures are that run's, not the pull request's. It is null on every other report. The pull request's total never counts a recorded report.
 
 ## Read the run's status
 
