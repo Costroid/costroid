@@ -276,10 +276,13 @@ func TestExportSendsTheContractHeaders(t *testing.T) {
 // Export reads GET /identity under each version it sends by, newest first,
 // and sends the batch and asks for its verdict under the first version whose
 // answer states it, naming that version on stderr. A platform that states
-// neither gets nothing.
+// none gets nothing.
 func TestExportSendsTheContractThePlatformStates(t *testing.T) {
-	v03, v02 := exportContracts[0], exportContracts[1]
-	if v03.Version != "0.3" || v02.Version != "0.2" {
+	if len(exportContracts) != 3 {
+		t.Fatalf("export sends by %v", exportContracts)
+	}
+	v04, v03, v02 := exportContracts[0], exportContracts[1], exportContracts[2]
+	if v04.Version != "0.4" || v03.Version != "0.3" || v02.Version != "0.2" {
 		t.Fatalf("export sends by %v", exportContracts)
 	}
 	for name, check := range map[string]struct {
@@ -287,8 +290,9 @@ func TestExportSendsTheContractThePlatformStates(t *testing.T) {
 		want   contract
 		asked  int
 	}{
-		"a platform that states v0.3":                       {speaksEvery(), v03, 1},
+		"a platform that states v0.4":                       {speaksEvery(), v04, 1},
 		"a platform that states only v0.2":                  {map[string]contract{v02.path(): v02}, v02, 1},
+		"a platform whose v0.4 path states another version": {map[string]contract{v04.path(): v03, v03.path(): v03}, v03, 2},
 		"a platform whose v0.3 path states another version": {map[string]contract{v03.path(): v02, v02.path(): v02}, v02, 2},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -355,7 +359,7 @@ func TestExportFallsBackToV02WhenIdentityIsRefused(t *testing.T) {
 			if len(stub.verdict) != 1 || stub.verdict[0] != batch {
 				t.Errorf("the verdict was asked at %q, want %s", stub.verdict, batch)
 			}
-			if want := []string{contractV03.path() + "/identity", contractV02.path() + "/identity"}; !slices.Equal(stub.identity, want) {
+			if want := []string{contractV04.path() + "/identity", contractV03.path() + "/identity", contractV02.path() + "/identity"}; !slices.Equal(stub.identity, want) {
 				t.Errorf("GET /identity was asked at %q, want %q", stub.identity, want)
 			}
 			want := "costroid: warning: Costroid Platform refused the identity request: " + name + ", so export could not read the platform's contract and sends the batch by integration/v0.2, as it did before. Give the token identity:read to send by the newest version\n"
@@ -801,6 +805,66 @@ func TestExportWarnsWhenNotBound(t *testing.T) {
 	busy := newPlatformStub(t, http.StatusConflict, `{"error":{"code":"EXPORT_BATCH_BUSY","message":""}}`)
 	if code, _, stderr := busy.export(t, busy.githubEnv()); code != exitRejected || strings.Contains(stderr, "costroid connect") {
 		t.Errorf("EXPORT_BATCH_BUSY: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// A run's rows sent again by hand, under the run's batch id and with no run
+// token, meet a v0.4 platform's 409 EXPORT_BATCH_RUN_BOUND. Sending them again
+// under that id meets the same answer, so export sends once, keeps the rows
+// file, says only the run that sent the batch restates it, never says to send
+// again, and exits 1.
+func TestExportKeepsTheRowsOfABatchBoundToItsRun(t *testing.T) {
+	data, err := os.ReadFile(exampleRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := filepath.Join(t.TempDir(), "rows.jsonl")
+	if err := os.WriteFile(rows, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stub := newPlatformStub(t, http.StatusConflict, `{"error":{"code":"EXPORT_BATCH_RUN_BOUND","message":"::error::forged"}}`)
+	stub.states = map[string]contract{contractV04.path(): contractV04}
+	var stdout, stderr bytes.Buffer
+	args := []string{"--rows", rows, "--platform-url", stub.server.URL, "--installation-id", testInstallation, "--batch-id", "903114-16873409921-1"}
+	env := map[string]string{platformTokenVariable: testIntegrationToken}
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	want := versionLine(contractV04) + "costroid: Costroid Platform refused batch 903114-16873409921-1: 409 EXPORT_BATCH_RUN_BOUND. The batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it. Nothing was stored, and " + rows + " is kept\n"
+	if code != exitRejected || stdout.String() != "" || stderr.String() != want {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "send again") || strings.Contains(stderr.String(), "warning") {
+		t.Errorf("stderr asks for the rows to be sent again: %q", stderr.String())
+	}
+	if len(stub.exports) != 1 || stub.exports[0].URL.Path != contractV04.path()+"/exports/903114-16873409921-1" {
+		t.Fatalf("%d exports, want one under %s", len(stub.exports), contractV04.path())
+	}
+	if asked := stub.timesAsked(); asked != 0 {
+		t.Errorf("the verdict was asked %d times", asked)
+	}
+	if after, err := os.ReadFile(rows); err != nil || !bytes.Equal(after, data) {
+		t.Fatalf("the rows file changed: %v", err)
+	}
+}
+
+// A platform that states v0.3 and not v0.4 gets the batch by v0.3, as before
+// export knew v0.4: one identity answer under v0.3, the batch and its verdict
+// under v0.3's path.
+func TestExportSendsByV03ToAPlatformThatStatesV03(t *testing.T) {
+	stub := newPlatformStub(t, http.StatusAccepted, `{"batch_id":"903114-16873409921-1","status":"accepted"}`)
+	stub.states = map[string]contract{contractV03.path(): contractV03, contractV02.path(): contractV02}
+	var stdout, stderr bytes.Buffer
+	env := stub.githubEnv()
+	args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	if code != 0 || stderr.String() != versionLine(contractV03) {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	batch := "/api/integration/v0.3/exports/903114-16873409921-1"
+	if len(stub.exports) != 1 || stub.exports[0].URL.Path != batch || !slices.Equal(stub.verdict, []string{batch}) {
+		t.Errorf("%d exports, the verdict asked at %q, want both at %s", len(stub.exports), stub.verdict, batch)
+	}
+	if len(stub.identity) != 1 {
+		t.Errorf("GET /identity answered %d times, want 1", len(stub.identity))
 	}
 }
 

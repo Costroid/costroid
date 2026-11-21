@@ -16,6 +16,7 @@ The row and its tags each have a contract, published in [Costroid/costroid-schem
 
 | Integration contract | Rows | Tags |
 | -------------------- | ---- | ---- |
+| `integration/v0.4` | `focus-row/v0.5` | `tags/v0.4` |
 | `integration/v0.3` | `focus-row/v0.5` | `tags/v0.4` |
 | `integration/v0.2` | `focus-row/v0.3` | `tags/v0.2` |
 
@@ -48,7 +49,7 @@ curl --header "Authorization: Bearer $TOKEN" \
 
 ## Costroid Platform
 
-`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.3`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.3), or by `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.3` first, and names it on standard error. The body is the rows as CSV, in the form [the row contract](#the-row-contract) of that version gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
+`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.4`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.4), or by `integration/v0.3` or `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.4` first, then `v0.3`, then `v0.2`, and names it on standard error. The body is the rows as CSV, in the form [the row contract](#the-row-contract) of that version gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
 
 The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` scope, and `identity:read` on GitHub Actions. Elsewhere, a token without `identity:read` still sends, by `integration/v0.2`, and `costroid export` warns that it could not read the platform's contract. Keep it as a secret named `COSTROID_PLATFORM_TOKEN`. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument. [`docs/connect.md`](connect.md) says why one token per owner, with `installations:write` as well, serves both commands.
 
@@ -82,6 +83,8 @@ The job passes them to the action's `ingest` stage, with the owner's installatio
 On GitHub Actions the batch id is the repository id, the run id and the run attempt, joined by hyphens: `903114-16873409921-1`. Sending one run's rows again restates its batch, and the same bytes change nothing. A re-run attempt runs the agent again, so it adds a batch.
 
 The job's OIDC token rides with the batch in `Costroid-Run-Token`, minted for the tenant's rows audience, which `costroid export` reads from `GET /identity`. It names the run and the repository that sent the rows, and the platform refuses a batch whose run belongs to an owner other than the installation's. It says nothing about the counts in the rows, which the agent's job wrote.
+
+A batch that holds `token_verified` rows is bound to the run that sent it, and only a run token of that run and repository restates it ([`integration/v0.4`, The batch id](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.4#the-batch-id)). The same batch id sent from another run, or from outside GitHub Actions, answers 409 `EXPORT_BATCH_RUN_BOUND`, and the platform keeps the batch's earlier rows.
 
 ### Bind the owner
 
@@ -136,6 +139,7 @@ The command prints how many rows went as `token_verified`. A `token_verified` ro
 | 402 `PLAN_WRITES_REFUSED` | A warning. Nothing in the rows is wrong, and the file is kept to send again | 0 |
 | 409 `INSTALLATION_NOT_BOUND` | A warning that names `costroid connect`. The tenant holds no binding of the installation, or it was revoked or displaced. The file is kept to send again | 0 |
 | 429 `QUOTA_` and the quota's name | A warning with the seconds in `Retry-After`. The file is kept to send again | 0 |
+| 409 `EXPORT_BATCH_RUN_BOUND` | The refusal line, then that the batch is bound to the run that sent it and only that run restates it. Nothing was stored, and the file is kept. The same batch id meets the same answer, so the line never says to send it again | 1 |
 | Any other refusal | `costroid: Costroid Platform refused batch <id>: <status> <code>` | 1 |
 
 A batch the platform took can still fail as it ingests. So `costroid export` asks `GET /exports/{batch_id}` for the verdict every 2 s, for up to 60 s:

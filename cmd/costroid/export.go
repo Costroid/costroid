@@ -43,6 +43,9 @@ const (
 	unverified           = "unverified"
 	unattributed         = "unattributed"
 	windowed             = "windowed"
+	// exportBatchRunBound is the refusal of a restatement of a batch whose
+	// token_verified rows bind it to the run that sent them.
+	exportBatchRunBound = "EXPORT_BATCH_RUN_BOUND"
 )
 
 // verdictPace is how often export asks for a batch's verdict, and for how long.
@@ -67,18 +70,22 @@ func (c contract) path() string {
 	return "/api/integration/v" + c.Version
 }
 
-// Version 0.3 is 0.2 with rows of focus-row/v0.5 and tags of tags/v0.4, which
-// carry the tags a caller names and the repository's visibility. Version 0.2
-// is what export sent before it read the platform's contract, so it is also
-// what export sends when the token may not read GET /identity.
+// Version 0.4 is 0.3 with a batch of token_verified rows bound to the run
+// that sent it, and the refusal EXPORT_BATCH_RUN_BOUND of a restatement from
+// any other. Version 0.3 is 0.2 with rows of focus-row/v0.5 and tags of
+// tags/v0.4, which carry the tags a caller names and the repository's
+// visibility. Version 0.2 is what export sent before it read the platform's
+// contract, so it is also what export sends when the token may not read
+// GET /identity.
 var (
+	contractV04 = contract{Version: "0.4", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
 	contractV03 = contract{Version: "0.3", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
 	contractV02 = contract{Version: "0.2", TagSet: "tags/v0.2", FocusRow: "focus-row/v0.3"}
 	// exportContracts are the versions export sends by, newest first.
-	exportContracts = []contract{contractV03, contractV02}
+	exportContracts = []contract{contractV04, contractV03, contractV02}
 )
 
-// The patterns are integration/v0.2's, and version 0.3 keeps them.
+// The patterns are integration/v0.2's, and versions 0.3 and 0.4 keep them.
 var (
 	integrationTokenPattern = regexp.MustCompile(`^costroid_it_[A-Za-z0-9_-]{43}$`)
 	installationIDPattern   = regexp.MustCompile(`^(github|github-owner|gitlab-namespace):[1-9][0-9]{0,19}$`)
@@ -102,9 +109,9 @@ const exportHelp = `Usage:
 
 export sends a rows file to Costroid Platform as one batch of CSV, under the
 integration token in COSTROID_PLATFORM_TOKEN. It reads GET /identity first and
-sends by integration/v0.3, or by v0.2 to a platform that states no later
-version, and names the version on standard error. Outside GitHub Actions a
-token without identity:read still sends, by v0.2, with a warning.
+sends by integration/v0.4, or by v0.3 or v0.2 to a platform that states no
+later version, and names the version on standard error. Outside GitHub
+Actions a token without identity:read still sends, by v0.2, with a warning.
 --platform-url is the platform's
 https origin, or an http one on a loopback address such as
 http://127.0.0.1:8787. --installation-id names the installation the rows came
@@ -128,8 +135,11 @@ the batch failed on.
 On 402 or 429 the platform took nothing for now and nothing in the rows is
 wrong. On 409 INSTALLATION_NOT_BOUND the tenant holds no binding of the
 installation, which costroid connect makes. In each case export warns, keeps
-the rows file and exits 0, so it can be sent later. docs/export.md lists every
-answer.
+the rows file and exits 0, so it can be sent later.
+
+On 409 EXPORT_BATCH_RUN_BOUND the batch holds token_verified rows, so it is
+bound to the run that sent it, and only that run restates it. Export keeps
+the rows file and exits 1. docs/export.md lists every answer.
 
 With --format, export sends nothing and writes the rows as a file another
 tool imports, to --out or to standard output. Every amount is written as the
@@ -215,6 +225,13 @@ func (r *refusal) unbound() bool {
 	return r.status == http.StatusConflict && r.code == installationNotBound
 }
 
+// runBound reports a restatement refused because the batch is bound to the
+// run that sent it. Sending the rows again under the same batch id meets the
+// same refusal.
+func (r *refusal) runBound() bool {
+	return r.status == http.StatusConflict && r.code == exportBatchRunBound
+}
+
 // platform is Costroid Platform's integration API under one token. origin
 // is set where the version is still to be read, and base once it is.
 type platform struct {
@@ -261,6 +278,9 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	case errors.As(err, &refused) && refused.unbound():
 		fmt.Fprintf(stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as docs/connect.md shows, and %s is kept to send again\n", err, flags.installation, flags.rows)
 		return 0
+	case errors.As(err, &refused) && refused.runBound():
+		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it. Nothing was stored, and %s is kept\n", err, flags.rows)
+		return exitRejected
 	case errors.As(err, &refused):
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitRejected
