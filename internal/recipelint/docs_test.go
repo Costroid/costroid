@@ -180,10 +180,10 @@ func section(t *testing.T, text, heading string) string {
 	return body
 }
 
-// installRun runs a README block in a scratch directory. curl serves the
-// release's files, and sudo writes into a bin directory on PATH in place of
-// /usr/local/bin.
-func installRun(t *testing.T, block, sums string) (int, string, []string) {
+// installRun runs an install page block in a scratch directory, with HOME in
+// the scratch directory. curl serves the release's files, and sudo fails as
+// it does on a machine that has none.
+func installRun(t *testing.T, block, sums string) (int, string, []string, string) {
 	t.Helper()
 	s := newShell(t)
 	served := filepath.Join(s.root, "release")
@@ -200,7 +200,7 @@ func installRun(t *testing.T, block, sums string) (int, string, []string) {
 done
 echo "$url" >> "`+s.root+`/urls"
 cp "`+served+`/${url##*/}" . || exit 22`)
-	s.stub("sudo", `exec "${@//\/usr\/local\/bin/`+s.bin+`}"`)
+	s.stub("sudo", `echo "sudo: not found" >&2; exit 127`)
 	command := exec.Command("bash", "-eo", "pipefail", "-c", block)
 	command.Dir = work
 	command.Env = []string{"PATH=" + s.bin + ":" + os.Getenv("PATH"), "HOME=" + s.root}
@@ -209,7 +209,7 @@ cp "`+served+`/${url##*/}" . || exit 22`)
 		t.Fatal(err)
 	}
 	urls, _ := os.ReadFile(filepath.Join(s.root, "urls"))
-	return command.ProcessState.ExitCode(), string(output), strings.Fields(string(urls))
+	return command.ProcessState.ExitCode(), string(output), strings.Fields(string(urls)), s.root
 }
 
 // pinnedCommit is the one commit of Costroid's action every GitHub recipe pins.
@@ -231,9 +231,10 @@ func pinnedCommit(t *testing.T) string {
 	return commit
 }
 
-// TestInstallPageBlockIsComplete runs the install page's first block, so a
-// stranger who pastes it ends with costroid on PATH, from the release the
-// recipes pin, checked against SHA256SUMS.
+// TestInstallPageBlockIsComplete runs the install page's block that installs
+// by hand, so a stranger who pastes it, with no sudo, ends with costroid in
+// ~/.local/bin, where the install script puts it, from the release the recipes
+// pin, checked against SHA256SUMS.
 func TestInstallPageBlockIsComplete(t *testing.T) {
 	pin := pinnedRelease(t)
 	page := read(t, installPage)
@@ -245,9 +246,12 @@ func TestInstallPageBlockIsComplete(t *testing.T) {
 	block := blocks[0][1]
 	sums := sumOf(fakeBinary) + "  " + releaseAsset + "\n" + sumOf("arm") + "  costroid-linux-arm64\n"
 
-	code, output, urls := installRun(t, block, sums)
+	code, output, urls, home := installRun(t, block, sums)
 	if code != 0 || !strings.Contains(output, installedMark) {
 		t.Fatalf("the block exited %d without running the installed costroid:\n%s", code, output)
+	}
+	if info, err := os.Stat(filepath.Join(home, ".local", "bin", "costroid")); err != nil || info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("the block left no executable costroid in ~/.local/bin: %v, %v", info, err)
 	}
 	if len(urls) == 0 {
 		t.Fatal("the block downloaded nothing")
@@ -259,7 +263,7 @@ func TestInstallPageBlockIsComplete(t *testing.T) {
 	}
 
 	tampered := sumOf("other bytes") + "  " + releaseAsset + "\n"
-	if code, output, _ := installRun(t, block, tampered); code == 0 || strings.Contains(output, installedMark) {
+	if code, output, _, _ := installRun(t, block, tampered); code == 0 || strings.Contains(output, installedMark) {
 		t.Errorf("the block installed a binary that does not match SHA256SUMS, exit %d:\n%s", code, output)
 	}
 
@@ -269,7 +273,7 @@ func TestInstallPageBlockIsComplete(t *testing.T) {
 	if !strings.Contains(binary, "prints `costroid "+pin+", catalog ") {
 		t.Errorf("the binary section does not say what costroid version prints for %s", pin)
 	}
-	if !strings.Contains(binary, "`shasum -a 256 --check`") {
+	if !strings.Contains(binary, "`shasum -a 256 -c` takes the place of `sha256sum -c`") {
 		t.Error("the binary section does not give macOS's checksum command")
 	}
 	match := releaseTargets.FindStringSubmatch(read(t, releaseWorkflowFile))
@@ -289,6 +293,29 @@ func TestInstallPageBlockIsComplete(t *testing.T) {
 	refs := actionRef.FindAllStringSubmatch(goInstall, -1)
 	if len(refs) != 1 || refs[0][1] != pinnedCommit(t) {
 		t.Errorf("the Go section names --action-ref %v, want the commit the recipes pin, %s", refs, pinnedCommit(t))
+	}
+}
+
+// TestChecksumBlocksUseTheFlagBusyBoxTakes holds every checksum command in a
+// shell block of the install and verify pages to -c, which GNU coreutils,
+// BusyBox and macOS's shasum all take. BusyBox refuses --check.
+func TestChecksumBlocksUseTheFlagBusyBoxTakes(t *testing.T) {
+	for _, page := range []string{installPage, filepath.Join(docsDir, "verify.md")} {
+		checks := 0
+		for _, block := range shellBlock.FindAllStringSubmatch(read(t, page), -1) {
+			for _, line := range strings.Split(block[1], "\n") {
+				if !strings.Contains(line, "sha256sum") && !strings.Contains(line, "shasum") {
+					continue
+				}
+				checks++
+				if strings.Contains(line, "--check") || !strings.Contains(line, " -c") {
+					t.Errorf("%s: %q checks with a flag other than -c", page, line)
+				}
+			}
+		}
+		if checks == 0 {
+			t.Errorf("%s holds no checksum command", page)
+		}
 	}
 }
 

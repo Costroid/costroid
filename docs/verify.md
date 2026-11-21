@@ -11,7 +11,7 @@ The commands below check `1.0.0-alpha.27`. Replace the version in every line for
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-linux-amd64
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/SHA256SUMS
-grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
+grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum -c
 ```
 
 It prints `costroid-linux-amd64: OK`. A checksum proves the download matches `SHA256SUMS`, and nothing about who wrote `SHA256SUMS`. The signature proves that.

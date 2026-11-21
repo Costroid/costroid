@@ -18,18 +18,19 @@ Its last line is the command to run next, `costroid demo`. When `$HOME/.local/bi
 
 ## The binary
 
-The commands below install `1.0.0-alpha.27`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.27), check it against `SHA256SUMS`, and put it on your `PATH`:
+The commands below install `1.0.0-alpha.27`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.27), check it against `SHA256SUMS`, and put it in `~/.local/bin`, where the script installs, with no `sudo`:
 
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-linux-amd64
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/SHA256SUMS
-grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
+grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum -c
 chmod +x costroid-linux-amd64
-sudo mv costroid-linux-amd64 /usr/local/bin/costroid
-costroid version
+mkdir -p ~/.local/bin
+mv costroid-linux-amd64 ~/.local/bin/costroid
+~/.local/bin/costroid version
 ```
 
-The last line prints `costroid 1.0.0-alpha.27, catalog 0.4.3, prices read 2026-11-21`. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 --check` takes the place of `sha256sum --check`. Any directory on your `PATH` works in place of `/usr/local/bin`.
+The last line prints `costroid 1.0.0-alpha.27, catalog 0.4.3, prices read 2026-11-21`. Any directory works in place of `~/.local/bin`, such as `/usr/local/bin` with `sudo mv`. With `~/.local/bin` on your `PATH`, `costroid` alone runs it. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`.
 
 ## The signature
 
@@ -39,7 +40,7 @@ Each file is signed with cosign, keyless, by this repository's release workflow.
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-linux-amd64.sigstore.json
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
   --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.27 \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com /usr/local/bin/costroid
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com ~/.local/bin/costroid
 ```
 
 The identity is the release workflow at the release's tag, so a file signed by any other workflow, branch or repository fails. [`docs/verify.md`](verify.md) checks `SHA256SUMS`, the image and the build provenance as well.
