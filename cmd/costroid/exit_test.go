@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Costroid/costroid/internal/cli"
+	"github.com/Costroid/costroid/internal/run"
 )
 
 // The kinds of wrong command line every command is walked with.
@@ -384,34 +385,37 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 	for _, check := range []struct {
 		args  []string
 		names string
+		// then holds the lines under the first, where costroid says why
+		// and what to do next in words of its own.
+		then []string
 	}{
-		{[]string{"demo", "--state", "passed"}, `"passed"`},
-		{[]string{"demo", "rows.jsonl"}, "demo takes no argument"},
-		{[]string{"lint"}, defaultWorkflows},
-		{[]string{"lint", "absent.yml"}, "absent.yml does not exist"},
-		{[]string{"init", "github", "--agent", "claude"}, "this directory is in no git repository"},
-		{[]string{"init", "bitbucket", "--agent", "claude"}, `"bitbucket"`},
-		{[]string{"doctor", "path"}, `"path"`},
-		{[]string{"doctor", "--ci"}, "--ci"},
-		{[]string{"validate", "absent.yml"}, "absent.yml does not exist"},
-		{[]string{"validate", "a.yml", "b.yml"}, "validate takes one path"},
-		{[]string{"run", "--budget-usd", "five", "--", "claude", "-p", "work"}, `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "five"`},
-		{[]string{"run", "--budget-usd", "5", "--", "frobnicate"}, "frobnicate is not an agent costroid run reads"},
-		{[]string{"run", "--budget-usd", "5", "--out", filepath.Join("absent", "rows.jsonl"), "--", "claude", "-p", "work"}, filepath.Join("absent", "rows.jsonl") + " is in a directory that does not exist"},
-		{[]string{"policy"}, "policy needs --rows"},
-		{[]string{"policy", "--rows", "rows.jsonl", "--at", "yesterday"}, `--at takes a time in RFC 3339, such as 2026-11-21T09:00:00Z, not "yesterday"`},
-		{[]string{"policy", "--rows", "absent.jsonl"}, "absent.jsonl does not exist"},
-		{[]string{"report"}, "report needs --rows"},
-		{[]string{"report", "--rows", "rows.jsonl"}, "neither GitHub Actions nor GitLab CI was detected"},
-		{[]string{"report", "--preview", "--rows", "absent.jsonl"}, "no rows file at absent.jsonl"},
-		{[]string{"ingest-run", "--out", "out.jsonl"}, "ingest-run needs --from KIND=PATH and --out"},
-		{[]string{"ingest-run", "--from", "execution-file=absent.json", "--out", "out.jsonl"}, "absent.json does not exist"},
-		{[]string{"follow-up"}, "follow-up needs --rows"},
-		{[]string{"follow-up", "--rows", "rows.jsonl"}, "GitHub Actions was not detected"},
-		{[]string{"approve", "extra"}, "approve takes no arguments"},
-		{[]string{"approve"}, "GitHub Actions was not detected"},
-		{[]string{"result"}, "result needs --pr"},
-		{[]string{"result", "--pr", "7", "--repo", "example/widgets"}, "GITHUB_TOKEN is not set"},
+		{args: []string{"demo", "--state", "passed"}, names: `"passed"`},
+		{args: []string{"demo", "rows.jsonl"}, names: "demo takes no argument"},
+		{args: []string{"lint"}, names: defaultWorkflows + " does not exist", then: []string{"lint reads the GitHub workflows of the repository it runs in.", "Run costroid lint at a repository's root, or name the files: costroid lint <paths>."}},
+		{args: []string{"lint", "absent.yml"}, names: "absent.yml does not exist"},
+		{args: []string{"init", "github", "--agent", "claude"}, names: "this directory is in no git repository", then: []string{"init writes at a repository's root.", "Run costroid init inside your repository."}},
+		{args: []string{"init", "bitbucket", "--agent", "claude"}, names: `"bitbucket"`},
+		{args: []string{"doctor", "path"}, names: `"path"`},
+		{args: []string{"doctor", "--ci"}, names: "--ci"},
+		{args: []string{"validate", "absent.yml"}, names: "absent.yml does not exist", then: []string{"See " + cli.Troubleshooting + "."}},
+		{args: []string{"validate", "a.yml", "b.yml"}, names: "validate takes one path"},
+		{args: []string{"run", "--budget-usd", "five", "--", "claude", "-p", "work"}, names: `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "five"`},
+		{args: []string{"run", "--budget-usd", "5", "--", "frobnicate"}, names: "frobnicate is not an agent costroid run reads", then: []string{"It reads " + strings.Join(run.Agents, ", ") + ".", "Name the one the command starts with --agent.", "Run costroid help run to see its usage."}},
+		{args: []string{"run", "--budget-usd", "5", "--out", filepath.Join("absent", "rows.jsonl"), "--", "claude", "-p", "work"}, names: filepath.Join("absent", "rows.jsonl") + " is in a directory that does not exist"},
+		{args: []string{"policy"}, names: "policy needs --rows and takes no argument", then: []string{"Run costroid help policy to see its usage."}},
+		{args: []string{"policy", "--rows", "rows.jsonl", "--at", "yesterday"}, names: `--at takes a time in RFC 3339, such as 2026-11-21T09:00:00Z, not "yesterday"`},
+		{args: []string{"policy", "--rows", "absent.jsonl"}, names: "absent.jsonl does not exist"},
+		{args: []string{"report"}, names: "report needs --rows"},
+		{args: []string{"report", "--rows", "rows.jsonl"}, names: "report refused: neither GitHub Actions nor GitLab CI was detected", then: []string{"report posts from a job of one of them.", "Run costroid report --preview --rows FILE to print the comment here."}},
+		{args: []string{"report", "--preview", "--rows", "absent.jsonl"}, names: "no rows file at absent.jsonl", then: []string{"costroid run writes one at --out, and costroid demo shows a comment without one."}},
+		{args: []string{"ingest-run", "--out", "out.jsonl"}, names: "ingest-run needs --from KIND=PATH and --out"},
+		{args: []string{"ingest-run", "--from", "execution-file=absent.json", "--out", "out.jsonl"}, names: "absent.json does not exist"},
+		{args: []string{"follow-up"}, names: "follow-up needs --rows"},
+		{args: []string{"follow-up", "--rows", "rows.jsonl"}, names: "follow-up refused: GitHub Actions was not detected", then: []string{"follow-up runs in a GitHub Actions job on the workflow_run event, as recipes/github-follow-up.yml does."}},
+		{args: []string{"approve", "extra"}, names: "approve takes no arguments"},
+		{args: []string{"approve"}, names: "approve refused: GitHub Actions was not detected", then: []string{"approve runs in a GitHub Actions job on the pull_request_review event, as recipes/github-approval.yml does."}},
+		{args: []string{"result"}, names: "result needs --pr"},
+		{args: []string{"result", "--pr", "7", "--repo", "example/widgets"}, names: "GITHUB_TOKEN is not set"},
 	} {
 		walked[check.args[0]] = true
 		code, stdout, stderr := execute(t, check.args...)
@@ -423,6 +427,9 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		}
 		if strings.HasPrefix(first, check.args[0]+": ") || strings.HasPrefix(first, "preview: ") {
 			t.Errorf("%v: a command's name stands before what is wrong:\n%s", check.args, stderr)
+		}
+		if check.then != nil && (first != check.names || !slices.Equal(lines[1:], check.then)) {
+			t.Errorf("%v prints:\n%swant %q, then:\n%s", check.args, stderr, check.names, strings.Join(check.then, "\n"))
 		}
 		if len(lines) < 2 || len(lines) > 4 || !nextStep.MatchString(lines[len(lines)-1]) {
 			t.Errorf("%v: %d lines, and the last names no command, page or recipe:\n%s", check.args, len(lines), stderr)
@@ -797,7 +804,7 @@ const exitCodePage = "../../docs/exit-codes.md"
 // uses.
 func TestTheExitCodePageMatchesTheCommands(t *testing.T) {
 	page := readFile(t, exitCodePage)
-	for _, sentence := range []string{cli.UsageExit[1], "the agent's own"} {
+	for _, sentence := range []string{cli.UsageExit[1], "the agent's own", "a wrong command line of `run` itself exits 125, where every other command exits 2"} {
 		if !strings.Contains(strings.ToLower(page), sentence) {
 			t.Errorf("%s does not say %q", exitCodePage, sentence)
 		}
