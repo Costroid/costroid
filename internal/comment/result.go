@@ -182,8 +182,9 @@ type CheckOutput struct {
 	Text    string
 }
 
-// Check renders the check output. Text carries the result object, with every
-// amount in it whatever the comment shows.
+// Check renders the check output. The title is the verdict sentence, and the
+// summary opens on it. Text carries the result object, with every amount in
+// it whatever the comment shows.
 func Check(input Input) (CheckOutput, error) {
 	block, err := Result(input)
 	if err != nil {

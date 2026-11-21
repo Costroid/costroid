@@ -118,9 +118,9 @@ func only(names []Data) string {
 	return Multiple
 }
 
-// Summary renders the job summary. It leads with the basis and the catalog,
-// and it follows the comment: withheld, it shows grades and no amount or
-// token count.
+// Summary renders the job summary. It opens on the verdict sentence and reads
+// in the comment's order, with each figure's catalog and token counts in its
+// table. Withheld, it shows no amount and no token count.
 func Summary(input Input) (string, error) {
 	return render("summary", input.view())
 }

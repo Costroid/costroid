@@ -286,8 +286,8 @@ func (i Input) recorded() *Recorded {
 	return &recorded
 }
 
-// recordedLine opens a report on a recorded run's rows, so no reader takes
-// its figures for the pull request's.
+// recordedLine stands under the verdict sentence of a report on a recorded
+// run's rows, so no reader takes its figures for the pull request's.
 func (i Input) recordedLine() string {
 	recorded := i.recorded()
 	if recorded == nil {
@@ -674,7 +674,7 @@ func traceCost(currency string, trace Trace) string {
 	return money(currency, trace.Cost.String())
 }
 
-// millionTokens is the pricing unit every catalog price is stated in.
+// millionTokens is the count of tokens the catalogs state a price per.
 const millionTokens = "1000000"
 
 // unitWords reads a pricing unit such as "1000000 Tokens" as "million
