@@ -1,10 +1,13 @@
 Usage:
-  costroid policy --rows rows.jsonl [--config costroid.yml]
+  costroid policy --rows rows.jsonl [--config costroid.yml] [--pack FILE]
                   [--history earlier.jsonl] [--baseline merged.jsonl]
                   [--workflow-added T] [--at T] [--json]
 
 policy gives, offline, the verdict the check gives: it holds the rows to the
 policy keys of the costroid.yml named, which should be the base branch's.
+--pack names the file of the policy pack its policy_pack names, as the base
+branch holds it. Without --pack, the path policy_pack names is read from the
+directory that holds the costroid.yml named.
 --history names the result objects of the pull request's earlier check runs,
 one per line, each with its check_run_id: the pull request's total is read
 from them as the report reads it. --baseline names, in the same form, the

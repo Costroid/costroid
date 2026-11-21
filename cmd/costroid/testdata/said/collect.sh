@@ -4,7 +4,7 @@
 # before help took its parts and their order, and a test holds every sentence
 # of them to the page the command prints now.
 #
-#   git worktree add ../before 4a6c734
+#   git worktree add ../before 1c14655
 #   (cd ../before && go build -o costroid ./cmd/costroid)
 #   cmd/costroid/testdata/said/collect.sh ../before/costroid
 set -eu
