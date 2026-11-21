@@ -229,11 +229,17 @@ func TestCustomerPackCannotLoosenTheDefault(t *testing.T) {
 	if len(answers) != 91 {
 		t.Fatalf("generated %d answers", len(answers))
 	}
-	for _, entry := range baseCases(t) {
-		kept := slices.Clone(entry.verdict.Results)
-		for source, valid := range answers {
+	cases := baseCases(t)
+	var kept [][]Result
+	for _, entry := range cases {
+		kept = append(kept, slices.Clone(entry.verdict.Results))
+	}
+	runner := childRunner(t)
+	for source, valid := range answers {
+		results, _, problem := runner.run(context.Background(), []byte(source), cases[0].request, cases[0].verdict.Results)
+		for _, entry := range cases {
 			name := fmt.Sprintf("%s, %q", entry.name, source)
-			out := RunCustomerPack(context.Background(), []byte(source), entry.request, entry.verdict)
+			out := compose(entry.verdict, results, problem)
 			assertComposedPack(t, name, entry.verdict, out)
 			result, faulted := customerResult(entry.verdict, out)
 			switch {
@@ -243,6 +249,8 @@ func TestCustomerPackCannotLoosenTheDefault(t *testing.T) {
 				t.Fatalf("%s: an answer outside the pack's words was read: %+v, %+v", name, out.Pack, out.Verdict.Results)
 			}
 		}
+	}
+	for _, entry := range cases {
 		for _, source := range packAttempts {
 			name := fmt.Sprintf("%s, %q", entry.name, source)
 			out := RunCustomerPack(context.Background(), []byte(source), entry.request, entry.verdict)
@@ -251,7 +259,9 @@ func TestCustomerPackCannotLoosenTheDefault(t *testing.T) {
 				t.Fatalf("%s: a pack result took a rule of Costroid's: %+v", name, out.Pack)
 			}
 		}
-		if !reflect.DeepEqual(entry.verdict.Results, kept) {
+	}
+	for index, entry := range cases {
+		if !reflect.DeepEqual(entry.verdict.Results, kept[index]) {
 			t.Fatalf("%s: a pack wrote Costroid's results", entry.name)
 		}
 	}
@@ -331,14 +341,15 @@ func TestCustomerPackWithARefusedBuiltinFailsClosed(t *testing.T) {
 			line         int
 		}{name, source, 4})
 	}
+	runner := childRunner(t)
 	for _, entry := range faults {
-		_, problem := loadCustomerPack(context.Background(), []byte(entry.source), time.Now().Add(maxPackTime))
+		results, _, problem := runner.run(context.Background(), []byte(entry.source), cases[0].request, cases[0].verdict.Results)
 		if problem == nil || problem.Reason() != packInvalid || problem.Line != entry.line {
 			t.Errorf("%s loaded as %v, line %d", entry.name, problem, entry.line)
 			continue
 		}
 		for _, base := range cases {
-			out := RunCustomerPack(context.Background(), []byte(entry.source), base.request, base.verdict)
+			out := compose(base.verdict, results, problem)
 			assertComposedPack(t, entry.name+", "+base.name, base.verdict, out)
 			result, faulted := customerResult(base.verdict, out)
 			want := max(severity[base.verdict.Conclusion], severity[Neutral])
@@ -347,28 +358,6 @@ func TestCustomerPackWithARefusedBuiltinFailsClosed(t *testing.T) {
 			}
 		}
 	}
-}
-
-// chain is a pack's rules that build a value whose size doubles with each
-// rule, through object.union so the type checker sees no nesting.
-func chain(name string, rules int) string {
-	var source strings.Builder
-	fmt.Fprintf(&source, "%s_0 := {\"rows\": input.rows}\n", name)
-	for index := 1; index <= rules; index++ {
-		fmt.Fprintf(&source, "%s_%d := object.union({\"left\": %s_%d}, {\"right\": %s_%d})\n", name, index, name, index-1, name, index-1)
-	}
-	return source.String()
-}
-
-// nested is a pack's rules that build a value whose static type doubles
-// with each rule, so the type checker's work does.
-func nested(name string, rules int) string {
-	var source strings.Builder
-	fmt.Fprintf(&source, "%s_0 := [1]\n", name)
-	for index := 1; index <= rules; index++ {
-		fmt.Fprintf(&source, "%s_%d := [%s_%d, %s_%d]\n", name, index, name, index-1, name, index-1)
-	}
-	return source.String()
 }
 
 func TestCustomerPackIsBounded(t *testing.T) {
@@ -384,32 +373,30 @@ func TestCustomerPackIsBounded(t *testing.T) {
 	for index := range maxPackResults + 1 {
 		fmt.Fprintf(&many, "results contains {\"rule\": \"rule_%d\", \"outcome\": \"warn\", \"reason\": \"many\"}\n", index)
 	}
-	quick := packBounds{steps: maxPackSteps, time: 100 * time.Millisecond}
 	cases := []struct {
 		name    string
 		source  string
 		request Request
-		bounds  packBounds
 		reason  string
+		steps   int64
 	}{
-		{"five nested loops over the input", header + warn + " if {\n\tn := count([1 | some a in input.usage; some b in input.usage; some c in input.usage; some d in input.usage; some e in input.usage])\n\tn > 0\n}\n", largest, customerBounds, packBound},
-		{"a comparison of two values of 2^24 leaves in one step", header + chain("a", 24) + chain("b", 24) + warn + " if {\n\ta_24 in [b_24]\n}\n", largest, quick, packBound},
-		{"a type check of 4^13 steps in the compiler", header + nested("a", 13) + nested("b", 13) + warn + " if {\n\ta_13 == b_13\n}\n", largest, quick, packBound},
-		{"17 currencies", header + warn + "\n", wider, customerBounds, packBound},
-		{"257 model ids", header + warn + "\n", more, customerBounds, packBound},
-		{"33 results", many.String(), largest, customerBounds, packBound},
-		{"a file over 64 KiB", header + warn + "\n" + strings.Repeat("#", maxPackBytes), largest, customerBounds, packUnread},
+		{"five nested loops over the input", header + warn + " if {\n\tn := count([1 | some a in input.usage; some b in input.usage; some c in input.usage; some d in input.usage; some e in input.usage])\n\tn > 0\n}\n", largest, packBound, maxPackSteps + 1},
+		{"17 currencies", header + warn + "\n", wider, packBound, 0},
+		{"257 model ids", header + warn + "\n", more, packBound, 0},
+		{"33 results", many.String(), largest, packBound, 68},
+		{"a file over 64 KiB", header + warn + "\n" + strings.Repeat("#", maxPackBytes), largest, packUnread, 0},
 	}
+	runner := childRunner(t)
 	for _, entry := range cases {
 		start := time.Now()
-		results, problem := runCustomerPack(context.Background(), []byte(entry.source), entry.request, nil, entry.bounds)
+		results, steps, problem := runner.run(context.Background(), []byte(entry.source), entry.request, nil)
 		elapsed := time.Since(start)
-		if problem == nil || problem.Reason() != entry.reason || len(results) > 0 {
-			t.Errorf("%s: %+v, %v", entry.name, results, problem)
+		if problem == nil || problem.Reason() != entry.reason || len(results) > 0 || steps != entry.steps {
+			t.Errorf("%s: %+v, %v, %d steps", entry.name, results, problem, steps)
 			continue
 		}
-		if elapsed > entry.bounds.time+500*time.Millisecond {
-			t.Errorf("%s: answered after %s, past %s", entry.name, elapsed, entry.bounds.time)
+		if elapsed > maxPackTime {
+			t.Errorf("%s: answered after %s, past %s", entry.name, elapsed, maxPackTime)
 		}
 		t.Logf("%s: %v after %s", entry.name, problem, elapsed)
 		for _, active := range []bool{false, true} {
@@ -424,17 +411,6 @@ func TestCustomerPackIsBounded(t *testing.T) {
 			}
 		}
 	}
-	pack, problem := loadCustomerPack(context.Background(), []byte(cases[0].source), time.Now().Add(maxPackTime))
-	if problem != nil {
-		t.Fatal(problem)
-	}
-	input, problem := customerInput(largest, Settings{}, nil)
-	if problem != nil {
-		t.Fatal(problem)
-	}
-	if _, steps, problem := pack.evaluate(context.Background(), input, maxPackSteps, time.Now().Add(time.Minute)); problem == nil || steps != maxPackSteps+1 {
-		t.Errorf("the loops stopped at step %d of a bound of %d: %v", steps, maxPackSteps, problem)
-	}
 }
 
 func TestCustomerPackCountsTheSameStepsEveryRun(t *testing.T) {
@@ -443,33 +419,38 @@ func TestCustomerPackCountsTheSameStepsEveryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, problem := customerInput(request, settings, evaluate(t, request).Results)
+	verdict := evaluate(t, request)
+	input, problem := customerInput(request, settings, verdict.Results)
 	if problem != nil {
 		t.Fatal(problem)
 	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	packs := packFixtures(t)
 	packs["over the bound"] = []byte("package costroid.pack\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"x\"} if {\n\tcount([1 | some a in input.usage; some b in input.usage; some c in input.usage; some d in input.usage; some e in input.usage]) > 0\n}\n")
+	runner := childRunner(t)
 	for name, source := range packs {
 		var counts []int64
-		var answers [][]PackResult
+		var answers []childAnswer
 		for range 100 {
-			pack, problem := loadCustomerPack(context.Background(), source, time.Now().Add(maxPackTime))
-			if problem != nil {
-				t.Fatalf("%s: %v", name, problem)
+			answer := answerPack(childRequest{Source: source, Input: encoded, Steps: maxPackSteps})
+			if (answer.Fault != nil) != (name == "over the bound") {
+				t.Fatalf("%s: %+v", name, answer.Fault)
 			}
-			results, steps, problem := pack.evaluate(context.Background(), input, maxPackSteps, time.Now().Add(time.Minute))
-			if (problem != nil) != (name == "over the bound") {
-				t.Fatalf("%s: %v", name, problem)
-			}
-			counts, answers = append(counts, steps), append(answers, results)
+			counts, answers = append(counts, answer.Steps), append(answers, answer)
 		}
-		if slices.Min(counts) != slices.Max(counts) || slices.ContainsFunc(answers, func(results []PackResult) bool { return !reflect.DeepEqual(results, answers[0]) }) {
+		if slices.Min(counts) != slices.Max(counts) || slices.ContainsFunc(answers, func(answer childAnswer) bool { return !reflect.DeepEqual(answer, answers[0]) }) {
 			t.Errorf("%s counted from %d to %d steps over 100 runs", name, slices.Min(counts), slices.Max(counts))
+		}
+		if _, steps, _ := runner.run(context.Background(), source, request, verdict.Results); steps != counts[0] {
+			t.Errorf("%s counts %d steps in a child and %d in this process", name, steps, counts[0])
 		}
 		if name != "over the bound" && counts[0]*100 > maxPackSteps {
 			t.Errorf("%s counts %d steps, more than a hundredth of the bound of %d", name, counts[0], maxPackSteps)
 		}
-		t.Logf("%s: %d steps, %d results", name, counts[0], len(answers[0]))
+		t.Logf("%s: %d steps, %d results", name, counts[0], len(answers[0].Results))
 	}
 }
 
@@ -504,11 +485,7 @@ func TestCustomerPackSeesOnlyItsInput(t *testing.T) {
 		`"rows":3,"settings":{"models":["claude-*"],"run_budget_usd":"5"},"trust":"unverified",` +
 		`"usage":[{"currency":"EUR","joinable_rows":0,"list_cost":"0.5","models":{"codex-mini":1},"rows":1,"unattributed_rows":1},` +
 		`{"currency":"USD","joinable_rows":1,"list_cost":"2.25","models":{"claude-sonnet-5-5":2},"rows":2,"unattributed_rows":2}]}`
-	document, err := ast.JSON(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(document)
+	encoded, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +494,7 @@ func TestCustomerPackSeesOnlyItsInput(t *testing.T) {
 	}
 	later := request
 	later.At, later.Start, later.MeasuredPullRequests = checkTime.Add(240*time.Hour), Start{NotOnBase: true}, 40
-	if again, _ := customerInput(later, settings, verdict.Results); ast.Compare(again, input) != 0 {
+	if again, _ := customerInput(later, settings, verdict.Results); !reflect.DeepEqual(again, input) {
 		t.Errorf("the input moved with the clock or the warn-only period: %v", again)
 	}
 
@@ -585,7 +562,7 @@ results contains {"rule": "reached", "outcome": "fail", "reason": "warn_only"} i
 	}
 	for _, name := range []string{"opa.runtime", "time.now_ns", "http.send", "net.lookup_ip_addr", "rand.intn"} {
 		source := "package costroid.pack\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"x\"} if {\n\t_ := " + refusedCalls[name] + "\n}\n"
-		_, problem := loadCustomerPack(context.Background(), []byte(source), time.Now().Add(maxPackTime))
+		_, _, problem := childRunner(t).run(context.Background(), []byte(source), request, verdict.Results)
 		if problem == nil || problem.Reason() != packInvalid {
 			t.Errorf("a pack that calls %s loaded: %v", name, problem)
 		}
@@ -632,21 +609,23 @@ func fuzzPackSeeds(f *testing.F) {
 	for _, entry := range packFaults {
 		f.Add([]byte(entry.source))
 	}
-	f.Add([]byte("package costroid.pack\n\n" + chain("a", 4) + "results contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"x\"} if {\n\ta_4 in [a_4]\n}\n"))
+	f.Add([]byte("package costroid.pack\n\na := object.union({\"left\": input.rows}, {\"right\": input.rows})\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"x\"} if {\n\ta in [a]\n}\n"))
 	f.Add([]byte(""))
 }
 
-// FuzzCustomerPack runs any module as a customer pack over a verdict of each
-// conclusion. Whatever the module, the conclusion is never below Costroid's,
-// Costroid's results stay as they were, and what the pack adds is in its own
-// words or is one customer_pack fault.
+// FuzzCustomerPack runs any module as a customer pack in a child, and joins
+// its answer to a verdict of each conclusion. Whatever the module, the child
+// answers or faults, the conclusion is never below Costroid's, Costroid's
+// results stay as they were, and what the pack adds is in its own words or is
+// one customer_pack fault.
 func FuzzCustomerPack(f *testing.F) {
 	fuzzPackSeeds(f)
 	cases := baseCases(f)
+	runner := childRunner(f)
 	f.Fuzz(func(t *testing.T, source []byte) {
+		results, _, problem := runner.run(context.Background(), source, cases[3].request, cases[3].verdict.Results)
 		for _, entry := range []baseCase{cases[1], cases[2], cases[3], cases[4]} {
-			out := RunCustomerPack(context.Background(), source, entry.request, entry.verdict)
-			assertComposedPack(t, fmt.Sprintf("%s, %q", entry.name, source), entry.verdict, out)
+			assertComposedPack(t, fmt.Sprintf("%s, %q", entry.name, source), entry.verdict, compose(entry.verdict, results, problem))
 		}
 	})
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
 	"github.com/Costroid/costroid/internal/run"
 )
@@ -43,6 +44,9 @@ const (
 var version = "dev"
 
 func main() {
+	if code, child := policy.PackChild(); child {
+		os.Exit(code)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := dispatch(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()

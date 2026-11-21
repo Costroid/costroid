@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Costroid/costroid/internal/agenttest"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 const (
@@ -22,10 +23,14 @@ const (
 	sessionID    = "00000000-0000-4000-8000-000000000002"
 )
 
-// TestMain replays a recorded stream when the harness runs the test binary
-// under the name claude. Otherwise it runs the tests with a stub first on PATH
-// for every agent, so no test can start the machine's own.
+// TestMain runs main when a customer pack's runner starts the test binary as
+// its child, and replays a recorded stream when the harness runs the test
+// binary under the name claude. Otherwise it runs the tests with a stub first
+// on PATH for every agent, so no test can start the machine's own.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == policy.PackChildArgument {
+		main()
+	}
 	if stream := os.Getenv(replayStream); stream != "" {
 		data, err := os.ReadFile(stream)
 		if err != nil {
@@ -35,6 +40,19 @@ func TestMain(m *testing.M) {
 		return
 	}
 	os.Exit(agenttest.Main(m.Run))
+}
+
+// TestMainRunsACustomerPackAsItsChild runs a pack through main's own entry:
+// the runner starts this binary as its child, and main hands the process to
+// the pack before it reads a command.
+func TestMainRunsACustomerPackAsItsChild(t *testing.T) {
+	source := []byte("package costroid.pack\n\nresults contains {\"rule\": \"team_rule\", \"outcome\": \"warn\", \"reason\": \"answered\"}\n")
+	verdict := policy.Verdict{Conclusion: policy.Success, Results: []policy.Result{}}
+	out := policy.RunCustomerPack(context.Background(), source, policy.Request{}, verdict)
+	want := []policy.PackResult{{Rule: "team_rule", Outcome: policy.PackWarn, Reason: "answered"}}
+	if !slices.Equal(out.Pack, want) || out.Verdict.Conclusion != policy.Neutral || len(out.Verdict.Results) != 0 {
+		t.Fatalf("main did not run the pack: %+v", out)
+	}
 }
 
 func execute(t *testing.T, args ...string) (int, string, string) {

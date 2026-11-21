@@ -3,26 +3,28 @@ package policy
 import (
 	"bytes"
 	"context"
-	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
-	"sync/atomic"
+	"syscall"
 	"time"
-
-	"github.com/open-policy-agent/opa/v1/ast"
-	"github.com/open-policy-agent/opa/v1/rego"
 )
 
 // A customer pack is one Rego module a repository keeps at its base commit,
-// beside costroid.yml. It is compiled alone, never beside the default pack,
-// and its results can only add warnings and failures to Costroid's verdict.
+// beside costroid.yml. It is never compiled or evaluated in the process that
+// decides the verdict: a child process of the same executable does both, and
+// the parent reads its answer as it would read anything a stranger wrote.
+// Its results can only add warnings and failures to Costroid's verdict.
 
 const (
-	customerPackage = "costroid.pack"
-	customerQuery   = "data.costroid.pack.results"
 	// maxPackBytes is the largest pack compiled, the bound serve puts on
 	// costroid.yml.
 	maxPackBytes = 64 << 10
@@ -36,12 +38,18 @@ const (
 	// same bound everywhere. It is at least 100 times the count of each pack
 	// in testdata/packs on the largest input.
 	maxPackSteps = 200_000
-	// maxPackTime bounds compiling and evaluating together, for the work the
-	// count does not see: the compiler's, and what one step does. Unlike the
-	// count it ends a run sooner on a slower runner, and only ever in a fault
-	// that fails.
+	// maxPackTime bounds the child from its start to its answer, compiling
+	// included: the parent kills it then. It also stops the work the count
+	// does not see, the compiler's and what one step does. Unlike the count it
+	// ends a run sooner on a slower runner, and only ever in a fault that
+	// fails.
 	maxPackTime     = 2 * time.Second
 	maxMessageBytes = 160
+	// maxAnswerBytes is the most the parent reads of the child's answer: 32
+	// results at their longest come to about 10 KiB.
+	maxAnswerBytes = 64 << 10
+	// maxChildErrorBytes is how much of the child's stderr a fault quotes.
+	maxChildErrorBytes = 2 << 10
 )
 
 // The rule of Costroid's own result on a pack that gave no answer, and its
@@ -54,8 +62,8 @@ const (
 	// or declares another package, or names a result for one of Costroid's
 	// rules.
 	packInvalid = "pack_invalid"
-	// packBound: the input, the steps, the clock or the results passed their
-	// bound.
+	// packBound: the input, the steps, the time or the results passed their
+	// bound, or the child ended without an answer.
 	packBound = "pack_bound"
 	// packResult: the answer is not a list of results in the pack's words.
 	packResult = "pack_result"
@@ -66,7 +74,8 @@ const (
 // unproven, as an invalid costroid.yml runs no rule and concludes neutral. A
 // fault the rows can cause fails: were it unproven, a rows file the head's job
 // wrote could stall a pack that would have failed the run, and the pull
-// request would have made its own check pass.
+// request would have made its own check pass. A slow runner, which the
+// head's workflow picks, is such a cause, so every fault of time fails.
 var packFaultOutcomes = map[string]string{
 	packUnread:  Unproven,
 	packInvalid: Unproven,
@@ -78,17 +87,10 @@ var packFaultOutcomes = map[string]string{
 // them before its rule ships. A pack's result never takes one.
 var reservedRules = append(slices.Clone(ruleOrder), "run_p95", ruleCustomerPack)
 
-// packCapabilitiesFile lists every built-in a customer pack may call: the
-// default pack's seven, the four other comparisons, count, three string
-// tests, and the two-variable form of some ... in. Each is pure and returns
-// nothing larger than its input. There is no network, clock, randomness,
-// file, environment or arithmetic.
-//
-//go:embed capabilities.pack.json
-var packCapabilitiesFile []byte
-
 // idPattern is a pack result's rule and reason.
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+const messageCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;()'=_/+?-"
 
 // PackOutcome is what a pack's result says. It has two values: a pack has no
 // word for pass.
@@ -152,159 +154,207 @@ func fault(reason string, line int, err error) *PackFault {
 	return &PackFault{reason: reason, Line: line, err: err}
 }
 
-// customerPack is a compiled customer pack.
-type customerPack struct {
-	query rego.PreparedEvalQuery
+// childRequest is what the parent writes to the child's stdin.
+type childRequest struct {
+	Source []byte          `json:"source"`
+	Input  json.RawMessage `json:"input"`
+	Steps  int64           `json:"steps"`
 }
 
-// packBounds are what one run of a pack may spend: steps, and time for
-// compiling and evaluating together.
-type packBounds struct {
-	steps int64
-	time  time.Duration
+// childAnswer is what the child writes to its stdout: the pack's results, or
+// its fault, and the steps it counted.
+type childAnswer struct {
+	Steps   int64        `json:"steps"`
+	Results []PackResult `json:"results"`
+	Fault   *childFault  `json:"fault,omitempty"`
 }
 
-var customerBounds = packBounds{steps: maxPackSteps, time: maxPackTime}
+type childFault struct {
+	Reason string `json:"reason"`
+	Line   int    `json:"line"`
+	Error  string `json:"error"`
+}
 
-// RunCustomerPack evaluates a customer pack over the request Costroid's
-// verdict was computed from, and joins its results to that verdict. The
-// conclusion it returns is never below the verdict's.
+// packRunner starts the child that runs a pack, and bounds it.
+type packRunner struct {
+	// executable is the absolute path of the child, this process's own.
+	executable string
+	steps      int64
+	time       time.Duration
+}
+
+// RunCustomerPack runs a customer pack in a child process over the request
+// Costroid's verdict was computed from, and joins its results to that
+// verdict. The conclusion it returns is never below the verdict's.
 func RunCustomerPack(ctx context.Context, source []byte, request Request, verdict Verdict) Composed {
-	results, problem := runCustomerPack(ctx, source, request, verdict.Results, customerBounds)
+	executable, err := selfExecutable()
+	if err != nil {
+		return compose(verdict, nil, fault(packBound, 0, fmt.Errorf("find this executable: %w", err)))
+	}
+	runner := packRunner{executable: executable, steps: maxPackSteps, time: maxPackTime}
+	results, _, problem := runner.run(ctx, source, request, verdict.Results)
 	return compose(verdict, results, problem)
 }
 
-func runCustomerPack(ctx context.Context, source []byte, request Request, results []Result, bounds packBounds) ([]PackResult, *PackFault) {
-	deadline := time.Now().Add(bounds.time)
-	pack, problem := loadCustomerPack(ctx, source, deadline)
-	if problem != nil {
-		return nil, problem
+// run hands the pack and its input to a child, and reads the child's answer.
+// It returns the results, the steps the child says it counted, and the
+// fault.
+func (r packRunner) run(ctx context.Context, source []byte, request Request, results []Result) ([]PackResult, int64, *PackFault) {
+	if len(source) > maxPackBytes {
+		return nil, 0, fault(packUnread, 0, fmt.Errorf("the file holds %d bytes, over %d", len(source), maxPackBytes))
 	}
 	settings, _ := request.Config.settings()
 	input, problem := customerInput(request, settings, results)
 	if problem != nil {
-		return nil, problem
+		return nil, 0, problem
 	}
-	answer, _, problem := pack.evaluate(ctx, input, bounds.steps, deadline)
-	return answer, problem
-}
-
-// within runs work on a goroutine of its own and waits for it until the
-// deadline or the end of ctx. OPA's compiler takes no context, and one step
-// of an evaluation can compare two values whose size doubles with each
-// expression that built them, so neither is stopped between steps. Past the
-// deadline within returns false, and nothing waits for the goroutine, which
-// ends when its work does.
-func within[T any](ctx context.Context, deadline time.Time, work func() T) (T, bool) {
-	done := make(chan T, 1)
-	go func() { done <- work() }()
-	timer := time.NewTimer(time.Until(deadline))
-	defer timer.Stop()
-	select {
-	case value := <-done:
-		return value, true
-	case <-timer.C:
-	case <-ctx.Done():
-	}
-	var none T
-	return none, false
-}
-
-// loadCustomerPack compiles one module alone under capabilities.pack.json,
-// by the deadline. It never sees the default pack, so no rule of the module
-// can join a document of Costroid's.
-func loadCustomerPack(ctx context.Context, source []byte, deadline time.Time) (*customerPack, *PackFault) {
-	if len(source) > maxPackBytes {
-		return nil, fault(packUnread, 0, fmt.Errorf("the file holds %d bytes, over %d", len(source), maxPackBytes))
-	}
-	type compiled struct {
-		pack    *customerPack
-		problem *PackFault
-	}
-	out, finished := within(ctx, deadline, func() compiled {
-		pack, problem := compileCustomerPack(ctx, source)
-		return compiled{pack, problem}
-	})
-	if !finished {
-		return nil, fault(packBound, 0, errors.New("the pack did not compile in time"))
-	}
-	return out.pack, out.problem
-}
-
-func compileCustomerPack(ctx context.Context, source []byte) (*customerPack, *PackFault) {
-	capabilities, err := ast.LoadCapabilitiesJSON(bytes.NewReader(packCapabilitiesFile))
+	encoded, err := json.Marshal(input)
 	if err != nil {
-		return nil, fault(packInvalid, 0, fmt.Errorf("read the capabilities: %w", err))
+		return nil, 0, fault(packBound, 0, fmt.Errorf("write the input: %w", err))
 	}
-	module, err := ast.ParseModuleWithOpts("pack.rego", string(source), ast.ParserOptions{
-		Capabilities: capabilities,
-		RegoVersion:  ast.RegoV1,
-	})
+	frame, err := json.Marshal(childRequest{Source: source, Input: encoded, Steps: r.steps})
 	if err != nil {
-		return nil, compileFault(err)
+		return nil, 0, fault(packBound, 0, fmt.Errorf("write the request: %w", err))
 	}
-	if problem := checkModule(module); problem != nil {
-		return nil, problem
+	answer, problem := r.exchange(ctx, frame)
+	if problem != nil {
+		return nil, 0, problem
 	}
-	prepared, err := rego.New(
-		rego.Query(customerQuery),
-		rego.ParsedModule(module),
-		rego.Capabilities(capabilities),
-		rego.SetRegoVersion(ast.RegoV1),
-		rego.Strict(true),
-		rego.StrictBuiltinErrors(true),
-		rego.Function2(compareDecimal, compare),
-		rego.GenerateJSON(decodeResults),
-	).PrepareForEval(ctx)
+	return readAnswer(answer, source)
+}
+
+// exchange starts the child by this executable's own path, with no shell,
+// an empty environment, a working directory that holds nothing and no file
+// but its three pipes, writes the request, and reads at most maxAnswerBytes
+// of its answer. The child is killed at the deadline, and waited for, so no
+// process outlives the call.
+func (r packRunner) exchange(ctx context.Context, frame []byte) ([]byte, *PackFault) {
+	if !filepath.IsAbs(r.executable) {
+		return nil, fault(packBound, 0, fmt.Errorf("the child %q is not an absolute path", r.executable))
+	}
+	dir, err := os.MkdirTemp("", "costroid-pack-")
 	if err != nil {
-		return nil, compileFault(err)
+		return nil, fault(packBound, 0, fmt.Errorf("make the child's directory: %w", err))
 	}
-	return &customerPack{query: prepared}, nil
+	defer os.RemoveAll(dir)
+	if err := closeInheritedOnExec(); err != nil {
+		return nil, fault(packBound, 0, err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.time)
+	defer cancel()
+	stdout, stderr := &capped{limit: maxAnswerBytes}, &capped{limit: maxChildErrorBytes}
+	command := exec.CommandContext(ctx, r.executable, PackChildArgument)
+	command.Env = []string{}
+	command.Dir = dir
+	command.Stdin = bytes.NewReader(frame)
+	command.Stdout, command.Stderr = stdout, stderr
+	command.SysProcAttr = childAttributes()
+	command.WaitDelay = 100 * time.Millisecond
+	err = command.Run()
+	switch {
+	case ctx.Err() != nil:
+		return nil, fault(packBound, 0, fmt.Errorf("the pack did not answer within %s", r.time))
+	case err != nil:
+		return nil, fault(packBound, 0, fmt.Errorf("the pack's process ended without an answer: %w: %s", err, firstLine(stderr.data)))
+	case stdout.over:
+		return nil, fault(packResult, 0, fmt.Errorf("the pack's process wrote more than %d bytes", maxAnswerBytes))
+	}
+	return stdout.data, nil
 }
 
-// checkModule refuses a module whose package is not costroid.pack, and one
-// that writes a result for a rule of Costroid's.
-func checkModule(module *ast.Module) *PackFault {
-	if path := module.Package.Path.String(); path != "data."+customerPackage {
-		return fault(packInvalid, row(module.Package.Location), fmt.Errorf("the package is %s, not %s", strings.TrimPrefix(path, "data."), customerPackage))
+// closeInheritedOnExec marks every descriptor above stderr close-on-exec.
+// Go opens each of its own that way already, so this reaches only those the
+// process inherited from its own parent, which would otherwise pass to the
+// child.
+func closeInheritedOnExec() error {
+	entries, err := os.ReadDir(descriptorDirectory)
+	if err != nil {
+		return fmt.Errorf("list the open descriptors: %w", err)
 	}
-	var problem *PackFault
-	ast.WalkTerms(module, func(term *ast.Term) bool {
-		object, ok := term.Value.(ast.Object)
-		if !ok || problem != nil {
-			return problem != nil
+	for _, entry := range entries {
+		if descriptor, err := strconv.Atoi(entry.Name()); err == nil && descriptor > 2 {
+			syscall.CloseOnExec(descriptor)
 		}
-		named := object.Get(ast.InternedTerm("rule"))
-		if named == nil {
-			return false
-		}
-		if rule, ok := named.Value.(ast.String); ok && slices.Contains(reservedRules, string(rule)) {
-			problem = fault(packInvalid, row(term.Location), fmt.Errorf("a result names Costroid's rule %s", rule))
-		}
-		return problem != nil
-	})
-	return problem
+	}
+	return nil
 }
 
-// compileFault reads the line of the first error the parser or the compiler
-// gives.
-func compileFault(err error) *PackFault {
-	var errs ast.Errors
-	if errors.As(err, &errs) && len(errs) > 0 {
-		return fault(packInvalid, row(errs[0].Location), err)
-	}
-	var single *ast.Error
-	if errors.As(err, &single) {
-		return fault(packInvalid, row(single.Location), err)
-	}
-	return fault(packInvalid, 0, err)
+// capped keeps the first limit bytes written to it and drops the rest, so a
+// child that writes without end never blocks on a full pipe.
+type capped struct {
+	limit int
+	data  []byte
+	over  bool
 }
 
-func row(location *ast.Location) int {
-	if location == nil {
-		return 0
+func (c *capped) Write(p []byte) (int, error) {
+	room := c.limit - len(c.data)
+	c.data = append(c.data, p[:min(room, len(p))]...)
+	c.over = c.over || len(p) > room
+	return len(p), nil
+}
+
+func firstLine(data []byte) string {
+	line, _, _ := bytes.Cut(bytes.TrimSpace(data), []byte("\n"))
+	return printable(string(line))
+}
+
+// readAnswer holds the child's answer to what the child itself was bound to
+// write: one JSON object of known fields and nothing after it, results in the
+// pack's words or a fault of a known reason, never both. The child is not
+// trusted, so anything else is a fault, never a result.
+func readAnswer(data, source []byte) ([]PackResult, int64, *PackFault) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var answer childAnswer
+	if err := decoder.Decode(&answer); err != nil {
+		return nil, 0, fault(packResult, 0, fmt.Errorf("read the pack's answer: %w", err))
 	}
-	return location.Row
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, 0, fault(packResult, 0, errors.New("the pack's answer holds more than one value"))
+	}
+	if answer.Fault != nil {
+		return nil, answer.Steps, answeredFault(*answer.Fault, len(answer.Results), source)
+	}
+	if len(answer.Results) > maxPackResults {
+		return nil, answer.Steps, fault(packBound, 0, fmt.Errorf("the pack returned %d results, over %d", len(answer.Results), maxPackResults))
+	}
+	for _, result := range answer.Results {
+		if problem := checkResult(result); problem != nil {
+			return nil, answer.Steps, problem
+		}
+	}
+	slices.SortFunc(answer.Results, comparePackResults)
+	return answer.Results, answer.Steps, nil
+}
+
+// answeredFault reads a fault the child stated. Its reason must be one only
+// the child can find, and its line one the pack has. The size of the file and
+// the bounds of the input are the parent's to judge.
+func answeredFault(stated childFault, results int, source []byte) *PackFault {
+	lines := bytes.Count(source, []byte("\n")) + 1
+	known := slices.Contains([]string{packInvalid, packBound, packResult}, stated.Reason)
+	if !known || results > 0 || stated.Line < 0 || stated.Line > lines {
+		return fault(packResult, 0, fmt.Errorf("the pack's process stated the fault %q at line %d", printable(stated.Reason), stated.Line))
+	}
+	return fault(stated.Reason, stated.Line, errors.New(printable(stated.Error)))
+}
+
+// checkResult holds one result to the pack's words: warn or fail, a rule and
+// a reason that are ids and no rule of Costroid's, a message a comment can
+// print, and no warn-only hold, which only compose sets.
+func checkResult(result PackResult) *PackFault {
+	switch {
+	case result.Outcome != PackWarn && result.Outcome != PackFail:
+		return fault(packResult, 0, fmt.Errorf("a result's outcome is %q, not warn or fail", printable(string(result.Outcome))))
+	case !idPattern.MatchString(result.Rule) || !idPattern.MatchString(result.Reason):
+		return fault(packResult, 0, fmt.Errorf("a result's rule %q or reason %q is not an id", printable(result.Rule), printable(result.Reason)))
+	case slices.Contains(reservedRules, result.Rule):
+		return fault(packResult, 0, fmt.Errorf("a result names Costroid's rule %s", result.Rule))
+	case printable(result.Message) != result.Message || result.HeldByWarnOnly:
+		return fault(packResult, 0, errors.New("a result holds a message a comment cannot print, or a warn-only hold"))
+	}
+	return nil
 }
 
 // customerInput is everything a customer pack reads, and the one place it is
@@ -312,7 +362,7 @@ func row(location *ast.Location) int {
 // credential, clock, environment, or warn-only state: only the rows' counts
 // and costs, the settings the base commit states, the baseline and the pull
 // request's total, and Costroid's own results without their figures.
-func customerInput(request Request, settings Settings, results []Result) (ast.Value, *PackFault) {
+func customerInput(request Request, settings Settings, results []Result) (map[string]any, *PackFault) {
 	usage := request.Usage
 	if len(usage.Currencies) > maxPackCurrencies {
 		return nil, fault(packBound, 0, fmt.Errorf("the rows hold %d currencies, over %d", len(usage.Currencies), maxPackCurrencies))
@@ -361,136 +411,7 @@ func customerInput(request Request, settings Settings, results []Result) (ast.Va
 	if lifetime := lifetimeInput(request.Lifetime, usage); lifetime != nil {
 		input["lifetime"] = lifetime
 	}
-	value, err := ast.InterfaceToValue(input)
-	if err != nil {
-		return nil, fault(packBound, 0, fmt.Errorf("build the input: %w", err))
-	}
-	return value, nil
-}
-
-// stepBound counts the expressions an evaluation begins, and cancels it
-// past its limit, its deadline or its context. OPA asks Cancelled before
-// each expression.
-type stepBound struct {
-	ctx      context.Context
-	limit    int64
-	deadline time.Time
-	steps    atomic.Int64
-	tripped  atomic.Bool
-}
-
-func (b *stepBound) Cancel() {
-	b.tripped.Store(true)
-}
-
-func (b *stepBound) Cancelled() bool {
-	if b.steps.Add(1) > b.limit || time.Now().After(b.deadline) || b.ctx.Err() != nil {
-		b.tripped.Store(true)
-	}
-	return b.tripped.Load()
-}
-
-// evaluate runs the pack over input, stopped past limit steps or the
-// deadline, and returns its results and the steps it counted.
-func (p *customerPack) evaluate(ctx context.Context, input ast.Value, limit int64, deadline time.Time) ([]PackResult, int64, *PackFault) {
-	bound := &stepBound{ctx: ctx, limit: limit, deadline: deadline}
-	type answer struct {
-		set rego.ResultSet
-		err error
-	}
-	out, finished := within(ctx, deadline, func() answer {
-		set, err := p.query.Eval(ctx, rego.EvalParsedInput(input), rego.EvalExternalCancel(bound))
-		return answer{set, err}
-	})
-	if !finished || bound.tripped.Load() {
-		bound.Cancel()
-		steps := bound.steps.Load()
-		return nil, steps, fault(packBound, 0, fmt.Errorf("stopped at step %d, past %d steps or the deadline", steps, limit))
-	}
-	steps := bound.steps.Load()
-	var problem *PackFault
-	switch set := out.set; {
-	case errors.As(out.err, &problem):
-		return nil, steps, problem
-	case out.err != nil:
-		return nil, steps, fault(packResult, 0, out.err)
-	case len(set) == 0:
-		return nil, steps, nil
-	case len(set) != 1 || len(set[0].Expressions) != 1:
-		return nil, steps, fault(packResult, 0, errors.New("the pack gave more than one answer"))
-	}
-	results, ok := out.set[0].Expressions[0].Value.([]PackResult)
-	if !ok {
-		return nil, steps, fault(packResult, 0, errors.New("the pack's answer was not decoded"))
-	}
-	return results, steps, nil
-}
-
-// decodeResults reads the pack's answer straight from its terms. It reads
-// only the shape a result takes, so no part of the answer outside it is ever
-// walked or copied: a set or an array of at most 32 objects, each with a rule,
-// an outcome of warn or fail, a reason and an optional message, every value a
-// string. Anything else is a fault, never a result left out.
-func decodeResults(term *ast.Term, _ *rego.EvalContext) (any, error) {
-	var elements []*ast.Term
-	switch value := term.Value.(type) {
-	case ast.Set:
-		if value.Len() > maxPackResults {
-			return nil, fault(packBound, 0, fmt.Errorf("the pack returned %d results, over %d", value.Len(), maxPackResults))
-		}
-		elements = value.Slice()
-	case *ast.Array:
-		if value.Len() > maxPackResults {
-			return nil, fault(packBound, 0, fmt.Errorf("the pack returned %d results, over %d", value.Len(), maxPackResults))
-		}
-		for index := range value.Len() {
-			elements = append(elements, value.Elem(index))
-		}
-	default:
-		return nil, fault(packResult, 0, fmt.Errorf("results is a %s, not a set of results", ast.ValueName(term.Value)))
-	}
-	results := make([]PackResult, 0, len(elements))
-	for _, element := range elements {
-		result, err := decodeResult(element)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, result)
-	}
-	slices.SortFunc(results, comparePackResults)
-	return results, nil
-}
-
-func decodeResult(term *ast.Term) (PackResult, *PackFault) {
-	object, ok := term.Value.(ast.Object)
-	if !ok {
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result is a %s, not an object", ast.ValueName(term.Value)))
-	}
-	if object.Len() > 4 {
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result holds %d keys", object.Len()))
-	}
-	fields := map[string]string{}
-	for _, key := range object.Keys() {
-		name, ok := key.Value.(ast.String)
-		if !ok || !slices.Contains([]string{"rule", "outcome", "reason", "message"}, string(name)) {
-			return PackResult{}, fault(packResult, 0, fmt.Errorf("a result holds the key %v", key))
-		}
-		text, ok := object.Get(key).Value.(ast.String)
-		if !ok {
-			return PackResult{}, fault(packResult, 0, fmt.Errorf("a result's %s is not a string", name))
-		}
-		fields[string(name)] = string(text)
-	}
-	result := PackResult{Rule: fields["rule"], Outcome: PackOutcome(fields["outcome"]), Reason: fields["reason"], Message: printable(fields["message"])}
-	switch {
-	case result.Outcome != PackWarn && result.Outcome != PackFail:
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result's outcome is %q, not warn or fail", fields["outcome"]))
-	case !idPattern.MatchString(result.Rule) || !idPattern.MatchString(result.Reason):
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result's rule %q or reason %q is not an id", result.Rule, result.Reason))
-	case slices.Contains(reservedRules, result.Rule):
-		return PackResult{}, fault(packResult, 0, fmt.Errorf("a result names Costroid's rule %s", result.Rule))
-	}
-	return result, nil
+	return input, nil
 }
 
 // printable keeps the characters a comment prints in a code span, replaces
@@ -508,8 +429,6 @@ func printable(message string) string {
 	}
 	return out.String()
 }
-
-const messageCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;()'=_/+?-"
 
 func comparePackResults(a, b PackResult) int {
 	return strings.Compare(
