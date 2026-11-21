@@ -206,10 +206,12 @@ func TestOverridesStartEmptyAtARearm(t *testing.T) {
 	requireCount(t, l.count(query), 2, 1, 1)
 	query.Rearmed = rearmed
 	requireCount(t, l.count(query), 0, 0, 0)
-	l.fail(failure(2, 1, "5", rearmed.Add(time.Hour)))
-	l.approve(approval(1, 1, "octo-ops", rearmed.Add(time.Hour)))
+	// Pull request 1 fails again on the head approved before the re-arm, and
+	// pull request 2 is approved after it on a head that failed only before.
+	l.fail(failure(1, 1, "5", rearmed.Add(time.Hour)))
+	l.approve(approval(2, 1, "octo-ops", rearmed.Add(time.Hour)))
 	requireCount(t, l.count(query), 1, 0, 0)
-	l.approve(approval(2, 1, "octo-ops", rearmed.Add(2*time.Hour)))
+	l.approve(approval(1, 1, "octo-ops", rearmed.Add(2*time.Hour)))
 	requireCount(t, l.count(query), 1, 1, 1)
 }
 
