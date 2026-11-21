@@ -2,6 +2,22 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.26 (2026-11-21)
+
+### What you can now do
+
+- Price GPT-6.2 Astra and GPT-6.2 Sol at their own rows, from catalog 0.4.3, on OpenAI and GitHub Copilot. 1.0.0-alpha.25 priced them at each sheet's fallback tier. GPT-6.2 Astra now reads USD 8.00 input, USD 40.00 output and USD 0.40 cache read per million tokens up to 272,000 input tokens, and USD 16.00, USD 60.00 and USD 0.80 above. GPT-6.2 Sol reads USD 2.00, USD 10.00 and USD 0.10, then USD 4.00, USD 15.00 and USD 0.20. OpenAI's sheet also prices both at the batch, fast and Ultrafast tiers. Their Ultrafast prices double on 2027-03-01, as OpenAI's page states: GPT-6.2 Astra from USD 24.00, USD 120.00 and USD 1.20 to USD 48.00, USD 240.00 and USD 2.40 up to 272,000 input tokens.
+- Price GPT-6.2 Astra for Law at its own rows, under the promotion OpenAI's page states through 2026-12-31: USD 8.00 input, USD 40.00 output and USD 0.40 cache read per million tokens up to 272,000 input tokens, and USD 16.00, USD 60.00 and USD 0.80 above. GPT-6 Astra for Law is now priced by context length: its short-context prices are unchanged, and above 272,000 input tokens it reads USD 20.00, USD 75.00 and USD 2.00.
+- Price Gemini 4 Neon at its own rows, from catalog 0.4.3: USD 3.00 input, USD 15.00 output and USD 0.15 cache read per million tokens at Google's standard tier, on GitHub Copilot and on Cursor; USD 1.50, USD 7.50 and USD 0.075 at Google's batch and flex tiers; USD 5.40, USD 27.00 and USD 0.27 at its priority tier. 1.0.0-alpha.25 priced it at each sheet's fallback tier.
+- Price MAI Code 2 and MAI Code 2 Flash on GitHub Copilot at their own rows: MAI Code 2 at USD 0.50 input, USD 2.50 output and USD 0.025 cache read per million tokens, and USD 1.00, USD 5.00 and USD 0.05 from 2027-05-17; MAI Code 2 Flash at USD 0.05, USD 0.25 and USD 0.005, and USD 0.10, USD 0.50 and USD 0.01 from 2027-05-17, as GitHub's page states.
+- GPT-6 Rosalind is cheaper in catalog 0.4.3, as a promotion OpenAI's page states through 2026-12-31: USD 10.00 input, USD 50.00 output and USD 1.00 cache read per million tokens up to 272,000 input tokens, where catalog 0.4.2 read USD 15.00, USD 75.00 and USD 1.50. The page states no price after 2026-12-31, so from 2027-01-01 a request for GPT-6 Rosalind, GPT-6 Astra for Law or GPT-6.2 Astra for Law prices at OpenAI's fallback, USD 150.00 input, USD 600.00 output and USD 12.00 cache read, and its row says it was priced at the fallback tier.
+- GitHub's page no longer lists GPT-5.6 Terra and Claude Opus 5. Catalog 0.4.3 keeps their rows as catalog 0.4.2 read them on 2026-11-14, so they price as before.
+- On Cursor, the US data residency multiplier of 1.1 now applies to Gemini 3.8 Flash, Gemini 4 Argon, Gemini 4 Carbon, Gemini 4 Hydrogen and Gemini 4 Neon. Catalog 0.4.2 priced those models' US requests at their global price.
+- The catalog's [diff report](https://github.com/Costroid/costroid-catalog/blob/v0.4.3/reports/0.4.3-diff.md) lists every row that 0.4.3 adds, removes or changes.
+- `costroid export` sends by integration contract v0.4 to a platform that states it, and by v0.3 or v0.2 otherwise, saying which.
+- On 409 `EXPORT_BATCH_RUN_BOUND`, `costroid export` says the batch is bound to the run that sent it and that only that run restates it, keeps the rows file, and exits 1. It never says to send again.
+- Read Costroid's figures beside the provider's reports in [`docs/accuracy.md`](docs/accuracy.md): sixteen days of the test key, the last eight of which pass, with every token class and every dollar figure equal to the provider's.
+
 ## 1.0.0-alpha.25 (2026-11-14)
 
 ### Breaking changes
