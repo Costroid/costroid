@@ -2,6 +2,38 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.27 (2026-11-21)
+
+### Breaking changes
+
+- The `costroid` check's title is a sentence that says what is true of the run, such as `Within budget, by the job's own figures: this run cost USD 0.0391529 at list (Measured) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.` It read `Verdict: neutral`. The comment and the job summary open with the same sentence, and the line `**Verdict: neutral.**` is gone. A script that matched on the title or on that line reads the `conclusion` output or the result object instead. The conclusion values, the exit codes, the machine block and the step's outputs are unchanged. [`docs/policy.md`](docs/policy.md#what-the-check-says) lists what the sentence can say.
+- `costroid policy` no longer opens with `Verdict: <conclusion>.` It prints each rule its last line does not name, then ends on the same sentence. Its exit codes and `--json` are unchanged.
+- An amount a person reads shows at least two decimal places: `USD 5.00`, where the comment read `USD 5`. No digit is rounded or dropped. The machine block, the outputs and `--json` keep the exact string, so a script reads an amount from them.
+- The comment's table has no Attribution column, and its Enforcement cell states the note without the grade's id: `client-side estimate, can pass the cap`, where it read `agent-flag: client-side estimate, can pass the cap`. The grades are in the machine block as before. The job summary's table leads with Cost and Basis.
+- `Unverified:` and `Verified:` read `Unchecked:` and `Checked:`. A report with no figures reads `No figure (agent_error): …`, where it read ``This report shows no figures. Reason `agent_error`: …``. A unit price reads `per million tokens`. `Run cost threshold` reads `Run cost limit`.
+- The increase rules read their baseline from merged pull requests. `run_increase` and `run_increase_percent` compare a run with the median of the same agent's latest 20 runs on the pull requests merged into the base branch, read from the `costroid` check runs on each merged pull request's head. A pull request's own earlier runs no longer count. In 1.0.0-alpha.25 and 1.0.0-alpha.26 they were the baseline, so a pull request set its own baseline: costly early runs raised the median, and a later run over it concluded `unproven` instead of failing. A repository whose latest 30 merges hold fewer than 10 runs of the agent now concludes `unproven` with reason `no_baseline`.
+- `costroid policy --history` no longer gives a baseline. It gives the pull request's total and the count that ends the warn-only period. `--baseline FILE` takes the merged pull requests' result objects. Where `costroid.yml` sets `max_increase_usd` or `max_increase_percent`, `--history` without `--baseline` is refused with a sentence.
+- `costroid reconcile` compares a run that crosses midnight UTC as one for dollars as well as tokens. The span's first day holds the joined dollar comparison. Each later day's row carries `span` and the span's state, with `tokens` and `dollars` null. A reader of `--out` that summed a later day's dollars now meets null there. Read the span's dollars on the row of `span.from`.
+- No residual names `run_spans_days` any more. The days of a span are compared together, so nothing moves out of them. `span.cause` still reads `run_spans_days`.
+- Every day of a span reads `price_miss` when a price misses on any of its days. The exit code, the miss count under the table and the dollar table count a span once.
+- A row whose figure is past the contract's form is no longer written. That day stops with a line naming the figure, every other day is still written, and `reconcile` exits 125.
+
+### What you can now do
+
+- Read what the check found without opening it: the title names the figure, its basis and the budget. `costroid report --preview` and `costroid demo` end on the same sentence.
+- When several rules ran, read which one decided in the title, and each other rule's line under it.
+- Read on a failed check where a reviewer's approval is described.
+- See a run that went past its cap above the fold: its cap line stands under the table.
+- Send Costroid Platform the fact that a pull request merged: `costroid merged`, in a job on a push to the default branch, sends one merge fact per pull request the push closed, by `integration/v0.6`, or by `integration/v0.5` to a platform that states no later version. A fact whose commit is the push's tip, sent with the job's OIDC token from a protected branch, is stored as `token_verified`, and the command names the branch. For any other fact, the command says why it reads `unverified`.
+- See what would be sent first: `costroid merged --dry-run` prints each merge id and document and reaches no platform. `--json` prints the platform's status, `run_identity` and `ref` for each fact.
+- Send reconciliation rows to Costroid Platform with `costroid reconcile --out FILE --export`. It sends what `--out` writes, by `integration/v0.6`, or by `integration/v0.5` to a platform that states no later version, to the platform `COSTROID_PLATFORM_URL` names, under `COSTROID_PLATFORM_TOKEN`. Bodies are cut at the limits `GET /quotas` states, a server error sends the same body again for up to 60 s, and 402, 409 `INSTALLATION_NOT_BOUND` and 429 keep the rows and warn. On GitHub Actions a job with `id-token: write` sends its run token beside `--installation-id`. The admin key never goes to the platform.
+- Read `currency` on every reconciliation row: the currency of every amount in it, `USD`.
+- Rely on the form of every amount: a decimal string of at most 30 places and 64 characters, never rounded to fit. Token counts are digits only, at most 20.
+- When any part of the baseline cannot be read, the report leaves it out and warns `the baseline is left out`. The pull request's total still posts.
+- `costroid lint-recipes` allows `id-token: write` on a job that runs `costroid merged`, which sends the job's OIDC token as each merge fact's run token.
+- A new `costroid lint-recipes` rule, `merged-job`, holds a job that runs `costroid merged` to `contents: read`, `pull-requests: read` and `id-token: write` and nothing else, to a workflow that runs on `push` alone, to a job `if` that joins the default-branch test with `&&`, to no agent, checkout or fetch, and to an integration token read from one secret in the step's `env`.
+- A token refused by a platform that serves `integration/v0.6` alone is reported as that refusal, not as a platform that serves no version.
+
 ## 1.0.0-alpha.26 (2026-11-21)
 
 ### What you can now do
