@@ -693,7 +693,7 @@ func TestMergedDocsMatchTheCommand(t *testing.T) {
 	}
 	filled := strings.NewReplacer(`"`, "", "$COSTROID_PLATFORM_URL", "https://app.costroid.com", "$GITHUB_REPOSITORY_OWNER_ID", "7204411")
 	for _, line := range lines {
-		if _, err := parseMerged(strings.Fields(filled.Replace(line[1])), io.Discard, io.Discard); err != nil {
+		if _, err := parseMerged(strings.Fields(filled.Replace(line[1])), io.Discard); err != nil {
 			t.Errorf("docs/export.md runs %q, which merged refuses: %v", line[0], err)
 		}
 	}

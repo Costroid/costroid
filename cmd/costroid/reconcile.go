@@ -67,7 +67,7 @@ func upstreamFlag(into map[string]string) func(string) error {
 	}
 }
 
-func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, error) {
+func parseReconcile(args []string, stdout io.Writer) (reconcileFlags, error) {
 	set := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	rows := set.String("rows", "", "the FOCUS rows, as JSON lines")
 	from := set.String("from", "", "the first UTC day, YYYY-MM-DD")
@@ -146,7 +146,7 @@ type reconcileWorld struct {
 }
 
 func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, stdout, stderr io.Writer) int {
-	flags, err := parseReconcile(args, stdout, stderr)
+	flags, err := parseReconcile(args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

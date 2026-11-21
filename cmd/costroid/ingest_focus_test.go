@@ -267,7 +267,7 @@ func TestTheInfrastructurePageExampleParses(t *testing.T) {
 	}
 	for _, line := range lines {
 		args := strings.Fields(line)[2:]
-		flags, err := parseIngestRun(args, &bytes.Buffer{}, &bytes.Buffer{})
+		flags, err := parseIngestRun(args, &bytes.Buffer{})
 		if err != nil || !flags.source.kind.estimate {
 			t.Errorf("%q: %v", line, err)
 		}

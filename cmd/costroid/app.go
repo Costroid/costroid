@@ -155,7 +155,7 @@ type appFlags struct {
 	name, webhook, kmsKey, org string
 }
 
-func parseApp(command string, args []string, stdout, stderr io.Writer) (appFlags, error) {
+func parseApp(command string, args []string, stdout io.Writer) (appFlags, error) {
 	set := flag.NewFlagSet("app "+command, flag.ContinueOnError)
 	var flags appFlags
 	set.StringVar(&flags.name, "name", "", "the App's name")
@@ -209,7 +209,7 @@ func appManifestJSON(flags appFlags, redirect string) ([]byte, error) {
 }
 
 func appManifest(args []string, stdout, stderr io.Writer) error {
-	flags, err := parseApp("manifest", args, stdout, stderr)
+	flags, err := parseApp("manifest", args, stdout)
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func (a createdApp) settings(web string) string {
 }
 
 func appCreate(ctx context.Context, args []string, world appWorld, stdout, stderr io.Writer) error {
-	flags, err := parseApp("create", args, stdout, stderr)
+	flags, err := parseApp("create", args, stdout)
 	if err != nil {
 		return err
 	}

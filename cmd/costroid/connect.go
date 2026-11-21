@@ -168,7 +168,7 @@ func waitFor(ctx context.Context, d time.Duration) error {
 }
 
 func connect(ctx context.Context, args []string, client *http.Client, getenv func(string) string, clock connectClock, stdout, stderr io.Writer) int {
-	flags, err := parseConnect(args, stdout, stderr)
+	flags, err := parseConnect(args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -201,7 +201,7 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 	}
 }
 
-func parseConnect(args []string, stdout, stderr io.Writer) (connectFlags, error) {
+func parseConnect(args []string, stdout io.Writer) (connectFlags, error) {
 	set := flag.NewFlagSet("connect", flag.ContinueOnError)
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation to bind: github-owner:<id> or gitlab-namespace:<id>")

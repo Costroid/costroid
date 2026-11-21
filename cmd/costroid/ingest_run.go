@@ -105,7 +105,7 @@ func kindNames(kinds []sourceKind, word string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " " + word + " " + names[len(names)-1]
 }
 
-func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, error) {
+func parseIngestRun(args []string, stdout io.Writer) (ingestRunFlags, error) {
 	set := flag.NewFlagSet("ingest-run", flag.ContinueOnError)
 	var sources sourcesFlag
 	set.Func("from", "KIND=PATH, the source to read", sources.from)
@@ -333,7 +333,7 @@ func (e openedExecution) read() (adapter.Report, error) {
 }
 
 func ingestRunCommand(args []string, stdout, stderr io.Writer) int {
-	flags, err := parseIngestRun(args, stdout, stderr)
+	flags, err := parseIngestRun(args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

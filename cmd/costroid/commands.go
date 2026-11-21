@@ -117,7 +117,9 @@ type bareCall struct{}
 func (bareCall) String() string {
 	var text strings.Builder
 	text.WriteString("Costroid is the cost check for pull requests.\n")
-	blocks := make([][]string, len(groupNames))
+	// blocks holds one more than the groups when their count is odd, so the
+	// last group has an empty block beside it.
+	blocks := make([][]string, len(groupNames)+len(groupNames)%2)
 	for where, name := range groupNames {
 		blocks[where] = groupLines(group(where), name)
 	}

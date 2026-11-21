@@ -116,7 +116,7 @@ type reviewFlags struct {
 	out, file  string
 }
 
-func parseReview(args []string, stdout, stderr io.Writer) (reviewFlags, error) {
+func parseReview(args []string, stdout io.Writer) (reviewFlags, error) {
 	set := flag.NewFlagSet("review", flag.ContinueOnError)
 	keep := set.Bool("keep", false, "read the run's answer and write it to --out")
 	post := set.Bool("post", false, "post the answer in --file as the review comment")
@@ -172,7 +172,7 @@ func answerKinds() string {
 // reviewCommand keeps the agent's answer in the agent's job, or posts it in
 // the report's job.
 func reviewCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	flags, err := parseReview(args, stdout, stderr)
+	flags, err := parseReview(args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

@@ -146,11 +146,11 @@ func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	var err error
 	switch args[0] {
 	case "keygen":
-		err = gatewayKeygen(args[1:], stdout, stderr)
+		err = gatewayKeygen(args[1:], stdout)
 	case "public-key":
 		err = gatewayPublicKey(stdout)
 	case "request":
-		err = gatewayRequest(args[1:], stdout, stderr)
+		err = gatewayRequest(args[1:], stdout)
 	case "mint":
 		err = gatewayMint(ctx, args[1:], stdout, stderr)
 	case "close":
@@ -189,7 +189,7 @@ func sealingKey() (string, error) {
 	return key, nil
 }
 
-func gatewayKeygen(args []string, stdout, stderr io.Writer) error {
+func gatewayKeygen(args []string, stdout io.Writer) error {
 	set := flag.NewFlagSet("gateway keygen", flag.ContinueOnError)
 	out := set.String("out", "", "the file the private half goes to; it must not exist")
 	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
@@ -230,7 +230,7 @@ func gatewayPublicKey(stdout io.Writer) error {
 	return nil
 }
 
-func gatewayRequest(args []string, stdout, stderr io.Writer) error {
+func gatewayRequest(args []string, stdout io.Writer) error {
 	set := flag.NewFlagSet("gateway request", flag.ContinueOnError)
 	out := set.String("out", "", "the directory the key and the sealed request go to")
 	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
@@ -274,7 +274,7 @@ type mintFlags struct {
 	caps          gateway.DailyCaps
 }
 
-func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
+func parseMint(args []string, stdout io.Writer) (mintFlags, error) {
 	set := flag.NewFlagSet("gateway mint", flag.ContinueOnError)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	budget := set.String("budget-usd", "", "the run's budget in USD, the key's max_budget")
@@ -323,7 +323,7 @@ func dailyCap(name, text string) (*decimal.Decimal, error) {
 }
 
 func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	flags, err := parseMint(args, stdout, stderr)
+	flags, err := parseMint(args, stdout)
 	if err != nil {
 		return err
 	}

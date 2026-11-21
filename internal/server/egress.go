@@ -58,7 +58,7 @@ func egressCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	switch args[0] {
 	case "report":
-		return egressReport(ctx, args[1:], stdout, stderr)
+		return egressReport(ctx, args[1:], stdout)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, EgressUsage)
 		return flag.ErrHelp
@@ -66,7 +66,7 @@ func egressCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	return fmt.Errorf("unknown egress command %q", args[0])
 }
 
-func egressReport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func egressReport(ctx context.Context, args []string, stdout io.Writer) error {
 	set := flag.NewFlagSet("egress report", flag.ContinueOnError)
 	asJSON := set.Bool("json", false, "print JSON")
 	if err := cli.Parse(set, args); err != nil {

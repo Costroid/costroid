@@ -168,7 +168,7 @@ func mergedCommand(ctx context.Context, args []string, std stdio) int {
 // so a push that closed nothing needs no token. The send is asked again at
 // export's verdict pace.
 func merged(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, stdout, stderr io.Writer) int {
-	flags, err := parseMerged(args, stdout, stderr)
+	flags, err := parseMerged(args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -209,7 +209,7 @@ func merged(ctx context.Context, args []string, client *http.Client, getenv func
 	return send.all(ctx, facts)
 }
 
-func parseMerged(args []string, stdout, stderr io.Writer) (mergedFlags, error) {
+func parseMerged(args []string, stdout io.Writer) (mergedFlags, error) {
 	set := flag.NewFlagSet("merged", flag.ContinueOnError)
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation the facts come through")

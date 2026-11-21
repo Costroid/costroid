@@ -278,7 +278,7 @@ func exportCommand(ctx context.Context, args []string, std stdio) int {
 }
 
 func export(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, stdout, stderr io.Writer) int {
-	flags, err := parseExport(args, stdout, stderr)
+	flags, err := parseExport(args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -326,7 +326,7 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	return verdict.print(sent, flags.origin, stdout, stderr)
 }
 
-func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
+func parseExport(args []string, stdout io.Writer) (exportFlags, error) {
 	set := flag.NewFlagSet("export", flag.ContinueOnError)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
