@@ -21,8 +21,8 @@ const usage = `Usage:
 pin reads the release the recipes pin, then moves each reference to its
 version and its commit to VERSION and COMMIT, the commit the tag vVERSION
 names. It reads README.md, docs/, recipes/, marketplace/, the copy of the
-two-block example under internal/recipelint/testdata and the $id of
-costroid.schema.json. It sets the Helm chart's version and appVersion and the
+two-block example and the merged workflow under internal/recipelint/testdata
+and the $id of costroid.schema.json. It sets the Helm chart's version and appVersion and the
 Compose file's default image to VERSION.
 
 It never changes CHANGELOG.md, docs_test.go, version_test.go or a recorded

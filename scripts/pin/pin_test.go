@@ -42,6 +42,7 @@ func pinnedTree() tree {
 		"docs/ledger.md":                                      "Export `" + oldVersion + "` first.\n\n```sh\nexport COSTROID_IMAGE=ghcr.io/costroid/costroid:" + oldVersion + "\n```\n",
 		"marketplace/README.md":                               "This action is `Costroid/costroid/action` at the commit of `__RELEASE_TAG__`.\n",
 		"internal/recipelint/testdata/customer/two-block.yml": "      - uses: Costroid/costroid/action@" + oldCommit + " # v" + oldVersion + "\n",
+		"internal/recipelint/testdata/github-merged.yml":      "      - uses: Costroid/costroid/action@" + oldCommit + " # v" + oldVersion + "\n",
 		"costroid.schema.json": "{\n  \"$id\": \"https://raw.githubusercontent.com/Costroid/costroid/v" + oldVersion + "/costroid.schema.json\",\n" +
 			"  \"description\": \"A version such as " + oldVersion + ".\"\n}\n",
 		chartFile:      "apiVersion: v2\nname: costroid\nversion: " + firstRelease + "\nappVersion: " + firstRelease + "\n",
@@ -116,6 +117,7 @@ func TestPinMovesEveryPinnedReference(t *testing.T) {
 	for _, name := range []string{
 		"README.md", "recipes/github-claude-code.yml", "recipes/gitlab-ci.yml", "docs/install.md",
 		"docs/recipes.md", "docs/ledger.md", "internal/recipelint/testdata/customer/two-block.yml",
+		"internal/recipelint/testdata/github-merged.yml",
 	} {
 		want[name] = moved(before[name])
 		if want[name] == before[name] {
@@ -135,10 +137,10 @@ func TestPinMovesEveryPinnedReference(t *testing.T) {
 	}
 	changed := strings.Split(strings.TrimSpace(stdout), "\n")
 	count := changed[len(changed)-1]
-	if got := strings.Join(changed[:len(changed)-1], " "); got != "README.md costroid.schema.json deploy/compose.yaml deploy/helm/costroid/Chart.yaml docs/install.md docs/ledger.md docs/recipes.md internal/recipelint/testdata/customer/two-block.yml recipes/github-claude-code.yml recipes/gitlab-ci.yml" {
+	if got := strings.Join(changed[:len(changed)-1], " "); got != "README.md costroid.schema.json deploy/compose.yaml deploy/helm/costroid/Chart.yaml docs/install.md docs/ledger.md docs/recipes.md internal/recipelint/testdata/customer/two-block.yml internal/recipelint/testdata/github-merged.yml recipes/github-claude-code.yml recipes/gitlab-ci.yml" {
 		t.Errorf("the pin listed the files %s", got)
 	}
-	if want := "pin: " + oldVersion + " at " + oldCommit + " to " + newVersion + " at " + newCommit + ": 20 references moved in 10 files"; count != want {
+	if want := "pin: " + oldVersion + " at " + oldCommit + " to " + newVersion + " at " + newCommit + ": 22 references moved in 11 files"; count != want {
 		t.Errorf("the count reads %q, want %q", count, want)
 	}
 

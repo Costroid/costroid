@@ -208,6 +208,90 @@ func TestConnectRecipeHoldsOnlyIdToken(t *testing.T) {
 	}
 }
 
+// mergedFixture is a workflow that runs costroid merged at the release the
+// recipes pin, so a pin moves it with them.
+const mergedFixture = "testdata/github-merged.yml"
+
+// TestAMergedJobMayAskForAnIDToken lints a workflow that runs costroid merged
+// in a job with id-token: write, and finds nothing.
+func TestAMergedJobMayAskForAnIDToken(t *testing.T) {
+	report := LintBytes(mergedFixture, []byte(read(t, mergedFixture)))
+	if len(report.Findings)+len(report.Notes) != 0 {
+		t.Fatalf("findings %v, notes %v", report.Findings, report.Notes)
+	}
+}
+
+// TestAMergedJobHoldsOnlyWhatItNeeds takes the merged job past its least in
+// each way it can go, one edit at a time: another permission or none for the
+// run token, an agent, code on the runner, a pull request's event, a run
+// beside the default branch, and the integration token outside the step's env.
+func TestAMergedJobHoldsOnlyWhatItNeeds(t *testing.T) {
+	source := read(t, mergedFixture)
+	const (
+		step    = "      - name: Send the merge facts\n"
+		command = `        run: costroid merged --platform-url "$COSTROID_PLATFORM_URL"`
+		branch  = "      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)\n"
+		token   = "          COSTROID_PLATFORM_TOKEN: ${{ secrets.COSTROID_PLATFORM_TOKEN }}\n"
+	)
+	permissions := source[strings.Index(source, "    permissions:\n      # Reads"):strings.Index(source, "    steps:\n")]
+	for _, change := range []edit{
+		{"pull requests written", "      pull-requests: read\n", "      pull-requests: write\n", RuleMergedJob},
+		{"another permission", "      contents: read\n", "      contents: read\n      checks: write\n", RuleMergedJob},
+		{"no id-token", "      id-token: write\n", "", RuleMergedJob},
+		{"write-all", permissions, "    permissions: write-all\n", RuleMergedJob},
+		{"an agent", step, "      - run: claude -p hello\n" + step, RuleMergedJob},
+		{"a checkout", step, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n" + step, RuleMergedJob},
+		{"a pull request's head", step, "      - env:\n          HEAD: ${{ github.head_ref }}\n        run: echo \"$HEAD\"\n" + step, RuleMergedJob},
+		{"a fetch", step, "      - run: git fetch origin main\n" + step, RuleMergedJob},
+		{"a pull_request event", "  push:\n", "  push:\n  pull_request:\n", RuleMergedJob},
+		{"a pull_request_target event", "  push:\n", "  push:\n  pull_request_target:\n", RuleMergedJob},
+		{"no push", "  push:\n", "  workflow_dispatch:\n", RuleMergedJob},
+		{"no default branch", branch, "", RuleMergedJob},
+		{"the default branch or another", branch, strings.Replace(branch, "&&", "||", 1), RuleMergedJob},
+		{"another run beside the default branch", "      vars.COSTROID_PLATFORM_URL != ''\n", "      always() || vars.COSTROID_PLATFORM_URL != ''\n", RuleMergedJob},
+		{"a token in the command line", command, `        run: COSTROID_PLATFORM_TOKEN="$TOKEN" costroid merged --platform-url "$COSTROID_PLATFORM_URL"`, RuleMergedJob},
+		{"a token's text in the command line", command, command + " costroid_it_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE", RuleMergedJob},
+		{"no token on the step", token, "", RuleMergedJob},
+		{"a token in the file", token, "          COSTROID_PLATFORM_TOKEN: costroid_it_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE\n", RuleMergedJob},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			expectRule(t, source, change)
+		})
+	}
+}
+
+// TestAnIDTokenWithoutMergedIsStillRefused keeps id-token: write on the job
+// and takes costroid merged out of it.
+func TestAnIDTokenWithoutMergedIsStillRefused(t *testing.T) {
+	source := read(t, mergedFixture)
+	expectRule(t, source, edit{"", `run: costroid merged --platform-url`, `run: echo --platform-url`, RuleIDTokenScope})
+}
+
+// TestADefaultBranchTestHoldsOnlyAsATermOfAnd reads a job's if as the merged
+// rule does: the test holds when every run must pass it.
+func TestADefaultBranchTestHoldsOnlyAsATermOfAnd(t *testing.T) {
+	for condition, want := range map[string]bool{
+		defaultBranchTest:                                             true,
+		"${{ " + defaultBranchTest + " }}":                            true,
+		"vars.X != '' && " + defaultBranchTest:                        true,
+		"vars.X != '' && (" + defaultBranchTest + " && vars.Y != '')": true,
+		"vars.X != '' && ( " + defaultBranchTest + " )":               true,
+		"(vars.X != '' || vars.Y != '') && " + defaultBranchTest:      true,
+		"vars.X == ' || ' && " + defaultBranchTest:                    true,
+		"vars.X != '' || " + defaultBranchTest:                        false,
+		"vars.X != '' || vars.Y != '' && " + defaultBranchTest:        false,
+		"(vars.X != '' || " + defaultBranchTest + ")":                 false,
+		"vars.X != '' && (vars.Y != '' || " + defaultBranchTest + ")": false,
+		"!(" + defaultBranchTest + ")":                                false,
+		"":                                                            false,
+		"github.ref == 'refs/heads/main'":                             false,
+	} {
+		if got := heldTo(condition, defaultBranchTest); got != want {
+			t.Errorf("heldTo(%q) = %t, want %t", condition, got, want)
+		}
+	}
+}
+
 // TestRecipesPrintTheRunStatus runs the last step of each agent job that runs
 // costroid run: it prints the status file as it is, and says when there is
 // none, and prints nothing else.

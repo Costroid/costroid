@@ -53,7 +53,7 @@ const (
 // repository's root.
 var (
 	pinnedTrees = []string{"docs", "recipes", "marketplace"}
-	pinnedFiles = []string{"README.md", "internal/recipelint/testdata/customer/two-block.yml", schemaFile}
+	pinnedFiles = []string{"README.md", "internal/recipelint/testdata/customer/two-block.yml", "internal/recipelint/testdata/github-merged.yml", schemaFile}
 	// neverChanged are files a pin leaves alone wherever they stand: the
 	// changelog records each release as it was, and the two tests hold
 	// versions of their own.
