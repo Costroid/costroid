@@ -19,10 +19,6 @@ import (
 	"github.com/Costroid/costroid/internal/vcs"
 )
 
-// contractV05 is the first version that carries merge facts. A later version
-// is served under its own path, and its platform keeps serving this one.
-var contractV05 = contract{Version: "0.5", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
-
 const (
 	mergeFactConflict = "MERGE_FACT_CONFLICT"
 	// maxPushCommits bounds the commits merged asks GitHub about, one request

@@ -291,7 +291,9 @@ func storeRows(path string, rows []reconcile.Row) error {
 }
 
 // contractV05 is the first version of the integration contract that carries
-// reconciliation rows. reconcile --export sends by it alone.
+// merge facts and reconciliation rows. merged and reconcile --export send by
+// it alone. A later version is served under its own path, and its platform
+// keeps serving this one.
 var contractV05 = contract{Version: "0.5", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
 
 // The limits of GET /quotas a reconciliation body is cut at.
