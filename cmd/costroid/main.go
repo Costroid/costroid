@@ -497,7 +497,7 @@ func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
 	// A run with no rows measured nothing, so it states no cost.
 	if result.Rows > 0 {
-		fmt.Fprintf(w, "costroid: %s at list, %s\n", comment.Money(runCurrency, result.ListTotal.String()), labels[report.CostBasis])
+		fmt.Fprintf(w, "costroid: %s at list (%s)\n", comment.Money(runCurrency, result.ListTotal.String()), labels[report.CostBasis])
 	}
 }
 

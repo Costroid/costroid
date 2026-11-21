@@ -160,7 +160,7 @@ func TestGhAwStatedCreditsNeverAddToUSD(t *testing.T) {
 		}
 		total = total.Add(cost)
 	}
-	usdLine := "costroid: USD " + total.String() + " at list, Measured\n"
+	usdLine := "costroid: USD " + total.String() + " at list (Measured)\n"
 	if !strings.Contains(stderr, usdLine) || !strings.Contains(largerStderr, usdLine) {
 		t.Errorf("no %q in\n%s\n%s", usdLine, stderr, largerStderr)
 	}
@@ -426,7 +426,7 @@ func TestGhAwCommentStatesTheCreditsPastTheCap(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	for _, line := range []string{"costroid: gh-aw, 2 requests\n", "costroid: USD 0.1180342 at list, Measured\n", "costroid: " + passed + "\n"} {
+	for _, line := range []string{"costroid: gh-aw, 2 requests\n", "costroid: USD 0.1180342 at list (Measured)\n", "costroid: " + passed + "\n"} {
 		if !strings.Contains(stderr, line) {
 			t.Errorf("ingest-run printed no %q:\n%s", line, stderr)
 		}

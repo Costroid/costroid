@@ -153,8 +153,9 @@ func TestSummarySaysWhenAnAgentFlagRunPassedTheBudget(t *testing.T) {
 // TestRunSummaryNamesTheCapAndShowsTwoDecimals runs the recorded run under a
 // cap it stays within and under one it passes. The summary calls what
 // --budget-usd sets the cap and never a budget, says how far the cap held
-// without the grade's id, and shows each amount with at least two decimal
-// places and every digit of the exact string. The exit code is the agent's
+// without the grade's id, states the cost in the comment's form, with its
+// basis in brackets, and shows each amount with at least two decimal places
+// and every digit of the exact string. The exit code is the agent's
 // own either way, and the rows keep the grade's id and its note as they were.
 func TestRunSummaryNamesTheCapAndShowsTwoDecimals(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -172,7 +173,7 @@ func TestRunSummaryNamesTheCapAndShowsTwoDecimals(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("exit %d: %s", code, stderr)
 			}
-			for _, line := range append(tc.lines, "costroid: USD "+realTotal+" at list") {
+			for _, line := range append(tc.lines, "costroid: USD "+realTotal+" at list (List-equivalent, not billed)\n") {
 				if !strings.Contains(stderr, line) {
 					t.Errorf("the summary has no line %q:\n%s", line, stderr)
 				}

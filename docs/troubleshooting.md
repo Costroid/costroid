@@ -101,7 +101,7 @@ The `run` stage. A line from the action's own checks ends the step with exit cod
 | `costroid: <agent>, <count> requests` | How many requests or turns the rows cover, by the grain the agent reported | None |
 | `costroid: <agent>, one run, <count> models` | The agent reported one total per model for the whole run | None |
 | `costroid: <count> rows in <path>, catalog <version>` | Where the rows are, and which price catalog priced them | None |
-| `costroid: USD <amount> at list, <label>` | The run's cost at list price, with its accuracy label, for example `List-equivalent, not billed`. A run that wrote no rows measured nothing, so it prints no such line | None |
+| `costroid: USD <amount> at list (<label>)` | The run's cost at list price, with its accuracy label, for example `List-equivalent, not billed`. A run that wrote no rows measured nothing, so it prints no such line | None |
 | `costroid: cap USD <amount> (<note>)` | The run's cap, which `--budget-usd` sets, and how far it held, for example `client-side estimate, can pass the cap`. `costroid run` prints it | None. [`docs/adapters.md`](adapters.md) says what each grade means |
 | `costroid: <grade>: <note>` | How a run Costroid did not start was enforced, from `ingest-run` | None |
 | `costroid: added <count> rows from <file> to <rows file>, each figure read from <column>, with the basis estimate` | `ingest-run --from focus` added the FOCUS cost file's rows after the rows the rows file held, and names the column it read each figure from | None. [`docs/infrastructure.md`](infrastructure.md) says which column it reads |

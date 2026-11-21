@@ -124,7 +124,7 @@ func TestFocusProfileFlagWritesStrictRows(t *testing.T) {
 		}
 		summaries[profile] = strings.ReplaceAll(stderr, profile+".jsonl", "rows.jsonl")
 	}
-	if summaries["default"] != summaries["strict"] || !strings.Contains(summaries["strict"], "at list, Measured") {
+	if summaries["default"] != summaries["strict"] || !strings.Contains(summaries["strict"], "at list (Measured)") {
 		t.Errorf("ingest-run states the profiles differently:\n%s\n%s", summaries["default"], summaries["strict"])
 	}
 	defaults, stricts := rowsOf(t, filepath.Join(directory, "default.jsonl")), rowsOf(t, filepath.Join(directory, "strict.jsonl"))
