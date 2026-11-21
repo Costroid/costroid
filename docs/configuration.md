@@ -15,12 +15,13 @@ comment:
 | `policy.max_run_cost_usd` | none | A ceiling on one run's cost at list, in USD. Unset, the rule does not run |
 | `policy.max_increase_usd` | none | How far a run may cost more than the median of this agent's 10 or more runs on merged pull requests, in USD. Unset, the rule does not run |
 | `policy.max_increase_percent` | none | The same increase, in percent of the median, such as `25` or `"12.5"`. Unset, the rule does not run |
+| `policy.max_p95_factor` | none | How many times the P95 of this agent's latest 20 runs on merged pull requests a run may cost, such as `2` or `"1.5"`, at least 1. With fewer than 20 runs the rule does not run. Unset, the rule does not run |
 | `policy.pr_budget_usd` | none | The budget a pull request's runs are held to together, in USD. Unset, the rule does not run |
 | `policy.monthly_budget_usd` | none | The budget the repository's runs are held to over a calendar month, in USD. It reads a ledger's month to date only. Unset, the rule does not run |
 | `policy.models` | none | The models a run may use: exact model ids, or prefixes that end in `*`. Unset, the rule does not run |
 | `policy.enforce` | `false` | `true` ends the warn-only period now, so a run over a limit fails the check |
 
-An amount is a plain decimal of at most 12 fractional digits, quoted or not: `5`, `2.50` and `"2.50"` read the same. Costroid reads the amount's text, never a float made from it, so `0.1` stays 0.1. Any other way YAML writes a number is a problem: an exponent such as `1e3`, `.inf`, `.nan`, hex such as `0x10`, octal such as `0o17` or `017`, an underscore such as `1_000`, and a sign. A leading zero is octal in YAML, so `017` would read as 15. [`docs/policy.md`](policy.md) says what each rule concludes, which rules need figures the check does not read yet, and when the warn-only period ends.
+An amount is a plain decimal of at most 12 fractional digits, quoted or not: `5`, `2.50` and `"2.50"` read the same. Costroid reads the amount's text, never a float made from it, so `0.1` stays 0.1. Any other way YAML writes a number is a problem: an exponent such as `1e3`, `.inf`, `.nan`, hex such as `0x10`, octal such as `0o17` or `017`, an underscore such as `1_000`, and a sign. A leading zero is octal in YAML, so `017` would read as 15. `policy.max_p95_factor` is read the same way and is at least 1, so `0.5` is a problem too. [`docs/policy.md`](policy.md) says what each rule concludes, which rules need figures the check does not read yet, and when the warn-only period ends.
 
 ```yaml
 policy:

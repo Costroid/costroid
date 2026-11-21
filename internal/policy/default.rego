@@ -7,14 +7,15 @@
 #   rows        the number of rows the check read.
 #   usage       per currency: list_cost as a decimal string, rows,
 #               unattributed_rows and joinable_rows.
-#   settings    each amount key that is set, as a decimal string, and models
-#               when it is set.
+#   settings    each amount key that is set and max_p95_factor, as decimal
+#               strings, and models when it is set.
 #   model_rows  present when models is set. outside: the rows whose model the
 #               allowlist refuses; unreadable: the rows whose model cannot be
 #               read.
 #   baseline    present when 10 or more earlier runs give a median: its trust,
-#               and for each increase key that is set, the USD amount a run
-#               may reach.
+#               runs, p50_usd and p95_usd, and for each increase key that is
+#               set, the USD amount a run may reach. max_p95_factor is that
+#               amount for run_p95, present only beside 20 runs.
 #   lifetime    present when the pull request's earlier runs were read: its
 #               trust, total_usd with this run included, may_repeat and
 #               other_currency.
@@ -40,6 +41,13 @@ results contains result if {
 results contains result if {
 	limit := input.settings.max_increase_percent
 	result := object.union({"rule": "run_increase_percent", "limit_percent": limit}, increase("max_increase_percent"))
+}
+
+# The P95 of fewer than 20 runs is their highest cost, so the binary states no
+# limit for such a baseline, and the rule does not run.
+results contains result if {
+	factor := input.settings.max_p95_factor
+	result := object.union({"rule": "run_p95", "limit_factor": factor}, increase("max_p95_factor"))
 }
 
 results contains result if {

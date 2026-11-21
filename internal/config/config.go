@@ -168,8 +168,12 @@ func dayForms(root *yaml.Node) []Problem {
 }
 
 // amountSentence is the policy's own sentence for an amount it cannot read,
-// so validate names it in the same words.
-const amountSentence = `policy.%s must be a plain decimal of at most %d fractional digits, such as 5, 2.50 or "2.50"`
+// so validate names it in the same words. factorSentence is its sentence for
+// a key the schema holds to at least 1, the factor of the P95 limit.
+const (
+	amountSentence = `policy.%s must be a plain decimal of at most %d fractional digits, such as 5, 2.50 or "2.50"`
+	factorSentence = `policy.%s must be a plain decimal of at least 1 with at most %d fractional digits, such as 2, 1.5 or "1.5"`
+)
 
 // amountTags are the YAML tags a plain decimal resolves to: 5 is an integer,
 // 2.50 a float and "2.50" a string.
@@ -196,29 +200,38 @@ func amountForms(root *yaml.Node) ([]Problem, error) {
 			continue
 		}
 		if !slices.Contains(amountTags, value.Tag) || len(value.Value) > form.maxLength || !form.pattern.MatchString(value.Value) {
-			problems = append(problems, Problem{Path: "/policy/" + key, Message: fmt.Sprintf(amountSentence, key, focus.MaxScale)})
+			problems = append(problems, Problem{Path: "/policy/" + key, Message: fmt.Sprintf(form.sentence, key, focus.MaxScale)})
 		}
 	}
 	return problems, nil
 }
 
 // textForm is how the schema states a value's text: an amount, or an entry
-// of policy.models.
+// of policy.models. sentence is the policy's own refusal of an amount, with
+// the key and the scale to fill in.
 type textForm struct {
 	pattern   *regexp.Regexp
 	maxLength int
+	sentence  string
 }
 
+// amountSentences are the policy's refusals by the least value the schema
+// states for a key, as its text: an amount from 0, and the P95 limit's factor
+// from 1.
+var amountSentences = map[string]string{"0": amountSentence, "1": factorSentence}
+
 // amountKeys are the policy keys the schema states as an amount, a decimal
-// quoted or not, each with the pattern and length its text must meet.
+// quoted or not, each with the pattern and length its text must meet and the
+// sentence that refuses it.
 func amountKeys() (map[string]textForm, error) {
 	var document struct {
 		Properties struct {
 			Policy struct {
 				Properties map[string]struct {
-					Type      any    `json:"type"`
-					Pattern   string `json:"pattern"`
-					MaxLength int    `json:"maxLength"`
+					Type      any             `json:"type"`
+					Pattern   string          `json:"pattern"`
+					MaxLength int             `json:"maxLength"`
+					Minimum   json.RawMessage `json:"minimum"`
 				} `json:"properties"`
 			} `json:"policy"`
 		} `json:"properties"`
@@ -233,10 +246,11 @@ func amountKeys() (map[string]textForm, error) {
 			continue
 		}
 		pattern, err := regexp.Compile(property.Pattern)
-		if err != nil || property.Pattern == "" || property.MaxLength == 0 {
-			return nil, fmt.Errorf("config: the schema states policy.%s with no usable pattern and length", key)
+		sentence, known := amountSentences[string(property.Minimum)]
+		if err != nil || property.Pattern == "" || property.MaxLength == 0 || !known {
+			return nil, fmt.Errorf("config: the schema states policy.%s with no usable pattern, length and least value", key)
 		}
-		keys[key] = textForm{pattern: pattern, maxLength: property.MaxLength}
+		keys[key] = textForm{pattern: pattern, maxLength: property.MaxLength, sentence: sentence}
 	}
 	return keys, nil
 }

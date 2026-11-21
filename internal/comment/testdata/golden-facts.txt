@@ -1822,6 +1822,401 @@ opencode-stated-usd-withheld	`input_uncached`
 opencode-stated-usd-withheld	`opencode`
 opencode-stated-usd-withheld	`output`
 opencode-stated-usd-withheld	| the wrapper stops the process at the cap |
+p95-over	0.0000008
+p95-over	0.000136
+p95-over	0.00015605
+p95-over	0.000436875
+p95-over	0.0006
+p95-over	0.00089
+p95-over	0.001619725
+p95-over	0.01
+p95-over	0.10
+p95-over	0.125
+p95-over	0.20
+p95-over	0.50
+p95-over	1.5
+p95-over	121
+p95-over	15605
+p95-over	19
+p95-over	20
+p95-over	2026-11-21
+p95-over	272
+p95-over	3495
+p95-over	4.998380275
+p95-over	4450
+p95-over	5.00
+p95-over	8
+p95-over	List-equivalent, not billed
+p95-over	Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.
+p95-over	USD 0.0000008
+p95-over	USD 0.000136
+p95-over	USD 0.00015605
+p95-over	USD 0.000436875
+p95-over	USD 0.0006
+p95-over	USD 0.00089
+p95-over	USD 0.001619725
+p95-over	USD 0.01
+p95-over	USD 0.10
+p95-over	USD 0.125
+p95-over	USD 0.20
+p95-over	USD 0.50
+p95-over	USD 4.998380275
+p95-over	USD 5.00
+p95-over	](https://app.costroid.com/?installation=github%3A58120394)
+p95-over	](https://docs.costroid.com/approval)
+p95-over	](https://docs.costroid.com/export)
+p95-over	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-over	`0.4.3`
+p95-over	`9f2c6e1`
+p95-over	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+p95-over	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+p95-over	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+p95-over	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+p95-over	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+p95-over	`anthropic:informational:cached_input_reported`
+p95-over	`anthropic:informational:reasoning_output`
+p95-over	`cache_read`
+p95-over	`cache_write_1h`
+p95-over	`cache_write_5m`
+p95-over	`cached_input_reported`
+p95-over	`claude-code`
+p95-over	`claude-haiku-5-5`
+p95-over	`costroid.yml`
+p95-over	`input_uncached`
+p95-over	`output`
+p95-over	`reasoning_output`
+p95-over	| client-side estimate, can pass the cap |
+p95-over-withheld	1.5
+p95-over-withheld	19
+p95-over-withheld	20
+p95-over-withheld	2026-11-21
+p95-over-withheld	List-equivalent, not billed
+p95-over-withheld	Over limit: this run is over 1.5 times the P95 of this agent's latest 20 runs, priced at list (List-equivalent, not billed). Amounts are withheld here.
+p95-over-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-over-withheld	](https://docs.costroid.com/approval)
+p95-over-withheld	](https://docs.costroid.com/export)
+p95-over-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-over-withheld	`0.4.3`
+p95-over-withheld	`9f2c6e1`
+p95-over-withheld	`cache_read`
+p95-over-withheld	`cache_write_1h`
+p95-over-withheld	`cache_write_5m`
+p95-over-withheld	`cached_input_reported`
+p95-over-withheld	`claude-code`
+p95-over-withheld	`claude-haiku-5-5`
+p95-over-withheld	`comment.show_cost: false`
+p95-over-withheld	`costroid.yml`
+p95-over-withheld	`input_uncached`
+p95-over-withheld	`output`
+p95-over-withheld	`reasoning_output`
+p95-over-withheld	| client-side estimate, can pass the cap |
+p95-short-history	0.0000008
+p95-short-history	0.000136
+p95-short-history	0.00015605
+p95-short-history	0.000436875
+p95-short-history	0.00089
+p95-short-history	0.001619725
+p95-short-history	0.01
+p95-short-history	0.10
+p95-short-history	0.125
+p95-short-history	0.20
+p95-short-history	0.50
+p95-short-history	121
+p95-short-history	15605
+p95-short-history	19
+p95-short-history	20
+p95-short-history	2026-11-21
+p95-short-history	272
+p95-short-history	3495
+p95-short-history	4.998380275
+p95-short-history	4450
+p95-short-history	5.00
+p95-short-history	7
+p95-short-history	8
+p95-short-history	List-equivalent, not billed
+p95-short-history	Not decided: the P95 limit needs 20 earlier runs of this agent and 7 reached the check, so the rule did not run. This run cost USD 0.001619725 at list (List-equivalent, not billed).
+p95-short-history	USD 0.0000008
+p95-short-history	USD 0.000136
+p95-short-history	USD 0.00015605
+p95-short-history	USD 0.000436875
+p95-short-history	USD 0.00089
+p95-short-history	USD 0.001619725
+p95-short-history	USD 0.01
+p95-short-history	USD 0.10
+p95-short-history	USD 0.125
+p95-short-history	USD 0.20
+p95-short-history	USD 0.50
+p95-short-history	USD 4.998380275
+p95-short-history	USD 5.00
+p95-short-history	](https://app.costroid.com/?installation=github%3A58120394)
+p95-short-history	](https://docs.costroid.com/export)
+p95-short-history	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-short-history	`0.4.3`
+p95-short-history	`9f2c6e1`
+p95-short-history	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+p95-short-history	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+p95-short-history	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+p95-short-history	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+p95-short-history	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+p95-short-history	`anthropic:informational:cached_input_reported`
+p95-short-history	`anthropic:informational:reasoning_output`
+p95-short-history	`cache_read`
+p95-short-history	`cache_write_1h`
+p95-short-history	`cache_write_5m`
+p95-short-history	`cached_input_reported`
+p95-short-history	`claude-code`
+p95-short-history	`claude-haiku-5-5`
+p95-short-history	`costroid.yml`
+p95-short-history	`input_uncached`
+p95-short-history	`output`
+p95-short-history	`reasoning_output`
+p95-short-history	| client-side estimate, can pass the cap |
+p95-short-history-withheld	19
+p95-short-history-withheld	20
+p95-short-history-withheld	2026-11-21
+p95-short-history-withheld	7
+p95-short-history-withheld	List-equivalent, not billed
+p95-short-history-withheld	Not decided: the P95 limit needs 20 earlier runs of this agent and 7 reached the check, so the rule did not run. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
+p95-short-history-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-short-history-withheld	](https://docs.costroid.com/export)
+p95-short-history-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-short-history-withheld	`0.4.3`
+p95-short-history-withheld	`9f2c6e1`
+p95-short-history-withheld	`cache_read`
+p95-short-history-withheld	`cache_write_1h`
+p95-short-history-withheld	`cache_write_5m`
+p95-short-history-withheld	`cached_input_reported`
+p95-short-history-withheld	`claude-code`
+p95-short-history-withheld	`claude-haiku-5-5`
+p95-short-history-withheld	`comment.show_cost: false`
+p95-short-history-withheld	`costroid.yml`
+p95-short-history-withheld	`input_uncached`
+p95-short-history-withheld	`output`
+p95-short-history-withheld	`reasoning_output`
+p95-short-history-withheld	| client-side estimate, can pass the cap |
+p95-warn-only	0.0000008
+p95-warn-only	0.000136
+p95-warn-only	0.00015605
+p95-warn-only	0.000436875
+p95-warn-only	0.0006
+p95-warn-only	0.00089
+p95-warn-only	0.001619725
+p95-warn-only	0.01
+p95-warn-only	0.10
+p95-warn-only	0.125
+p95-warn-only	0.20
+p95-warn-only	0.50
+p95-warn-only	1.5
+p95-warn-only	121
+p95-warn-only	15605
+p95-warn-only	19
+p95-warn-only	20
+p95-warn-only	2026-11-09
+p95-warn-only	2026-11-21
+p95-warn-only	272
+p95-warn-only	3495
+p95-warn-only	4.998380275
+p95-warn-only	4450
+p95-warn-only	5.00
+p95-warn-only	7
+p95-warn-only	8
+p95-warn-only	List-equivalent, not billed
+p95-warn-only	Over limit, warn-only: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs. After 2026-11-09 09:00 UTC this fails the check.
+p95-warn-only	USD 0.0000008
+p95-warn-only	USD 0.000136
+p95-warn-only	USD 0.00015605
+p95-warn-only	USD 0.000436875
+p95-warn-only	USD 0.0006
+p95-warn-only	USD 0.00089
+p95-warn-only	USD 0.001619725
+p95-warn-only	USD 0.01
+p95-warn-only	USD 0.10
+p95-warn-only	USD 0.125
+p95-warn-only	USD 0.20
+p95-warn-only	USD 0.50
+p95-warn-only	USD 4.998380275
+p95-warn-only	USD 5.00
+p95-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+p95-warn-only	](https://docs.costroid.com/export)
+p95-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-warn-only	`0.4.3`
+p95-warn-only	`9f2c6e1`
+p95-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+p95-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+p95-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+p95-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+p95-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+p95-warn-only	`anthropic:informational:cached_input_reported`
+p95-warn-only	`anthropic:informational:reasoning_output`
+p95-warn-only	`cache_read`
+p95-warn-only	`cache_write_1h`
+p95-warn-only	`cache_write_5m`
+p95-warn-only	`cached_input_reported`
+p95-warn-only	`claude-code`
+p95-warn-only	`claude-haiku-5-5`
+p95-warn-only	`costroid.yml`
+p95-warn-only	`enforce: true`
+p95-warn-only	`input_uncached`
+p95-warn-only	`output`
+p95-warn-only	`policy`
+p95-warn-only	`reasoning_output`
+p95-warn-only	| client-side estimate, can pass the cap |
+p95-warn-only-withheld	1.5
+p95-warn-only-withheld	19
+p95-warn-only-withheld	20
+p95-warn-only-withheld	2026-11-09
+p95-warn-only-withheld	2026-11-21
+p95-warn-only-withheld	7
+p95-warn-only-withheld	List-equivalent, not billed
+p95-warn-only-withheld	Over limit, warn-only: this run is over 1.5 times the P95 of this agent's latest 20 runs, priced at list (List-equivalent, not billed). After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
+p95-warn-only-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-warn-only-withheld	](https://docs.costroid.com/export)
+p95-warn-only-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-warn-only-withheld	`0.4.3`
+p95-warn-only-withheld	`9f2c6e1`
+p95-warn-only-withheld	`cache_read`
+p95-warn-only-withheld	`cache_write_1h`
+p95-warn-only-withheld	`cache_write_5m`
+p95-warn-only-withheld	`cached_input_reported`
+p95-warn-only-withheld	`claude-code`
+p95-warn-only-withheld	`claude-haiku-5-5`
+p95-warn-only-withheld	`comment.show_cost: false`
+p95-warn-only-withheld	`costroid.yml`
+p95-warn-only-withheld	`enforce: true`
+p95-warn-only-withheld	`input_uncached`
+p95-warn-only-withheld	`output`
+p95-warn-only-withheld	`policy`
+p95-warn-only-withheld	`reasoning_output`
+p95-warn-only-withheld	| client-side estimate, can pass the cap |
+p95-within	0.0000008
+p95-within	0.000136
+p95-within	0.00015605
+p95-within	0.000436875
+p95-within	0.00089
+p95-within	0.0012
+p95-within	0.001619725
+p95-within	0.01
+p95-within	0.10
+p95-within	0.125
+p95-within	0.20
+p95-within	0.50
+p95-within	1.5
+p95-within	121
+p95-within	15605
+p95-within	19
+p95-within	20
+p95-within	2026-11-21
+p95-within	272
+p95-within	3495
+p95-within	4.998380275
+p95-within	4450
+p95-within	5.00
+p95-within	8
+p95-within	List-equivalent, not billed
+p95-within	USD 0.0000008
+p95-within	USD 0.000136
+p95-within	USD 0.00015605
+p95-within	USD 0.000436875
+p95-within	USD 0.00089
+p95-within	USD 0.0012
+p95-within	USD 0.001619725
+p95-within	USD 0.01
+p95-within	USD 0.10
+p95-within	USD 0.125
+p95-within	USD 0.20
+p95-within	USD 0.50
+p95-within	USD 4.998380275
+p95-within	USD 5.00
+p95-within	Within limit, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed), within 1.5 times the USD 0.0012 P95 of this agent's latest 20 runs. Nothing outside the job checked the figures, so the check is neutral.
+p95-within	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within	](https://docs.costroid.com/export)
+p95-within	](https://docs.costroid.com/policy)
+p95-within	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-within	`0.4.3`
+p95-within	`9f2c6e1`
+p95-within	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+p95-within	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+p95-within	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+p95-within	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+p95-within	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+p95-within	`anthropic:informational:cached_input_reported`
+p95-within	`anthropic:informational:reasoning_output`
+p95-within	`cache_read`
+p95-within	`cache_write_1h`
+p95-within	`cache_write_5m`
+p95-within	`cached_input_reported`
+p95-within	`claude-code`
+p95-within	`claude-haiku-5-5`
+p95-within	`costroid.yml`
+p95-within	`input_uncached`
+p95-within	`output`
+p95-within	`reasoning_output`
+p95-within	| client-side estimate, can pass the cap |
+p95-within-checked	0.10
+p95-within-checked	1
+p95-within-checked	1.5
+p95-within-checked	1000000
+p95-within-checked	20
+p95-within-checked	2026-11-01
+p95-within-checked	4.90
+p95-within-checked	5.00
+p95-within-checked	Measured
+p95-within-checked	USD 0.10
+p95-within-checked	USD 4.90
+p95-within-checked	USD 5.00
+p95-within-checked	Within limit: this run cost USD 0.10 at list (Measured), within 1.5 times the USD 0.10 P95 of this agent's latest 20 runs. A ledger checked the rows.
+p95-within-checked	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within-checked	](https://docs.costroid.com/export)
+p95-within-checked	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-within-checked	`0.1.0`
+p95-within-checked	`9f2c6e1`
+p95-within-checked	`codex`
+p95-within-checked	`costroid.yml`
+p95-within-checked	`gpt-5.5`
+p95-within-checked	`openai:gpt-5.5:global:standard:output`
+p95-within-checked	`output`
+p95-within-checked	| the wrapper stops the process at the cap |
+p95-within-checked-withheld	1
+p95-within-checked-withheld	1.5
+p95-within-checked-withheld	20
+p95-within-checked-withheld	2026-11-01
+p95-within-checked-withheld	Measured
+p95-within-checked-withheld	Within limit: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.
+p95-within-checked-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within-checked-withheld	](https://docs.costroid.com/export)
+p95-within-checked-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-within-checked-withheld	`0.1.0`
+p95-within-checked-withheld	`9f2c6e1`
+p95-within-checked-withheld	`codex`
+p95-within-checked-withheld	`comment.show_cost: false`
+p95-within-checked-withheld	`costroid.yml`
+p95-within-checked-withheld	`gpt-5.5`
+p95-within-checked-withheld	`output`
+p95-within-checked-withheld	| the wrapper stops the process at the cap |
+p95-within-withheld	1.5
+p95-within-withheld	19
+p95-within-withheld	20
+p95-within-withheld	2026-11-21
+p95-within-withheld	List-equivalent, not billed
+p95-within-withheld	Within limit, by the job's own figures: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
+p95-within-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within-withheld	](https://docs.costroid.com/export)
+p95-within-withheld	](https://docs.costroid.com/policy)
+p95-within-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+p95-within-withheld	`0.4.3`
+p95-within-withheld	`9f2c6e1`
+p95-within-withheld	`cache_read`
+p95-within-withheld	`cache_write_1h`
+p95-within-withheld	`cache_write_5m`
+p95-within-withheld	`cached_input_reported`
+p95-within-withheld	`claude-code`
+p95-within-withheld	`claude-haiku-5-5`
+p95-within-withheld	`comment.show_cost: false`
+p95-within-withheld	`costroid.yml`
+p95-within-withheld	`input_uncached`
+p95-within-withheld	`output`
+p95-within-withheld	`reasoning_output`
+p95-within-withheld	| client-side estimate, can pass the cap |
 pass-shown	0.10
 pass-shown	1
 pass-shown	1000000

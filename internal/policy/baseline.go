@@ -7,6 +7,12 @@ import "github.com/Costroid/costroid/internal/decimal"
 // highest cost, and one run moves the P50.
 const MinBaselineRuns = 10
 
+// MinP95Runs is the fewest earlier runs whose P95 run_p95 holds a run to. The
+// nearest-rank P95 of n runs is the cost at rank ceil(0.95 n), which for every
+// n below 20 is the highest cost, so one costly run would set the limit. At 20
+// it is the 19th, and the window holds no more.
+const MinP95Runs = BaselineWindow
+
 // Baseline is what this agent's earlier runs on the repository cost, in USD.
 type Baseline struct {
 	// Runs counts the earlier runs the median was read from.
@@ -38,9 +44,10 @@ type Lifetime struct {
 }
 
 // baselineInput is the baseline as the pack reads it: its trust, its runs,
-// its P50 and P95 in USD, and for each increase key that is set, the USD
-// amount a run may reach. The pack cannot add or multiply, so the limits are
-// computed here. A baseline of too few runs is none.
+// its P50 and P95 in USD, for each increase key that is set, the USD amount a
+// run may reach, and with max_p95_factor set and MinP95Runs runs, the P95
+// times the factor. The pack cannot add or multiply, so the limits are
+// computed here, exactly. A baseline of too few runs is none.
 func baselineInput(baseline *Baseline, settings Settings) map[string]any {
 	if baseline == nil || baseline.Runs < MinBaselineRuns || baseline.MedianUSD.Sign() < 0 || baseline.P95USD.Sign() < 0 {
 		return nil
@@ -57,6 +64,9 @@ func baselineInput(baseline *Baseline, settings Settings) map[string]any {
 	}
 	if percent, set := settings.Amounts[keyMaxIncreasePercent]; set {
 		input[keyMaxIncreasePercent] = median.Mul(decimal.FromInt(100).Add(percent)).DivPow10(2).String()
+	}
+	if factor, set := settings.Amounts[keyMaxP95Factor]; set && baseline.Runs >= MinP95Runs {
+		input[keyMaxP95Factor] = baseline.P95USD.Mul(factor).String()
 	}
 	return input
 }

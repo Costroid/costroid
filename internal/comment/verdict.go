@@ -25,6 +25,7 @@ var ruleLabels = map[string]string{
 	policy.RuleRunCostThreshold:   "Run cost limit",
 	policy.RuleRunIncrease:        "Increase over baseline",
 	policy.RuleRunIncreasePercent: "Percent increase over baseline",
+	policy.RuleRunP95:             "P95 limit",
 	policy.RuleMonthlyBudget:      "Monthly budget",
 	policy.RuleModelAllowlist:     "Model allowlist",
 	policy.RuleAttribution:        "Attribution",
@@ -48,6 +49,7 @@ var limitNouns = map[string]string{
 	policy.RuleRunCostThreshold:   "limit",
 	policy.RuleRunIncrease:        "limit",
 	policy.RuleRunIncreasePercent: "limit",
+	policy.RuleRunP95:             "limit",
 	policy.RulePullRequestBudget:  "budget",
 	policy.RuleMonthlyBudget:      "budget",
 }
@@ -97,13 +99,16 @@ func (i Input) reading(shown bool) []string {
 }
 
 // named reports a result the verdict sentence states in full: its figure
-// against its limit. A rule that could not be checked is explained by its own
+// against its limit, or the P95 limit's short history, which the sentence
+// counts. Any other rule that could not be checked is explained by its own
 // line, and so is the model list, whose line names the models.
 func named(result policy.Result) bool {
 	switch {
 	case leadNouns[result.Rule] == "":
 		return false
 	case broken(result) || result.Outcome == policy.Pass:
+		return true
+	case result.Rule == policy.RuleRunP95 && result.Reason == policy.ReasonNoBaseline:
 		return true
 	}
 	return result.Reason == policy.ReasonUnverifiedRows
@@ -268,6 +273,10 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 		if sentence := increaseSentence(result, shown); sentence != "" {
 			return label + ": " + sentence
 		}
+	case result.Rule == policy.RuleRunP95:
+		if sentence := p95Sentence(result, shown); sentence != "" {
+			return label + ": " + sentence
+		}
 	case result.Rule == policy.RulePullRequestBudget:
 		if sentence := pullRequestSentence(result, shown, bases, request); sentence != "" {
 			return label + ": " + sentence
@@ -427,6 +436,24 @@ func increaseSentence(result policy.Result, shown bool) string {
 		return fmt.Sprintf("the run is at most %s over the median of earlier runs.", allowed)
 	case policy.ReasonNoBaseline:
 		return fmt.Sprintf("no baseline of %d or more earlier runs reached this check, so the rule did not run.", policy.MinBaselineRuns)
+	}
+	return ""
+}
+
+// p95Sentence states a run against its P95 limit, or is empty for a reason
+// every rule states alike.
+func p95Sentence(result policy.Result, shown bool) string {
+	run := "the run"
+	if shown && result.CostUSD != "" && result.P95USD != "" {
+		run = Money(budgetCurrency, result.CostUSD)
+	}
+	switch result.Reason {
+	case policy.ReasonOverBaseline:
+		return run + " is over " + p95Limit(result, shown) + "."
+	case policy.ReasonWithinLimit:
+		return run + " is within " + p95Limit(result, shown) + "."
+	case policy.ReasonNoBaseline:
+		return fmt.Sprintf("%d earlier runs of this agent reached this check, and the rule needs %d, so it did not run.", baselineRuns(result), policy.MinP95Runs)
 	}
 	return ""
 }

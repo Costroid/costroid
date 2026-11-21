@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -106,6 +107,62 @@ func rulesVerdict(t *testing.T, config policy.ConfigFile, at time.Time, baseline
 		t.Fatal(err)
 	}
 	return &verdict
+}
+
+// p95Config sets the P95 limit at 1.5 times the P95 of the agent's latest
+// runs.
+const p95Config = "policy:\n  max_p95_factor: \"1.5\"\n"
+
+// p95Verdict evaluates the default pack under p95Config over a run's usage,
+// with a baseline of runs earlier runs whose P95 is p95, in USD, vouched for
+// as the rows are.
+func p95Verdict(t *testing.T, usage policy.Usage, trust policy.Trust, at time.Time, runs int, p95 string) *policy.Verdict {
+	t.Helper()
+	verdict, err := policy.Evaluate(context.Background(), policy.Request{
+		Usage:    usage,
+		Trust:    trust,
+		Evidence: policy.GatewayMeasured,
+		Config:   policy.ConfigFile{Data: []byte(p95Config), Found: true, Ref: exampleBase, FromBase: true},
+		Start:    policy.Start{At: goldenStart},
+		At:       at,
+		Baseline: &policy.Baseline{Runs: runs, MedianUSD: decimal.MustParse(p95), P95USD: decimal.MustParse(p95), Trust: trust},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &verdict
+}
+
+// p95States are the P95 limit's states, each shown and withheld: a run over
+// the limit once the warn-only period ended and inside it, within it on rows
+// the agent's job wrote and on rows a ledger checked, and a history of 7
+// runs, which is too short for the rule to run.
+func p95States(t *testing.T) map[string]Input {
+	t.Helper()
+	data, err := os.ReadFile(goldenRowsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := policy.ReadUsage(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := realInput(t)
+	checked.Ledger = ledgerOf(t, sampleFields())
+	attributed := policy.Usage{Rows: 1, Currencies: []policy.CurrencyUsage{{Currency: "USD", ListCost: decimal.MustParse("0.1"), Rows: 1, Models: map[string]int{"gpt-5.5": 1}}}}
+	checked.Verdict = p95Verdict(t, attributed, policy.TokenVerified, insidePeriod, policy.MinP95Runs, "0.1")
+	shown := map[string]Input{
+		"p95-over":           withVerdict(t, p95Verdict(t, usage, policy.Unverified, afterPeriod, policy.MinP95Runs, "0.0006")),
+		"p95-warn-only":      withVerdict(t, p95Verdict(t, usage, policy.Unverified, insidePeriod, policy.MinP95Runs, "0.0006")),
+		"p95-within":         withVerdict(t, p95Verdict(t, usage, policy.Unverified, insidePeriod, policy.MinP95Runs, "0.0012")),
+		"p95-within-checked": checked,
+		"p95-short-history":  withVerdict(t, p95Verdict(t, usage, policy.Unverified, insidePeriod, 7, "0.0012")),
+	}
+	states := map[string]Input{}
+	for name, input := range shown {
+		states[name], states[name+"-withheld"] = input, withheld(input)
+	}
+	return states
 }
 
 // settings is a costroid.yml found at the base commit.
@@ -410,6 +467,8 @@ func goldenStates(t *testing.T) map[string]Input {
 	// Two rules fail: the sentence names the first the pack lists, and the
 	// other follows in the body.
 	states["two-rules-fail"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_run_cost_usd: \"0.001\"\n  models:\n    - gpt-*\n"), afterPeriod, nil, nil))
+
+	maps.Copy(states, p95States(t))
 
 	// A fork's own rows fail a rule. The follow-up holds the check at neutral,
 	// and the sentence says so with the rule's own noun, shown and withheld.

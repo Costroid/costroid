@@ -54,7 +54,7 @@ var factPatterns = []*regexp.Regexp{
 	regexp.MustCompile("`[^`\n]+`"),
 	regexp.MustCompile(`\]\([^)\s]+\)`),
 	regexp.MustCompile(`\| (?:no cap held the run|only the vendor's budget applies|client-side estimate, can pass the cap|the wrapper stops the process at the cap|checked before each request|a cap of [^|\n]+) \|`),
-	regexp.MustCompile(`(?m)(?:Run budget|Run cost limit|Increase over baseline|Percent increase over baseline|Pull request budget|Merge request budget|Monthly budget|Model allowlist|Attribution): .*?\.(?: |$)`),
+	regexp.MustCompile(`(?m)(?:Run budget|Run cost limit|Increase over baseline|Percent increase over baseline|P95 limit|Pull request budget|Merge request budget|Monthly budget|Model allowlist|Attribution): .*?\.(?: |$)`),
 }
 
 // factsOf lists the facts a comment states, sorted and each once.

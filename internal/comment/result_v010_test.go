@@ -182,9 +182,10 @@ func TestMachineBlockStatesEveryEstimateFigureOrCountsIt(t *testing.T) {
 }
 
 // TestResultWithoutAnEstimateIsWhatItWas holds every golden state that states
-// no estimate to result/v0.9: its schema string, no estimates field, and the
-// copied 0.9 schema. A note whose reason is off the closed list states no
-// line, so it states no estimate either.
+// no estimate, and holds no value only result/v0.11 defines, to result/v0.9:
+// its schema string, no estimates field, and the copied 0.9 schema. A note
+// whose reason is off the closed list states no line, so it states no
+// estimate either.
 func TestResultWithoutAnEstimateIsWhatItWas(t *testing.T) {
 	schema := compileResultSchema(t)
 	states := goldenStates(t)
@@ -195,6 +196,9 @@ func TestResultWithoutAnEstimateIsWhatItWas(t *testing.T) {
 	for name, input := range states {
 		if len(input.Ledger.Infrastructure.Figures) > 0 || input.estimateUnavailable() != "" {
 			stated++
+			continue
+		}
+		if holdsP95(input) {
 			continue
 		}
 		for file, object := range machineBlocks(t, input) {

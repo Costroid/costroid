@@ -61,19 +61,22 @@ const (
 	RuleRunCostThreshold   = "run_cost_threshold"
 	RuleRunIncrease        = "run_increase"
 	RuleRunIncreasePercent = "run_increase_percent"
-	RulePullRequestBudget  = "pr_budget"
-	RuleMonthlyBudget      = "monthly_budget"
-	RuleModelAllowlist     = "model_allowlist"
-	RuleAttribution        = "attribution"
+	// RuleRunP95 holds a run to a multiple of the P95 of this agent's latest
+	// runs on merged pull requests.
+	RuleRunP95            = "run_p95"
+	RulePullRequestBudget = "pr_budget"
+	RuleMonthlyBudget     = "monthly_budget"
+	RuleModelAllowlist    = "model_allowlist"
+	RuleAttribution       = "attribution"
 )
 
 var ruleOrder = []string{
-	RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent,
+	RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent, RuleRunP95,
 	RulePullRequestBudget, RuleMonthlyBudget, RuleModelAllowlist, RuleAttribution,
 }
 
 // runCostRules hold this run's own cost to a limit, so their results carry it.
-var runCostRules = []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent}
+var runCostRules = []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent, RuleRunP95}
 
 // measuredRules pass on token-verified rows only when measured or reconciled
 // spend stands behind them: the rules that hold a cost to a limit, and the
@@ -86,6 +89,7 @@ var runRuleKeys = map[string]string{
 	RuleRunCostThreshold:   keyMaxRunCost,
 	RuleRunIncrease:        keyMaxIncrease,
 	RuleRunIncreasePercent: keyMaxIncreasePercent,
+	RuleRunP95:             keyMaxP95Factor,
 }
 
 // The outcomes of a rule.
@@ -181,8 +185,8 @@ type Verdict struct {
 	problem error
 }
 
-// Result is one rule's outcome. LimitUSD, CostUSD and BaselineUSD are
-// amounts, so a comment that withholds amounts drops them.
+// Result is one rule's outcome. LimitUSD, CostUSD, BaselineUSD and P95USD
+// are amounts, so a comment that withholds amounts drops them.
 type Result struct {
 	Rule           string `json:"rule"`
 	Outcome        string `json:"outcome"`
@@ -196,6 +200,16 @@ type Result struct {
 	CostUSD string `json:"cost_usd,omitempty"`
 	// BaselineUSD is the median the increase rules compare the run with.
 	BaselineUSD string `json:"baseline_usd,omitempty"`
+	// P95USD is the P95 of the baseline run_p95 holds the run to, present
+	// only beside a baseline of MinP95Runs runs.
+	P95USD string `json:"p95_usd,omitempty"`
+	// LimitFactor is policy.max_p95_factor: a run may cost up to P95USD times
+	// it. The product is not stated, because its scale can pass the twelve
+	// fractional digits an amount holds.
+	LimitFactor string `json:"limit_factor,omitempty"`
+	// BaselineRuns counts the earlier runs run_p95's baseline holds. Nil on
+	// every other rule, and on a ledger's answer, which reads no baseline.
+	BaselineRuns *int `json:"baseline_runs,omitempty"`
 	// Models names the models off the allowlist, sorted, at most 10.
 	Models []string `json:"models,omitempty"`
 }
@@ -212,6 +226,7 @@ func (v Verdict) WithoutAmounts() Verdict {
 		v.Results[index].LimitUSD = ""
 		v.Results[index].CostUSD = ""
 		v.Results[index].BaselineUSD = ""
+		v.Results[index].P95USD = ""
 	}
 	return v
 }
@@ -323,9 +338,12 @@ func withoutRunRules(settings Settings) (Settings, []Result) {
 		}
 		delete(settings.Amounts, key)
 		result := Result{Rule: rule, Outcome: Unproven, Reason: ReasonNoRunRows}
-		if rule == RuleRunIncreasePercent {
+		switch rule {
+		case RuleRunIncreasePercent:
 			result.LimitPercent = limit.String()
-		} else {
+		case RuleRunP95:
+			result.LimitFactor = limit.String()
+		default:
 			result.LimitUSD = limit.String()
 		}
 		withheld = append(withheld, result)
@@ -428,8 +446,8 @@ func ledgerUsage(lines []LedgerLine) Usage {
 }
 
 // annotate orders the results and adds the figures each was held to: the
-// run's USD cost, the baseline's median, the pull request's total, and the
-// models off the allowlist.
+// run's USD cost, the baseline's median, or its P95 and its runs, the pull
+// request's total, and the models off the allowlist.
 func annotate(results []Result, request Request, settings Settings) []Result {
 	slices.SortFunc(results, func(a, b Result) int {
 		return cmp.Compare(slices.Index(ruleOrder, a.Rule), slices.Index(ruleOrder, b.Rule))
@@ -451,8 +469,26 @@ func annotate(results []Result, request Request, settings Settings) []Result {
 		if increase && result.Reason != ReasonNoBaseline && request.Baseline != nil {
 			result.BaselineUSD = request.Baseline.MedianUSD.String()
 		}
+		if result.Rule == RuleRunP95 && result.Reason != ReasonNoRunRows {
+			p95Figures(result, request.Baseline)
+		}
 	}
 	return results
+}
+
+// p95Figures adds the baseline run_p95 was held to: the runs it holds, and its
+// P95 when the rule compared the run with it. The pack compares only beside a
+// baseline of MinP95Runs runs, so a result with any reason but no_baseline
+// had one.
+func p95Figures(result *Result, baseline *Baseline) {
+	runs := 0
+	if baseline != nil {
+		runs = baseline.Runs
+	}
+	result.BaselineRuns = &runs
+	if result.Reason != ReasonNoBaseline && baseline != nil {
+		result.P95USD = baseline.P95USD.String()
+	}
 }
 
 func digest(data []byte) string {

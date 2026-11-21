@@ -167,6 +167,31 @@ func TestOfflineEqualsOnline(t *testing.T) {
 			want:  verdictWords{policy.Neutral, []string{"run_increase unproven no_baseline"}},
 			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows"}},
 		},
+		{
+			name: "a run over 1.5 times the P95 of twenty merged runs", config: text("policy:\n  max_p95_factor: \"1.5\"\n  enforce: true\n"), merged: 20,
+			want:  verdictWords{policy.Failure, []string{"run_p95 fail over_baseline"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_p95 unproven no_run_rows"}},
+		},
+		{
+			name: "a run within twice the P95 of twenty merged runs", config: text("policy:\n  max_p95_factor: 2\n  enforce: true\n"), merged: 20,
+			want:  verdictWords{policy.Neutral, []string{"run_p95 unproven unverified_rows"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_p95 unproven no_run_rows"}},
+		},
+		{
+			name: "nineteen merged runs are no P95", config: text("policy:\n  max_p95_factor: 1\n  enforce: true\n"), merged: 19,
+			want:  verdictWords{policy.Neutral, []string{"run_p95 unproven no_baseline"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_p95 unproven no_run_rows"}},
+		},
+		{
+			name: "the pull request's own twenty runs are no P95", config: text("policy:\n  max_p95_factor: 1\n  enforce: true\n"), earlier: 20,
+			want:  verdictWords{policy.Neutral, []string{"run_p95 unproven no_baseline"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_p95 unproven no_run_rows"}},
+		},
+		{
+			name: "the P95 and the median rules read one baseline", config: text("policy:\n  max_increase_usd: \"0.0006\"\n  max_p95_factor: 2\n  enforce: true\n"), merged: 20,
+			want:  verdictWords{policy.Failure, []string{"run_increase fail over_baseline", "run_p95 unproven unverified_rows"}},
+			serve: &verdictWords{policy.Neutral, []string{"run_increase unproven no_run_rows", "run_p95 unproven no_run_rows"}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -440,7 +465,7 @@ func TestPolicyRefusesHistoryAloneWhereARuleReadsABaseline(t *testing.T) {
 	baseline := writeObjects(t, filepath.Join(directory, "merged.jsonl"), nil)
 	increase := writeBaseConfig(t, "policy:\n  max_increase_percent: 10\n")
 	code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", increase, "--history", history)
-	want := "costroid: --history gives no baseline: run_increase and run_increase_percent read the merged pull requests' check runs, which --baseline names\n"
+	want := "costroid: --history gives no baseline: run_increase, run_increase_percent and run_p95 read the merged pull requests' check runs, which --baseline names\n"
 	if code != exitFailure || stdout != "" || stderr != want {
 		t.Errorf("exit %d: %q %q", code, stdout, stderr)
 	}

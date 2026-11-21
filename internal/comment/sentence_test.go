@@ -146,21 +146,27 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 	}
 	limit := strings.Repeat("7", 300) + ".123456789012"
 	rules := []string{
-		policy.RuleRunBudget, policy.RuleRunCostThreshold, policy.RuleRunIncrease, policy.RuleRunIncreasePercent,
+		policy.RuleRunBudget, policy.RuleRunCostThreshold, policy.RuleRunIncrease, policy.RuleRunIncreasePercent, policy.RuleRunP95,
 		policy.RulePullRequestBudget, policy.RuleMonthlyBudget, policy.RuleModelAllowlist, policy.RuleAttribution,
 	}
 	outcomes := []struct{ outcome, reason string }{
 		{policy.Fail, policy.ReasonOverLimit}, {policy.Warn, policy.ReasonOverLimit}, {policy.Pass, policy.ReasonWithinLimit},
-		{policy.Unproven, policy.ReasonUnverifiedRows}, {policy.Unproven, policy.ReasonNoLedger},
+		{policy.Unproven, policy.ReasonUnverifiedRows}, {policy.Unproven, policy.ReasonNoLedger}, {policy.Unproven, policy.ReasonNoBaseline},
 	}
 	// A figure is a sum of rows, and so are a pull request's total and a
-	// baseline's median. Only a limit in costroid.yml has no longest form.
+	// baseline's median and P95. Only a limit in costroid.yml has no longest
+	// form, and the P95 limit's factor is read as an amount is, at most 64
+	// characters.
 	sum := decimal.MustParse(longAmount).Add(decimal.MustParse(longAmount)).Add(decimal.MustParse(longAmount)).String()
+	runs := policy.MinP95Runs - 1
 	checked := 0
 	for _, rule := range rules {
 		for _, outcome := range outcomes {
 			for _, figures := range []int{1, 3, maxFigures + 3} {
-				result := policy.Result{Rule: rule, Outcome: outcome.outcome, Reason: outcome.reason, LimitUSD: limit, CostUSD: sum, BaselineUSD: sum, LimitPercent: strings.Repeat("9", 40), Models: []string{"a", "b"}}
+				result := policy.Result{
+					Rule: rule, Outcome: outcome.outcome, Reason: outcome.reason, LimitUSD: limit, CostUSD: sum, BaselineUSD: sum,
+					LimitPercent: strings.Repeat("9", 40), Models: []string{"a", "b"}, P95USD: sum, LimitFactor: longAmount, BaselineRuns: &runs,
+				}
 				shown := worstCase(t, figures, result)
 				onGitLab, onFork := asGitLab(shown), shown.OnForkRows()
 				for _, input := range []Input{shown, withheld(shown), onGitLab, withheld(onGitLab), onFork, withheld(onFork)} {
@@ -252,6 +258,10 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 	}
 	total := policy.Result{Rule: policy.RulePullRequestBudget, Outcome: policy.Unproven, Reason: policy.ReasonNoLifetime, LimitUSD: "10"}
 	attribution := policy.Result{Rule: policy.RuleAttribution, Outcome: policy.Warn, Reason: policy.ReasonJoinableRows}
+	runs := policy.MinP95Runs
+	p95 := policy.Result{Rule: policy.RuleRunP95, Outcome: policy.Fail, Reason: policy.ReasonOverBaseline, CostUSD: realTotal, P95USD: "0.0006", LimitFactor: "1.5", BaselineRuns: &runs}
+	increase := policy.Result{Rule: policy.RuleRunIncrease, Outcome: policy.Fail, Reason: policy.ReasonOverBaseline, LimitUSD: "0.0001", CostUSD: realTotal, BaselineUSD: "0.001"}
+	overTotal := policy.Result{Rule: policy.RulePullRequestBudget, Outcome: policy.Fail, Reason: policy.ReasonOverLimit, LimitUSD: "0.001", CostUSD: realTotal}
 	figure := "this run cost USD " + realTotal + " at list (List-equivalent, not billed)"
 	for _, tc := range []struct {
 		name       string
@@ -284,6 +294,18 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 			[]policy.Result{budget(policy.Unproven, policy.ReasonUnverifiedRows), total, attribution},
 			"Within budget, by the job's own figures: " + figure + " of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
 			[]string{"Pull request budget: this check read no total"}, []string{"Run budget: ", "Attribution: "}},
+		{"of rules that fail, the P95 limit follows the increase rules", policy.Failure,
+			[]policy.Result{increase, p95},
+			"Over limit: " + figure + ", more than USD 0.0001 over the USD 0.001 median of earlier runs.",
+			[]string{"P95 limit: USD " + realTotal + " is over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs."}, []string{"Increase over baseline: "}},
+		{"of rules that fail, the P95 limit comes before the pull request budget and the model list", policy.Failure,
+			[]policy.Result{p95, overTotal, models(policy.Fail, policy.ReasonOutsideAllowlist)},
+			"Over limit: " + figure + ", over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.",
+			[]string{"Pull request budget: USD " + realTotal + " over this pull request's runs is over the USD 0.001 budget.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, []string{"P95 limit: "}},
+		{"a P95 limit that did not run decides only after every rule that fails or warns", policy.Neutral,
+			[]policy.Result{budget(policy.Pass, policy.ReasonWithinLimit), {Rule: policy.RuleRunP95, Outcome: policy.Unproven, Reason: policy.ReasonNoBaseline, LimitFactor: "1.5", BaselineRuns: new(7)}},
+			"Not decided: the P95 limit needs 20 earlier runs of this agent and 7 reached the check, so the rule did not run. This run cost USD " + realTotal + " at list (List-equivalent, not billed).",
+			[]string{"Run budget: USD " + realTotal + " is within the USD 5.00 budget."}, []string{"P95 limit: "}},
 		{"the attribution rule never decides alone", policy.Neutral,
 			[]policy.Result{attribution},
 			"No budget set: " + figure + ". No rule decides this check.",

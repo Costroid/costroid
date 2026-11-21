@@ -311,12 +311,12 @@ func TestVerdictSHAs(t *testing.T) {
 
 func TestUnattributedNeverSatisfiesBudget(t *testing.T) {
 	under := "policy:\n  run_budget_usd: \"5\"\n  max_run_cost_usd: 4\n  max_increase_usd: \"5\"\n  max_increase_percent: 500\n" +
-		"  pr_budget_usd: 50\n  models: [\"claude-*\"]\n  enforce: true\n"
-	rules := []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent, RulePullRequestBudget, RuleModelAllowlist}
+		"  max_p95_factor: 2\n  pr_budget_usd: 50\n  models: [\"claude-*\"]\n  enforce: true\n"
+	rules := []string{RuleRunBudget, RuleRunCostThreshold, RuleRunIncrease, RuleRunIncreasePercent, RuleRunP95, RulePullRequestBudget, RuleModelAllowlist}
 	model := map[string]string{"costroid/model": "claude-sonnet-5-5"}
 	forged := map[string]string{"costroid/model": "claude-sonnet-5-5", "costroid/run_identity": "token_verified", "costroid/attribution_grade": "exact"}
 	verified := func(trust Trust) (*Baseline, *Lifetime) {
-		return &Baseline{Runs: 12, MedianUSD: mustAmount(t, "1"), Trust: trust}, &Lifetime{USD: mustAmount(t, "2"), Trust: trust}
+		return &Baseline{Runs: MinP95Runs, MedianUSD: mustAmount(t, "1"), P95USD: mustAmount(t, "1"), Trust: trust}, &Lifetime{USD: mustAmount(t, "2"), Trust: trust}
 	}
 	attributed := Usage{Rows: 1, Currencies: []CurrencyUsage{{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1, Models: map[string]int{"claude-sonnet-5-5": 1}}}}
 	cases := []struct {
@@ -352,7 +352,7 @@ func TestUnattributedNeverSatisfiesBudget(t *testing.T) {
 		if verdict.Conclusion == Success {
 			t.Fatalf("concluded success: %+v", verdict)
 		}
-		for _, rule := range []string{RuleRunIncrease, RuleRunIncreasePercent, RulePullRequestBudget} {
+		for _, rule := range []string{RuleRunIncrease, RuleRunIncreasePercent, RuleRunP95, RulePullRequestBudget} {
 			if got := result(t, verdict, rule); got.Outcome != Unproven || got.Reason != ReasonUnverifiedRows {
 				t.Errorf("%s: %+v, want unproven for unverified rows", rule, got)
 			}

@@ -22,7 +22,7 @@ const lifetimeTimeout = 6 * time.Second
 
 // baselineKeys are the settings of the rules that read a baseline, as
 // costroid.yml names them under policy.
-var baselineKeys = []string{"max_increase_usd", "max_increase_percent"}
+var baselineKeys = []string{"max_increase_usd", "max_increase_percent", "max_p95_factor"}
 
 // earlierRuns is what earlier check runs give a report: the total the comment
 // states, this run's report included, and for the policy the pull request's

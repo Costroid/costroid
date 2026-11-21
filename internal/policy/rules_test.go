@@ -320,3 +320,190 @@ func TestIntegerAmountsAccepted(t *testing.T) {
 		}
 	})
 }
+
+// p95Baseline is a baseline of runs earlier runs whose P95 is p95, in USD.
+func p95Baseline(t *testing.T, runs int, p95 string, trust Trust) *Baseline {
+	t.Helper()
+	return &Baseline{Runs: runs, MedianUSD: mustAmount(t, "0.5"), P95USD: mustAmount(t, p95), Trust: trust}
+}
+
+// TestP95Rule holds a run to policy.max_p95_factor times the P95 of 20
+// earlier runs: under, at and over the limit on both trust paths, warning in
+// the warn-only period, with the figures the result states, and exactly past
+// twelve fractional digits. A pass needs rows and a baseline a ledger checked,
+// and spend the gateway measured. The rule follows run_increase_percent,
+// reads the baseline the median rules read, and in serve concludes
+// no_run_rows as every run rule does.
+func TestP95Rule(t *testing.T) {
+	const factor = "policy:\n  max_p95_factor: \"1.5\"\n"
+	enforced := config(factor + "  enforce: true\n")
+	runs := MinP95Runs
+	paths := []struct {
+		trust    Trust
+		evidence Evidence
+		usage    func(cost string) Usage
+		within   string
+	}{
+		{Unverified, "", func(cost string) Usage { return usageOf(t, line{"USD", cost, "", nil}) }, Unproven},
+		{TokenVerified, GatewayMeasured, func(cost string) Usage { return verifiedUsage(t, "USD", cost, "m") }, Pass},
+	}
+	for _, path := range paths {
+		for _, tc := range []struct {
+			at, cost, outcome, reason string
+		}{
+			{"under", "2.9", path.within, ReasonWithinLimit},
+			{"at", "3", path.within, ReasonWithinLimit},
+			{"over", "3.000000000001", Fail, ReasonOverBaseline},
+		} {
+			t.Run(fmt.Sprintf("%s the limit on %s rows", tc.at, path.trust), func(t *testing.T) {
+				request := Request{Usage: path.usage(tc.cost), Trust: path.trust, Evidence: path.evidence, Config: enforced, Baseline: p95Baseline(t, runs, "2", path.trust)}
+				verdict := evaluate(t, request)
+				reason := tc.reason
+				if tc.outcome == Unproven {
+					reason = ReasonUnverifiedRows
+				}
+				want := Result{Rule: RuleRunP95, Outcome: tc.outcome, Reason: reason, CostUSD: tc.cost, P95USD: "2", LimitFactor: "1.5", BaselineRuns: &runs}
+				if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) {
+					t.Errorf("%+v, want %+v", got, want)
+				}
+				if conclusion := map[string]string{Pass: Success, Unproven: Neutral, Fail: Failure}[tc.outcome]; verdict.Conclusion != conclusion {
+					t.Errorf("concluded %s, want %s", verdict.Conclusion, conclusion)
+				}
+			})
+		}
+	}
+	t.Run("it warns in the warn-only period", func(t *testing.T) {
+		verdict := evaluate(t, Request{Usage: usageOf(t, line{"USD", "4", "", nil}), Config: config(factor), Baseline: p95Baseline(t, runs, "2", Unverified)})
+		if got := result(t, verdict, RuleRunP95); got.Outcome != Warn || got.Reason != ReasonOverBaseline || !got.HeldByWarnOnly || verdict.Conclusion != Neutral {
+			t.Errorf("%+v", verdict)
+		}
+	})
+	t.Run("a baseline the agents' jobs wrote never lets it pass", func(t *testing.T) {
+		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", "1", "m"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: enforced, Baseline: p95Baseline(t, runs, "2", Unverified)})
+		if got := result(t, verdict, RuleRunP95); got.Outcome != Unproven || got.Reason != ReasonUnverifiedRows || verdict.Conclusion != Neutral {
+			t.Errorf("%+v", verdict)
+		}
+	})
+	t.Run("token counts the agent's job sent never let it pass", func(t *testing.T) {
+		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", "1", "m"), Trust: TokenVerified, Evidence: AgentCounts, Config: enforced, Baseline: p95Baseline(t, runs, "2", TokenVerified)})
+		if got := result(t, verdict, RuleRunP95); got.Outcome != Unproven || got.Reason != ReasonUnmeasuredSpend || verdict.Conclusion != Neutral {
+			t.Errorf("%+v", verdict)
+		}
+	})
+	t.Run("rows in another currency are never held to it", func(t *testing.T) {
+		usage := Usage{Rows: 2, Currencies: []CurrencyUsage{
+			{Currency: "EUR", ListCost: mustAmount(t, "900"), Rows: 1},
+			{Currency: "USD", ListCost: mustAmount(t, "1"), Rows: 1},
+		}}
+		verdict := evaluate(t, Request{Usage: usage, Trust: TokenVerified, Evidence: GatewayMeasured, Config: enforced, Baseline: p95Baseline(t, runs, "2", TokenVerified)})
+		if got := result(t, verdict, RuleRunP95); got.Outcome != Unproven || got.Reason != ReasonOtherCurrency || got.P95USD != "2" {
+			t.Errorf("%+v", got)
+		}
+	})
+	t.Run("a factor times a P95 past twelve fractional digits compares exactly", func(t *testing.T) {
+		for cost, outcome := range map[string]string{"0.000000000004": Pass, "0.000000000005": Fail} {
+			verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", cost, "m"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: enforced, Baseline: p95Baseline(t, runs, "0.000000000003", TokenVerified)})
+			if got := result(t, verdict, RuleRunP95); got.Outcome != outcome {
+				t.Errorf("USD %s against 1.5 times USD 0.000000000003: %+v", cost, got)
+			}
+		}
+	})
+	t.Run("it sits beside the median rules and reads their baseline", func(t *testing.T) {
+		limits := config("policy:\n  run_budget_usd: 100\n  max_increase_usd: \"0.5\"\n  max_p95_factor: 1\n  pr_budget_usd: 100\n  enforce: true\n")
+		verdict := evaluate(t, Request{Usage: usageOf(t, line{"USD", "1.2", "", nil}), Config: limits, Baseline: p95Baseline(t, runs, "1", Unverified), Lifetime: &Lifetime{}})
+		var order []string
+		for _, result := range verdict.Results {
+			order = append(order, result.Rule+" "+result.Outcome)
+		}
+		want := []string{"run_budget unproven", "run_increase fail", "run_p95 fail", "pr_budget unproven"}
+		if !slices.Equal(order, want) {
+			t.Errorf("%q, want %q", order, want)
+		}
+		if got := result(t, verdict, RuleRunIncrease); got.BaselineUSD != "0.5" || got.P95USD != "" || got.LimitFactor != "" || got.BaselineRuns != nil {
+			t.Errorf("the median rule states the P95's figures: %+v", got)
+		}
+	})
+	t.Run("a ledger's answer withholds it as every run rule", func(t *testing.T) {
+		verdict, err := EvaluateLedger(context.Background(), LedgerRequest{
+			Lines:  []LedgerLine{{Currency: "USD", ListCost: mustAmount(t, "9"), Rows: 1, Model: "m", Verified: true, Attributed: true}},
+			Config: enforced, Evidence: GatewayMeasured, At: checkTime,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := Result{Rule: RuleRunP95, Outcome: Unproven, Reason: ReasonNoRunRows, LimitFactor: "1.5"}
+		if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) || verdict.Conclusion != Neutral {
+			t.Errorf("%+v, want %+v", verdict, want)
+		}
+	})
+	t.Run("withheld, the P95 goes and the factor and the runs stay", func(t *testing.T) {
+		verdict := evaluate(t, Request{Usage: usageOf(t, line{"USD", "4", "", nil}), Config: enforced, Baseline: p95Baseline(t, runs, "2", Unverified)}).WithoutAmounts()
+		want := Result{Rule: RuleRunP95, Outcome: Fail, Reason: ReasonOverBaseline, LimitFactor: "1.5", BaselineRuns: &runs}
+		if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) {
+			t.Errorf("%+v, want %+v", got, want)
+		}
+	})
+	t.Run("unset, it does not run", func(t *testing.T) {
+		verdict := evaluate(t, Request{Usage: usageOf(t, line{"USD", "900", "", nil}), Config: config("policy:\n  enforce: true\n"), Baseline: p95Baseline(t, runs, "1", TokenVerified)})
+		if slices.ContainsFunc(verdict.Results, func(result Result) bool { return result.Rule == RuleRunP95 }) {
+			t.Errorf("%+v", verdict.Results)
+		}
+	})
+}
+
+// TestP95NeedsTwentyRuns reads the baseline from the costs of 19 and of 20
+// earlier runs, one of them an outlier. Of 19 the nearest-rank P95 is the
+// outlier itself, and the rule does not run; of 20 it is the 19th cost, and
+// the rule holds the run to it.
+func TestP95NeedsTwentyRuns(t *testing.T) {
+	costs := func(n int) []RunCost {
+		runs := make([]RunCost, n)
+		for index := range runs {
+			runs[index] = RunCost{CheckRun: int64(index + 1), Currency: "USD", Cost: mustAmount(t, "1")}
+		}
+		runs[0].Cost = mustAmount(t, "100")
+		return runs
+	}
+	limits := config("policy:\n  max_p95_factor: 2\n  enforce: true\n")
+	usage := usageOf(t, line{"USD", "50", "", nil})
+	nineteen := BaselineOf(costs(19), Unverified)
+	if nineteen.Runs != 19 || nineteen.P95USD.String() != "100" {
+		t.Fatalf("19 runs read as %+v", nineteen)
+	}
+	runs := 19
+	want := Result{Rule: RuleRunP95, Outcome: Unproven, Reason: ReasonNoBaseline, LimitFactor: "2", BaselineRuns: &runs}
+	verdict := evaluate(t, Request{Usage: usage, Config: limits, Baseline: nineteen})
+	if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) || verdict.Conclusion != Neutral {
+		t.Errorf("19 runs: %+v, want %+v", verdict, want)
+	}
+	twenty := BaselineOf(costs(20), Unverified)
+	if twenty.Runs != 20 || twenty.P95USD.String() != "1" {
+		t.Fatalf("20 runs read as %+v", twenty)
+	}
+	runs = 20
+	want = Result{Rule: RuleRunP95, Outcome: Fail, Reason: ReasonOverBaseline, CostUSD: "50", P95USD: "1", LimitFactor: "2", BaselineRuns: &runs}
+	verdict = evaluate(t, Request{Usage: usage, Config: limits, Baseline: twenty})
+	if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) || verdict.Conclusion != Failure {
+		t.Errorf("20 runs: %+v, want %+v", verdict, want)
+	}
+}
+
+// TestP95NeverPassesOnAShortHistory holds the rule on every history shorter
+// than 20 runs, none at all included, to unproven with no_baseline and the
+// count of runs it found: on rows and a baseline a ledger checked, with spend
+// the gateway measured, a run that cost nothing still does not pass.
+func TestP95NeverPassesOnAShortHistory(t *testing.T) {
+	limits := config("policy:\n  max_p95_factor: 1000\n  enforce: true\n")
+	for runs := -1; runs < MinP95Runs; runs++ {
+		var baseline *Baseline
+		found := 0
+		if runs >= 0 {
+			baseline, found = p95Baseline(t, runs, "1", TokenVerified), runs
+		}
+		verdict := evaluate(t, Request{Usage: verifiedUsage(t, "USD", "0", "m"), Trust: TokenVerified, Evidence: GatewayMeasured, Config: limits, Baseline: baseline})
+		want := Result{Rule: RuleRunP95, Outcome: Unproven, Reason: ReasonNoBaseline, LimitFactor: "1000", BaselineRuns: &found}
+		if got := result(t, verdict, RuleRunP95); !reflect.DeepEqual(got, want) || verdict.Conclusion == Success {
+			t.Errorf("%d runs: %+v concluded %s, want %+v", runs, got, verdict.Conclusion, want)
+		}
+	}
+}

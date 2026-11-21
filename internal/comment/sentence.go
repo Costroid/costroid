@@ -183,6 +183,7 @@ var leadNouns = map[string]string{
 	policy.RuleRunCostThreshold:   "limit",
 	policy.RuleRunIncrease:        "limit",
 	policy.RuleRunIncreasePercent: "limit",
+	policy.RuleRunP95:             "limit",
 	policy.RulePullRequestBudget:  "budget",
 	policy.RuleMonthlyBudget:      "budget",
 }
@@ -194,6 +195,7 @@ var ruleNouns = map[string]string{
 	policy.RuleRunCostThreshold:   "run cost limit",
 	policy.RuleRunIncrease:        "increase over baseline",
 	policy.RuleRunIncreasePercent: "percent increase over baseline",
+	policy.RuleRunP95:             "P95 limit",
 	policy.RuleMonthlyBudget:      "monthly budget",
 	policy.RuleModelAllowlist:     "model list",
 	policy.RuleAttribution:        "attribution",
@@ -258,6 +260,8 @@ func (b telling) keptClaim(result policy.Result, said cut) claim {
 	case result.Reason == policy.ReasonUnverifiedRows && leadNouns[result.Rule] != "":
 		kept.state = "Within " + leadNouns[result.Rule] + ", by the job's own figures"
 		kept.closing = "Nothing outside the job checked the figures, so the check is neutral."
+	case result.Rule == policy.RuleRunP95 && result.Reason == policy.ReasonNoBaseline:
+		return b.undecided(fmt.Sprintf("the P95 limit needs %d earlier runs of this agent and %d reached the check, so the rule did not run", policy.MinP95Runs, baselineRuns(result)), said)
 	default:
 		return b.undecided("the "+ruleNoun(result.Rule, b.request)+" could not be checked", said)
 	}
@@ -300,6 +304,15 @@ func (b telling) against(result policy.Result, said cut, over bool) (figure, lim
 			return b.runCost(said), ", " + reach + "median of earlier runs"
 		}
 		return b.runCost(said), ", " + reach + Money(budgetCurrency, result.BaselineUSD) + " median of earlier runs"
+	case policy.RuleRunP95:
+		held := standingWord(over) + " " + p95Limit(result, shown)
+		switch {
+		case !shown && !said.limit:
+			return b.subject() + " is " + standingWord(over) + " its " + noun + b.priced(said), ""
+		case !shown:
+			return b.subject() + " is " + held + b.priced(said), ""
+		}
+		return b.runCost(said), ", " + held
 	case policy.RulePullRequestBudget:
 		if !shown || result.CostUSD == "" || result.LimitUSD == "" {
 			return "this " + b.request + "'s runs are " + standingWord(over) + " the " + noun + ", priced at list", ""
@@ -313,6 +326,26 @@ func (b telling) against(result policy.Result, said cut, over bool) (figure, lim
 		return b.runCost(said), ", " + standingWord(over) + " its " + noun
 	}
 	return b.runCost(said), heldTo(result.LimitUSD, noun, over)
+}
+
+// p95Limit names the limit run_p95 holds a run to: the factor times the P95 of
+// the baseline, with the P95's amount when amounts are shown. The rule
+// compares a run only with a baseline of MinP95Runs runs.
+func p95Limit(result policy.Result, shown bool) string {
+	p95 := "P95"
+	if shown && result.P95USD != "" {
+		p95 = Money(budgetCurrency, result.P95USD) + " P95"
+	}
+	return fmt.Sprintf("%s times the %s of this agent's latest %d runs", result.LimitFactor, p95, policy.MinP95Runs)
+}
+
+// baselineRuns is how many earlier runs run_p95's baseline held, 0 when the
+// result states none.
+func baselineRuns(result policy.Result) int {
+	if result.BaselineRuns == nil {
+		return 0
+	}
+	return *result.BaselineRuns
 }
 
 func standingWord(over bool) string {

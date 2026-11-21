@@ -25,7 +25,8 @@ const ConfigPath = "costroid.yml"
 // Settings are the policy keys of costroid.yml. A key that is not set is a
 // rule that does not run.
 type Settings struct {
-	// Amounts holds each amount key that is set, by its name in costroid.yml.
+	// Amounts holds each key that is set and read as an amount is, by its
+	// name in costroid.yml: the amounts, and the P95 limit's factor.
 	Amounts map[string]decimal.Decimal
 	// Models are the models a run may use: exact ids, or prefixes that end in
 	// *. Empty when the key is not set.
@@ -37,6 +38,10 @@ type Settings struct {
 // amountPattern is a plain decimal of at most the row contract's scale, the
 // same pattern the schema states.
 var amountPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,12})?$`)
+
+// factorPattern is a plain decimal of at least 1 and at most the row
+// contract's scale, the same pattern the schema states.
+var factorPattern = regexp.MustCompile(`^[1-9][0-9]*(\.[0-9]{1,12})?$`)
 
 // integerPattern is a plain non-negative decimal integer, the only form an
 // integer setting takes.
@@ -54,6 +59,7 @@ const (
 	keyMaxIncreasePercent = "max_increase_percent"
 	keyPullRequestBudget  = "pr_budget_usd"
 	keyMonthlyBudget      = "monthly_budget_usd"
+	keyMaxP95Factor       = "max_p95_factor"
 	keyModels             = "models"
 	keyEnforce            = "enforce"
 )
@@ -67,7 +73,7 @@ var amountKeys = []string{
 
 // Keys are the keys under policy that ParseSettings reads, sorted.
 func Keys() []string {
-	keys := append([]string{keyModels, keyEnforce}, amountKeys...)
+	keys := append([]string{keyModels, keyEnforce, keyMaxP95Factor}, amountKeys...)
 	slices.Sort(keys)
 	return keys
 }
@@ -98,6 +104,12 @@ func ParseSettings(data []byte) (Settings, error) {
 				return Settings{}, err
 			}
 			settings.Amounts[key] = amount
+		case key == keyMaxP95Factor:
+			factor, err := readFactor(value)
+			if err != nil {
+				return Settings{}, err
+			}
+			settings.Amounts[key] = factor
 		case key == keyModels:
 			models, err := parseModels(value)
 			if err != nil {
@@ -232,14 +244,28 @@ var amountTags = []string{"!!int", "!!float", "!!str"}
 // float, and none of them is written as the figure it stands for: 017 is 15.
 func readAmount(key string, value *yaml.Node) (decimal.Decimal, error) {
 	refused := fmt.Errorf("policy: policy.%s must be a plain decimal of at most %d fractional digits, such as 5, 2.50 or \"2.50\"", key, focus.MaxScale)
-	if value.Kind != yaml.ScalarNode || !slices.Contains(amountTags, value.Tag) || !amountPattern.MatchString(value.Value) {
+	return readDecimal(value, amountPattern, refused)
+}
+
+// readFactor reads policy.max_p95_factor from its source text as an amount is
+// read, and holds it to at least 1: a limit below the P95 would fail a run
+// that costs what most earlier runs cost.
+func readFactor(value *yaml.Node) (decimal.Decimal, error) {
+	refused := fmt.Errorf("policy: policy.%s must be a plain decimal of at least 1 with at most %d fractional digits, such as 2, 1.5 or \"1.5\"", keyMaxP95Factor, focus.MaxScale)
+	return readDecimal(value, factorPattern, refused)
+}
+
+// readDecimal reads a scalar's text when the pattern takes it, and is the
+// refusal given otherwise.
+func readDecimal(value *yaml.Node, pattern *regexp.Regexp, refused error) (decimal.Decimal, error) {
+	if value.Kind != yaml.ScalarNode || !slices.Contains(amountTags, value.Tag) || !pattern.MatchString(value.Value) {
 		return decimal.Decimal{}, refused
 	}
-	amount, err := decimal.Parse(value.Value)
+	number, err := decimal.Parse(value.Value)
 	if err != nil {
 		return decimal.Decimal{}, refused
 	}
-	return amount, nil
+	return number, nil
 }
 
 // parseModels reads policy.models: a list of one or more distinct entries.

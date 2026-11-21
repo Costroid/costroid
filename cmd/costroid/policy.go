@@ -129,7 +129,7 @@ func offlineCheck(ctx context.Context, flags policyFlags) (policy.Verdict, earli
 // errHistoryIsNoBaseline refuses --history alone where a rule reads a
 // baseline. The file once gave the baseline too, and a verdict without it
 // would differ from the one it gave.
-var errHistoryIsNoBaseline = errors.New("--history gives no baseline: run_increase and run_increase_percent read the merged pull requests' check runs, which --baseline names")
+var errHistoryIsNoBaseline = errors.New("--history gives no baseline: run_increase, run_increase_percent and run_p95 read the merged pull requests' check runs, which --baseline names")
 
 // historyOf reads --history and --baseline as the report reads the pull
 // request's check runs and the merged pull requests', with the rows as this

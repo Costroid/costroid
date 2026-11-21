@@ -123,7 +123,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -270,7 +270,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -426,7 +426,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -558,7 +558,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "3333333333333333333333333333333333333333",
     "config": "found",
@@ -635,7 +635,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
   "policy": {
     "conclusion": "neutral",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "3333333333333333333333333333333333333333",
     "config": "found",
@@ -784,7 +784,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -890,7 +890,7 @@ Check run 1001 carries this report in full.
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1036,7 +1036,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1142,7 +1142,7 @@ Check run 1001 carries this report in full.
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1248,7 +1248,7 @@ Check run 1003 carries this report in full.
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1394,7 +1394,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1500,7 +1500,7 @@ Check run 1001 carries this report in full.
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1644,7 +1644,7 @@ Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, pri
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "083ffd3e65658f79fd16055a7154735dcdf62014c51593c19c44e621a47b87da",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1789,7 +1789,7 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "95563eb18e14e68596a3cc6ffbe24069d7cafd6432562f654c571703eb2d0b27",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",
@@ -1895,7 +1895,7 @@ Check run 1001 carries this report in full.
   "policy": {
     "conclusion": "failure",
     "trust": "unverified",
-    "pack_sha256": "0a36ca52cf9123f580e21c44a00d804f62558b6c0f96179917521684e70c3f30",
+    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
     "config_sha256": "95563eb18e14e68596a3cc6ffbe24069d7cafd6432562f654c571703eb2d0b27",
     "config_ref": "1111111111111111111111111111111111111111",
     "config": "found",

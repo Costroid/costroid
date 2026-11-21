@@ -10,6 +10,7 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | `run_cost_threshold`   | `policy.max_run_cost_usd`     | The run's cost at list, in USD, against the limit |
 | `run_increase`         | `policy.max_increase_usd`     | The run's cost at list, in USD, against the median of this agent's runs on merged pull requests plus the amount set |
 | `run_increase_percent` | `policy.max_increase_percent` | The run's cost at list, in USD, against the median of this agent's runs on merged pull requests plus the percent set |
+| `run_p95`              | `policy.max_p95_factor`       | The run's cost at list, in USD, against the factor set times the P95 of this agent's latest 20 runs on merged pull requests |
 | `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, over every basis, this run included, against the budget |
 | `monthly_budget`       | `policy.monthly_budget_usd`   | The repository's month to date, in USD, against the budget. It reads a ledger only |
 | `model_allowlist`      | `policy.models`               | Each row's `costroid/model` tag against the list |
@@ -19,11 +20,12 @@ A rule without its setting does not run. With no `costroid.yml`, only `attributi
 
 The budget rules compare USD amounts as exact decimals. A row in another currency is never converted, and never compared with a USD limit.
 
-Four rules read figures from outside the run. One that is set and lacks its figure concludes `unproven`, so the check cannot conclude `success`, and the comment names the rule and says why it did not run:
+Five rules read figures from outside the run. One that is set and lacks its figure concludes `unproven`, so the check cannot conclude `success`, and the comment names the rule and says why it did not run:
 
 | Rule                                   | Reads                                                         | In this release                                                                        |
 | -------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `run_increase`, `run_increase_percent` | The median of 10 or more runs of the same agent on the pull requests merged into the base branch, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --baseline` from a file. With fewer runs, off a pull request, on GitLab, or when any part of it cannot be read, both conclude `unproven` with reason `no_baseline` |
+| `run_p95`                              | The P95 of the latest 20 runs of the same agent on the pull requests merged into the base branch, from their check runs | Read as the median rules read their baseline. With fewer than 20 runs, or where they conclude `no_baseline`, it concludes `unproven` with reason `no_baseline` |
 | `pr_budget`                            | The total of the pull request's earlier runs, from their check runs | `costroid report` reads it on a GitHub pull request, and `costroid policy --history` from a file. Off a pull request, on GitLab, under `costroid policy` without `--history`, or when a commit's check runs cannot be read, it concludes `unproven` with reason `no_lifetime` |
 | `monthly_budget`                       | The repository's month to date, from a ledger                 | No ledger reaches the check, so it concludes `unproven` with reason `no_ledger`        |
 
@@ -39,7 +41,7 @@ Any job of the repository can post a check run named `costroid`, so the total is
 
 `run_increase` and `run_increase_percent` hold a run to the median of the same agent's runs on the pull requests merged into the base branch. The report reads those runs from the `costroid` check runs on each merged pull request's head commit. The pull request the check is about never counts, whatever its state: not its own earlier runs, not a listing of it as merged, and not a merged pull request whose head is its head. Before commit `df493ca` of 2026-11-21 the baseline was the pull request's own earlier runs, so a pull request set its own baseline: costly early runs raised the median a later run was held to.
 
-- The report reads the baseline only when `costroid.yml` at the base sets `max_increase_usd` or `max_increase_percent`. It asks GitHub in one request for the 100 closed pull requests into the base branch that were updated last, and keeps the latest 30 merges among them. A merge updates its pull request, so from an answer of 100 it keeps only the merges after the answer's oldest update, and never skips a later merge for an earlier one. It then reads the check runs on each head in one request: 31 requests at most. It reads them beside the pull request's own check runs, inside the same 6 seconds.
+- The report reads the baseline only when `costroid.yml` at the base sets `max_increase_usd`, `max_increase_percent` or `max_p95_factor`. It asks GitHub in one request for the 100 closed pull requests into the base branch that were updated last, and keeps the latest 30 merges among them. A merge updates its pull request, so from an answer of 100 it keeps only the merges after the answer's oldest update, and never skips a later merge for an earlier one. It then reads the check runs on each head in one request: 31 requests at most. It reads them beside the pull request's own check runs, inside the same 6 seconds.
 - A run is one earlier report on rows that name one agent, the agent this run's rows name. A run that names no agent or several joins no baseline, and when this run's rows name no agent or several, there is no baseline.
 - Every run on a merged head counts, not only its last: the window is the agent's latest runs, so a pull request whose agent ran three times adds three runs. The runs on a merged pull request's earlier commits are not read.
 - A run's cost is its figures added up at list, over every basis, as the run rules read this run. A run whose figures span two currencies has no single cost and joins no baseline. Each currency has its own baseline, and the rules read the one in USD.
@@ -48,19 +50,33 @@ Any job of the repository can post a check run named `costroid`, so the total is
 - With fewer than 10 runs there is no baseline, and both rules conclude `unproven` with reason `no_baseline`. Below 10, one run moves the median.
 - The median is the nearest-rank P50: the costs are sorted, and the median is the cost at rank ⌈n × 50 / 100⌉, counted from 1. Of 10 runs it is the 5th, of 20 the 10th. It is always one of the runs' costs, compared as an exact decimal, never a midpoint and never a float.
 
-When any part of the baseline cannot be read, there is none, and both rules conclude `unproven` with reason `no_baseline`: the list, the check runs on one head, a `costroid` check run whose object this release does not read, or a head with more than 100 check runs named `costroid`. A baseline of part of its window would hold other runs than the latest. A warning on stderr names the part, and the pull request's total, read from other check runs, still reaches the comment.
+When any part of the baseline cannot be read, there is none, and every rule that reads it concludes `unproven` with reason `no_baseline`: the list, the check runs on one head, a `costroid` check run whose object this release does not read, or a head with more than 100 check runs named `costroid`. A baseline of part of its window would hold other runs than the latest. A warning on stderr names the part, and the pull request's total, read from other check runs, still reaches the comment.
 
 Any job of the repository can post a check run named `costroid`, so a baseline is unverified, as the pull request's total is. It can show a run over it, never within it: the rules warn or fail, or conclude `unproven`. It is the one figure from a claim that can still move a limit: a check run posted on a merged head can raise the median, and a raised median spares a run a failure. A pull request's own check runs no longer can.
 
 `model_allowlist` takes exact model ids, and prefixes that end in `*`: `claude-*` admits `claude-sonnet-5-5`, and `claude` admits only `claude`. A row whose tag is absent, or is not a model id of at most 128 letters, digits and `._:/+-`, cannot pass the rule: it concludes `unproven` with reason `unreadable_model`. A model off the list fails the rule whatever else the rows hold, and the verdict names at most 10 such models.
 
+## The P95 limit
+
+`run_p95` holds a run to a multiple of the P95 of the same agent's latest 20 runs on the pull requests merged into the base branch. It reads the baseline the median rules read, from the same check runs, so the pull request's own runs never count.
+
+```yaml
+policy:
+  max_p95_factor: 2
+```
+
+- `max_p95_factor` is a plain decimal of at least 1 with at most 12 fractional digits, quoted or not, read from its text as an amount is. A run that costs more than the P95 times the factor is over the limit: it warns during the warn-only period, then fails. The limit is computed as an exact decimal. The result states the P95 as `p95_usd` and the factor as `limit_factor`, never their product, whose scale can pass the 12 fractional digits an amount holds.
+- The P95 is the nearest-rank P95: the cost at rank ⌈n × 95 / 100⌉, counted from 1. For every n below 20 that rank is n, the highest cost, so one costly run would set the limit. Of 20 runs it is the 19th, and the window holds no more. So the rule needs all 20 runs. With fewer it does not run: it concludes `unproven` with reason `no_baseline`, and `baseline_runs` counts the runs it found. It never passes on a short history.
+- Within the limit, it passes only when this run's rows and the baseline were both checked against a token, as the median rules do. On the Action path it concludes `unproven` at best.
+- It sits beside the median rules. They are independent, read one baseline, and can all be set. `run_increase` and `run_increase_percent` ask whether a run is far from a typical run, and need 10 runs. `run_p95` asks whether a run costs more than nearly every earlier run, and needs 20. A verdict lists it after `run_increase_percent` and before `pr_budget`, so when it fails beside a median rule the sentence names the median rule.
+
 ## The verdict on each trust path
 
 Who wrote the rows decides what a rule can conclude. A row whose run identity no one checked is `unattributed`, and an `unattributed` row never satisfies a rule.
 
-| Outcome of a budget, increase or model rule | Rows the agent's job wrote (the Action path)                               | Rows a ledger checked against the job's OIDC token                            |
+| Outcome of a budget, increase, P95 or model rule | Rows the agent's job wrote (the Action path)                          | Rows a ledger checked against the job's OIDC token                            |
 | ------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`, and its title opens "Within budget, by the job's own figures" | A budget, increase or model rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
+| Within the limit, or every model on the list | Cannot pass. The check concludes `neutral`, and its title opens "Within budget, by the job's own figures" | A budget, increase, P95 or model rule passes only when the gateway's attested count or a provider's report stands behind the rows' spend. On the agent's own token counts it concludes `unproven` with reason `unmeasured_spend`, and the check `neutral`. One `unattributed` row keeps any rule from passing |
 | Over the limit, or a model off the list     | Warns during the warn-only period, then fails                              | Warns during the warn-only period, then fails                                 |
 | No rows reached the check                   | Cannot pass                                                                | Cannot pass                                                                   |
 
@@ -97,6 +113,7 @@ One sentence says what is true of the run. It is the check's title, the first li
 ```text
 Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 Over budget: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget.
+Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.
 No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
 No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran.
 ```
@@ -114,7 +131,7 @@ No figure (agent_error): the agent ended in an error before it reported usage, s
 | `No figure` and a code in brackets                     | The report has no figures. The code is the result object's `run_reason`, `reason` or `state` | `neutral`, or `failure` for `artifact_refused` |
 | `No agent run`                                         | The workflow skipped the agent's job                                                         | `neutral`  |
 
-`Over limit` and `Within limit` name `run_cost_threshold` and the two increase rules, whose amounts are limits. A budget is `run_budget`, `pr_budget` or `monthly_budget`.
+`Over limit` and `Within limit` name `run_cost_threshold`, the two increase rules and `run_p95`, whose amounts are limits. A budget is `run_budget`, `pr_budget` or `monthly_budget`.
 
 When several rules ran, the sentence names one: the first, in the order of the table of rules above, of the worst outcome the verdict holds. A rule that fails comes before one the warn-only period holds, that before one that cannot pass, and that before one that passed. Every other rule's line follows in the comment, above the folds. `attribution` never names the sentence alone, and its line is under the first fold.
 
@@ -169,7 +186,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
 }
 ```
 
-A result can carry `limit_usd`, `cost_usd` and `baseline_usd`, which are amounts, `limit_percent`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. The comment's copy of the block drops `limit_usd`, `cost_usd` and `baseline_usd` when it withholds amounts. The check run's block keeps them. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
+A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
 
 ## The engine
 
@@ -195,7 +212,7 @@ gh api repos/OWNER/REPO/commits/SHA/check-runs \
   >> earlier.jsonl
 ```
 
-`--baseline` takes the result objects of the check runs on the heads of the pull requests merged into the base branch, in the same form, and the command reads the baseline from them as the report does. An object the report would not read leaves no baseline, with the report's warning. `--history` without `--baseline` is refused when the `costroid.yml` named sets `max_increase_usd` or `max_increase_percent`: before commit `df493ca` of 2026-11-21 `--history` gave those rules their baseline, and the command does not conclude `no_baseline` without saying why. This collects the objects of the latest 30 merges into `main`, leaving out pull request `NUMBER`, the one the check is about:
+`--baseline` takes the result objects of the check runs on the heads of the pull requests merged into the base branch, in the same form, and the command reads the baseline from them as the report does. An object the report would not read leaves no baseline, with the report's warning. `--history` without `--baseline` is refused when the `costroid.yml` named sets `max_increase_usd`, `max_increase_percent` or `max_p95_factor`: before commit `df493ca` of 2026-11-21 `--history` gave those rules their baseline, and the command does not conclude `no_baseline` without saying why. This collects the objects of the latest 30 merges into `main`, leaving out pull request `NUMBER`, the one the check is about:
 
 ```sh
 gh api 'repos/OWNER/REPO/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100' \
