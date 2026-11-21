@@ -26,7 +26,7 @@ const (
 	followUpTrigger = "workflow_run"
 )
 
-var errNotGitHubActions = errors.New("follow-up refused: GitHub Actions was not detected\nfollow-up runs in a GitHub Actions job on the workflow_run event, as recipes/github-follow-up.yml does.")
+var errNotGitHubActions = cli.Stopped("follow-up refused: GitHub Actions was not detected", "follow-up runs in a GitHub Actions job on the workflow_run event, as recipes/github-follow-up.yml does.")
 
 // finishedRun is the part of a workflow_run event the follow-up reads. GitHub
 // writes the event, so the head commit and the head repository are GitHub's,

@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	errApproveNotGitHubActions = errors.New("approve refused: GitHub Actions was not detected\napprove runs in a GitHub Actions job on the pull_request_review event, as recipes/github-approval.yml does.")
+	errApproveNotGitHubActions = cli.Stopped("approve refused: GitHub Actions was not detected", "approve runs in a GitHub Actions job on the pull_request_review event, as recipes/github-approval.yml does.")
 	errApproveArguments        = errors.New("approve takes no arguments")
 	errNoReviews               = errors.New("this host lists no reviews")
 	errHeadMoved               = errors.New("the pull request's head has moved since this run")

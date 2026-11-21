@@ -50,7 +50,7 @@ func lintCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	report, err := recipelint.LintWith(paths, recipelint.Options{Profile: recipelint.Customer})
 	if errors.Is(err, fs.ErrNotExist) && set.NArg() == 0 {
-		return cli.Fail(stderr, fmt.Errorf("%s does not exist\nlint reads the GitHub workflows of the repository it runs in.\nRun costroid lint at a repository's root, or name the files: costroid lint <paths>.", defaultWorkflows))
+		return cli.Fail(stderr, cli.Stopped(defaultWorkflows+" does not exist", "lint reads the GitHub workflows of the repository it runs in.", "Run costroid lint at a repository's root, or name the files: costroid lint <paths>."))
 	}
 	if err != nil {
 		return cli.Fail(stderr, cli.File(err))

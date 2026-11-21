@@ -245,7 +245,7 @@ var (
 	copyInstruction = regexp.MustCompile(`Copy (?:to|into) .*?(?:\.(?: |$)|, then )`)
 )
 
-var errNoRepository = errors.New("this directory is in no git repository\ninit writes at a repository's root.\nRun costroid init inside your repository.")
+var errNoRepository = cli.Stopped("this directory is in no git repository", "init writes at a repository's root.", "Run costroid init inside your repository.")
 
 // buildInfo is the release this binary belongs to: what the linker stamped,
 // or what the go command recorded. tagCommit reads the commit a release's tag

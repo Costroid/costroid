@@ -53,7 +53,7 @@ const (
 var rowIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // errNoCISystem is why a report outside a supported CI system refuses to run.
-var errNoCISystem = errors.New("report refused: neither GitHub Actions nor GitLab CI was detected\nreport posts from a job of one of them.\nRun costroid report --preview --rows FILE to print the comment here.")
+var errNoCISystem = cli.Stopped("report refused: neither GitHub Actions nor GitLab CI was detected", "report posts from a job of one of them.", "Run costroid report --preview --rows FILE to print the comment here.")
 
 // reportEvent is the one GitHub event report posts on. On any other event the
 // event file names no head, and GITHUB_SHA can be the default branch's last
@@ -495,7 +495,7 @@ func previewRowsExist(flags reportFlags) error {
 		os.Getenv(refusedVariable) != "" || os.Getenv(refusedCountVariable) != "" {
 		return nil
 	}
-	return fmt.Errorf("no rows file at %s\ncostroid run writes one at --out, and costroid demo shows a comment without one.", flags.rows)
+	return cli.Stopped("no rows file at "+flags.rows, "costroid run writes one at --out, and costroid demo shows a comment without one.")
 }
 
 // previewVerdict evaluates the policy offline at the given time. It reads no

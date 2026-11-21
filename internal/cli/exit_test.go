@@ -25,7 +25,7 @@ func TestFailExitsTwoOnAMistakeAnd125OnAnythingElse(t *testing.T) {
 		"a subcommand's finding":      {Mistaken("tally rows", errors.New("tally rows needs --rows")), ExitUsage, "costroid: tally rows needs --rows\nRun costroid help tally to see its usage.\n"},
 		"a mistake another one wraps": {fmt.Errorf("read the flags: %w", Mistaken("tally", errors.New("tally takes no argument"))), ExitUsage, "costroid: read the flags: tally takes no argument\nRun costroid help tally to see its usage.\n"},
 		"work that could not be done": {errors.New("the ledger did not answer"), ExitCouldNot, "costroid: the ledger did not answer\nSee " + Troubleshooting + ".\n"},
-		"an error with its next step": {errors.New("no rows file at rows.jsonl\ncostroid run writes one at --out."), ExitCouldNot, "costroid: no rows file at rows.jsonl\ncostroid run writes one at --out.\n"},
+		"an error with its next step": {Stopped("no rows file at rows.jsonl", "costroid run writes one at --out."), ExitCouldNot, "costroid: no rows file at rows.jsonl\ncostroid run writes one at --out.\n"},
 	} {
 		var stderr bytes.Buffer
 		if code := Fail(&stderr, check.err); code != check.code || stderr.String() != check.want {

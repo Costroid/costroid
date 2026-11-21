@@ -48,6 +48,20 @@ func Mistaken(command string, err error) error {
 	return &Mistake{lines: []string{err.Error(), fmt.Sprintf("Run costroid help %s to see its usage.", command)}}
 }
 
+// stopped is work a command could not do, in the lines Explain prints.
+type stopped struct {
+	lines []string
+}
+
+func (s *stopped) Error() string { return strings.Join(s.lines, "\n") }
+
+// Stopped is work a command could not do: what is wrong, then why when
+// costroid knows it, then what to do next. Each line after the first is a
+// sentence, and the last names a command, a file or a page.
+func Stopped(what string, then ...string) error {
+	return &stopped{lines: append([]string{what}, then...)}
+}
+
 // Explain prints what stopped a command, under costroid's name: what is wrong
 // on the first line, then why and what to do next when the error says them.
 // An error that names no next step ends on the page that lists costroid's

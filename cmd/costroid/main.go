@@ -254,7 +254,7 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	// no empty file is left to read as a run that printed no usage.
 	if *agent == "" {
 		if _, err := run.AgentFor(set.Args()); err != nil {
-			return runFlags{}, fmt.Errorf("%s is not an agent costroid run reads\nIt reads %s.\nName the one the command starts with --agent.", filepath.Base(set.Arg(0)), strings.Join(run.Agents, ", "))
+			return runFlags{}, cli.Stopped(filepath.Base(set.Arg(0))+" is not an agent costroid run reads", "It reads "+strings.Join(run.Agents, ", ")+".", "Name the one the command starts with --agent.")
 		}
 	}
 	if *out == "" {
