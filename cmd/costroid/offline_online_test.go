@@ -36,13 +36,29 @@ const earlierRunCost = "0.001"
 // are synthetic.
 func earlierReports(t *testing.T, first int64, n int) []string {
 	t.Helper()
+	return reportsAt(t, first, n, earlierRunCost)
+}
+
+// costlyRunCost is what each run costs in a costly synthetic history, in
+// USD: a run of the recorded rows is far below a baseline of such runs.
+const costlyRunCost = "5"
+
+// costlyReports are earlierReports at costlyRunCost.
+func costlyReports(t *testing.T, first int64, n int) []string {
+	t.Helper()
+	return reportsAt(t, first, n, costlyRunCost)
+}
+
+// reportsAt are the result objects of earlierReports, each run at cost.
+func reportsAt(t *testing.T, first int64, n int, cost string) []string {
+	t.Helper()
 	objects := make([]string, n)
 	for index := range objects {
 		id := first + int64(index)
 		result, err := comment.Result(comment.Input{
 			State: comment.Reported,
 			Ledger: comment.Ledger{Rows: 1, Agents: []comment.Data{"claude-code"}, Figures: []comment.Figure{
-				{Currency: "USD", Basis: "list_equivalent", Attribution: "unattributed", Enforcement: "agent-flag", Cost: decimal.MustParse(earlierRunCost), Rows: 1},
+				{Currency: "USD", Basis: "list_equivalent", Attribution: "unattributed", Enforcement: "agent-flag", Cost: decimal.MustParse(cost), Rows: 1},
 			}},
 			RowsSHA256: fmt.Sprintf("%064x", id),
 			CheckRunID: &id,
@@ -69,6 +85,8 @@ type pathCase struct {
 	// unread puts on the first merged head a check run whose object this
 	// release does not read.
 	unread bool
+	// costly makes the pull request's own earlier runs cost costlyRunCost.
+	costly bool
 	// want is the conclusion and the outcome and reason of each result, as
 	// the report and costroid policy give them.
 	want verdictWords
@@ -200,6 +218,18 @@ func mergedHead(number int) string {
 // merged into main, perHead on each.
 func reportPath(t *testing.T, tc pathCase, history pathHistory) policy.Verdict {
 	t.Helper()
+	check := postedCheck(t, tc, history)
+	block, err := comment.ParseResult(check.Text)
+	if err != nil || block.Policy == nil {
+		t.Fatalf("the posted check carries no verdict: %v\n%s", err, check.Text)
+	}
+	return *block.Policy
+}
+
+// postedCheck posts the report as reportPath does, and returns the check it
+// posts on the head.
+func postedCheck(t *testing.T, tc pathCase, history pathHistory) scmtest.Check {
+	t.Helper()
 	stub := reportEnvironment(t, pullRequestEventOn("main"))
 	stub.SetPrivate(true)
 	if tc.config != nil {
@@ -229,23 +259,30 @@ func reportPath(t *testing.T, tc pathCase, history pathHistory) policy.Verdict {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	for _, check := range stub.Checks {
-		if check.HeadSHA != headCommit {
-			continue
+		if check.HeadSHA == headCommit {
+			return check
 		}
-		block, err := comment.ParseResult(check.Text)
-		if err != nil || block.Policy == nil {
-			t.Fatalf("the posted check carries no verdict: %v\n%s", err, check.Text)
-		}
-		return *block.Policy
 	}
 	t.Fatalf("no check posted: %s", stderr)
-	return policy.Verdict{}
+	return scmtest.Check{}
 }
 
 // offlinePath runs costroid policy on the rows with the same costroid.yml,
 // the pull request's own earlier runs' result objects as --history and the
 // merged runs' as --baseline, one per line.
 func offlinePath(t *testing.T, tc pathCase, history pathHistory) policy.Verdict {
+	t.Helper()
+	stdout := offlineOutput(t, tc, history, "--json")
+	var verdict policy.Verdict
+	if err := json.Unmarshal([]byte(stdout), &verdict); err != nil {
+		t.Fatalf("%v: %s", err, stdout)
+	}
+	return verdict
+}
+
+// offlineOutput runs costroid policy as offlinePath does, with the flags
+// added, and returns what it prints.
+func offlineOutput(t *testing.T, tc pathCase, history pathHistory, flags ...string) string {
 	t.Helper()
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "base.yml")
@@ -256,15 +293,12 @@ func offlinePath(t *testing.T, tc pathCase, history pathHistory) policy.Verdict 
 	}
 	historyPath := writeObjects(t, filepath.Join(directory, "earlier.jsonl"), history.own)
 	baselinePath := writeObjects(t, filepath.Join(directory, "merged.jsonl"), history.merged)
-	code, stdout, stderr := execute(t, "policy", "--json", "--rows", realRows, "--config", configPath, "--history", historyPath, "--baseline", baselinePath)
+	args := append([]string{"policy", "--rows", realRows, "--config", configPath, "--history", historyPath, "--baseline", baselinePath}, flags...)
+	code, stdout, stderr := execute(t, args...)
 	if code != 0 && code != exitRejected {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	var verdict policy.Verdict
-	if err := json.Unmarshal([]byte(stdout), &verdict); err != nil {
-		t.Fatalf("%v: %s", err, stdout)
-	}
-	return verdict
+	return stdout
 }
 
 // writeObjects writes the result objects to path, one per line, and returns
@@ -414,7 +448,7 @@ func TestPolicyRefusesHistoryAloneWhereARuleReadsABaseline(t *testing.T) {
 		"with --baseline":         {"--config", increase, "--history", history, "--baseline", baseline},
 		"where no rule reads one": {"--config", writeBaseConfig(t, "policy:\n  pr_budget_usd: 5\n"), "--history", history},
 	} {
-		if code, stdout, stderr := execute(t, append([]string{"policy", "--rows", realRows}, args...)...); code != 0 || !strings.HasPrefix(stdout, "Verdict: neutral.") {
+		if code, stdout, stderr := execute(t, append([]string{"policy", "--rows", realRows}, args...)...); code != 0 || stdout == "" || stderr != "" {
 			t.Errorf("%s: exit %d: %q %q", name, code, stdout, stderr)
 		}
 	}

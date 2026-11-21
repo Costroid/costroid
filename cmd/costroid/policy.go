@@ -70,7 +70,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
-	verdict, err := offlineVerdict(ctx, flags)
+	verdict, runs, err := offlineCheck(ctx, flags)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
@@ -78,7 +78,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
-	if err := printVerdict(ctx, stdout, verdict, flags); err != nil {
+	if err := printVerdict(stdout, verdict, runs.lifetime, flags); err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
@@ -89,24 +89,31 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 }
 
 func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, error) {
+	verdict, _, err := offlineCheck(ctx, flags)
+	return verdict, err
+}
+
+// offlineCheck gives the verdict and the history it was read with, so the
+// pull request's total the last line names is the one the verdict read.
+func offlineCheck(ctx context.Context, flags policyFlags) (policy.Verdict, earlierRuns, error) {
 	file, err := os.Open(flags.rows)
 	if err != nil {
-		return policy.Verdict{}, err
+		return policy.Verdict{}, earlierRuns{}, err
 	}
 	defer file.Close()
 	usage, err := policy.ReadUsage(file)
 	if err != nil {
-		return policy.Verdict{}, err
+		return policy.Verdict{}, earlierRuns{}, err
 	}
 	config := policy.ConfigFromFile(flags.config)
 	if config.Unread != nil {
-		return policy.Verdict{}, config.Unread
+		return policy.Verdict{}, earlierRuns{}, config.Unread
 	}
 	runs, err := historyOf(ctx, flags, config)
 	if err != nil {
-		return policy.Verdict{}, err
+		return policy.Verdict{}, earlierRuns{}, err
 	}
-	return policy.Evaluate(ctx, policy.Request{
+	verdict, err := policy.Evaluate(ctx, policy.Request{
 		Usage:                usage,
 		Trust:                policy.Unverified,
 		Config:               config,
@@ -116,6 +123,7 @@ func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, err
 		Lifetime:             runs.earlier,
 		MeasuredPullRequests: measuredReports(runs.lifetime),
 	})
+	return verdict, runs, err
 }
 
 // errHistoryIsNoBaseline refuses --history alone where a rule reads a
@@ -172,9 +180,9 @@ func historyOf(ctx context.Context, flags policyFlags, config policy.ConfigFile)
 
 // printVerdict prints what the verdict sentence leaves unsaid, one sentence a
 // line, and last the sentence itself, which names the rows' figures and,
-// under --history, the bases of the pull request's total. --json prints the
-// verdict alone.
-func printVerdict(ctx context.Context, stdout io.Writer, verdict policy.Verdict, flags policyFlags) error {
+// under --history, the bases of lifetime, the pull request's total. --json
+// prints the verdict alone.
+func printVerdict(stdout io.Writer, verdict policy.Verdict, lifetime *comment.Lifetime, flags policyFlags) error {
 	if flags.json {
 		encoded, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
@@ -192,11 +200,7 @@ func printVerdict(ctx context.Context, stdout io.Writer, verdict policy.Verdict,
 	if err != nil {
 		return err
 	}
-	runs, err := historyOf(ctx, flags)
-	if err != nil {
-		return err
-	}
-	report := comment.Input{Ledger: ledger, State: comment.Reported, Verdict: &verdict, Lifetime: runs.lifetime, Amounts: comment.AmountsShown}
+	report := comment.Input{Ledger: ledger, State: comment.Reported, Verdict: &verdict, Lifetime: lifetime, Amounts: comment.AmountsShown}
 	if ledger.Rows == 0 {
 		report.State, report.Reason = comment.NoRows, comment.EmptyRowsFile
 	}
