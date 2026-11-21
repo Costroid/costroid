@@ -4,15 +4,17 @@
 
 ## In one step
 
-The release carries `costroid-install.sh`. It needs cosign 3 or later on your `PATH`, which [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) installs. Without cosign it stops and installs nothing: the six commands under [The binary](#the-binary) install it instead, checked against `SHA256SUMS` alone.
-
-The script checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`. Read it first:
+The release carries `costroid-install.sh`. It checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`, and asks for no privilege. Read it first:
 
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-install.sh
 less costroid-install.sh
 sh costroid-install.sh
 ```
+
+With no cosign 3 or later on your `PATH`, the script downloads the cosign it pins to a temporary directory, checks it against the SHA-256 it holds, and removes it afterwards. Where that download fails, the script installs nothing and names both ways forward: install cosign 3 or later, as [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) shows, or install by hand as [The binary](#the-binary) shows. A download that does not match its pin also installs nothing, and [`docs/troubleshooting.md`](troubleshooting.md#the-install-script) says what to do. The script never installs on `SHA256SUMS` alone.
+
+Its last line is the command to run next, `costroid demo`. When `$HOME/.local/bin` is not on your `PATH`, it names the binary by its full path, and the line above it adds the directory to `PATH` in that shell.
 
 ## The binary
 

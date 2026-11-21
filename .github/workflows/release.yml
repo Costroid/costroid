@@ -328,7 +328,7 @@ jobs:
           cp changes/changes.md notes.md
           cat >>notes.md <<NOTES
 
-          Install: download \`costroid-install.sh\`, read it, then run it. It checks this release's signature and checksum before it installs anything, and needs cosign 3 or later.
+          Install: download \`costroid-install.sh\`, read it, then run it. It checks this release's signature and checksum before it installs anything. Without cosign 3 or later on \`PATH\`, it downloads the cosign it pins, checked by its SHA-256.
 
           \`\`\`sh
           curl -fsSLO https://github.com/$GH_REPO/releases/download/$TAG/costroid-install.sh

@@ -5,15 +5,6 @@
 ubuntu:24.04 one-step $ less costroid-install.sh
 debian:12 one-step $ less costroid-install.sh
 
-# The script refuses without cosign, so nothing is installed and costroid is
-# not found.
-ubuntu:24.04 one-step $ sh costroid-install.sh
-ubuntu:24.04 one-step $ costroid demo
-debian:12 one-step $ sh costroid-install.sh
-debian:12 one-step $ costroid demo
-alpine:3.20 one-step $ sh costroid-install.sh
-alpine:3.20 one-step $ costroid demo
-
 # BusyBox's sha256sum takes -c, not --check.
 alpine:3.20 by-hand $ grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum --check
 

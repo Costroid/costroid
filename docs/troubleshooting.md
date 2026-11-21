@@ -4,20 +4,31 @@ Most lines Costroid prints start with `costroid:`, and this page lists each one 
 
 ## The install script
 
-`costroid-install.sh`, the one-step install of [`docs/install.md`](install.md#in-one-step). A line here other than the last two ends the script with exit code 1, and nothing is installed.
+`costroid-install.sh`, the one-step install of [`docs/install.md`](install.md#in-one-step). Each line in this table ends the script with exit code 1, and nothing is installed.
 
 | Line | Meaning | Fix |
 | ---- | ------- | --- |
-| `costroid: cosign is not on PATH, and nothing is installed without its check: install cosign 3 or later, then run this again` | The script checks the release's signature with cosign before it installs anything, and found no `cosign` | Install cosign 3 or later, as [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) shows, then run the script again. Without cosign, [The binary](install.md#the-binary) installs it by hand against `SHA256SUMS` |
 | `costroid: curl is not on PATH` | The script downloads with `curl` | Install curl |
+| `costroid: neither sha256sum nor shasum is on PATH` | The script checks the cosign it downloads and the binary by their SHA-256, with `sha256sum`, or with `shasum` as on macOS | Install either |
 | `costroid: this copy names no release: download costroid-install.sh from the release you want to install` | The script came from the repository, where its version and commit are empty. The release workflow fills both in the copy it attaches to a release | Download it from the release, as [`docs/install.md`](install.md#in-one-step) shows |
 | `costroid: no release for <system>` | The machine is not Linux or macOS, or not `amd64` or `arm64` | Build it with Go, as [`docs/install.md`](install.md#with-go) shows |
+| `costroid: could not download cosign <version>, so nothing was installed: install cosign 3 or later and run this again, or install costroid by hand as https://github.com/Costroid/costroid/blob/main/docs/install.md#the-binary shows` | No cosign 3 or later is on `PATH`, and the script could not download the cosign it pins from github.com. curl's own line above it says why | Install cosign 3 or later, as [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) shows, and run the script again. Or install by hand, as [The binary](install.md#the-binary) shows, which checks the binary against `SHA256SUMS` alone |
+| `costroid: cosign <version> does not match its pinned SHA-256, so nothing was installed` | The cosign the script downloaded is not the one it pins. The script did not run it, and does not download it again | Do not run the script again on this machine until the download is explained. Then install cosign 3 or later, as [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) shows, or install by hand, as [The binary](install.md#the-binary) shows |
 | `costroid: could not download <file> of v<version>` | github.com did not answer, or the release holds no such file | Run the script again. curl's own line above it says why |
-| `costroid: the signature on SHA256SUMS of v<version> does not verify, so nothing was installed` | cosign refused the signature. A cosign older than 3 cannot read the release's bundle and refuses a genuine release with `bundle does not contain cert for verification`; some distributions package cosign 2. With cosign 3 or later, Costroid's release workflow did not make the signature at that tag and commit | Run `cosign version`. Older than 3: install cosign 3 or later, as [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/) shows, and run the script again. 3 or later: do not install this release, and report it as [`SECURITY.md`](../SECURITY.md) says |
+| `costroid: the signature on SHA256SUMS of v<version> does not verify, so nothing was installed` | cosign 3 or later refused the signature: Costroid's release workflow did not make it at that tag and commit. cosign's own lines above it say why. The script never runs a cosign older than 3, which cannot read the release's bundle and refuses a genuine release | Do not install this release. Report it as [`SECURITY.md`](../SECURITY.md) says |
 | `costroid: SHA256SUMS of v<version> holds no line for <binary>` | The release holds no binary for this machine | Build it with Go, as [`docs/install.md`](install.md#with-go) shows |
 | `costroid: <binary> does not match its line in the signed SHA256SUMS of v<version>, so nothing was installed` | The downloaded binary is not the one the signed checksum names | Do not install this binary. Report it as [`SECURITY.md`](../SECURITY.md) says |
+
+The script prints the lines in this table on its way, and none of them stops it. Its last line starts with `Next:` and names the command to run next.
+
+| Line | Meaning | Fix |
+| ---- | ------- | --- |
+| `costroid: cosign 3 or later is not on PATH, so this script downloads cosign <version> to its temporary directory, checks it against the SHA-256 it holds and removes it afterwards` | No `cosign` is on `PATH`. The script downloads cosign for this machine from the cosign release on github.com, at the version it pins, and runs it only when its SHA-256 is the one the script holds | None. With cosign 3 or later on `PATH`, the script downloads none |
+| `costroid: cosign <version> is on PATH and this check needs 3 or later, so this script downloads cosign <version> to its temporary directory, checks it against the SHA-256 it holds and removes it afterwards` | The `cosign` on `PATH` states a version older than 3, or none. A cosign older than 3 cannot read the release's bundle and refuses a genuine release, so the script does not run it | None. With cosign 3 or later on `PATH`, the script downloads none |
+| `costroid: checking the signature on SHA256SUMS of v<version>` | The script downloads `SHA256SUMS` and its signature, and cosign checks that the release workflow signed it at the release's tag and commit | None |
+| `costroid: downloading <binary>` | The signature verified, and the script downloads the binary for this machine | None |
 | `costroid: installed v<version> at <directory>/costroid, checked by its signature` | The binary is installed | None |
-| `costroid: <directory> is not on your PATH: add it, or run <directory>/costroid` | The directory the binary went to is not on `PATH` | Add it to `PATH`, or pass another directory as the script's argument |
+| `costroid: <directory> is not on your PATH. To add it in this shell, run:` | The directory the binary went to is not on `PATH`. The line under it adds it for this shell, and the `Next:` line names the binary by its full path | Run the line under it, and add the same line to your shell's profile to keep it. Or pass a directory on your `PATH` as the script's argument |
 
 ## Installing the binary
 
