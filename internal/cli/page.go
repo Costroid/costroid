@@ -1,5 +1,6 @@
 // Package cli holds what every costroid command shares on the command line:
-// the shape of a help page, and what a flag mistake prints.
+// the shape of a help page, what a mistake and an error print, and the codes a
+// command exits with.
 package cli
 
 import (

@@ -217,8 +217,7 @@ func keepAnswer(flags reviewFlags, stderr io.Writer) int {
 func postAnswer(ctx context.Context, path string, stderr io.Writer) int {
 	system := cicontext.Detect(os.Getenv)
 	if system == cicontext.NoSystem {
-		fmt.Fprintln(stderr, "costroid: review refused: neither GitHub Actions nor GitLab CI was detected")
-		return exitFailure
+		return cli.Fail(stderr, errors.New("review refused: neither GitHub Actions nor GitLab CI was detected"))
 	}
 	if event := os.Getenv("GITHUB_EVENT_NAME"); system == cicontext.GitHubActions && event != reportEvent {
 		fmt.Fprintf(stderr, "costroid: not posted: review posts on the pull_request event, and this run's event is %q\n", event)

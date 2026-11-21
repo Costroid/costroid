@@ -76,6 +76,20 @@ func TestPlainSaysWhatTheSystemSaidInWords(t *testing.T) {
 	}
 }
 
+func TestWithoutTakesAPackagesNameOffTheFrontAndKeepsTheError(t *testing.T) {
+	_, absent := os.Stat(filepath.Join(t.TempDir(), "rows.jsonl"))
+	named := fmt.Errorf("policy: read rows: %w", absent)
+	if got, want := Plain(Without("policy", named)), "read rows: "+Plain(absent); got != want {
+		t.Errorf("reads %q, want %q", got, want)
+	}
+	if mistake := Mistaken("tally", errors.New("tally: no rows")); Fail(&bytes.Buffer{}, Without("tally", mistake)) != ExitUsage {
+		t.Error("a mistake without its package's name is no mistake")
+	}
+	if other := errors.New("the policy: none"); Without("policy", other) != other {
+		t.Error("an error that opens otherwise changed")
+	}
+}
+
 func TestFileSaysAnErrorByTheFileItEndsOn(t *testing.T) {
 	_, absent := os.Stat(filepath.Join(t.TempDir(), "workflows"))
 	wrapped := fmt.Errorf("read a workflow: %w", absent)

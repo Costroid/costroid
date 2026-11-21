@@ -41,6 +41,26 @@ func File(err error) error {
 	return err
 }
 
+// unnamed is an error without the package's name its text opened with.
+type unnamed struct {
+	error
+	text string
+}
+
+func (u unnamed) Error() string { return u.text }
+
+func (u unnamed) Unwrap() error { return u.error }
+
+// Without is err without the name of the package that made it, where its
+// text opens with that name: "policy: rows line 1" under costroid policy
+// names the command twice, and the second time stands before what is wrong.
+func Without(name string, err error) error {
+	if text, named := strings.CutPrefix(err.Error(), name+": "); named {
+		return unnamed{error: err, text: text}
+	}
+	return err
+}
+
 func fileSentence(file *fs.PathError) string {
 	switch {
 	case errors.Is(file.Err, fs.ErrNotExist):

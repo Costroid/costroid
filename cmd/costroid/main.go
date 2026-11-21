@@ -333,7 +333,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	record := runRecord{out: flags.out, budget: &flags.budget, head: ci.Head, json: flags.json, ciRun: ciRunFromEnvironment(os.Getenv)}
 	session, err := gatewaySession(flags)
 	if err != nil {
-		cli.Explain(stderr, errors.Join(err, rows.Close()))
+		cli.Explain(stderr, cli.Without("run", errors.Join(err, rows.Close())))
 		recordRunResult(stdout, stderr, record)
 		return exitFailure
 	}
@@ -356,7 +356,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	}
 	record.reason, record.agentError, record.agentStated = result.Reason, result.AgentError, result.Report.AgentStated
 	if err != nil {
-		cli.Explain(stderr, err)
+		cli.Explain(stderr, cli.Without("run", err))
 		recordRunResult(stdout, stderr, record.failed(err))
 		return exitFailure
 	}

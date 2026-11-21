@@ -380,6 +380,7 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(directory))
 	t.Chdir(directory)
 	writeFile(t, filepath.Join(directory, "rows.jsonl"), "")
+	writeFile(t, filepath.Join(directory, "no-currency.jsonl"), "{}\n")
 	t.Setenv("GITHUB_TOKEN", "")
 	walked := map[string]bool{}
 	for _, check := range []struct {
@@ -405,6 +406,8 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		{args: []string{"policy"}, names: "policy needs --rows and takes no argument", then: []string{"Run costroid help policy to see its usage."}},
 		{args: []string{"policy", "--rows", "rows.jsonl", "--at", "yesterday"}, names: `--at takes a time in RFC 3339, such as 2026-11-21T09:00:00Z, not "yesterday"`},
 		{args: []string{"policy", "--rows", "absent.jsonl"}, names: "absent.jsonl does not exist"},
+		{args: []string{"policy", "--rows", "no-currency.jsonl"}, names: "rows line 1: BillingCurrency is not an ISO code", then: []string{"See " + cli.Troubleshooting + "."}},
+		{args: []string{"run", "--budget-usd", "5", "--agent", "claude-code", "--out", "out.jsonl", "--", "npx"}, names: "npx names no package or script", then: []string{"See " + cli.Troubleshooting + "."}},
 		{args: []string{"report"}, names: "report needs --rows"},
 		{args: []string{"report", "--rows", "rows.jsonl"}, names: "report refused: neither GitHub Actions nor GitLab CI was detected", then: []string{"report posts from a job of one of them.", "Run costroid report --preview --rows FILE to print the comment here."}},
 		{args: []string{"report", "--preview", "--rows", "absent.jsonl"}, names: "no rows file at absent.jsonl", then: []string{"costroid run writes one at --out, and costroid demo shows a comment without one."}},

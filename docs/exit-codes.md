@@ -10,7 +10,7 @@ Every `costroid` command ends in one of four ways, and each way has one exit cod
 | 124 | `costroid run` stopped the agent at the cap | A run whose cost reached `--budget-usd` |
 | 125 | Costroid could not do its work | A file that is not there or cannot be read, a host or a service that did not answer, a directory that is no repository, a command that needs a CI job and has none |
 
-A command that exits 2 or 125 says why on standard error. The first line opens with `costroid:` and says what is wrong. A line under it says what to do next: it names a command, a file or a page of this documentation. [`troubleshooting.md`](troubleshooting.md) lists the lines.
+A command that exits 2 or 125 says why on standard error. The first line opens with `costroid:` and says what is wrong. Where a line follows it, the last one says what to do next: it names a command, a file or a page of this documentation. [`troubleshooting.md`](troubleshooting.md) lists the lines.
 
 ## `costroid run` exits with the agent's own code
 

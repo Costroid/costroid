@@ -76,7 +76,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	verdict, runs, err := offlineCheck(ctx, flags)
 	if err != nil {
-		return cli.Fail(stderr, cli.File(err))
+		return cli.Fail(stderr, cli.Without("policy", cli.File(err)))
 	}
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)

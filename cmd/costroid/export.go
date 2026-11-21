@@ -468,8 +468,7 @@ func writeStdout(format exportformat.Format, files []exportformat.File, stdout, 
 		return exitRejected
 	}
 	if _, err := stdout.Write(files[0].Body); err != nil {
-		fmt.Fprintf(stderr, "costroid: write the %s file: %v\n", format, err)
-		return exitFailure
+		return cli.Fail(stderr, fmt.Errorf("write the %s file: %w", format, err))
 	}
 	return 0
 }

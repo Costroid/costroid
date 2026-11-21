@@ -353,8 +353,7 @@ func printFacts(facts []mergeFact, stdout, stderr io.Writer) int {
 // each is stored as unverified.
 func (s *mergedSend) open(ctx context.Context, getenv func(string) string) int {
 	if !integrationTokenPattern.MatchString(s.target.token) {
-		fmt.Fprintf(s.stderr, "costroid: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform\n")
-		return exitFailure
+		return cli.Fail(s.stderr, errors.New("COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform"))
 	}
 	stated, tenant, err := s.target.statedOf(ctx, statementContracts)
 	least := statementContracts[len(statementContracts)-1]
