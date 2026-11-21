@@ -623,7 +623,7 @@ func Reconclude(block Block, approval *Approval, amounts Amounts, previous int64
 		Block:           block,
 		approval:        approval,
 		besideEstimates: slices.ContainsFunc(block.Estimates, func(estimate BlockEstimate) bool { return estimate.Reason == "" }),
-		request:         requestNoun(AccountGitHub),
+		request:         RequestNoun(AccountGitHub),
 	}.sentence()
 	summary := fmt.Sprintf("**%s**\n\n%s\n\nCheck run %d carries this report in full.\n", sentence, line, previous)
 	return CheckOutput{Title: sentence, Summary: summary, Text: fenced(encoded)}, nil

@@ -413,9 +413,12 @@ func goldenStates(t *testing.T) map[string]Input {
 
 	// A fork's own rows fail a rule. The follow-up holds the check at neutral,
 	// and the sentence says so with the rule's own noun, shown and withheld.
+	// Inside the warn-only period it says the same, and never that the check
+	// will fail: a fork's check is neutral after the period too.
 	states["fork-failure-held"] = fail.OnForkRows()
 	states["fork-failure-held-withheld"] = withheld(fail.OnForkRows())
 	states["fork-limit-held"] = states["limit-over"].OnForkRows()
+	states["fork-failure-held-warn-only"] = warn.OnForkRows()
 
 	// On GitLab a change is a merge request, in the sentence and in each line
 	// under it. GitLab keeps no check runs to add a change's total from, so a

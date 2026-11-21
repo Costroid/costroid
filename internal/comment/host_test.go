@@ -48,8 +48,8 @@ func nounCount(text, noun string) int {
 // pr and pull_request.
 func TestTheNounFollowsTheHost(t *testing.T) {
 	for host, want := range map[string]string{AccountGitLab: "merge request", AccountGitHub: "pull request", "": "pull request"} {
-		if got := requestNoun(host); got != want {
-			t.Errorf("requestNoun(%q) = %q, want %q", host, got, want)
+		if got := RequestNoun(host); got != want {
+			t.Errorf("RequestNoun(%q) = %q, want %q", host, got, want)
 		}
 	}
 	said := 0

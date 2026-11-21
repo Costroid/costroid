@@ -54,29 +54,21 @@ func nameCheck(ctx context.Context, host scm.Reporter, id int64, render checkRen
 	return true
 }
 
-// inputCheck renders a report's check from its input. Each sentence in after
-// ends the summary as a paragraph of its own.
-func inputCheck(input comment.Input, after ...string) checkRender {
+// inputCheck renders a report's check from its input.
+func inputCheck(input comment.Input) checkRender {
 	return func(id *int64) (comment.CheckOutput, error) {
 		if id != nil {
 			input.CheckRunID, input.IDInCheck = id, true
 		}
-		output, err := comment.Check(input)
-		if err != nil {
-			return comment.CheckOutput{}, err
-		}
-		for _, sentence := range after {
-			output.Summary += "\n\n" + sentence
-		}
-		return output, nil
+		return comment.Check(input)
 	}
 }
 
 // postInputCheck posts a report's check and names it, and returns the input
 // as posted: with the check run's id, and IDInCheck when the check names
 // itself. A check that is not posted ends as a line on stderr.
-func postInputCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer, after ...string) comment.Input {
-	render := inputCheck(input, after...)
+func postInputCheck(ctx context.Context, host scm.Reporter, input comment.Input, stderr io.Writer) comment.Input {
+	render := inputCheck(input)
 	id, err := postCheck(ctx, host, input.HeadSHA, input.Conclusion(), render, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: check not posted: %v\n", err)

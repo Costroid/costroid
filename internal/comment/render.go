@@ -163,11 +163,11 @@ const (
 	AccountGitLab = "gitlab"
 )
 
-// requestNoun is what a host calls a change proposed for merge: a merge
+// RequestNoun is what a host calls a change proposed for merge: a merge
 // request on GitLab, a pull request on any other host. Only words a person
-// reads take it. Keys, tags, flags, rule ids and outputs keep pr and
-// pull_request on every host.
-func requestNoun(host string) string {
+// reads take it, in the comment and in the job's log. Keys, tags, flags, rule
+// ids and outputs keep pr and pull_request on every host.
+func RequestNoun(host string) string {
 	if host == AccountGitLab {
 		return "merge request"
 	}
@@ -176,7 +176,7 @@ func requestNoun(host string) string {
 
 // request is the word for a change on the host the report posts to.
 func (i Input) request() string {
-	return requestNoun(i.AccountHost)
+	return RequestNoun(i.AccountHost)
 }
 
 // installationKinds is the kind each host's installation id takes in the
@@ -279,8 +279,9 @@ type Input struct {
 	// none. Its reason is from a closed list. The machine block states it
 	// among its estimates.
 	EstimateUnavailable *focusfile.Unavailable
-	// forkHeld says OnForkRows held the verdict at neutral.
-	forkHeld bool
+	// forkRows says a fork's own workflow run wrote the rows, as OnForkRows
+	// sets it.
+	forkRows bool
 }
 
 // Recorded is a run recorded earlier, as costroid report --recorded names it.

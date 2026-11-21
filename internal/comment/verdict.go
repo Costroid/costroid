@@ -83,7 +83,7 @@ func (i Input) reading(shown bool) []string {
 	if i.approved() {
 		add(approvalLine(*i.Approval))
 	}
-	if i.forkHeld {
+	if i.forkHeld() {
 		add(forkHeldLine(i.request()))
 	}
 	if i.State == Reported {
@@ -149,13 +149,16 @@ const approvalPage = "https://docs.costroid.com/approval"
 // nextStep is the one sentence for a reader who must act: the file to fix
 // when costroid.yml kept every rule from running, how a failure is approved,
 // or when the warn-only period ends. It is empty for any other verdict. Only
-// GitHub's check takes an approval.
+// GitHub's check takes an approval. A fork's own rows leave nothing to act
+// on: their check is neutral whether or not the period runs.
 func (i Input) nextStep() string {
 	switch {
 	case i.Verdict == nil:
 		return ""
 	case configSentence(*i.Verdict, i.configRead()) != "":
 		return configSentence(*i.Verdict, i.configRead())
+	case i.forkRows:
+		return ""
 	case i.Verdict.Conclusion == policy.Failure && !i.approved() && i.AccountHost != AccountGitLab:
 		return "[The approval page](" + approvalPage + ") says how a reviewer approves a failed check."
 	case slices.ContainsFunc(i.Verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly }):

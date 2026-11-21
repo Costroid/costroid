@@ -89,7 +89,7 @@ func TestSentenceStatesTheFigureAgainstTheBudget(t *testing.T) {
 		if sentence := sentenceOf(t, body); !strings.HasPrefix(sentence, tc.want) {
 			t.Errorf("%s: the sentence does not state %q:\n%s", tc.name, tc.want, sentence)
 		}
-		if above, _, _ := strings.Cut(body, "### Costroid"); (tc.line != "" && !strings.Contains(above, "\n"+tc.line+"\n")) || (tc.line == "" && strings.Contains(above, ruleLabel(tc.result.Rule, requestNoun(AccountGitHub))+": ")) {
+		if above, _, _ := strings.Cut(body, "### Costroid"); (tc.line != "" && !strings.Contains(above, "\n"+tc.line+"\n")) || (tc.line == "" && strings.Contains(above, ruleLabel(tc.result.Rule, RequestNoun(AccountGitHub))+": ")) {
 			t.Errorf("%s: the rule's own line follows only a sentence that leaves it unsaid, want %q:\n%s", tc.name, tc.line, above)
 		}
 	}

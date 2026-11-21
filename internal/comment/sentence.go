@@ -41,9 +41,9 @@ type telling struct {
 	Block
 	// approval is the approval that turned a failure neutral, nil for none.
 	approval *Approval
-	// forkHeld says the rows are a fork's own, so a failure is held at
-	// neutral.
-	forkHeld bool
+	// forkRows says the rows are a fork's own, so a rule they break is held
+	// at neutral, in the warn-only period and after it.
+	forkRows bool
 	// besideEstimates says the report shows figures that are not an agent's.
 	besideEstimates bool
 	// request is what the host calls the change the run was for.
@@ -55,7 +55,7 @@ type telling struct {
 func (i Input) telling() telling {
 	told := telling{
 		Block:           i.fields(),
-		forkHeld:        i.forkHeld,
+		forkRows:        i.forkRows,
 		besideEstimates: len(i.Ledger.Infrastructure.Figures) > 0,
 		request:         i.request(),
 	}
@@ -208,13 +208,14 @@ func ruleNoun(rule, request string) string {
 	return ruleNouns[rule]
 }
 
-// forkClosing says why a failure on a fork's own rows leaves the check
+// forkClosing says why a rule a fork's own rows break leaves the check
 // neutral.
 const forkClosing = "A fork's rows are the fork's own claim, so the check is neutral."
 
 // overClaim is the sentence for a rule that found its limit passed or a model
-// off the list: enforced, held by the warn-only period, approved, or held at
-// neutral on a fork's own rows.
+// off the list: held at neutral on a fork's own rows, held by the warn-only
+// period, approved, or enforced. A fork's rows come first: their check stays
+// neutral when the period ends, so the sentence never says it will fail.
 func (b telling) overClaim(result policy.Result, said cut) claim {
 	over := claim{state: "Over " + leadNouns[result.Rule]}
 	if result.Rule == policy.RuleModelAllowlist {
@@ -222,15 +223,15 @@ func (b telling) overClaim(result policy.Result, said cut) claim {
 	}
 	over.figure, over.limit = b.against(result, said, true)
 	switch {
+	case b.forkRows:
+		over.state += ", on a fork's own rows"
+		over.closing = forkClosing
 	case result.Outcome == policy.Warn:
 		over.state += ", warn-only"
 		over.closing = "After " + b.warnOnlyEnd() + " this fails the check."
 	case b.approval != nil:
 		over.state += ", approved by " + b.approval.Approver
 		over.closing = "The approval covers commit " + b.approval.HeadSHA[:min(len(b.approval.HeadSHA), shortCommitLength)] + " and ends with a new push."
-	case b.forkHeld:
-		over.state += ", on a fork's own rows"
-		over.closing = forkClosing
 	}
 	return over
 }

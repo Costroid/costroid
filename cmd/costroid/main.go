@@ -183,7 +183,7 @@ type runFlags struct {
 func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	set := flag.NewFlagSet("run", flag.ContinueOnError)
 	set.SetOutput(stderr)
-	budget := set.String("budget-usd", "", "the run's budget in USD")
+	budget := set.String("budget-usd", "", "the run's cap in USD")
 	agent := set.String("agent", "", "the agent, when the command's name does not say: "+strings.Join(run.Agents, ", "))
 	out := set.String("out", "", "the file the FOCUS rows go to, as JSON lines: "+defaultRowsFile+" when not given")
 	asJSON := set.Bool("json", false, "print the result object on stdout, and the agent's stream on stderr")

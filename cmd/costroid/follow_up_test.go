@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
@@ -252,6 +254,96 @@ func TestForkFollowUpLeavesANeutralVerdictAsItIs(t *testing.T) {
 	}
 	if check := stub.Checks[0]; strings.Contains(check.Summary, forkHeldReason) || strings.Contains(check.Title, "fork") {
 		t.Errorf("an uncapped check names the cap:\n%s", check.Summary)
+	}
+}
+
+// TestAForksRowsOverABudgetNeverSayWarnOnly gives a fork's pull request rows
+// over a budget while the warn-only period runs, and after it has ended. A
+// fork's check is neutral in both, so both read the same held sentence: the
+// title never says "warn-only", and nothing a person reads says the check
+// will fail after the period or how to enforce it now. The machine block
+// keeps what the policy found: the period, and a rule that warns.
+func TestAForksRowsOverABudgetNeverSayWarnOnly(t *testing.T) {
+	const closing = " A fork's rows are the fork's own claim, so the check is neutral."
+	shown := "Over budget, on a fork's own rows: this run cost USD " + realTotal + " at list (List-equivalent, not billed), over the USD 0.001 run budget." + closing
+	withheld := "Over budget, on a fork's own rows: this run is over its run budget, priced at list (List-equivalent, not billed)." + closing + " Amounts are withheld here."
+	for name, tc := range map[string]struct {
+		config  string
+		added   []time.Time
+		public  bool
+		title   string
+		outcome string
+	}{
+		"the workflow is not on the default branch yet": {overBudget, nil, false, shown, "warn"},
+		"inside the seven days":                         {overBudget, []time.Time{time.Now().Add(-day)}, false, shown, "warn"},
+		"inside the seven days, amounts withheld":       {overBudget + showCostOff, []time.Time{time.Now().Add(-day)}, true, withheld, "warn"},
+		"after the period":                              {overBudget, []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}, false, shown, "fail"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := followUpEnvironment(t, "stranger/widgets")
+			if tc.added != nil {
+				stub.Commits[agentWorkflow] = tc.added
+			}
+			stub.Files[configFile] = tc.config
+			stub.SetPrivate(!tc.public)
+			code, _, stderr := execute(t, "follow-up", "--rows", realRows)
+			if code != 0 || len(stub.Checks) != 1 {
+				t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+			}
+			check := stub.Checks[0]
+			if check.Conclusion != "neutral" || check.Title != tc.title || !underTitle(check, forkHeldReason) {
+				t.Errorf("the check concludes %s under the title\n%s\nwant neutral under\n%s\nwith the fork's sentence under it:\n%s", check.Conclusion, check.Title, tc.title, check.Summary)
+			}
+			for _, untrue := range []string{"warn-only", "Warn-only", "this fails the check", "enforce: true"} {
+				if strings.Contains(check.Title+check.Summary, untrue) {
+					t.Errorf("a fork's check says %q:\n%s", untrue, check.Summary)
+				}
+			}
+			verdict := checkVerdict(t, check.Text)
+			if verdict.Conclusion != "neutral" || len(verdict.Results) == 0 || verdict.Results[0].Outcome != tc.outcome || verdict.WarnOnly.Active != (tc.outcome == "warn") {
+				t.Errorf("the machine block's verdict = %+v", verdict)
+			}
+		})
+	}
+}
+
+// TestAForksFollowUpNeverHoldsASuccess runs the follow-up on a fork's rows
+// under each rule the rows are within, enforced. The verdict sentence has no
+// words for a verdict that passed every rule and was held at neutral, and no
+// follow-up reaches one: rows a fork's own job wrote pass no rule. This fails
+// the day one does, so the state cannot appear without a sentence.
+func TestAForksFollowUpNeverHoldsASuccess(t *testing.T) {
+	checkedOpening := regexp.MustCompile(`^(Within budget|Within limit|Models on the list): `)
+	for name, config := range map[string]string{
+		"a run budget the rows are within":     underBudget + "  enforce: true\n",
+		"a run cost limit the rows are within": "policy:\n  max_run_cost_usd: \"5\"\n  enforce: true\n",
+		"a model list the rows are on":         "policy:\n  models:\n    - claude-*\n  enforce: true\n",
+		"every one of them":                    underBudget + "  max_run_cost_usd: \"5\"\n  models:\n    - claude-*\n  enforce: true\n",
+		"no rule":                              "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := followUpEnvironment(t, "stranger/widgets")
+			stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+			stub.Files[configFile] = config
+			code, _, stderr := execute(t, "follow-up", "--rows", realRows)
+			if code != 0 || len(stub.Checks) != 1 {
+				t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+			}
+			check := stub.Checks[0]
+			ruled, passed := 0, 0
+			for _, result := range checkVerdict(t, check.Text).Results {
+				if result.Rule == policy.RuleAttribution {
+					continue
+				}
+				ruled++
+				if result.Outcome == policy.Pass {
+					passed++
+				}
+			}
+			if check.Conclusion != "neutral" || (ruled > 0 && passed == ruled) || checkedOpening.MatchString(check.Title) {
+				t.Errorf("the follow-up concluded %s over %d of %d rules passed, a held success the sentence has no words for:\n%s", check.Conclusion, passed, ruled, check.Title)
+			}
+		})
 	}
 }
 

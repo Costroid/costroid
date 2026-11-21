@@ -108,6 +108,7 @@ No figure (agent_error): the agent ended in an error before it reported usage, s
 | `Over budget`, `Over limit`, `Model not on the list`   | The cost is over it, or a row names a model off the list                                     | `failure`  |
 | Any of the three, then ", warn-only"                   | The warn-only period holds that failure back                                                 | `neutral`  |
 | Any of the three, then ", approved by" and a login     | A reviewer approved that failure on this commit                                              | `neutral`  |
+| Any of the three, then ", on a fork's own rows"        | A fork's own run wrote the rows, so the follow-up holds the check, in the warn-only period and after it | `neutral`  |
 | `No budget set`                                        | `costroid.yml` sets nothing a rule reads                                                     | `neutral`  |
 | `Not decided`                                          | `costroid.yml` could not be used, or the rule named could not be checked                     | `neutral`  |
 | `No figure` and a code in brackets                     | The report has no figures. The code is the result object's `run_reason`, `reason` or `state` | `neutral`, or `failure` for `artifact_refused` |

@@ -608,6 +608,69 @@ fork-failure-held	`output`
 fork-failure-held	`policy.run_budget_usd`
 fork-failure-held	`reasoning_output`
 fork-failure-held	| client-side estimate, can pass the cap |
+fork-failure-held-warn-only	0.0000008
+fork-failure-held-warn-only	0.000136
+fork-failure-held-warn-only	0.00015605
+fork-failure-held-warn-only	0.000436875
+fork-failure-held-warn-only	0.00089
+fork-failure-held-warn-only	0.001
+fork-failure-held-warn-only	0.001619725
+fork-failure-held-warn-only	0.01
+fork-failure-held-warn-only	0.10
+fork-failure-held-warn-only	0.125
+fork-failure-held-warn-only	0.20
+fork-failure-held-warn-only	0.50
+fork-failure-held-warn-only	121
+fork-failure-held-warn-only	15605
+fork-failure-held-warn-only	19
+fork-failure-held-warn-only	2026-11-21
+fork-failure-held-warn-only	272
+fork-failure-held-warn-only	3495
+fork-failure-held-warn-only	4.998380275
+fork-failure-held-warn-only	4450
+fork-failure-held-warn-only	5.00
+fork-failure-held-warn-only	8
+fork-failure-held-warn-only	List-equivalent, not billed
+fork-failure-held-warn-only	Over budget, on a fork's own rows: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. A fork's rows are the fork's own claim, so the check is neutral.
+fork-failure-held-warn-only	Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`.
+fork-failure-held-warn-only	USD 0.0000008
+fork-failure-held-warn-only	USD 0.000136
+fork-failure-held-warn-only	USD 0.00015605
+fork-failure-held-warn-only	USD 0.000436875
+fork-failure-held-warn-only	USD 0.00089
+fork-failure-held-warn-only	USD 0.001
+fork-failure-held-warn-only	USD 0.001619725
+fork-failure-held-warn-only	USD 0.01
+fork-failure-held-warn-only	USD 0.10
+fork-failure-held-warn-only	USD 0.125
+fork-failure-held-warn-only	USD 0.20
+fork-failure-held-warn-only	USD 0.50
+fork-failure-held-warn-only	USD 4.998380275
+fork-failure-held-warn-only	USD 5.00
+fork-failure-held-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+fork-failure-held-warn-only	](https://docs.costroid.com/export)
+fork-failure-held-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
+fork-failure-held-warn-only	`0.4.3`
+fork-failure-held-warn-only	`9f2c6e1`
+fork-failure-held-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+fork-failure-held-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+fork-failure-held-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+fork-failure-held-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+fork-failure-held-warn-only	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+fork-failure-held-warn-only	`anthropic:informational:cached_input_reported`
+fork-failure-held-warn-only	`anthropic:informational:reasoning_output`
+fork-failure-held-warn-only	`cache_read`
+fork-failure-held-warn-only	`cache_write_1h`
+fork-failure-held-warn-only	`cache_write_5m`
+fork-failure-held-warn-only	`cached_input_reported`
+fork-failure-held-warn-only	`claude-code`
+fork-failure-held-warn-only	`claude-haiku-5-5`
+fork-failure-held-warn-only	`costroid.yml`
+fork-failure-held-warn-only	`input_uncached`
+fork-failure-held-warn-only	`output`
+fork-failure-held-warn-only	`policy.run_budget_usd`
+fork-failure-held-warn-only	`reasoning_output`
+fork-failure-held-warn-only	| client-side estimate, can pass the cap |
 fork-failure-held-withheld	19
 fork-failure-held-withheld	2026-11-21
 fork-failure-held-withheld	List-equivalent, not billed

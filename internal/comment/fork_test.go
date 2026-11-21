@@ -12,7 +12,9 @@ import (
 // rule's own noun and says the rows are a fork's and why the check is neutral,
 // the fork's sentence is the reason under it, and no next step asks for an
 // approval a fork's check does not need. The verdict it was given is left as
-// it was, and a verdict that is neutral already is not said to be held.
+// it was. A rule the warn-only period holds reads the same as one that fails,
+// with no word of the period, and a run that breaks no rule is not said to be
+// held.
 func TestOnForkRowsHoldsEachRulesFailureAtNeutral(t *testing.T) {
 	for rule, opening := range map[string]string{
 		policy.RuleRunBudget:          "Over budget",
@@ -39,20 +41,45 @@ func TestOnForkRowsHoldsEachRulesFailureAtNeutral(t *testing.T) {
 			t.Errorf("%s: enforced, the sentence reads %q", rule, enforced)
 		}
 		body := commentOf(t, held)
-		if !strings.HasPrefix(body, Marker+"\n**"+sentence+"**\n\n"+forkHeldLine(requestNoun(AccountGitHub))+"\n\n"+uncheckedLine+"\n") {
+		if !strings.HasPrefix(body, Marker+"\n**"+sentence+"**\n\n"+forkHeldLine(RequestNoun(AccountGitHub))+"\n\n"+uncheckedLine+"\n") {
 			t.Errorf("%s: the fork's sentence is not the reason under the verdict sentence:\n%s", rule, body)
 		}
 		if strings.Contains(body, approvalPage) || strings.Contains(body, "Reason: `") {
 			t.Errorf("%s: a held check asks for an approval, or keeps a sentence in the old form:\n%s", rule, body)
 		}
 	}
+	states := goldenStates(t)
+	inPeriod, enforced := states["warn-shown"].OnForkRows(), states["fail-shown"].OnForkRows()
+	if got, want := VerdictSentence(inPeriod), VerdictSentence(enforced); got != want || strings.Contains(got, "warn-only") {
+		t.Errorf("inside the warn-only period a fork's rows over a budget read\n%s\nand after it\n%s", got, want)
+	}
+	if body := readable(commentOf(t, inPeriod)); strings.Contains(strings.ToLower(body), "warn-only") || strings.Contains(body, "this fails the check") || strings.Contains(body, "enforce: true") ||
+		!strings.Contains(body, "\n\n"+forkHeldLine(RequestNoun(AccountGitHub))+"\n\n") {
+		t.Errorf("inside the warn-only period a fork's report names the period or what follows it, or leaves the fork's sentence out:\n%s", body)
+	}
 	for name, input := range map[string]Input{
-		"a rule the warn-only period holds": goldenStates(t)["warn-shown"],
-		"a run within its budget":           goldenStates(t)["neutral-shown"],
-		"no verdict":                        realInput(t),
+		"a run within its budget": states["neutral-shown"],
+		"no verdict":              realInput(t),
 	} {
 		if on := input.OnForkRows(); VerdictSentence(on) != VerdictSentence(input) || commentOf(t, on) != commentOf(t, input) {
-			t.Errorf("%s: a check that was neutral already reads as held:\n%s", name, VerdictSentence(on))
+			t.Errorf("%s: a check no rule was broken on reads as held:\n%s", name, VerdictSentence(on))
 		}
+	}
+}
+
+// TestOnForkRowsGivesAHeldSuccessNoSentence records the one state the hold
+// has no words for: a verdict that passed every rule, held at neutral. Its
+// sentence is the one a checked run gets, which is not true of a neutral
+// check. No command reaches it, because a follow-up reads rows the fork's own
+// job wrote, and such rows pass no rule: a test of the follow-up in
+// cmd/costroid fails the day one does.
+func TestOnForkRowsGivesAHeldSuccessNoSentence(t *testing.T) {
+	passed := goldenStates(t)["pass-shown"]
+	held := passed.OnForkRows()
+	if passed.Conclusion() != policy.Success || held.Conclusion() != policy.Neutral {
+		t.Fatalf("the state concludes %s, and held %s", passed.Conclusion(), held.Conclusion())
+	}
+	if got := VerdictSentence(held); got != VerdictSentence(passed) || strings.Contains(got, "fork") {
+		t.Errorf("a held success now has a sentence of its own, so the follow-up's test and this one are due a state:\n%s", got)
 	}
 }

@@ -23,8 +23,8 @@ When it posts, a fork's pull request gets one `costroid` check on its head commi
 
 | What the fork's run left | The check | Why |
 | --- | --- | --- |
-| No rows, as with every recipe as it ships | `neutral`, with the reason `fork_no_rows` at the end of its summary | The recipes run no agent on a fork's pull request, so no figure reached the check |
-| Rows, because you let an agent run on forks | `neutral`, never `failure` or `success` | The fork's own run wrote the rows. A rule they fail warns, and the summary ends with the reason. An unverified row never satisfies a budget rule. [`docs/policy.md`](policy.md) has the table |
+| No rows, as with every recipe as it ships | `neutral`, with the reason `fork_no_rows` in its title | The recipes run no agent on a fork's pull request, so no figure reached the check |
+| Rows, because you let an agent run on forks | `neutral`, never `failure` or `success` | The fork's own run wrote the rows. A rule they break warns, in the warn-only period and after it: the title opens on the rule and "on a fork's own rows", and the line under it says why. An unverified row never satisfies a budget rule. [`docs/policy.md`](policy.md) has the table |
 | A rows file over 8 MiB | `neutral`, with the reason `rows_file_unread` | The follow-up does not read a file past its cap |
 
 A `neutral` check passes a required check, so a fork's pull request can merge. When no rows arrived, the check's machine block carries the same reason, `fork_no_rows`.
