@@ -82,7 +82,9 @@ func TestInitNamesDoctorLastUnlessItPrintsAPatchOrOpensThePullRequest(t *testing
 }
 
 // TestDoctorNamesThePullRequestWhenNothingIsLeftToFix holds doctor's next
-// step to a run with no fail and no warn: a warn's own fix comes first.
+// step to a run with no fail and no warn: a warn's own fix comes first. The
+// repository init has just written reaches it on a machine with no agent
+// installed, once gh lists the secret.
 func TestDoctorNamesThePullRequestWhenNothingIsLeftToFix(t *testing.T) {
 	root := t.TempDir()
 	if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude"); code != 0 {
@@ -91,6 +93,12 @@ func TestDoctorNamesThePullRequestWhenNothingIsLeftToFix(t *testing.T) {
 	code, stdout, stderr := runDoctor(t, root, ghHost("ANTHROPIC_API_KEY\n", ""))
 	if code != 0 || lastLine(stdout) != nextAfterDoctor {
 		t.Errorf("no fail: exit %d, stderr %q, stdout:\n%s", code, stderr, stdout)
+	}
+	noAgent := ghHost("ANTHROPIC_API_KEY\n", "")
+	noAgent.programs = []string{"gh"}
+	code, stdout, stderr = runDoctor(t, root, noAgent)
+	if code != 0 || lastLine(stdout) != nextAfterDoctor || !strings.Contains(stdout, "costroid: doctor: 0 fail, 0 warn, ") {
+		t.Errorf("no agent on this machine: exit %d, stderr %q, stdout:\n%s", code, stderr, stdout)
 	}
 	code, stdout, _ = runDoctor(t, t.TempDir(), ghHost("", ""))
 	if code != 0 || strings.Contains(stdout, "Next:") || !strings.HasPrefix(lastLine(stdout), "costroid: doctor: 0 fail, 1 warn, ") {

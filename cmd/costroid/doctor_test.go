@@ -101,6 +101,28 @@ func runDoctor(t *testing.T, root string, host *fakeHost, args ...string) (int, 
 	return code, stdout.String(), stderr.String()
 }
 
+// troubleshootingPage is where docs/troubleshooting.md is, found before any
+// test changes directory.
+var troubleshootingPage = func() string {
+	page, err := filepath.Abs(filepath.Join("..", "..", "docs", "troubleshooting.md"))
+	if err != nil {
+		panic(err)
+	}
+	return page
+}()
+
+// troubleshootingLists holds docs/troubleshooting.md to a row for each line,
+// quoted as the binary prints it.
+func troubleshootingLists(t *testing.T, lines ...string) {
+	t.Helper()
+	page := readFile(t, troubleshootingPage)
+	for _, line := range lines {
+		if !strings.Contains(page, "`"+line+"`") {
+			t.Errorf("docs/troubleshooting.md does not quote %q", line)
+		}
+	}
+}
+
 func lineWith(output, prefix string) string {
 	for line := range strings.SplitSeq(output, "\n") {
 		if strings.HasPrefix(line, prefix) {
@@ -638,26 +660,32 @@ func TestDoctorNamesAMissingRemote(t *testing.T) {
 	}
 }
 
+// TestDoctorSendsAnUnreadableGhToSignIn runs doctor with a gh that holds no
+// sign-in. Every read fails alike, so one line says so and names the fix, in
+// place of a line for each read with gh's own text in it.
 func TestDoctorSendsAnUnreadableGhToSignIn(t *testing.T) {
 	root := doctorRepository(t, map[string]string{".github/workflows/costroid.yml": pinnedRecipe(t, "github-claude-code.yml", "claude")})
+	const want = "warn: gh is not signed in, so doctor did not read the repository's secrets, variables or visibility: run gh auth login, then doctor again"
 	var stdout, stderr bytes.Buffer
-	doctor(context.Background(), root, releaseBuild, fakeGh(t, "To get started with GitHub CLI, please run:  gh auth login"), nil, &stdout, &stderr)
-	for _, want := range []string{
-		"warn: gh variable list failed, so doctor did not check the repository's variables: gh exited 1: To get started with GitHub CLI, please run:  gh auth login: run gh auth login, then doctor again",
-		"warn: gh secret list failed, so doctor did not check the repository's secrets: ",
-		"warn: gh repo view failed, so doctor did not read whether the repository is private: ",
-	} {
-		if lineWith(stdout.String(), want) == "" {
-			t.Errorf("no line starts %q:\n%s", want, stdout.String())
-		}
+	code := doctor(context.Background(), root, releaseBuild, fakeGh(t, "To get started with GitHub CLI, please run:  gh auth login"), nil, &stdout, &stderr)
+	if code != 0 || lineWith(stdout.String(), "warn: gh ") != want {
+		t.Fatalf("exit %d, want 0 and %q:\n%s%s", code, want, stdout.String(), stderr.String())
 	}
+	if lines := strings.Count(stdout.String(), "gh auth login"); lines != 1 {
+		t.Errorf("%d lines send the reader to gh auth login, want 1 for the one missing sign-in:\n%s", lines, stdout.String())
+	}
+	if strings.Contains(stdout.String(), " failed") || strings.Contains(stdout.String(), "To get started") {
+		t.Errorf("doctor printed a read that failed, or gh's own text, beside the one line:\n%s", stdout.String())
+	}
+	fact, _, _ := strings.Cut(want, ": run ")
+	troubleshootingLists(t, fact)
 }
 
 // TestDoctorTellsA404FromASignIn runs doctor with a gh that is signed in and
 // answers that the repository is not found, as GitHub does for one not pushed
 // yet. One line says so and sends it to push, and no line says gh auth login.
-// A missing or refused sign-in still says gh auth login on each line, and an
-// error that is neither says to fix what gh says.
+// A missing or refused sign-in says gh auth login on one line, and an error
+// that is neither says to fix what gh says, on a line for each read.
 func TestDoctorTellsA404FromASignIn(t *testing.T) {
 	const (
 		notFound = "the repository is not on GitHub yet, or this account cannot read it: push it, then run doctor again"
@@ -670,8 +698,8 @@ func TestDoctorTellsA404FromASignIn(t *testing.T) {
 	}{
 		{"not found", "HTTP 404: Not Found (https://api.github.com/repos/acme/widgets/actions/variables?per_page=100)", notFound, 1},
 		{"no repository of that name", "GraphQL: Could not resolve to a Repository with the name acme/widgets. (repository)", notFound, 1},
-		{"signed out", "To get started with GitHub CLI, please run:  gh auth login", signIn, 3},
-		{"a refused token", "HTTP 401: Bad credentials (https://api.github.com/graphql)", signIn, 3},
+		{"signed out", "To get started with GitHub CLI, please run:  gh auth login", signIn, 1},
+		{"a refused token", "HTTP 401: Bad credentials (https://api.github.com/graphql)", signIn, 1},
 		{"another error", "error connecting to api.github.com", "fix what gh's error says, then run doctor again", 3},
 	} {
 		t.Run(test.label, func(t *testing.T) {
@@ -689,8 +717,12 @@ func TestDoctorTellsA404FromASignIn(t *testing.T) {
 				t.Errorf("%d lines say gh failed, want %d:\n%s", len(failed), test.lines, stdout.String())
 			}
 			for _, line := range failed {
-				if !strings.HasSuffix(line, ": gh exited 1: "+test.message+": "+test.fix) {
-					t.Errorf("the line %q does not end with gh's error and the fix %q", line, test.fix)
+				ending := ": gh exited 1: " + test.message + ": " + test.fix
+				if test.label == "signed out" {
+					ending = "warn: gh is not signed in, so doctor did not read the repository's secrets, variables or visibility: " + test.fix
+				}
+				if !strings.HasSuffix(line, ending) {
+					t.Errorf("the line %q does not end %q", line, ending)
 				}
 			}
 			if strings.Contains(stdout.String(), signIn) != (test.fix == signIn) {
@@ -698,6 +730,112 @@ func TestDoctorTellsA404FromASignIn(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDoctorCountsAMissingLocalAgentAsOkWhenAWorkflowInstallsIt runs doctor
+// on a machine with no agent installed. Where a workflow or a GitLab template
+// of the repository installs the agent, a pull request's run needs nothing of
+// this machine, so the line reads ok and says who installs it. Where nothing
+// installs it, the line warns and names the install, as before.
+func TestDoctorCountsAMissingLocalAgentAsOkWhenAWorkflowInstallsIt(t *testing.T) {
+	noAgent := func() *fakeHost {
+		host := ghHost("ANTHROPIC_API_KEY\nOPENAI_API_KEY\n", "")
+		host.programs = []string{"gh"}
+		return host
+	}
+	for _, check := range []struct{ host, agent, recipe, want string }{
+		{githubHost, "claude", "github-claude-code.yml", "ok: claude is not on PATH: the workflow installs its own, and only costroid run on this machine needs it"},
+		{githubHost, "codex", "github-codex.yml", "ok: codex is not on PATH: the workflow installs its own, and only costroid run on this machine needs it"},
+		{githubHost, "claude-code-action", "github-claude-code-action.yml", "ok: claude is not on PATH: the workflow installs its own, and only costroid run on this machine needs it"},
+		{gitlabHost, "codex", "gitlab-ci.yml", "ok: codex is not on PATH: the template installs its own, and only costroid run on this machine needs it"},
+	} {
+		t.Run(check.host+"/"+check.agent, func(t *testing.T) {
+			root := doctorRepository(t, map[string]string{initOut[check.host]: pinnedRecipe(t, check.recipe, check.agent)})
+			code, stdout, stderr := runDoctor(t, root, noAgent())
+			if code != 0 || lineWith(stdout, "ok: "+strings.Fields(check.want)[1]+" is not on PATH") != check.want {
+				t.Fatalf("exit %d, want 0 and %q:\n%s%s", code, check.want, stdout, stderr)
+			}
+			if strings.Contains(stdout, "npm install") || strings.Contains(stdout, "cannot start it") {
+				t.Errorf("doctor asks for an agent on this machine that the %s installs:\n%s", check.host, stdout)
+			}
+		})
+	}
+	const warned = "warn: claude is not on PATH, so costroid run cannot start it on this machine, though CI installs its own: install it with npm install --global @anthropic-ai/claude-code@2.1.316"
+	code, stdout, _ := runDoctor(t, t.TempDir(), noAgent())
+	if code != 0 || lineWith(stdout, "warn: claude ") != warned || strings.Contains(stdout, "installs its own, and only") {
+		t.Errorf("no workflow installs the agent: exit %d, want %q:\n%s", code, warned, stdout)
+	}
+	troubleshootingLists(t, "ok: <agent> is not on PATH: the workflow installs its own, and only costroid run on this machine needs it")
+}
+
+// gitAndGh puts git on PATH, and beside it a gh that fails every command
+// with message, as gh does, unless message is empty. It returns the host that
+// runs them.
+func gitAndGh(t *testing.T, message string) doctorHost {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	if message != "" {
+		writeFile(t, filepath.Join(bin, "gh"), "#!/bin/sh\necho '"+message+"' >&2\nexit 1\n")
+		if err := os.Chmod(filepath.Join(bin, "gh"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+	return doctorHost{getenv: func(string) string { return "" }, lookPath: exec.LookPath, output: runOutput}
+}
+
+// TestDoctorWarnsOfARepositoryWithNoRemoteWithoutGh runs doctor in a
+// repository git lists no remote for. One line says no pull request can be
+// opened from it, read from git alone: with no gh, with a gh that finds no
+// remote either, and beside the sign-in line of a gh that holds none. With a
+// remote the line is not printed.
+func TestDoctorWarnsOfARepositoryWithNoRemoteWithoutGh(t *testing.T) {
+	const (
+		noRemote = "warn: the repository has no remote, so no pull request can be opened from it: create it on GitHub and add it as origin"
+		noGh     = "warn: gh is not on PATH, so doctor did not list the repository's secrets: install gh, or check that the repository's settings hold ANTHROPIC_API_KEY"
+		signIn   = "warn: gh is not signed in, so doctor did not read the repository's secrets, variables or visibility: run gh auth login, then doctor again"
+	)
+	root := gitRepository(t)
+	writeFile(t, filepath.Join(root, initOut[githubHost]), pinnedRecipe(t, "github-claude-code.yml", "claude"))
+	warns := func(host doctorHost) []string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := doctor(context.Background(), root, releaseBuild, host, nil, &stdout, &stderr); code != 0 {
+			t.Fatalf("exit %d:\n%s%s", code, stdout.String(), stderr.String())
+		}
+		var lines []string
+		for line := range strings.SplitSeq(stdout.String(), "\n") {
+			if strings.HasPrefix(line, "warn: ") {
+				lines = append(lines, line)
+			}
+		}
+		return lines
+	}
+	for name, check := range map[string]struct {
+		gh   string
+		want []string
+	}{
+		"no gh":                      {"", []string{noRemote, noGh}},
+		"a gh that finds no remote":  {"no git remotes found", []string{noRemote}},
+		"a gh that holds no sign-in": {"To get started with GitHub CLI, please run:  gh auth login", []string{noRemote, signIn}},
+	} {
+		if got := warns(gitAndGh(t, check.gh)); !slices.Equal(got, check.want) {
+			t.Errorf("%s: doctor warns\n%s\nwant\n%s", name, strings.Join(got, "\n"), strings.Join(check.want, "\n"))
+		}
+	}
+	runGit(t, root, "remote", "add", "origin", "https://github.com/example/widgets.git")
+	if got := warns(gitAndGh(t, "")); !slices.Equal(got, []string{noGh}) {
+		t.Errorf("with a remote doctor warns\n%s\nwant\n%s", strings.Join(got, "\n"), noGh)
+	}
+	fact, _, _ := strings.Cut(noRemote, ": create ")
+	troubleshootingLists(t, fact)
 }
 
 // markingGh puts git and a gh that leaves a mark and fails first on PATH,

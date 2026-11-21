@@ -219,7 +219,7 @@ func examine(ctx context.Context, root string, build buildInfo, host doctorHost,
 }
 
 // machineLines check the agents and the keys on this machine.
-func machineLines(ctx context.Context, root string, host doctorHost, agents []string) []finding {
+func machineLines(ctx context.Context, root string, host doctorHost, agents []localAgent) []finding {
 	var lines []finding
 	for _, agent := range agents {
 		lines = append(lines, agentLine(ctx, root, host, agent))
@@ -473,51 +473,63 @@ func joinNames(names []string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
+// localAgent is an agent costroid run starts on this machine, and what in
+// the repository installs its own for CI: the workflow, the template, or
+// nothing.
+type localAgent struct {
+	name, installedBy string
+}
+
 // agentsRun names the agents the workflows and the GitLab templates start, or
 // claude when none does.
-func agentsRun(flows []workflow, templates []gitlabTemplate) []string {
-	var agents []string
-	add := func(agent string) {
-		if !slices.Contains(agents, agent) {
-			agents = append(agents, agent)
+func agentsRun(flows []workflow, templates []gitlabTemplate) []localAgent {
+	var agents []localAgent
+	add := func(name, installedBy string) {
+		if !slices.ContainsFunc(agents, func(agent localAgent) bool { return agent.name == name }) {
+			agents = append(agents, localAgent{name: name, installedBy: installedBy})
 		}
 	}
 	for _, template := range templates {
 		if _, known := gitlabKeys[template.agent]; known {
-			add(template.agent)
+			add(template.agent, "template")
 		}
 	}
 	for _, flow := range flows {
 		text := string(flow.source)
 		if strings.Contains(text, "anthropics/claude-code-action@") || strings.Contains(text, "@anthropic-ai/claude-code@") {
-			add("claude")
+			add("claude", "workflow")
 		}
 		if strings.Contains(text, "openai/codex-action@") || strings.Contains(text, "@openai/codex@") {
-			add("codex")
+			add("codex", "workflow")
 		}
 	}
 	if len(agents) == 0 {
-		add("claude")
+		add("claude", "")
 	}
-	slices.Sort(agents)
+	slices.SortFunc(agents, func(a, b localAgent) int { return strings.Compare(a.name, b.name) })
 	return agents
 }
 
 // agentLine checks that an agent is on PATH, for costroid run on this
-// machine. CI installs its own.
-func agentLine(ctx context.Context, root string, host doctorHost, agent string) finding {
-	path, err := host.lookPath(agent)
+// machine. An agent that is not there is no warning where a workflow or a
+// template of the repository installs its own: a pull request's run does not
+// need this machine's.
+func agentLine(ctx context.Context, root string, host doctorHost, agent localAgent) finding {
+	path, err := host.lookPath(agent.name)
+	if err != nil && agent.installedBy != "" {
+		return ok("%s is not on PATH: the %s installs its own, and only costroid run on this machine needs it", agent.name, agent.installedBy)
+	}
 	if err != nil {
-		missing := (&run.MissingAgentError{Name: agent}).Error()
+		missing := (&run.MissingAgentError{Name: agent.name}).Error()
 		fact, fix, _ := strings.Cut(missing, ": ")
 		return warn(fact+", so costroid run cannot start it on this machine, though CI installs its own", fix)
 	}
 	out, err := host.output(ctx, root, path, "--version")
 	found := agentVersion.FindString(string(out))
 	if err != nil || found == "" {
-		return warn(agent+" --version printed no version", "reinstall "+agent)
+		return warn(agent.name+" --version printed no version", "reinstall "+agent.name)
 	}
-	return ok("%s %s is on PATH", agent, found)
+	return ok("%s %s is on PATH", agent.name, found)
 }
 
 // keyVariables are the variables each agent reads its provider key from.
@@ -528,11 +540,11 @@ var keyVariables = map[string][]string{
 
 // keyLines say whether each provider key is set in this shell, and never
 // what it holds.
-func keyLines(host doctorHost, agents []string) []finding {
+func keyLines(host doctorHost, agents []localAgent) []finding {
 	var lines []finding
 	for _, agent := range agents {
 		var set []string
-		for _, name := range keyVariables[agent] {
+		for _, name := range keyVariables[agent.name] {
 			if host.getenv(name) != "" {
 				set = append(set, name)
 			}
@@ -544,7 +556,7 @@ func keyLines(host doctorHost, agents []string) []finding {
 			}
 			lines = append(lines, ok("%s %s set in this shell", joinNames(set), verb))
 		} else {
-			lines = append(lines, ok("%s is not set in this shell, so a local run of %s uses its own sign-in, priced as docs/bases.md says", strings.Join(keyVariables[agent], " or "), agent))
+			lines = append(lines, ok("%s is not set in this shell, so a local run of %s uses its own sign-in, priced as docs/bases.md says", strings.Join(keyVariables[agent.name], " or "), agent.name))
 		}
 	}
 	if focus.ReadsLikeKey(host.getenv(credentialVariable)) {
@@ -561,9 +573,13 @@ const ghNoRemote = "no git remotes found"
 // not exist, which is also its answer to an account that cannot read it.
 var ghNotFound = []string{"HTTP 404", "Could not resolve to a Repository"}
 
+// ghSignedOut are what gh prints when it holds no sign-in. gh exits 4 when a
+// command needs a sign-in it does not hold.
+var ghSignedOut = []string{"gh auth login", "gh exited 4:"}
+
 // ghSignIn are what gh prints when it holds no sign-in, or one GitHub
-// refuses. gh exits 4 when a command needs a sign-in it does not hold.
-var ghSignIn = []string{"gh auth login", "HTTP 401", "gh exited 4:"}
+// refuses. Every gh read then fails alike.
+var ghSignIn = append([]string{"HTTP 401"}, ghSignedOut...)
 
 // ghFix says what to do about a failed gh read, from gh's own error. Only a
 // missing or refused sign-in is sent to gh auth login.
@@ -593,32 +609,56 @@ func containsAny(text string, parts []string) bool {
 	return slices.ContainsFunc(parts, func(part string) bool { return strings.Contains(text, part) })
 }
 
-// repositoryLines read, through gh, what the repository holds: its secrets'
-// and variables' names and its visibility. With the platform's URL set, in
-// this shell or as a repository variable, the integration token's secret is
-// needed by name.
+// repositoryLines say whether the repository has a remote, then read, through
+// gh, what it holds: its secrets' and variables' names and its visibility.
+// With the platform's URL set, in this shell or as a repository variable, the
+// integration token's secret is needed by name. A sign-in gh lacks, or one
+// GitHub refuses, fails every read alike and is one line.
 func repositoryLines(ctx context.Context, root string, host doctorHost, flows []workflow) []finding {
+	lines := remoteLines(ctx, root, host)
 	needed := secretsNeeded(flows)
 	if _, err := host.lookPath("gh"); err != nil {
 		if host.getenv(platformVariable) != "" {
 			needed = append(needed, platformTokenVariable)
 		}
 		if len(needed) == 0 {
-			return nil
+			return lines
 		}
-		return []finding{warn("gh is not on PATH, so doctor did not list the repository's secrets",
-			"install gh, or check that the repository's settings hold "+joinNames(needed))}
+		return append(lines, warn("gh is not on PATH, so doctor did not list the repository's secrets",
+			"install gh, or check that the repository's settings hold "+joinNames(needed)))
 	}
+	const unread = ", so doctor did not read the repository's secrets, variables or visibility"
 	variables, err := ghNames(ctx, root, host, "variable", "list")
-	if err != nil && ghStops(err) {
-		return []finding{warn("gh variable list failed, so doctor did not read the repository's secrets, variables or visibility: "+err.Error(), ghFix(err))}
+	if err != nil {
+		switch text := err.Error(); {
+		case len(lines) > 0 && strings.Contains(text, ghNoRemote):
+			return lines
+		case containsAny(text, ghSignedOut):
+			return append(lines, warn("gh is not signed in"+unread, ghFix(err)))
+		case ghStops(err) || containsAny(text, ghSignIn):
+			return append(lines, warn("gh variable list failed"+unread+": "+text, ghFix(err)))
+		}
 	}
 	if host.getenv(platformVariable) != "" || slices.Contains(variables, platformVariable) {
 		needed = append(needed, platformTokenVariable)
 	}
-	lines := secretLines(ctx, root, host, needed, secretReaders(flows))
+	lines = append(lines, secretLines(ctx, root, host, needed, secretReaders(flows))...)
 	lines = append(lines, variableLines(variables, err)...)
 	return append(lines, visibilityLines(ctx, root, host, flows)...)
+}
+
+// remoteLines warn of a repository for which git lists no remote. Without
+// git on PATH doctor cannot tell, and says nothing.
+func remoteLines(ctx context.Context, root string, host doctorHost) []finding {
+	path, err := host.lookPath("git")
+	if err != nil {
+		return nil
+	}
+	listed, err := host.output(ctx, root, path, "remote")
+	if err != nil || strings.TrimSpace(string(listed)) != "" {
+		return nil
+	}
+	return []finding{warn("the repository has no remote, so no pull request can be opened from it", "create it on GitHub and add it as origin")}
 }
 
 // secretsNeeded lists the secrets the workflows that run Costroid or an agent
