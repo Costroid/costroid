@@ -294,6 +294,39 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 	}
 }
 
+// TestNoFigureSentenceSaysNoRuleRanOnlyWhenNoneDid holds a report with no
+// figures to what its policy did: with no rule set the sentence says no rule
+// ran, and under a rule that read no rows it leaves that to the rule's own
+// line, which follows it.
+func TestNoFigureSentenceSaysNoRuleRanOnlyWhenNoneDid(t *testing.T) {
+	empty := noFigures(NoRows, EmptyRowsFile)
+	sentence := "No figure (empty_rows_file): the rows file holds no rows. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which."
+	for name, tc := range map[string]struct {
+		verdict *policy.Verdict
+		want    string
+		line    string
+	}{
+		"no policy":           {nil, sentence + " No rule ran.", ""},
+		"no rule set":         {&policy.Verdict{Conclusion: policy.Neutral}, sentence + " No rule ran.", ""},
+		"a rule read no rows": {&policy.Verdict{Conclusion: policy.Neutral, Results: []policy.Result{{Rule: policy.RuleRunBudget, Outcome: policy.Unproven, Reason: policy.ReasonNoRows, LimitUSD: "5"}}}, sentence, "Run budget: this check read no rows, so it cannot pass."},
+		"an earlier run is over": {&policy.Verdict{Conclusion: policy.Failure, Results: []policy.Result{{Rule: policy.RulePullRequestBudget, Outcome: policy.Fail, Reason: policy.ReasonOverLimit, LimitUSD: "10", CostUSD: "10.5"}}},
+			"Over budget: this pull request's runs cost USD 10.50 at list (every basis together), over the USD 10.00 pull request budget.", sentence},
+	} {
+		input := empty
+		input.Verdict = tc.verdict
+		if got := VerdictSentence(input); got != tc.want {
+			t.Errorf("%s:\n got %s\nwant %s", name, got, tc.want)
+		}
+		body := commentOf(t, input)
+		if tc.line != "" && !strings.Contains(body, "**"+tc.want+"**\n\n"+tc.line+"\n") {
+			t.Errorf("%s: %q does not follow the sentence:\n%s", name, tc.line, body)
+		}
+		if strings.Contains(body, "| Cost |") || strings.Contains(body, "<summary>Rows</summary>") {
+			t.Errorf("%s: a report with no figures shows a table or a fold of rows:\n%s", name, body)
+		}
+	}
+}
+
 // amountShown finds each amount a person reads: a currency code, then the
 // digits and the decimal places after it.
 var amountShown = regexp.MustCompile(`\b[A-Z]{3} (-?[0-9]+)((?:\.[0-9]+)?)`)

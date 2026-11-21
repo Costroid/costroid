@@ -744,6 +744,9 @@ func (i Input) details(shown, withCap bool) ([]string, string) {
 		rows, holds = rows+", "+catalogPhrase(i.Ledger.Catalogs), append(holds, "catalog")
 	}
 	lines = append(lines, strings.Join(append(run, rows+"."), " "))
+	if len(holds) == 0 {
+		holds = append(holds, "rows")
+	}
 	summary := listed(holds, 0)
 	return lines, strings.ToUpper(summary[:1]) + summary[1:]
 }
