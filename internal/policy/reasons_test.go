@@ -15,18 +15,17 @@ import (
 
 // The copies of result/v0.9 and result/v0.11 the comment package holds to
 // their digests. The list of a policy result's reasons in result/v0.9 is
-// every reason the run and the comment can write, and so is result/v0.11's
-// without the reasons it keeps for a customer pack.
+// every reason the run and the comment can write, and so is result/v0.11's:
+// that version adds a rule and no reason.
 var (
 	resultSchema     = filepath.Join("..", "comment", "testdata", "result.schema.json")
 	resultSchemaV011 = filepath.Join("..", "comment", "testdata", "result-v0.11.schema.json")
 )
 
 // resultLists are the closed lists a result schema states for a policy
-// result: its rules and its reasons, and the reasons it keeps for the rule
-// customer_pack.
+// result: its rules and its reasons.
 type resultLists struct {
-	rules, reasons, packReasons []string
+	rules, reasons []string
 }
 
 type enum struct {
@@ -49,21 +48,6 @@ func readResultLists(t *testing.T, path string) resultLists {
 								Rule   enum `json:"rule"`
 								Reason enum `json:"reason"`
 							} `json:"properties"`
-							AllOf []struct {
-								If struct {
-									Properties struct {
-										Rule struct {
-											Const string `json:"const"`
-										} `json:"rule"`
-										Reason *struct{} `json:"reason"`
-									} `json:"properties"`
-								} `json:"if"`
-								Then struct {
-									Properties struct {
-										Reason enum `json:"reason"`
-									} `json:"properties"`
-								} `json:"then"`
-							} `json:"allOf"`
 						} `json:"items"`
 					} `json:"results"`
 				} `json:"properties"`
@@ -74,26 +58,16 @@ func readResultLists(t *testing.T, path string) resultLists {
 		t.Fatal(err)
 	}
 	items := schema.Defs.Policy.Properties.Results.Items
-	lists := resultLists{rules: items.Properties.Rule.Enum, reasons: items.Properties.Reason.Enum}
-	for _, clause := range items.AllOf {
-		if clause.If.Properties.Rule.Const == ruleCustomerPack && clause.If.Properties.Reason == nil {
-			lists.packReasons = clause.Then.Properties.Reason.Enum
-		}
-	}
-	return lists
+	return resultLists{rules: items.Properties.Rule.Enum, reasons: items.Properties.Reason.Enum}
 }
 
 // TestReasonsListEveryReasonTheResultCanHold holds the reasons the engine
 // takes from the pack equal to the reasons result/v0.9 lists for a policy
-// result, to the reasons result/v0.11 lists for any rule but customer_pack,
-// and to every Reason constant of this package's source, so a reason the Go
+// result, to the reasons result/v0.11 lists, and to every Reason constant of
+// this package's source, so a reason the Go
 // code sets is one the pack may return too.
 func TestReasonsListEveryReasonTheResultCanHold(t *testing.T) {
 	v09, v011 := readResultLists(t, resultSchema), readResultLists(t, resultSchemaV011)
-	if len(v011.packReasons) == 0 {
-		t.Fatal("result/v0.11 keeps no reasons for customer_pack")
-	}
-	costroids := slices.DeleteFunc(slices.Clone(v011.reasons), func(reason string) bool { return slices.Contains(v011.packReasons, reason) })
 	held := slices.Sorted(slices.Values(reasons))
 	if compacted := slices.Compact(slices.Clone(held)); len(compacted) != len(held) {
 		t.Errorf("the reasons list a reason twice: %q", held)
@@ -103,7 +77,7 @@ func TestReasonsListEveryReasonTheResultCanHold(t *testing.T) {
 		want []string
 	}{
 		{"result/v0.9's policy.results[].reason", v09.reasons},
-		{"result/v0.11's policy.results[].reason but customer_pack's", costroids},
+		{"result/v0.11's policy.results[].reason", v011.reasons},
 		{"the Reason constants of the source", reasonConstants(t)},
 	} {
 		want := slices.Sorted(slices.Values(list.want))
@@ -118,11 +92,12 @@ func TestReasonsListEveryReasonTheResultCanHold(t *testing.T) {
 }
 
 // TestRulesAreTheRulesResultV011Lists holds the rules the engine takes from
-// the pack, in the order a verdict lists them, and the customer pack's rule
-// to the rules result/v0.11 lists for a policy result.
+// the pack, in the order a verdict lists them, to the rules result/v0.11
+// lists for a policy result. A customer pack's rule is in no published
+// version yet.
 func TestRulesAreTheRulesResultV011Lists(t *testing.T) {
 	listed := readResultLists(t, resultSchemaV011).rules
-	held := append(slices.Clone(ruleOrder), ruleCustomerPack)
+	held := slices.Clone(ruleOrder)
 	if !slices.Equal(slices.Sorted(slices.Values(held)), slices.Sorted(slices.Values(listed))) {
 		t.Errorf("the rules are %q, and result/v0.11 lists %q", held, listed)
 	}

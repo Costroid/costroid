@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/result/v0.11/result.schema.json",
   "title": "Costroid result object, version 0.11",
-  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, the recorded run a report shows in place of the pull request's own, the infrastructure estimates a workflow added beside the agent's rows, apart from the figures, the P95 limit, the results of the repository's own policy pack, a rule demoted by its override rate, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it. An object that holds none of run_p95, customer_pack, demoted or pack is written as version 0.10, or as version 0.9 when it states no estimate.",
+  "description": "What one Costroid report says about one run: figures per currency and basis, token counts by class, grades, the cap the run was given, the pull request's total, the agent's own figure in its own unit, the recorded run a report shows in place of the pull request's own, the infrastructure estimates a workflow added beside the agent's rows, apart from the figures, the P95 limit, and a reason when there are no figures. costroid run --json and costroid report --json print it, and the check run's machine block carries it. An object that holds no run_p95 result is written as version 0.10, or as version 0.9 when it states no estimate.",
   "type": "object",
   "properties": {
     "schema": {
@@ -511,51 +511,26 @@
       }
     },
     {
-      "description": "A version 0.11 object holds something version 0.10 cannot: the rule run_p95 or customer_pack, a demoted rule, or a pack.",
+      "description": "A version 0.11 object holds something version 0.10 cannot: a result of the rule run_p95.",
       "required": [
         "policy"
       ],
       "properties": {
         "policy": {
           "type": "object",
-          "anyOf": [
-            {
-              "required": [
-                "pack"
-              ]
-            },
-            {
-              "properties": {
-                "results": {
-                  "type": "array",
-                  "contains": {
-                    "type": "object",
-                    "properties": {
-                      "rule": {
-                        "enum": [
-                          "run_p95",
-                          "customer_pack"
-                        ]
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            {
-              "properties": {
-                "results": {
-                  "type": "array",
-                  "contains": {
-                    "type": "object",
-                    "required": [
-                      "demoted"
-                    ]
+          "properties": {
+            "results": {
+              "type": "array",
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "const": "run_p95"
                   }
                 }
               }
             }
-          ]
+          }
         }
       }
     }
@@ -1012,8 +987,7 @@
                   "monthly_budget",
                   "model_allowlist",
                   "attribution",
-                  "run_p95",
-                  "customer_pack"
+                  "run_p95"
                 ]
               },
               "outcome": {
@@ -1042,11 +1016,7 @@
                   "unreadable_model",
                   "models_on_allowlist",
                   "unmeasured_spend",
-                  "no_run_rows",
-                  "pack_unread",
-                  "pack_invalid",
-                  "pack_bound",
-                  "pack_result"
+                  "no_run_rows"
                 ]
               },
               "held_by_warn_only": {
@@ -1086,19 +1056,10 @@
                 "pattern": "^[1-9][0-9]{0,3}(\\.[0-9]{1,12})?$"
               },
               "baseline_runs": {
-                "description": "The earlier runs the baseline holds, at most 20. Only under run_p95: 20 beside a P95, and fewer with the reason no_baseline, when the rule did not run.",
+                "description": "The earlier runs the baseline holds, at most 20. Only under run_p95: 20 when the rule ran, and fewer with the reason no_baseline, when it did not.",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 20
-              },
-              "line": {
-                "description": "The line of the policy pack the compiler named. Only with the reason pack_invalid, and absent when the compiler named no line.",
-                "type": "integer",
-                "minimum": 1
-              },
-              "demoted": {
-                "description": "The rule's override rate turned its fail into warn. Only on a warn of a rule that holds a cost to a limit, with the rule's own reason. A release writes it only from a ledger's own record of failing verdicts and approvals.",
-                "$ref": "#/$defs/demoted"
               }
             },
             "required": [
@@ -1161,6 +1122,9 @@
                     "baseline_runs"
                   ],
                   "properties": {
+                    "outcome": {
+                      "const": "unproven"
+                    },
                     "baseline_runs": {
                       "type": "integer",
                       "maximum": 19
@@ -1190,7 +1154,12 @@
                 "then": {
                   "required": [
                     "baseline_runs"
-                  ]
+                  ],
+                  "properties": {
+                    "baseline_runs": {
+                      "const": 20
+                    }
+                  }
                 }
               },
               {
@@ -1209,183 +1178,9 @@
                     }
                   }
                 }
-              },
-              {
-                "if": {
-                  "properties": {
-                    "rule": {
-                      "const": "customer_pack"
-                    }
-                  }
-                },
-                "then": {
-                  "propertyNames": {
-                    "enum": [
-                      "rule",
-                      "outcome",
-                      "reason",
-                      "held_by_warn_only",
-                      "line"
-                    ]
-                  },
-                  "properties": {
-                    "reason": {
-                      "enum": [
-                        "pack_unread",
-                        "pack_invalid",
-                        "pack_bound",
-                        "pack_result"
-                      ]
-                    }
-                  }
-                },
-                "else": {
-                  "properties": {
-                    "reason": {
-                      "not": {
-                        "enum": [
-                          "pack_unread",
-                          "pack_invalid",
-                          "pack_bound",
-                          "pack_result"
-                        ]
-                      }
-                    }
-                  }
-                }
-              },
-              {
-                "if": {
-                  "properties": {
-                    "rule": {
-                      "const": "customer_pack"
-                    },
-                    "reason": {
-                      "enum": [
-                        "pack_unread",
-                        "pack_invalid"
-                      ]
-                    }
-                  }
-                },
-                "then": {
-                  "properties": {
-                    "outcome": {
-                      "const": "unproven"
-                    }
-                  },
-                  "not": {
-                    "required": [
-                      "held_by_warn_only"
-                    ]
-                  }
-                }
-              },
-              {
-                "if": {
-                  "properties": {
-                    "rule": {
-                      "const": "customer_pack"
-                    },
-                    "reason": {
-                      "enum": [
-                        "pack_bound",
-                        "pack_result"
-                      ]
-                    }
-                  }
-                },
-                "then": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "outcome": {
-                          "const": "fail"
-                        }
-                      },
-                      "not": {
-                        "required": [
-                          "held_by_warn_only"
-                        ]
-                      }
-                    },
-                    {
-                      "properties": {
-                        "outcome": {
-                          "const": "warn"
-                        }
-                      },
-                      "required": [
-                        "held_by_warn_only"
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "if": {
-                  "required": [
-                    "line"
-                  ]
-                },
-                "then": {
-                  "properties": {
-                    "reason": {
-                      "const": "pack_invalid"
-                    }
-                  }
-                }
-              },
-              {
-                "if": {
-                  "required": [
-                    "demoted"
-                  ]
-                },
-                "then": {
-                  "properties": {
-                    "rule": {
-                      "enum": [
-                        "run_budget",
-                        "run_cost_threshold",
-                        "run_increase",
-                        "run_increase_percent",
-                        "run_p95",
-                        "pr_budget"
-                      ]
-                    },
-                    "outcome": {
-                      "const": "warn"
-                    },
-                    "reason": {
-                      "enum": [
-                        "over_limit",
-                        "over_baseline"
-                      ]
-                    }
-                  },
-                  "not": {
-                    "required": [
-                      "held_by_warn_only"
-                    ]
-                  }
-                }
               }
             ]
-          },
-          "contains": {
-            "type": "object",
-            "properties": {
-              "rule": {
-                "const": "customer_pack"
-              }
-            }
-          },
-          "minContains": 0,
-          "maxContains": 1
-        },
-        "pack": {
-          "$ref": "#/$defs/pack"
+          }
         },
         "joinable_rows": {
           "type": "integer",
@@ -1404,38 +1199,7 @@
         "results",
         "joinable_rows"
       ],
-      "additionalProperties": false,
-      "if": {
-        "properties": {
-          "results": {
-            "type": "array",
-            "contains": {
-              "type": "object",
-              "properties": {
-                "rule": {
-                  "const": "customer_pack"
-                }
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "required": [
-          "pack"
-        ],
-        "properties": {
-          "pack": {
-            "type": "object",
-            "properties": {
-              "results": {
-                "type": "array",
-                "maxItems": 0
-              }
-            }
-          }
-        }
-      }
+      "additionalProperties": false
     },
     "digest": {
       "type": "string",
@@ -1683,120 +1447,6 @@
       "type": "string",
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$"
-    },
-    "demoted": {
-      "description": "Why and until when a rule is demoted. approved times 5 is more than failing, which the schema cannot state.",
-      "type": "object",
-      "properties": {
-        "reason": {
-          "description": "The list is closed. override_rate: reviewers approved more than one in five of the pull requests the rule failed in its window.",
-          "enum": [
-            "override_rate"
-          ]
-        },
-        "approved": {
-          "description": "The pull requests in the window on which the rule failed and an approval was recorded, at least 3 and at most failing.",
-          "type": "integer",
-          "minimum": 3,
-          "maximum": 20
-        },
-        "failing": {
-          "description": "The pull requests in the window on which the rule failed: the latest 20 within 90 days, the one being judged left out.",
-          "type": "integer",
-          "minimum": 10,
-          "maximum": 20
-        },
-        "until": {
-          "description": "When the demotion ends: 30 days from the verdict that first crossed the threshold.",
-          "$ref": "#/$defs/instant"
-        }
-      },
-      "required": [
-        "reason",
-        "approved",
-        "failing",
-        "until"
-      ],
-      "additionalProperties": false
-    },
-    "pack": {
-      "description": "The repository's own policy pack, as costroid.yml names it with policy_pack, read at config_ref, and its results. pack_sha256 still names Costroid's own rules.",
-      "type": "object",
-      "properties": {
-        "path": {
-          "description": "The pack's path in the repository, relative to its root: no . or .. segment, ending .rego.",
-          "type": "string",
-          "maxLength": 256,
-          "pattern": "^((\\.?[A-Za-z0-9_-]|\\.\\.[A-Za-z0-9._-])[A-Za-z0-9._-]*/)*(\\.?[A-Za-z0-9_-]|\\.\\.[A-Za-z0-9._-])[A-Za-z0-9._-]*\\.rego$"
-        },
-        "sha256": {
-          "description": "The SHA-256 of the bytes read, lower-case hex, and of zero bytes when none were read.",
-          "$ref": "#/$defs/digest"
-        },
-        "results": {
-          "description": "The pack's own results, at most 32, apart from policy.results. Empty when the pack returned none, and when a customer_pack result states why the pack did not run to its end.",
-          "type": "array",
-          "maxItems": 32,
-          "items": {
-            "$ref": "#/$defs/packResult"
-          }
-        }
-      },
-      "required": [
-        "path",
-        "sha256",
-        "results"
-      ],
-      "additionalProperties": false
-    },
-    "packResult": {
-      "type": "object",
-      "properties": {
-        "rule": {
-          "description": "The pack's own rule id. It names the pack's rule even where it repeats one of Costroid's.",
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,62}$"
-        },
-        "outcome": {
-          "description": "A pack has no word for pass. A result that states anything else faults the pack.",
-          "enum": [
-            "warn",
-            "fail"
-          ]
-        },
-        "reason": {
-          "description": "The pack's own reason id.",
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,62}$"
-        },
-        "message": {
-          "description": "The pack's own text. Every character outside the allowlist is replaced by ?, and the text is cut at 160 bytes.",
-          "type": "string",
-          "pattern": "^[A-Za-z0-9 .,:;()'=_/+?-]{1,160}$"
-        },
-        "held_by_warn_only": {
-          "description": "The pack's fail, held to warn by the warn-only period.",
-          "const": true
-        }
-      },
-      "required": [
-        "rule",
-        "outcome",
-        "reason"
-      ],
-      "additionalProperties": false,
-      "if": {
-        "required": [
-          "held_by_warn_only"
-        ]
-      },
-      "then": {
-        "properties": {
-          "outcome": {
-            "const": "warn"
-          }
-        }
-      }
     }
   },
   "dependentRequired": {

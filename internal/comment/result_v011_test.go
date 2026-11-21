@@ -18,12 +18,11 @@ import (
 // resultV011SchemaPath is result/v0.11 of Costroid/costroid-schemas, copied.
 var resultV011SchemaPath = filepath.Join("testdata", "result-v0.11.schema.json")
 
-// resultV011SchemaSHA256 is the SHA-256 of result/v0.11/result.schema.json in
-// Costroid/costroid-schemas at e527b98, the commit that bounds the P95
-// limit's factor below 10,000:
+// resultV011SchemaSHA256 is the SHA-256 of result/v0.11/result.schema.json as
+// Costroid/costroid-schemas publishes it:
 //
-//	git show e527b98:result/v0.11/result.schema.json | sha256sum
-const resultV011SchemaSHA256 = "81f675ff9b4bb36f8bee0f445cbfa01ef4d52f2cc3a1430dea2db2ccaefc3b96"
+//	git show main:result/v0.11/result.schema.json | sha256sum
+const resultV011SchemaSHA256 = "db358b90a150e08705056028ea549ec3df3f40766c12811436cbf544ade184f9"
 
 // holdsP95 reports an input whose verdict holds a result of run_p95, the one
 // value of result/v0.11 this release writes.
