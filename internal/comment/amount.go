@@ -17,8 +17,8 @@ func places(exact string) string {
 	return whole + "." + fraction + strings.Repeat("0", minPlaces-len(fraction))
 }
 
-// money draws an amount after its currency code, as every amount a person
-// reads is drawn.
-func money(currency, exact string) string {
+// Money draws an amount after its currency code, as every amount a person
+// reads is drawn: in the comment, the check, the job summary and a terminal.
+func Money(currency, exact string) string {
 	return currency + " " + places(exact)
 }

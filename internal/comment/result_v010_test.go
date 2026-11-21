@@ -295,7 +295,7 @@ func TestOlderResultsStillRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := Reconclude(block, nil, 4242)
+	output, err := Reconclude(block, nil, AmountsUnsettled, 4242)
 	if err != nil {
 		t.Fatal(err)
 	}

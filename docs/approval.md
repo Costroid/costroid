@@ -47,7 +47,15 @@ approval:
 
 ## What the check shows
 
-When a review counts and the newest `costroid` check on the head concludes `failure`, `costroid approve` posts the check again on the same commit. The new check concludes `neutral`. Its title names the approver and the commit. Its summary names the time too, and says the policy's verdict stays `failure`. Neither names an amount: the earlier check run carries the report in full. Its machine block is the earlier check's result object with `conclusion` set to `neutral` and `check_run_id` naming the new check run. `policy.conclusion` still reads `failure`. The summary names the check run that carries the report in full.
+When a review counts and the newest `costroid` check on the head concludes `failure`, `costroid approve` posts the check again on the same commit. The new check concludes `neutral`. Its title names the approver and the commit, in the sentence the report gives the same approval:
+
+```text
+Over budget, approved by octocat: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit 9f2c6e1 and ends with a new push.
+```
+
+The title names the amount where the report's comment shows amounts. Where the comment withholds them, the title names none and ends "Amounts are withheld here." `costroid approve` reads `comment.show_cost` and the repository's visibility as the report does, at the same commit, so the two never differ. [`docs/configuration.md`](configuration.md) has the setting.
+
+The summary opens on the title. It names the time too, and says the policy's verdict stays `failure`. Its machine block is the earlier check's result object with `conclusion` set to `neutral` and `check_run_id` naming the new check run. `policy.conclusion` still reads `failure`. The summary names the check run that carries the report in full.
 
 When an approval is dismissed, or no longer counts, `costroid approve` posts the policy's verdict again. When the newest check already concludes what the reviews give, it posts nothing.
 
@@ -69,7 +77,7 @@ A press counts under the rules a review counts under in `costroid approve`, for 
 
 The press is the approval, so `approval.expires_days` does not apply to it. The App's installation must be held in the installations table and not suspended.
 
-When a press counts, the service posts the newest `costroid` check on the head again with the conclusion `costroid approve` gives it: an approved failure concludes `neutral`, and the summary names the presser, the commit and the time. When the newest check already concludes so, it posts nothing. A press that does not count changes nothing, and the service's log says why.
+When a press counts, the service posts the newest `costroid` check on the head again with the conclusion `costroid approve` gives it: an approved failure concludes `neutral`, and the summary names the presser, the commit and the time. The service does not read `comment.show_cost`, so its title and summary name no amount on any repository. When the newest check already concludes so, it posts nothing. A press that does not count changes nothing, and the service's log says why.
 
 The service posts only when it holds the App's key in a KMS, as [`docs/github-app.md`](github-app.md) sets up; without it, it posts nothing. The check the report posts carries no button yet.
 

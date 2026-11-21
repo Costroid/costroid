@@ -162,15 +162,18 @@ func readReviewEvent(eventName, path, repository string) (int, error) {
 }
 
 // reconclude posts the newest costroid check on the head again when an
-// approval changes its conclusion, or when one no longer does. An error says
-// why nothing was posted.
+// approval changes its conclusion, or when one no longer does. The check
+// shows or withholds amounts as the report's comment does: resolveAmounts
+// decides it for both, from the same setting at the same commit. An error
+// says why nothing was posted.
 func reconclude(ctx context.Context, host approvalHost, pull pullContext, number int, now time.Time, stderr io.Writer) error {
 	current, err := host.PullRequest(ctx, number)
 	if err != nil {
 		return fmt.Errorf("read the pull request: %w", err)
 	}
 	approval := findApproval(ctx, host, pull.settingsRef(), current, now, stderr)
-	done, err := history.Reconclude(ctx, host, current.HeadSHA, approval, time.Now)
+	amounts := resolveAmounts(ctx, host, pull.settingsRef(), stderr)
+	done, err := history.Reconclude(ctx, host, current.HeadSHA, approval, time.Now, history.Showing(amounts))
 	switch {
 	case errors.Is(err, history.ErrNoCheck):
 		return fmt.Errorf("no costroid check is on commit %s yet, and the report applies an approval when it posts", current.HeadSHA)

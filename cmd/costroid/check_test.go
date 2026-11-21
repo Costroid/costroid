@@ -153,6 +153,16 @@ func checkFlows() []checkFlow {
 			_, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit))
 			return repository.Stub, writes, stderr
 		}},
+		{"approve: an approval where amounts are withheld", func(t *testing.T) (*scmtest.Stub, int, string) {
+			repository := branchPullRequest(t)
+			repository.Files[configFile] = enforcedOver + showCostOff
+			repository.SetPrivate(false)
+			reportOn(t, repository, headCommit)
+			writes := len(repository.Writes())
+			repository.Reviews = []map[string]any{review(31, approver, "APPROVED", headCommit, approvedAt)}
+			_, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit))
+			return repository.Stub, writes, stderr
+		}},
 	}
 }
 
@@ -187,7 +197,7 @@ func TestCheckWritesPerFlowAreUnchanged(t *testing.T) {
 
 // TestFollowUpNamesItsCheck holds a fork's check to what a branch's check
 // carries: the check run's id in its own result object and in the step's
-// outputs. The second request keeps the fork's sentences in the summary.
+// outputs. The second request keeps the fork's reason under the title.
 func TestFollowUpNamesItsCheck(t *testing.T) {
 	for name, rows := range map[string]string{
 		"rows over an enforced budget": realRows,
@@ -213,12 +223,12 @@ func TestFollowUpNamesItsCheck(t *testing.T) {
 			if got := readOutputs(t, outputs)["check_run_id"]; got != id {
 				t.Errorf("the check_run_id output reads %q, want %s", got, id)
 			}
-			want := forkCapSentence
+			want := forkHeldReason
 			if rows != realRows {
-				want = forkNoRowsSentence
+				want = forkNoRowsReason
 			}
-			if !strings.HasSuffix(check.Summary, "\n\n"+want) {
-				t.Errorf("the named check's summary lost the fork's sentences:\n%s", check.Summary)
+			if !underTitle(check, want) {
+				t.Errorf("the named check's summary lost the fork's reason:\n%s", check.Summary)
 			}
 		})
 	}

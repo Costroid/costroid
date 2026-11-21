@@ -265,7 +265,7 @@ func TestGhAwFollowUpPostsOnABranchWithTheCredits(t *testing.T) {
 	}
 	check := stub.Checks[0]
 	line := "gh-aw stated 7.47 AI credits for this run. Costroid does not convert credits."
-	if check.HeadSHA != headCommit || !strings.Contains(check.Summary, line) || strings.Contains(check.Summary, forkCapSentence) {
+	if check.HeadSHA != headCommit || !strings.Contains(check.Summary, line) || strings.Contains(check.Summary, forkHeldReason) {
 		t.Errorf("check on %s:\n%s", check.HeadSHA, check.Summary)
 	}
 	block := checkBlock(t, check.Text)
@@ -288,7 +288,7 @@ func TestGhAwFollowUpStillCapsAFork(t *testing.T) {
 	stub.Files[configFile] = overBudget + "  enforce: true\n"
 	stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
 	code, _, stderr := execute(t, "follow-up", "--ingested", "--rows", ingestedRows(t))
-	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" || !strings.Contains(stub.Checks[0].Summary, forkCapSentence) {
+	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" || !underTitle(stub.Checks[0], forkHeldReason) {
 		t.Fatalf("exit %d, %+v: %s", code, stub.Checks, stderr)
 	}
 }

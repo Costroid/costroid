@@ -545,6 +545,153 @@ figures-omitted-withheld	`comment.show_cost: false`
 figures-omitted-withheld	`gpt-5.5`
 figures-omitted-withheld	`output`
 figures-omitted-withheld	| the wrapper stops the process at the cap |
+fork-failure-held	0.0000008
+fork-failure-held	0.000136
+fork-failure-held	0.00015605
+fork-failure-held	0.000436875
+fork-failure-held	0.00089
+fork-failure-held	0.001
+fork-failure-held	0.001619725
+fork-failure-held	0.01
+fork-failure-held	0.10
+fork-failure-held	0.125
+fork-failure-held	0.20
+fork-failure-held	0.50
+fork-failure-held	121
+fork-failure-held	15605
+fork-failure-held	19
+fork-failure-held	2026-11-21
+fork-failure-held	272
+fork-failure-held	3495
+fork-failure-held	4.998380275
+fork-failure-held	4450
+fork-failure-held	5.00
+fork-failure-held	8
+fork-failure-held	List-equivalent, not billed
+fork-failure-held	Over budget, on a fork's own rows: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. A fork's rows are the fork's own claim, so the check is neutral.
+fork-failure-held	Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`.
+fork-failure-held	USD 0.0000008
+fork-failure-held	USD 0.000136
+fork-failure-held	USD 0.00015605
+fork-failure-held	USD 0.000436875
+fork-failure-held	USD 0.00089
+fork-failure-held	USD 0.001
+fork-failure-held	USD 0.001619725
+fork-failure-held	USD 0.01
+fork-failure-held	USD 0.10
+fork-failure-held	USD 0.125
+fork-failure-held	USD 0.20
+fork-failure-held	USD 0.50
+fork-failure-held	USD 4.998380275
+fork-failure-held	USD 5.00
+fork-failure-held	](https://app.costroid.com/?installation=github%3A58120394)
+fork-failure-held	](https://docs.costroid.com/export)
+fork-failure-held	](https://github.com/example/widgets/actions/runs/19203384756)
+fork-failure-held	`0.4.3`
+fork-failure-held	`9f2c6e1`
+fork-failure-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+fork-failure-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+fork-failure-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+fork-failure-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+fork-failure-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+fork-failure-held	`anthropic:informational:cached_input_reported`
+fork-failure-held	`anthropic:informational:reasoning_output`
+fork-failure-held	`cache_read`
+fork-failure-held	`cache_write_1h`
+fork-failure-held	`cache_write_5m`
+fork-failure-held	`cached_input_reported`
+fork-failure-held	`claude-code`
+fork-failure-held	`claude-haiku-5-5`
+fork-failure-held	`costroid.yml`
+fork-failure-held	`input_uncached`
+fork-failure-held	`output`
+fork-failure-held	`policy.run_budget_usd`
+fork-failure-held	`reasoning_output`
+fork-failure-held	| client-side estimate, can pass the cap |
+fork-failure-held-withheld	19
+fork-failure-held-withheld	2026-11-21
+fork-failure-held-withheld	List-equivalent, not billed
+fork-failure-held-withheld	Over budget, on a fork's own rows: this run is over its run budget, priced at list (List-equivalent, not billed). A fork's rows are the fork's own claim, so the check is neutral. Amounts are withheld here.
+fork-failure-held-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+fork-failure-held-withheld	](https://docs.costroid.com/export)
+fork-failure-held-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+fork-failure-held-withheld	`0.4.3`
+fork-failure-held-withheld	`9f2c6e1`
+fork-failure-held-withheld	`cache_read`
+fork-failure-held-withheld	`cache_write_1h`
+fork-failure-held-withheld	`cache_write_5m`
+fork-failure-held-withheld	`cached_input_reported`
+fork-failure-held-withheld	`claude-code`
+fork-failure-held-withheld	`claude-haiku-5-5`
+fork-failure-held-withheld	`comment.show_cost: false`
+fork-failure-held-withheld	`costroid.yml`
+fork-failure-held-withheld	`input_uncached`
+fork-failure-held-withheld	`output`
+fork-failure-held-withheld	`reasoning_output`
+fork-failure-held-withheld	| client-side estimate, can pass the cap |
+fork-limit-held	0.0000008
+fork-limit-held	0.000136
+fork-limit-held	0.00015605
+fork-limit-held	0.000436875
+fork-limit-held	0.00089
+fork-limit-held	0.001
+fork-limit-held	0.001619725
+fork-limit-held	0.01
+fork-limit-held	0.10
+fork-limit-held	0.125
+fork-limit-held	0.20
+fork-limit-held	0.50
+fork-limit-held	121
+fork-limit-held	15605
+fork-limit-held	19
+fork-limit-held	2026-11-21
+fork-limit-held	272
+fork-limit-held	3495
+fork-limit-held	4.998380275
+fork-limit-held	4450
+fork-limit-held	5.00
+fork-limit-held	8
+fork-limit-held	List-equivalent, not billed
+fork-limit-held	Over limit, on a fork's own rows: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run cost limit. A fork's rows are the fork's own claim, so the check is neutral.
+fork-limit-held	Run cost limit: USD 0.001, from `policy.max_run_cost_usd` in `costroid.yml`.
+fork-limit-held	USD 0.0000008
+fork-limit-held	USD 0.000136
+fork-limit-held	USD 0.00015605
+fork-limit-held	USD 0.000436875
+fork-limit-held	USD 0.00089
+fork-limit-held	USD 0.001
+fork-limit-held	USD 0.001619725
+fork-limit-held	USD 0.01
+fork-limit-held	USD 0.10
+fork-limit-held	USD 0.125
+fork-limit-held	USD 0.20
+fork-limit-held	USD 0.50
+fork-limit-held	USD 4.998380275
+fork-limit-held	USD 5.00
+fork-limit-held	](https://app.costroid.com/?installation=github%3A58120394)
+fork-limit-held	](https://docs.costroid.com/export)
+fork-limit-held	](https://github.com/example/widgets/actions/runs/19203384756)
+fork-limit-held	`0.4.3`
+fork-limit-held	`9f2c6e1`
+fork-limit-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+fork-limit-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+fork-limit-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+fork-limit-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+fork-limit-held	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+fork-limit-held	`anthropic:informational:cached_input_reported`
+fork-limit-held	`anthropic:informational:reasoning_output`
+fork-limit-held	`cache_read`
+fork-limit-held	`cache_write_1h`
+fork-limit-held	`cache_write_5m`
+fork-limit-held	`cached_input_reported`
+fork-limit-held	`claude-code`
+fork-limit-held	`claude-haiku-5-5`
+fork-limit-held	`costroid.yml`
+fork-limit-held	`input_uncached`
+fork-limit-held	`output`
+fork-limit-held	`policy.max_run_cost_usd`
+fork-limit-held	`reasoning_output`
+fork-limit-held	| client-side estimate, can pass the cap |
 gh-aw-stated-credits	0.000006
 gh-aw-stated-credits	0.000031
 gh-aw-stated-credits	0.004922
@@ -686,6 +833,66 @@ gitlab-note	`output`
 gitlab-note	`policy.run_budget_usd`
 gitlab-note	`reasoning_output`
 gitlab-note	| client-side estimate, can pass the cap |
+gitlab-note-request-budget	0.0000008
+gitlab-note-request-budget	0.000136
+gitlab-note-request-budget	0.00015605
+gitlab-note-request-budget	0.000436875
+gitlab-note-request-budget	0.00089
+gitlab-note-request-budget	0.001619725
+gitlab-note-request-budget	0.01
+gitlab-note-request-budget	0.10
+gitlab-note-request-budget	0.125
+gitlab-note-request-budget	0.20
+gitlab-note-request-budget	0.50
+gitlab-note-request-budget	121
+gitlab-note-request-budget	15605
+gitlab-note-request-budget	19
+gitlab-note-request-budget	2026-11-21
+gitlab-note-request-budget	272
+gitlab-note-request-budget	3495
+gitlab-note-request-budget	4.998380275
+gitlab-note-request-budget	4450
+gitlab-note-request-budget	5.00
+gitlab-note-request-budget	8
+gitlab-note-request-budget	List-equivalent, not billed
+gitlab-note-request-budget	Merge request budget: this check read no total for the merge request's earlier runs, so the rule did not run.
+gitlab-note-request-budget	Not decided: the merge request budget could not be checked. This run cost USD 0.001619725 at list (List-equivalent, not billed).
+gitlab-note-request-budget	USD 0.0000008
+gitlab-note-request-budget	USD 0.000136
+gitlab-note-request-budget	USD 0.00015605
+gitlab-note-request-budget	USD 0.000436875
+gitlab-note-request-budget	USD 0.00089
+gitlab-note-request-budget	USD 0.001619725
+gitlab-note-request-budget	USD 0.01
+gitlab-note-request-budget	USD 0.10
+gitlab-note-request-budget	USD 0.125
+gitlab-note-request-budget	USD 0.20
+gitlab-note-request-budget	USD 0.50
+gitlab-note-request-budget	USD 4.998380275
+gitlab-note-request-budget	USD 5.00
+gitlab-note-request-budget	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
+gitlab-note-request-budget	](https://docs.costroid.com/export)
+gitlab-note-request-budget	](https://github.com/example/widgets/actions/runs/19203384756)
+gitlab-note-request-budget	`0.4.3`
+gitlab-note-request-budget	`9f2c6e1`
+gitlab-note-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+gitlab-note-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+gitlab-note-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+gitlab-note-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+gitlab-note-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+gitlab-note-request-budget	`anthropic:informational:cached_input_reported`
+gitlab-note-request-budget	`anthropic:informational:reasoning_output`
+gitlab-note-request-budget	`cache_read`
+gitlab-note-request-budget	`cache_write_1h`
+gitlab-note-request-budget	`cache_write_5m`
+gitlab-note-request-budget	`cached_input_reported`
+gitlab-note-request-budget	`claude-code`
+gitlab-note-request-budget	`claude-haiku-5-5`
+gitlab-note-request-budget	`costroid.yml`
+gitlab-note-request-budget	`input_uncached`
+gitlab-note-request-budget	`output`
+gitlab-note-request-budget	`reasoning_output`
+gitlab-note-request-budget	| client-side estimate, can pass the cap |
 gitlab-note-withheld	19
 gitlab-note-withheld	2026-11-21
 gitlab-note-withheld	List-equivalent, not billed

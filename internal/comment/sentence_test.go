@@ -19,7 +19,7 @@ import (
 
 // sentenceStates are the states a verdict sentence opens with. Each names
 // what is true of the run, and none is a conclusion value.
-var sentenceStates = regexp.MustCompile(`^(Within budget|Over budget|Within limit|Over limit|Model not on the list|Models on the list|No budget set|Not decided|No figure \([a-z_]+\)|No agent run)(, by the job's own figures|, warn-only|, approved by [A-Za-z0-9-]+)?: `)
+var sentenceStates = regexp.MustCompile(`^(Within budget|Over budget|Within limit|Over limit|Model not on the list|Models on the list|No budget set|Not decided|No figure \([a-z_]+\)|No agent run)(, by the job's own figures|, warn-only|, approved by [A-Za-z0-9-]+|, on a fork's own rows)?: `)
 
 // markup is every character that would make a sentence render as anything
 // but its own text in a comment, or break a table.
@@ -35,7 +35,9 @@ func firstLine(text string) string {
 // sentence: the check's title, and in bold the first line of the comment, of
 // the check's summary and of the job summary. The sentence is plain text that
 // opens with what is true of the run and ends as a sentence. A check an
-// approval concludes again opens on its own title too.
+// approval concludes again opens on its own title too, and that title is the
+// sentence the report itself posts for the same approval: with the amount
+// where amounts are shown, and with none where they are withheld.
 func TestVerdictSentenceIsOneStringOnEverySurface(t *testing.T) {
 	for name, input := range goldenStates(t) {
 		sentence := VerdictSentence(input)
@@ -64,8 +66,8 @@ func TestVerdictSentenceIsOneStringOnEverySurface(t *testing.T) {
 			}
 		}
 	}
-	failed := goldenStates(t)["fail-shown"]
-	object, err := Result(failed)
+	states := goldenStates(t)
+	object, err := Result(states["fail-shown"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,17 +78,25 @@ func TestVerdictSentenceIsOneStringOnEverySurface(t *testing.T) {
 	approval := &Approval{Approver: "octocat", HeadSHA: sampleHead, At: time.Date(2026, 11, 12, 9, 30, 0, 0, time.UTC)}
 	for name, tc := range map[string]struct {
 		approval *Approval
+		amounts  Amounts
+		state    string
 		want     string
 	}{
-		"approved":    {approval, "Over budget, approved by octocat: this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit 9f2c6e1 and ends with a new push. Amounts are withheld here."},
-		"no approval": {nil, "Over budget: this run is over its run budget, priced at list (List-equivalent, not billed). Amounts are withheld here."},
+		"approved, amounts shown":       {approval, AmountsShown, "approved-failure", "Over budget, approved by octocat: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit 9f2c6e1 and ends with a new push."},
+		"approved, amounts off":         {approval, AmountsOff, "approved-failure-withheld", "Over budget, approved by octocat: this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit 9f2c6e1 and ends with a new push. Amounts are withheld here."},
+		"approved, amounts unsettled":   {approval, AmountsUnsettled, "approved-failure-withheld", "Over budget, approved by octocat: this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit 9f2c6e1 and ends with a new push. Amounts are withheld here."},
+		"no approval, amounts shown":    {nil, AmountsShown, "fail-shown", "Over budget: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget."},
+		"no approval, amounts withheld": {nil, AmountsOff, "fail-withheld", "Over budget: this run is over its run budget, priced at list (List-equivalent, not billed). Amounts are withheld here."},
 	} {
-		again, err := Reconclude(block, tc.approval, exampleCheckRun)
+		again, err := Reconclude(block, tc.approval, tc.amounts, exampleCheckRun)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if again.Title != tc.want || firstLine(again.Summary) != "**"+tc.want+"**" || amountInWords.MatchString(again.Title+again.Summary) {
-			t.Errorf("%s: the check concluded again is titled %q and opens\n%s", name, again.Title, again.Summary)
+		if again.Title != tc.want || firstLine(again.Summary) != "**"+tc.want+"**" || tc.want != VerdictSentence(states[tc.state]) {
+			t.Errorf("%s: the check concluded again is titled %q, the report's own sentence is %q, and the summary opens\n%s", name, again.Title, VerdictSentence(states[tc.state]), again.Summary)
+		}
+		if tc.amounts != AmountsShown && amountInWords.MatchString(again.Title+again.Summary) {
+			t.Errorf("%s: a check concluded again where amounts are withheld names one:\n%s", name, again.Summary)
 		}
 	}
 }
@@ -124,8 +134,9 @@ func worstCase(t *testing.T, figures int, result policy.Result) Input {
 // TestVerdictSentenceFitsTheStatusLimit holds the sentence to 255 characters
 // in every golden state and in constructed worst cases: every rule and
 // outcome, shown and withheld, over one figure and over more than the table
-// holds, with the longest amounts, limits and login. A sentence past the
-// limit is cut in a fixed order, and no cut drops the state or the first
+// holds, with the longest amounts, limits and login, on GitHub, on GitLab
+// with its longer noun, and held at neutral on a fork's rows. A sentence past
+// the limit is cut in a fixed order, and no cut drops the state or the first
 // figure with its currency and basis.
 func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 	for name, input := range goldenStates(t) {
@@ -151,7 +162,8 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 			for _, figures := range []int{1, 3, maxFigures + 3} {
 				result := policy.Result{Rule: rule, Outcome: outcome.outcome, Reason: outcome.reason, LimitUSD: limit, CostUSD: sum, BaselineUSD: sum, LimitPercent: strings.Repeat("9", 40), Models: []string{"a", "b"}}
 				shown := worstCase(t, figures, result)
-				for _, input := range []Input{shown, withheld(shown)} {
+				onGitLab, onFork := asGitLab(shown), shown.OnForkRows()
+				for _, input := range []Input{shown, withheld(shown), onGitLab, withheld(onGitLab), onFork, withheld(onFork)} {
 					sentence := VerdictSentence(input)
 					checked++
 					if length := utf8.RuneCountInString(sentence); length > StatusLimit {
@@ -161,7 +173,7 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 						t.Errorf("%s %s over %d figures: the cut dropped the state: %s", rule, outcome.outcome, figures, sentence)
 					}
 					first, basis := "XAA "+sum+" at list (List-equivalent, not billed)", "priced at list (List-equivalent, not billed)"
-					if strings.Contains(sentence, "this pull request's runs") {
+					if strings.Contains(sentence, " request's runs") {
 						first, basis = "USD "+sum+" at list (every basis together)", "priced at list"
 					}
 					names := strings.Contains(sentence, first)
@@ -175,7 +187,7 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 			}
 		}
 	}
-	if checked != len(rules)*len(outcomes)*3*2 {
+	if checked != len(rules)*len(outcomes)*3*6 {
 		t.Fatalf("%d worst cases were built", checked)
 	}
 
@@ -351,8 +363,8 @@ func TestAmountsShowTwoDecimalsAndEveryDigit(t *testing.T) {
 		if got != want || !strings.HasPrefix(got, exact) || strings.Trim(strings.TrimPrefix(got, exact), ".0") != "" {
 			t.Errorf("places(%q) = %q, want %q: only zeros may follow the exact string", exact, got, want)
 		}
-		if money("USD", exact) != "USD "+want {
-			t.Errorf("money(USD, %q) = %q", exact, money("USD", exact))
+		if Money("USD", exact) != "USD "+want {
+			t.Errorf("Money(USD, %q) = %q", exact, Money("USD", exact))
 		}
 	}
 	for name, input := range goldenStates(t) {
@@ -430,6 +442,18 @@ func TestPolicyPageQuotesSentencesTheGoldensHold(t *testing.T) {
 		if !slices.ContainsFunc(slices.Collect(maps.Keys(sentences)), func(sentence string) bool { return strings.HasPrefix(sentence, opening) }) {
 			t.Errorf("docs/policy.md names the opening %q, and no golden state's sentence opens with it", opening)
 		}
+	}
+}
+
+// TestApprovalPageQuotesTheApprovedSentence holds the title docs/approval.md
+// quotes for an approved check to the golden state's sentence, word for word.
+func TestApprovalPageQuotesTheApprovedSentence(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", "docs", "approval.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quoted := "\n```text\n" + VerdictSentence(goldenStates(t)["approved-failure"]) + "\n```\n"; !strings.Contains(string(page), quoted) {
+		t.Errorf("docs/approval.md does not quote the approved check's title:%s", quoted)
 	}
 }
 

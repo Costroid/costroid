@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -144,6 +145,71 @@ func approve(t *testing.T, event string) (int, string) {
 	return code, stderr.String()
 }
 
+// approvedTitles posts a failed report on pull request 7 under a costroid.yml
+// and a visibility, nil for one GitHub does not answer, and approves its head.
+// It returns the check costroid approve posts, and the title the report gives
+// the check when it runs again on the same head under the same approval.
+func approvedTitles(t *testing.T, config string, private *bool) (approved scmtest.Check, reported string) {
+	t.Helper()
+	repository := branchPullRequest(t)
+	repository.Files[configFile], repository.Private = config, private
+	reportOn(t, repository, headCommit)
+	repository.Reviews = []map[string]any{review(31, approver, "APPROVED", headCommit, approvedAt)}
+	if code, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit)); code != 0 || len(repository.Checks) != 2 || repository.Checks[1].Conclusion != policy.Neutral {
+		t.Fatalf("exit %d, checks %+v: %s", code, repository.Checks, stderr)
+	}
+	return repository.Checks[1], reportOn(t, repository, headCommit).Title
+}
+
+// TestAnApprovedFailureNamesItsAmountWhereAmountsShow approves a failed check
+// on a repository whose comment shows amounts. The check costroid approve
+// posts names the amount and the budget in its title, and that title is the
+// one the report gives the same approval: the two never differ.
+func TestAnApprovedFailureNamesItsAmountWhereAmountsShow(t *testing.T) {
+	want := "Over budget, approved by " + approver + ": this run cost USD " + realTotal + " at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit " + headCommit[:7] + " and ends with a new push."
+	yes, no := true, false
+	for name, tc := range map[string]struct {
+		config  string
+		private *bool
+	}{
+		"a private repository":                                   {enforcedOver, &yes},
+		"a private repository that sets show_cost off":           {enforcedOver + showCostOff, &yes},
+		"a public repository that leaves show_cost on":           {enforcedOver, &no},
+		"a visibility GitHub does not answer, with show_cost on": {enforcedOver, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			approved, reported := approvedTitles(t, tc.config, tc.private)
+			if approved.Title != want || reported != want {
+				t.Errorf("costroid approve titles the check\n%s\nthe report titles it\n%s\nwant\n%s", approved.Title, reported, want)
+			}
+			if !strings.HasPrefix(approved.Summary, "**"+want+"**\n\n") {
+				t.Errorf("the summary does not open on the title:\n%s", approved.Summary)
+			}
+		})
+	}
+}
+
+// TestAnApprovedFailureWithholdsWhereAmountsAreWithheld approves a failed
+// check on a repository whose comment withholds amounts: a public one with
+// comment.show_cost off, and one whose visibility cannot be read. The check
+// costroid approve posts names no amount in its title or its summary, and its
+// title is again the one the report gives the same approval.
+func TestAnApprovedFailureWithholdsWhereAmountsAreWithheld(t *testing.T) {
+	want := "Over budget, approved by " + approver + ": this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit " + headCommit[:7] + " and ends with a new push. Amounts are withheld here."
+	no := false
+	for name, private := range map[string]*bool{"a public repository that sets show_cost off": &no, "a visibility GitHub does not answer": nil} {
+		t.Run(name, func(t *testing.T) {
+			approved, reported := approvedTitles(t, enforcedOver+showCostOff, private)
+			if approved.Title != want || reported != want {
+				t.Errorf("costroid approve titles the check\n%s\nthe report titles it\n%s\nwant\n%s", approved.Title, reported, want)
+			}
+			if amount := regexp.MustCompile(`[A-Z]{3} [0-9]`).FindString(approved.Summary); amount != "" || !strings.HasPrefix(approved.Summary, "**"+want+"**\n\n") {
+				t.Errorf("the summary names the amount %q, or does not open on the title:\n%s", amount, approved.Summary)
+			}
+		})
+	}
+}
+
 // posted is a check run's result object.
 type posted struct {
 	CheckRunID *int64 `json:"check_run_id"`
@@ -190,7 +256,7 @@ func TestReviewFlipsCheckWithoutPush(t *testing.T) {
 	if object.HeadSHA != headCommit || object.RowsSHA256 != objectOf(t, failed).RowsSHA256 || object.CheckRunID == nil || *object.CheckRunID != flipped.ID {
 		t.Errorf("the object is not the report's, named by its own check run: %+v", object)
 	}
-	approved := "Over budget, approved by reviewer: this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit 9f2c6e1 and ends with a new push. Amounts are withheld here."
+	approved := "Over budget, approved by reviewer: this run cost USD " + realTotal + " at list (List-equivalent, not billed), over the USD 0.001 run budget. The approval covers commit 9f2c6e1 and ends with a new push."
 	if flipped.Title != approved {
 		t.Errorf("the check's title reads %q", flipped.Title)
 	}
@@ -221,7 +287,7 @@ func TestReviewFlipsCheckWithoutPush(t *testing.T) {
 		t.Fatalf("exit %d, %d checks: %s", code, len(repository.Checks), stderr)
 	}
 	restored := repository.Checks[2]
-	if restored.Conclusion != policy.Failure || objectOf(t, restored).Conclusion != policy.Failure || !strings.Contains(restored.Summary, "No approval binds commit `9f2c6e1`") {
+	if restored.Conclusion != policy.Failure || objectOf(t, restored).Conclusion != policy.Failure || restored.Title != failed.Title || !strings.Contains(restored.Summary, "No approval binds commit `9f2c6e1`") {
 		t.Errorf("the dismissal left %+v", restored)
 	}
 }

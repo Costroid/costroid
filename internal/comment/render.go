@@ -163,6 +163,22 @@ const (
 	AccountGitLab = "gitlab"
 )
 
+// requestNoun is what a host calls a change proposed for merge: a merge
+// request on GitLab, a pull request on any other host. Only words a person
+// reads take it. Keys, tags, flags, rule ids and outputs keep pr and
+// pull_request on every host.
+func requestNoun(host string) string {
+	if host == AccountGitLab {
+		return "merge request"
+	}
+	return "pull request"
+}
+
+// request is the word for a change on the host the report posts to.
+func (i Input) request() string {
+	return requestNoun(i.AccountHost)
+}
+
 // installationKinds is the kind each host's installation id takes in the
 // integration contract.
 var installationKinds = map[string]string{
@@ -263,6 +279,8 @@ type Input struct {
 	// none. Its reason is from a closed list. The machine block states it
 	// among its estimates.
 	EstimateUnavailable *focusfile.Unavailable
+	// forkHeld says OnForkRows held the verdict at neutral.
+	forkHeld bool
 }
 
 // Recorded is a run recorded earlier, as costroid report --recorded names it.
@@ -293,7 +311,7 @@ func (i Input) recordedLine() string {
 	if recorded == nil {
 		return ""
 	}
-	return fmt.Sprintf("These figures are a recorded run's, workflow run %d on %s, not this pull request's.", recorded.RunID, recorded.Date)
+	return fmt.Sprintf("These figures are a recorded run's, workflow run %d on %s, not this %s's.", recorded.RunID, recorded.Date, i.request())
 }
 
 // Comment renders the sticky comment. Its block is a copy of the check's that
@@ -594,7 +612,7 @@ func (i Input) view() view {
 	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
 		line := figureLine{
-			Cost:  money(figure.Currency, figure.Cost.String()),
+			Cost:  Money(figure.Currency, figure.Cost.String()),
 			Basis: basisLabels[figure.Basis],
 			Note:  figureNote(figure, i.agentStated(), shown),
 		}
@@ -621,7 +639,7 @@ func traceOf(figure Figure, number int, shown, checkRuns bool) traceBlock {
 	if !shown {
 		return withheldTrace(figure, number, checkRuns)
 	}
-	block := traceBlock{Shown: true, Summary: "How " + money(figure.Currency, figure.Cost.String()) + " was computed", Omitted: figure.TraceOmitted}
+	block := traceBlock{Shown: true, Summary: "How " + Money(figure.Currency, figure.Cost.String()) + " was computed", Omitted: figure.TraceOmitted}
 	for _, trace := range figure.Trace {
 		block.Lines = append(block.Lines, traceLine{
 			Catalog:   catalogCell(trace.Catalog),
@@ -662,7 +680,7 @@ func unitPrice(currency string, trace Trace) string {
 	if trace.Class.Informational() {
 		return "informational, not priced"
 	}
-	return money(currency, trace.UnitPrice.String()) + " per " + unitWords(trace.Unit)
+	return Money(currency, trace.UnitPrice.String()) + " per " + unitWords(trace.Unit)
 }
 
 // traceCost is a trace line's amount. A class that carries no price has no
@@ -671,7 +689,7 @@ func traceCost(currency string, trace Trace) string {
 	if trace.Class.Informational() {
 		return "No amount: not priced"
 	}
-	return money(currency, trace.Cost.String())
+	return Money(currency, trace.Cost.String())
 }
 
 // millionTokens is the count of tokens the catalogs state a price per.
@@ -747,8 +765,7 @@ func (i Input) details(shown, withCap bool) ([]string, string) {
 	if len(holds) == 0 {
 		holds = append(holds, "rows")
 	}
-	summary := listed(holds, 0)
-	return lines, strings.ToUpper(summary[:1]) + summary[1:]
+	return lines, capital(listed(holds, 0))
 }
 
 // catalogPhrase names the rows' catalogs, each with the day its prices were
@@ -827,20 +844,22 @@ func runLine(head, link string) string {
 }
 
 // why is what the verdict sentence leaves unsaid of a report with no figures:
-// what a refused artifact held, why the workflow skipped the agent, the
-// reader's first error, or what to do about the agent's. When a rule broken
-// on the pull request's earlier runs names the sentence, the reason for no
-// figures opens the paragraph in full.
+// what a refused artifact held, why the workflow skipped the agent, why a
+// fork's run left no rows, the reader's first error, or what to do about the
+// agent's. When a rule broken on the pull request's earlier runs names the
+// sentence, the reason for no figures opens the paragraph in full.
 func (i Input) why() string {
 	var said []string
 	if decided, ruled := deciding(i.Verdict); ruled && broken(decided) && !i.refused() {
-		said = append(said, i.fields().noFigure(len(i.Ledger.Infrastructure.Figures) > 0, false))
+		said = append(said, i.telling().noFigure(false))
 	}
 	switch {
 	case i.refused():
 		said = append(said, i.refusedLine())
 	case i.Reason == AgentSkipped:
-		said = append(said, "The recipes skip the agent's job for a first-time contributor without the `costroid-agent` label and for a fork's pull request.")
+		said = append(said, "The recipes skip the agent's job for a first-time contributor without the `costroid-agent` label and for a fork's "+i.request()+".")
+	case i.Reason == ForkNoRows:
+		said = append(said, "The recipes run no agent on a fork's "+i.request()+". A neutral check does not block a merge.")
 	case i.readerLine() != "":
 		said = append(said, fmt.Sprintf("The reader's first error: `%s`.", i.readerLine()))
 	case i.agentError() != "":

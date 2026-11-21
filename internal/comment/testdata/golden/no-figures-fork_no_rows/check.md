@@ -6,6 +6,8 @@ No figure (fork_no_rows): this pull request comes from a fork, and its workflow 
 
 **No figure (fork_no_rows): this pull request comes from a fork, and its workflow run left no rows. No rule ran.**
 
+The recipes run no agent on a fork's pull request. A neutral check does not block a merge.
+
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 # Text

@@ -113,10 +113,10 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 			withheld = tc.shown
 		}
 		verdict := policy.Verdict{Results: []policy.Result{tc.result}}
-		if got := resultSentence(tc.result, 0, true, nil); got != tc.shown {
+		if got := resultSentence(tc.result, 0, true, nil, requestNoun(AccountGitHub)); got != tc.shown {
 			t.Errorf("shown:\n got %s\nwant %s", got, tc.shown)
 		}
-		if got := resultSentence(verdict.WithoutAmounts().Results[0], 0, false, nil); got != withheld {
+		if got := resultSentence(verdict.WithoutAmounts().Results[0], 0, false, nil, requestNoun(AccountGitHub)); got != withheld {
 			t.Errorf("withheld:\n got %s\nwant %s", got, withheld)
 		}
 	}

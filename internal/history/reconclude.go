@@ -36,13 +36,33 @@ type Reconcluded struct {
 	Unnamed error
 }
 
+// Option tells Reconclude what the check it repeats does not state.
+type Option func(*recheck)
+
+// recheck is what Reconclude was told.
+type recheck struct {
+	amounts comment.Amounts
+}
+
+// Showing passes on whether the report's comment shows amounts, as the report
+// decides it from comment.show_cost and the repository's visibility. The
+// check's result object does not say. Without it the zero value holds, and
+// the title and the summary of the check posted name no amount.
+func Showing(amounts comment.Amounts) Option {
+	return func(told *recheck) { told.amounts = amounts }
+}
+
 // Reconclude posts the newest costroid check on head again with the
 // conclusion approval gives it: neutral for an approved failure, the policy's
 // verdict when approval is nil. It then names the new check run in its own
 // result object. When the newest check already concludes so, it posts nothing
 // and answers ErrConcluded with Previous and Conclusion set. A head with no
 // costroid check answers ErrNoCheck. now is read when the check is posted.
-func Reconclude(ctx context.Context, host Rechecker, head string, approval *comment.Approval, now func() time.Time) (Reconcluded, error) {
+func Reconclude(ctx context.Context, host Rechecker, head string, approval *comment.Approval, now func() time.Time, options ...Option) (Reconcluded, error) {
+	var told recheck
+	for _, option := range options {
+		option(&told)
+	}
 	newest, err := Newest(ctx, host, head)
 	if err != nil {
 		return Reconcluded{}, err
@@ -57,7 +77,7 @@ func Reconclude(ctx context.Context, host Rechecker, head string, approval *comm
 		if id != nil {
 			named.CheckRunID = id
 		}
-		return comment.Reconclude(named, approval, newest.CheckRun)
+		return comment.Reconclude(named, approval, told.amounts, newest.CheckRun)
 	}
 	output, err := render(nil)
 	if err != nil {

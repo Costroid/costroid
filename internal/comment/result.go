@@ -598,8 +598,10 @@ func addedValues(object string, block Block) []addedValue {
 // object with the conclusion an approval gives it: neutral for an approved
 // failure, the policy's verdict when no approval counts. previous names the
 // check run that carries the report in full. The object does not say whether
-// the report's comment shows amounts, so the title and the summary name none.
-func Reconclude(block Block, approval *Approval, previous int64) (CheckOutput, error) {
+// the report's comment shows amounts, so amounts says it, as the report
+// decides it. Unless it reads AmountsShown, the title and the summary name
+// none.
+func Reconclude(block Block, approval *Approval, amounts Amounts, previous int64) (CheckOutput, error) {
 	verdict := block.verdict()
 	conclusion := block.ApprovedConclusion(approval)
 	block.Conclusion = &conclusion
@@ -613,7 +615,16 @@ func Reconclude(block Block, approval *Approval, previous int64) (CheckOutput, e
 	} else {
 		line = approvalLine(*approval)
 	}
-	sentence := block.withoutAmounts().sentence(approval, slices.ContainsFunc(block.Estimates, func(estimate BlockEstimate) bool { return estimate.Reason == "" }))
+	if amounts != AmountsShown {
+		block = block.withoutAmounts()
+	}
+	// Only GitHub's check takes an approval.
+	sentence := telling{
+		Block:           block,
+		approval:        approval,
+		besideEstimates: slices.ContainsFunc(block.Estimates, func(estimate BlockEstimate) bool { return estimate.Reason == "" }),
+		request:         requestNoun(AccountGitHub),
+	}.sentence()
 	summary := fmt.Sprintf("**%s**\n\n%s\n\nCheck run %d carries this report in full.\n", sentence, line, previous)
 	return CheckOutput{Title: sentence, Summary: summary, Text: fenced(encoded)}, nil
 }

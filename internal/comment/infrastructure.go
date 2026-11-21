@@ -245,7 +245,7 @@ func (i Infrastructure) view(shown, checkRuns bool) *infrastructureView {
 		currencies[figure.Currency] = true
 		line := fmt.Sprintf("Infrastructure, %s, in %s for %s, from %s.", basisWords[figure.Basis], figure.Currency, figure.Period, figure.Source.Code())
 		if shown {
-			line = fmt.Sprintf("Infrastructure, %s: %s for %s, from %s.", basisWords[figure.Basis], money(figure.Currency, figure.Cost.String()), figure.Period, figure.Source.Code())
+			line = fmt.Sprintf("Infrastructure, %s: %s for %s, from %s.", basisWords[figure.Basis], Money(figure.Currency, figure.Cost.String()), figure.Period, figure.Source.Code())
 		}
 		section.Lines = append(section.Lines, line)
 	}
@@ -268,7 +268,7 @@ func (i Infrastructure) view(shown, checkRuns bool) *infrastructureView {
 			cells.Service = row.Service.Code()
 		}
 		if shown {
-			cells.Amount = money(row.Currency, row.Cost.String())
+			cells.Amount = Money(row.Currency, row.Cost.String())
 		}
 		section.Rows = append(section.Rows, cells)
 	}

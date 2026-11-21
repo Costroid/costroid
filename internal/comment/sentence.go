@@ -32,11 +32,37 @@ const instantLayout = "2006-01-02 15:04 UTC"
 // with its currency and basis, the budget, and one clause on what was checked
 // or what follows. Withheld, it names no amount and says so.
 func VerdictSentence(input Input) string {
-	var approval *Approval
-	if input.approved() {
-		approval = input.Approval
+	return input.telling().sentence()
+}
+
+// telling is a result object beside what its verdict sentence says that the
+// object does not hold.
+type telling struct {
+	Block
+	// approval is the approval that turned a failure neutral, nil for none.
+	approval *Approval
+	// forkHeld says the rows are a fork's own, so a failure is held at
+	// neutral.
+	forkHeld bool
+	// besideEstimates says the report shows figures that are not an agent's.
+	besideEstimates bool
+	// request is what the host calls the change the run was for.
+	request string
+}
+
+// telling is the result object the report writes, so the sentence and the
+// object never disagree, beside what only the report knows.
+func (i Input) telling() telling {
+	told := telling{
+		Block:           i.fields(),
+		forkHeld:        i.forkHeld,
+		besideEstimates: len(i.Ledger.Infrastructure.Figures) > 0,
+		request:         i.request(),
 	}
-	return input.fields().sentence(approval, len(input.Ledger.Infrastructure.Figures) > 0)
+	if i.approved() {
+		told.approval = i.Approval
+	}
+	return told
 }
 
 // cut is how much of a verdict sentence is said.
@@ -56,14 +82,11 @@ type cut struct {
 // characters a row and 12 decimal places, so the last cut fits.
 var cuts = []cut{{firstFigures, true, true}, {1, true, true}, {1, true, false}, {1, false, false}}
 
-// sentence builds the verdict sentence from the result object, so the two
-// never disagree. approval is the approval that turned a failure neutral, nil
-// for none, and besideEstimates says the report shows figures that are not an
-// agent's.
-func (b Block) sentence(approval *Approval, besideEstimates bool) string {
+// sentence is the verdict sentence, cut until it fits StatusLimit.
+func (b telling) sentence() string {
 	var text string
 	for _, said := range cuts {
-		text = b.sentenceAt(said, approval, besideEstimates)
+		text = b.sentenceAt(said)
 		if utf8.RuneCountInString(text) <= StatusLimit {
 			break
 		}
@@ -97,16 +120,16 @@ func (c claim) text(said cut, withheld bool) string {
 
 const refusedSentence = "No figure (artifact_refused): the rows artifact held files besides the rows and the run object, so this report read none of it and the check fails."
 
-func (b Block) sentenceAt(said cut, approval *Approval, besideEstimates bool) string {
+func (b telling) sentenceAt(said cut) string {
 	withheld := b.Amounts != amountsShown
 	decided, ruled := deciding(b.Policy)
 	switch {
 	case b.RunReason == ArtifactRefused:
 		return refusedSentence
 	case ruled && broken(decided):
-		return b.overClaim(decided, approval, said).text(said, withheld)
+		return b.overClaim(decided, said).text(said, withheld)
 	case b.State != Reported:
-		return b.noFigure(besideEstimates, !ruled && said.closing)
+		return b.noFigure(!ruled && said.closing)
 	case b.Policy != nil && b.Policy.Config == policy.ConfigInvalid:
 		return b.undecided("costroid.yml is not valid, so no rule ran", said).text(said, withheld)
 	case b.Policy != nil && b.Policy.Config == policy.ConfigUnread:
@@ -164,21 +187,35 @@ var leadNouns = map[string]string{
 	policy.RuleMonthlyBudget:      "budget",
 }
 
-// ruleNouns name each rule inside a sentence.
+// ruleNouns name each rule inside a sentence. The budget on a change's total
+// is named by ruleNoun, after the host's word for the change.
 var ruleNouns = map[string]string{
 	policy.RuleRunBudget:          "run budget",
 	policy.RuleRunCostThreshold:   "run cost limit",
 	policy.RuleRunIncrease:        "increase over baseline",
 	policy.RuleRunIncreasePercent: "percent increase over baseline",
-	policy.RulePullRequestBudget:  "pull request budget",
 	policy.RuleMonthlyBudget:      "monthly budget",
 	policy.RuleModelAllowlist:     "model list",
 	policy.RuleAttribution:        "attribution",
 }
 
+// ruleNoun names a rule inside a sentence. request is the host's word for a
+// change, which the budget on a change's total is named after.
+func ruleNoun(rule, request string) string {
+	if rule == policy.RulePullRequestBudget {
+		return request + " budget"
+	}
+	return ruleNouns[rule]
+}
+
+// forkClosing says why a failure on a fork's own rows leaves the check
+// neutral.
+const forkClosing = "A fork's rows are the fork's own claim, so the check is neutral."
+
 // overClaim is the sentence for a rule that found its limit passed or a model
-// off the list: enforced, held by the warn-only period, or approved.
-func (b Block) overClaim(result policy.Result, approval *Approval, said cut) claim {
+// off the list: enforced, held by the warn-only period, approved, or held at
+// neutral on a fork's own rows.
+func (b telling) overClaim(result policy.Result, said cut) claim {
 	over := claim{state: "Over " + leadNouns[result.Rule]}
 	if result.Rule == policy.RuleModelAllowlist {
 		over.state = "Model not on the list"
@@ -188,9 +225,12 @@ func (b Block) overClaim(result policy.Result, approval *Approval, said cut) cla
 	case result.Outcome == policy.Warn:
 		over.state += ", warn-only"
 		over.closing = "After " + b.warnOnlyEnd() + " this fails the check."
-	case approval != nil:
-		over.state += ", approved by " + approval.Approver
-		over.closing = "The approval covers commit " + approval.HeadSHA[:min(len(approval.HeadSHA), shortCommitLength)] + " and ends with a new push."
+	case b.approval != nil:
+		over.state += ", approved by " + b.approval.Approver
+		over.closing = "The approval covers commit " + b.approval.HeadSHA[:min(len(b.approval.HeadSHA), shortCommitLength)] + " and ends with a new push."
+	case b.forkHeld:
+		over.state += ", on a fork's own rows"
+		over.closing = forkClosing
 	}
 	return over
 }
@@ -206,7 +246,7 @@ func (b Block) warnOnlyEnd() string {
 
 // keptClaim is the sentence for a rule nothing broke: one that passed, one
 // the agent's own rows kept from passing, or one that could not be checked.
-func (b Block) keptClaim(result policy.Result, said cut) claim {
+func (b telling) keptClaim(result policy.Result, said cut) claim {
 	kept := claim{closing: "A ledger checked the rows."}
 	switch {
 	case result.Outcome == policy.Pass && result.Rule == policy.RuleModelAllowlist:
@@ -218,7 +258,7 @@ func (b Block) keptClaim(result policy.Result, said cut) claim {
 		kept.state = "Within " + leadNouns[result.Rule] + ", by the job's own figures"
 		kept.closing = "Nothing outside the job checked the figures, so the check is neutral."
 	default:
-		return b.undecided("the "+ruleNouns[result.Rule]+" could not be checked", said)
+		return b.undecided("the "+ruleNoun(result.Rule, b.request)+" could not be checked", said)
 	}
 	kept.figure, kept.limit = b.against(result, said, false)
 	return kept
@@ -227,16 +267,15 @@ func (b Block) keptClaim(result policy.Result, said cut) claim {
 // undecided is the sentence for a check no rule decided, for the reason
 // given, with what the run cost after it.
 func (b Block) undecided(why string, said cut) claim {
-	cost := b.runCost(said)
-	return claim{state: "Not decided", figure: why + ". " + strings.ToUpper(cost[:1]) + cost[1:]}
+	return claim{state: "Not decided", figure: why + ". " + capital(b.runCost(said))}
 }
 
 // against sets a rule's figure beside what the rule holds it to. over says
 // the figure is past it. The limit comes back apart, so a long sentence can
 // leave it out. Withheld, the figure names no amount.
-func (b Block) against(result policy.Result, said cut, over bool) (figure, limit string) {
+func (b telling) against(result policy.Result, said cut, over bool) (figure, limit string) {
 	shown := b.Amounts == amountsShown
-	noun := ruleNouns[result.Rule]
+	noun := ruleNoun(result.Rule, b.request)
 	switch result.Rule {
 	case policy.RuleModelAllowlist:
 		used := "used a model that is not on the list"
@@ -259,12 +298,12 @@ func (b Block) against(result policy.Result, said cut, over bool) (figure, limit
 		case result.BaselineUSD == "":
 			return b.runCost(said), ", " + reach + "median of earlier runs"
 		}
-		return b.runCost(said), ", " + reach + money(budgetCurrency, result.BaselineUSD) + " median of earlier runs"
+		return b.runCost(said), ", " + reach + Money(budgetCurrency, result.BaselineUSD) + " median of earlier runs"
 	case policy.RulePullRequestBudget:
 		if !shown || result.CostUSD == "" || result.LimitUSD == "" {
-			return "this pull request's runs are " + standingWord(over) + " the " + noun + ", priced at list", ""
+			return "this " + b.request + "'s runs are " + standingWord(over) + " the " + noun + ", priced at list", ""
 		}
-		return "this pull request's runs cost " + money(budgetCurrency, result.CostUSD) + " at list" + b.totalBases(), heldTo(result.LimitUSD, noun, over)
+		return "this " + b.request + "'s runs cost " + Money(budgetCurrency, result.CostUSD) + " at list" + b.totalBases(), heldTo(result.LimitUSD, noun, over)
 	}
 	switch {
 	case !shown:
@@ -285,9 +324,9 @@ func standingWord(over bool) string {
 // heldTo names the limit a figure stands against.
 func heldTo(limit, noun string, over bool) string {
 	if over {
-		return ", over the " + money(budgetCurrency, limit) + " " + noun
+		return ", over the " + Money(budgetCurrency, limit) + " " + noun
 	}
-	return " of the " + money(budgetCurrency, limit) + " " + noun
+	return " of the " + Money(budgetCurrency, limit) + " " + noun
 }
 
 // allowedIncrease is how far over the median a run may go: the amount when
@@ -295,7 +334,7 @@ func heldTo(limit, noun string, over bool) string {
 func allowedIncrease(result policy.Result, shown bool) string {
 	switch {
 	case shown && result.LimitUSD != "" && result.BaselineUSD != "":
-		return money(budgetCurrency, result.LimitUSD)
+		return Money(budgetCurrency, result.LimitUSD)
 	case result.LimitPercent != "":
 		return result.LimitPercent + "%"
 	}
@@ -363,7 +402,7 @@ func (b Block) figures(said cut) string {
 		clause := "at list (" + basisLabels[figure.CostBasis] + ")"
 		switch {
 		case shown:
-			clause = money(figure.Currency, figure.ListCost) + " " + clause
+			clause = Money(figure.Currency, figure.ListCost) + " " + clause
 		case slices.Contains(clauses, clause):
 			continue
 		}
@@ -386,16 +425,16 @@ func (b Block) overCap() string {
 	if over, err := decimal.Parse(*b.Cap.Overshoot); err != nil || over.Sign() <= 0 {
 		return ""
 	}
-	return ", " + money(b.Cap.Currency, *b.Cap.Overshoot) + " over its " + money(b.Cap.Currency, b.Cap.Amount) + " cap"
+	return ", " + Money(b.Cap.Currency, *b.Cap.Overshoot) + " over its " + Money(b.Cap.Currency, b.Cap.Amount) + " cap"
 }
 
 // noFigure is the sentence for a report with no figures: the typed reason and
 // its sentence, and that no rule ran when none did.
-func (b Block) noFigure(besideEstimates, noRule bool) string {
+func (b telling) noFigure(noRule bool) string {
 	if b.Reason == AgentSkipped {
-		return "No agent run: the workflow skipped the agent's job on this pull request, so there is no cost to report."
+		return "No agent run: the workflow skipped the agent's job on this " + b.request + ", so there is no cost to report."
 	}
-	code, why := b.absence(besideEstimates)
+	code, why := b.absence()
 	text := "No figure (" + code + "): " + why + "."
 	if noRule {
 		text += " No rule ran."
@@ -406,20 +445,20 @@ func (b Block) noFigure(besideEstimates, noRule bool) string {
 // absence is the typed code for why a report has no figures, and its
 // sentence. The run's own reason names it when the run stated one, then the
 // report's reason, then its state.
-func (b Block) absence(besideEstimates bool) (code, why string) {
+func (b telling) absence() (code, why string) {
 	code = string(b.State)
 	if b.Reason != "" {
 		code = string(b.Reason)
 	}
 	rows := "rows"
-	if besideEstimates {
+	if b.besideEstimates {
 		rows = "agent rows"
 	}
 	switch {
 	case b.RunReason.Sentence() != "":
 		return string(b.RunReason), b.RunReason.Sentence()
 	case b.Reason == ForkNoRows:
-		return code, "this pull request comes from a fork, and its workflow run left no rows"
+		return code, "this " + b.request + " comes from a fork, and its workflow run left no rows"
 	case b.Reason == NoRowsFile:
 		return code, "no rows file reached this report. The agent's job log says why it wrote none"
 	case b.Reason == NotAFile:

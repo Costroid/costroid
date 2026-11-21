@@ -25,13 +25,6 @@ const (
 	followUpTrigger = "workflow_run"
 )
 
-const forkNoRowsSentence = "Reason: `" + string(comment.ForkNoRows) + "`. This pull request comes from a fork, and its workflow run left no rows. " +
-	"The recipes run no agent on a fork's pull request. A neutral check does not block a merge."
-
-// forkCapSentence ends the summary of a check the cap held at neutral.
-const forkCapSentence = "This pull request comes from a fork, and the fork's own run wrote these rows. " +
-	"Its check concludes neutral at most, so a rule that fails here warns and does not block a merge."
-
 var errNotGitHubActions = errors.New("follow-up refused: GitHub Actions was not detected")
 
 // finishedRun is the part of a workflow_run event the follow-up reads. GitHub
@@ -290,7 +283,8 @@ func finishedRunURL(id int64) string {
 // postFollowUp posts the check alone, and names the check run in its own
 // result object as report does. The pull request's number is not in a fork's
 // workflow_run event, and the check is what a required check reads. A fork's
-// verdict is held at neutral; a branch's stands as report's does.
+// verdict is held at neutral, and the check's title and the reason under it
+// say so; a branch's stands as report's does.
 func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, workflow string, input comment.Input, rowsPath string, fork bool, stderr io.Writer) comment.Input {
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
@@ -298,7 +292,7 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 	// The settings come from the default branch's commit, the one the
 	// follow-up runs from, and the warn-only period starts from the agent's
 	// workflow file on that branch.
-	verdict := decideVerdict(ctx, host, verdictRequest{
+	input.Verdict = decideVerdict(ctx, host, verdictRequest{
 		commits: policy.Commits{Base: pull.base, Head: pull.head, PullRequest: true},
 		start: func(ctx context.Context) policy.Start {
 			return finishedWorkflowStart(ctx, host, workflow, pull.base, stderr)
@@ -306,20 +300,10 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 		rowsPath: rowsPath,
 		state:    input.State,
 	}, stderr)
-	capped := fork && capAtNeutral(verdict)
-	input.Verdict = verdict
-	return postInputCheck(ctx, host, input, stderr, forkSentences(input, capped)...)
-}
-
-// capAtNeutral holds a fork's verdict at neutral and reports whether it moved
-// it. The recipes run no agent on a fork's pull request, so a fork's rows are
-// the fork's own statement: they neither block a merge nor pass a budget.
-func capAtNeutral(verdict *policy.Verdict) bool {
-	if verdict == nil || verdict.Conclusion == policy.Neutral {
-		return false
+	if fork {
+		input = input.OnForkRows()
 	}
-	verdict.Conclusion = policy.Neutral
-	return true
+	return postInputCheck(ctx, host, input, stderr)
 }
 
 // finishedWorkflowStart reads the history of the workflow file the finished
@@ -342,17 +326,4 @@ func finishedWorkflowStart(ctx context.Context, host scm.Reporter, workflow, bas
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	return start
-}
-
-// forkSentences end the summary of a fork's check: the reason when the fork's
-// run left no rows, and the cap when it held the verdict at neutral.
-func forkSentences(input comment.Input, capped bool) []string {
-	var sentences []string
-	if input.Reason == comment.ForkNoRows {
-		sentences = append(sentences, forkNoRowsSentence)
-	}
-	if capped {
-		sentences = append(sentences, forkCapSentence)
-	}
-	return sentences
 }

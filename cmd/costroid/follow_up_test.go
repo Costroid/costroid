@@ -21,6 +21,19 @@ const (
 	forkBranch = "main"
 )
 
+// The reason that stands under the title of a fork's check: for rows the
+// follow-up held at neutral, and for a run that left none.
+const (
+	forkHeldReason   = "This pull request comes from a fork, and the fork's own run wrote these rows. Its check concludes neutral at most, so a rule that fails here warns and does not block a merge."
+	forkNoRowsReason = "The recipes run no agent on a fork's pull request. A neutral check does not block a merge."
+)
+
+// underTitle reports a check whose summary opens on its title and states
+// reason as the paragraph under it.
+func underTitle(check scmtest.Check, reason string) bool {
+	return strings.HasPrefix(check.Summary, "**"+check.Title+"**\n\n"+reason+"\n\n")
+}
+
 // followUpEnvironment is a workflow_run job in example/widgets, after the
 // agent's workflow finished on pull request 7 from headRepository, which GitHub
 // lists as the head commit's one pull request.
@@ -64,7 +77,7 @@ func TestForkFollowUpPostsOneNeutralCheckWithTheReason(t *testing.T) {
 	if check.Name != "costroid" || check.Conclusion != "neutral" || check.HeadSHA != headCommit {
 		t.Errorf("check = %+v", check)
 	}
-	if !strings.Contains(check.Summary, "Reason: `fork_no_rows`.") || !strings.Contains(check.Text, `"reason": "fork_no_rows"`) {
+	if !strings.HasPrefix(check.Title, "No figure (fork_no_rows): ") || !underTitle(check, forkNoRowsReason) || !strings.Contains(check.Text, `"reason": "fork_no_rows"`) {
 		t.Errorf("no reason:\n%s\n%s", check.Summary, check.Text)
 	}
 	if !strings.Contains(check.Summary, "[CI run](https://github.com/example/widgets/actions/runs/19203384756)") {
@@ -211,8 +224,8 @@ func TestForkFollowUpCapsAtNeutral(t *testing.T) {
 	if check.Conclusion != "neutral" || check.HeadSHA != headCommit {
 		t.Errorf("check = %+v", check)
 	}
-	if !strings.HasSuffix(check.Summary, "\n\n"+forkCapSentence) {
-		t.Errorf("the summary does not say why:\n%s", check.Summary)
+	if !underTitle(check, forkHeldReason) {
+		t.Errorf("the summary does not say why under its title:\n%s", check.Summary)
 	}
 	block := checkBlock(t, check.Text)
 	validateResult(t, block)
@@ -237,8 +250,53 @@ func TestForkFollowUpLeavesANeutralVerdictAsItIs(t *testing.T) {
 	if code != 0 || len(stub.Checks) != 1 || stub.Checks[0].Conclusion != "neutral" {
 		t.Fatalf("exit %d, %+v: %s", code, stub.Checks, stderr)
 	}
-	if strings.Contains(stub.Checks[0].Summary, forkCapSentence) {
-		t.Errorf("an uncapped check names the cap:\n%s", stub.Checks[0].Summary)
+	if check := stub.Checks[0]; strings.Contains(check.Summary, forkHeldReason) || strings.Contains(check.Title, "fork") {
+		t.Errorf("an uncapped check names the cap:\n%s", check.Summary)
+	}
+}
+
+// TestAForksFailureHeldAtNeutralSaysSo gives a fork's pull request rows that
+// fail an enforced rule. The check concludes neutral, and its title says so
+// before anyone opens it: it opens on the rule's own noun and "on a fork's own
+// rows", names the amount only where amounts are shown, and ends on why the
+// check is neutral. The fork's sentence is the reason under the title, the
+// policy's own conclusion in the machine block is held as before, and no
+// sentence in the form "Reason: `code`." is left.
+func TestAForksFailureHeldAtNeutralSaysSo(t *testing.T) {
+	const closing = " A fork's rows are the fork's own claim, so the check is neutral."
+	figure := "this run cost USD " + realTotal + " at list (List-equivalent, not billed)"
+	for name, tc := range map[string]struct {
+		config string
+		public bool
+		title  string
+	}{
+		"over a budget, amounts shown": {enforcedOver, false,
+			"Over budget, on a fork's own rows: " + figure + ", over the USD 0.001 run budget." + closing},
+		"over a budget, amounts withheld": {enforcedOver + showCostOff, true,
+			"Over budget, on a fork's own rows: this run is over its run budget, priced at list (List-equivalent, not billed)." + closing + " Amounts are withheld here."},
+		"over a limit": {"policy:\n  max_run_cost_usd: \"0.001\"\n  enforce: true\n", false,
+			"Over limit, on a fork's own rows: " + figure + ", over the USD 0.001 run cost limit." + closing},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := followUpEnvironment(t, "stranger/widgets")
+			stub.Commits[agentWorkflow] = []time.Time{time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+			stub.Files[configFile] = tc.config
+			stub.SetPrivate(!tc.public)
+			code, _, stderr := execute(t, "follow-up", "--rows", realRows)
+			if code != 0 || len(stub.Checks) != 1 {
+				t.Fatalf("exit %d, %d checks: %s", code, len(stub.Checks), stderr)
+			}
+			check := stub.Checks[0]
+			if check.Conclusion != "neutral" || check.Title != tc.title {
+				t.Errorf("the check concludes %s under the title\n%s\nwant neutral under\n%s", check.Conclusion, check.Title, tc.title)
+			}
+			if !underTitle(check, forkHeldReason) || strings.Contains(check.Summary, "Reason: `") {
+				t.Errorf("the fork's sentence is not the reason under the title, or a sentence in the old form is left:\n%s", check.Summary)
+			}
+			if verdict := checkVerdict(t, check.Text); verdict.Conclusion != "neutral" || len(verdict.Results) == 0 || verdict.Results[0].Outcome != "fail" {
+				t.Errorf("the machine block's verdict = %+v", verdict)
+			}
+		})
 	}
 }
 

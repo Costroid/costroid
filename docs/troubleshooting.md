@@ -385,6 +385,7 @@ The check's title, the first line of the comment and the first line of the job s
 | `No figure (no_usage)`, `No figure (concurrent_run)`, `No figure (reader_refused)`, `No figure (agent_error)` | The run stated why it wrote no rows | [Running the agent](#running-the-agent) and [The run's summary](#the-runs-summary) have each reason's line, and [Agent errors](#agent-errors) the fix for each class |
 | `No figure (artifact_refused)` | The `costroid-rows` artifact held entries besides the rows and the run object, so the report read none of it and the check fails | [Installing the binary](#installing-the-binary) has the refused artifact's line |
 | `No agent run` | The workflow skipped the agent's job. The recipes skip it for a first-time contributor without the `costroid-agent` label and for a fork's pull request | None |
+| `Over budget, on a fork's own rows`, or another rule's opening before the same words | The pull request comes from a fork, and the fork's own run wrote rows that fail a rule. The follow-up holds the check at `neutral`, so it does not block a merge | None. [`docs/required-check.md`](required-check.md#a-forks-pull-request) says what a fork's pull request gets |
 
 ## costroid.yml
 

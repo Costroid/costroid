@@ -128,7 +128,7 @@ func (c *capCheck) line(preview bool) string {
 		if !preview || !c.compared {
 			return noCap
 		}
-		return noCap + " Cap: " + money(budgetCurrency, c.amount.String()) + ", which nothing enforced." + c.spent()
+		return noCap + " Cap: " + Money(budgetCurrency, c.amount.String()) + ", which nothing enforced." + c.spent()
 	}
 	if !c.compared {
 		return c.held() + " The figures above are not one " + budgetCurrency + " figure of one basis, so none is compared with the cap."
@@ -139,14 +139,14 @@ func (c *capCheck) line(preview bool) string {
 // held names the cap and what held the run to it, in words. The grade's id
 // stays in the machine block.
 func (c *capCheck) held() string {
-	return "Cap: " + money(budgetCurrency, c.amount.String()) + " (" + enforcementNotes[c.grade] + ")."
+	return "Cap: " + Money(budgetCurrency, c.amount.String()) + " (" + enforcementNotes[c.grade] + ")."
 }
 
 // spent states the cost and how far under or over the cap it is.
 func (c *capCheck) spent() string {
-	spent := " Cost: " + money(budgetCurrency, c.cost.String()) + ", " + basisLabels[c.basis] + "."
+	spent := " Cost: " + Money(budgetCurrency, c.cost.String()) + ", " + basisLabels[c.basis] + "."
 	if c.overshoot.Sign() == 0 {
-		return spent + " Under the cap by " + money(budgetCurrency, c.remainder.String()) + "."
+		return spent + " Under the cap by " + Money(budgetCurrency, c.remainder.String()) + "."
 	}
 	return spent + " " + c.over()
 }
@@ -154,7 +154,7 @@ func (c *capCheck) spent() string {
 // over states how far the run went over the cap, in its currency and, when
 // the rows tell, in tokens.
 func (c *capCheck) over() string {
-	over := "Over the cap by " + money(budgetCurrency, c.overshoot.String())
+	over := "Over the cap by " + Money(budgetCurrency, c.overshoot.String())
 	if c.overshootTokens != nil {
 		over += fmt.Sprintf(" and %s tokens", c.overshootTokens)
 	}
@@ -211,7 +211,7 @@ func limitLines(verdict *policy.Verdict, grade string) (lines, nouns []string) {
 		if !budgetRule || result.LimitUSD == "" {
 			continue
 		}
-		line := fmt.Sprintf("%s: %s, from `%s` in `costroid.yml`.", ruleLabels[result.Rule], money(budgetCurrency, result.LimitUSD), setting)
+		line := fmt.Sprintf("%s: %s, from `%s` in `costroid.yml`.", ruleLabels[result.Rule], Money(budgetCurrency, result.LimitUSD), setting)
 		if grade != "none" {
 			line += fmt.Sprintf(" The verdict checks this %s, never the cap.", limitNouns[result.Rule])
 		}

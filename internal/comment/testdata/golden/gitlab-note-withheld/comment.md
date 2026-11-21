@@ -16,7 +16,7 @@ Amounts are off on this public repository (`comment.show_cost: false`). The rows
 <details>
 <summary>Policy, agents, models and catalog</summary>
 
-Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this merge request applies after the merge, because the verdict reads the base branch's file.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
 

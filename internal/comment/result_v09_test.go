@@ -212,7 +212,7 @@ func TestResultV07StatesTheLifetimeAsTheCommentDoes(t *testing.T) {
 	if block.Lifetime == nil || !reflect.DeepEqual(*block.Lifetime, want) {
 		t.Errorf("lifetime %+v, want %+v", block.Lifetime, want)
 	}
-	lines := input.Lifetime.sentences()
+	lines := input.Lifetime.sentences(requestNoun(AccountGitHub))
 	for index, figure := range want.Figures {
 		if says := strings.Contains(lines[index], "may include a repeated report"); says != figure.MayRepeat {
 			t.Errorf("line %q, may_repeat %t", lines[index], figure.MayRepeat)

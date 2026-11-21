@@ -53,13 +53,19 @@ func FigureCost(figure BlockFigure) (decimal.Decimal, error) {
 	return cost, nil
 }
 
-// sentences states each figure, then what the figures leave out.
-func (l Lifetime) sentences() []string {
+// commitCap says why a change's totals can be short. Only GitHub keeps the
+// check runs the totals are read from, so the sentence names GitHub's limit
+// in GitHub's words on every host.
+const commitCap = "GitHub lists at most 250 commits of a pull request, so these totals can leave out later commits."
+
+// sentences states each figure, then what the figures leave out. request is
+// the host's word for a change.
+func (l Lifetime) sentences(request string) []string {
 	shown := l.Figures[:min(len(l.Figures), maxLifetimeFigures)]
 	var lines []string
 	for _, figure := range shown {
-		line := fmt.Sprintf("Across this pull request: %s at list (%s), from %d %s",
-			money(figure.Currency, figure.Cost.String()), basisLabels[figure.Basis], figure.Reports, plural(figure.Reports, "report", "reports"))
+		line := fmt.Sprintf("Across this %s: %s at list (%s), from %d %s",
+			request, Money(figure.Currency, figure.Cost.String()), basisLabels[figure.Basis], figure.Reports, plural(figure.Reports, "report", "reports"))
 		if figure.Undigested && figure.Reports > 1 {
 			line += ", which may include a repeated report"
 		}
@@ -69,7 +75,7 @@ func (l Lifetime) sentences() []string {
 		lines = append(lines, fmt.Sprintf("%d more %s in other currencies or bases are left out.", omitted, plural(omitted, "total", "totals")))
 	}
 	if l.Capped {
-		lines = append(lines, "GitHub lists at most 250 commits of a pull request, so these totals can leave out later commits.")
+		lines = append(lines, commitCap)
 	}
 	if l.Unread > 0 {
 		lines = append(lines, fmt.Sprintf("%d %s left out of these totals: this release cannot read or add up %s result %s.",
@@ -112,7 +118,7 @@ func CommentWithLifetime(input Input, lifetime *Lifetime) (string, error) {
 	data := lifetimeView{view: input.view()}
 	data.Block = fenced(block)
 	if lifetime != nil && input.Amounts == AmountsShown {
-		data.lines = lifetime.sentences()
+		data.lines = lifetime.sentences(input.request())
 	}
 	var out bytes.Buffer
 	if err := templates.ExecuteTemplate(&out, "comment", data); err != nil {

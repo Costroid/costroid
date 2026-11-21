@@ -411,6 +411,19 @@ func goldenStates(t *testing.T) map[string]Input {
 	// other follows in the body.
 	states["two-rules-fail"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_run_cost_usd: \"0.001\"\n  models:\n    - gpt-*\n"), afterPeriod, nil, nil))
 
+	// A fork's own rows fail a rule. The follow-up holds the check at neutral,
+	// and the sentence says so with the rule's own noun, shown and withheld.
+	states["fork-failure-held"] = fail.OnForkRows()
+	states["fork-failure-held-withheld"] = withheld(fail.OnForkRows())
+	states["fork-limit-held"] = states["limit-over"].OnForkRows()
+
+	// On GitLab a change is a merge request, in the sentence and in each line
+	// under it. GitLab keeps no check runs to add a change's total from, so a
+	// budget on that total is not decided there.
+	onGitLab := withVerdict(t, rulesVerdict(t, settings("policy:\n  pr_budget_usd: \"0.003\"\n"), insidePeriod, nil, nil))
+	onGitLab.AccountHost, onGitLab.Installation, onGitLab.CheckRunID = AccountGitLab, gitlabNamespace, nil
+	states["gitlab-note-request-budget"] = onGitLab
+
 	// The rows name a credential, a pull request and a head commit, as a run
 	// in CI does, so the attribution rule warns: its line is folded, under a
 	// budget and with no rule set.

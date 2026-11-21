@@ -18,15 +18,29 @@ func blockVerdict(verdict *policy.Verdict, shown bool) *policy.Verdict {
 	return &withheld
 }
 
+// ruleLabels open each rule's own line. The budget on a change's total is
+// labelled by ruleLabel, after the host's word for the change.
 var ruleLabels = map[string]string{
 	policy.RuleRunBudget:          "Run budget",
 	policy.RuleRunCostThreshold:   "Run cost limit",
 	policy.RuleRunIncrease:        "Increase over baseline",
 	policy.RuleRunIncreasePercent: "Percent increase over baseline",
-	policy.RulePullRequestBudget:  "Pull request budget",
 	policy.RuleMonthlyBudget:      "Monthly budget",
 	policy.RuleModelAllowlist:     "Model allowlist",
 	policy.RuleAttribution:        "Attribution",
+}
+
+// ruleLabel opens a rule's own line. request is the host's word for a change.
+func ruleLabel(rule, request string) string {
+	if rule == policy.RulePullRequestBudget {
+		return capital(request) + " budget"
+	}
+	return ruleLabels[rule]
+}
+
+// capital is text with its first letter in upper case.
+func capital(text string) string {
+	return strings.ToUpper(text[:1]) + text[1:]
 }
 
 var limitNouns = map[string]string{
@@ -69,6 +83,9 @@ func (i Input) reading(shown bool) []string {
 	if i.approved() {
 		add(approvalLine(*i.Approval))
 	}
+	if i.forkHeld {
+		add(forkHeldLine(i.request()))
+	}
 	if i.State == Reported {
 		add(i.trustLine())
 	} else {
@@ -108,7 +125,7 @@ func (i Input) otherRules(shown, attribution bool) []string {
 		case stated && result.Rule == decided.Rule:
 		case result.Rule == policy.RuleAttribution && !attribution && result.Rule != decided.Rule:
 		default:
-			lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.lifetimeBases()))
+			lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.lifetimeBases(), i.request()))
 		}
 	}
 	return lines
@@ -120,7 +137,7 @@ func (i Input) attributionNote() string {
 	decided, _ := deciding(i.Verdict)
 	for _, result := range i.Verdict.Results {
 		if result.Rule == policy.RuleAttribution && result.Rule != decided.Rule {
-			return resultSentence(result, i.Verdict.JoinableRows, false, nil)
+			return resultSentence(result, i.Verdict.JoinableRows, false, nil, i.request())
 		}
 	}
 	return ""
@@ -164,7 +181,7 @@ func (i Input) policyNotes() string {
 		notes = append(notes, attribution)
 	}
 	if i.Verdict.ConfigFromBase {
-		notes = append(notes, fromBase)
+		notes = append(notes, fromBase(i.request()))
 	}
 	return strings.Join(notes, " ")
 }
@@ -201,14 +218,16 @@ func VerdictLines(input Input, config string) []string {
 		lines = append(lines, warnOnlySentence(verdict.WarnOnly))
 	}
 	if verdict.ConfigFromBase {
-		lines = append(lines, fromBase)
+		lines = append(lines, fromBase(input.request()))
 	}
 	return lines
 }
 
 // fromBase says why a change to costroid.yml in the pull request does not
 // reach its own verdict.
-const fromBase = "A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file."
+func fromBase(request string) string {
+	return "A change to `costroid.yml` in this " + request + " applies after the merge, because the verdict reads the base branch's file."
+}
 
 // configSentence says why no rule ran when the costroid.yml named could not
 // be used, and is empty when it could.
@@ -235,8 +254,10 @@ func noRuleApplied(config string) string {
 	return "No rule applied: " + config + " sets no budget and no limit. " + setBudget
 }
 
-func resultSentence(result policy.Result, joinable int, shown bool, bases []string) string {
-	label, noun := ruleLabels[result.Rule], limitNouns[result.Rule]
+// resultSentence is a rule's own line. request is the host's word for a
+// change, and bases are the bases the change's total adds.
+func resultSentence(result policy.Result, joinable int, shown bool, bases []string, request string) string {
+	label, noun := ruleLabel(result.Rule, request), limitNouns[result.Rule]
 	switch {
 	case result.Rule == policy.RuleModelAllowlist:
 		return label + ": " + allowlistSentence(result)
@@ -245,7 +266,7 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 			return label + ": " + sentence
 		}
 	case result.Rule == policy.RulePullRequestBudget:
-		if sentence := pullRequestSentence(result, shown, bases); sentence != "" {
+		if sentence := pullRequestSentence(result, shown, bases, request); sentence != "" {
 			return label + ": " + sentence
 		}
 	}
@@ -253,18 +274,18 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("%s: %s is over the %s %s.", label, money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), noun)
+			return fmt.Sprintf("%s: %s is over the %s %s.", label, Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), noun)
 		}
 		return fmt.Sprintf("%s: the run is over the %s.", label, noun)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s: %s is within the %s %s.", label, money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), noun)
+			return fmt.Sprintf("%s: %s is within the %s %s.", label, Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), noun)
 		}
 		return fmt.Sprintf("%s: the run is within the %s.", label, noun)
 	case policy.ReasonUnverifiedRows:
-		return label + ": unchecked rows cannot satisfy a budget." + standing(result, shown, bases)
+		return label + ": unchecked rows cannot satisfy a budget." + standing(result, shown, bases, request)
 	case policy.ReasonUnattributedRows:
-		return label + ": unattributed rows cannot satisfy a budget." + standing(result, shown, bases)
+		return label + ": unattributed rows cannot satisfy a budget." + standing(result, shown, bases, request)
 	case policy.ReasonNoRows:
 		return label + ": this check read no rows, so it cannot pass."
 	case policy.ReasonOtherCurrency:
@@ -276,7 +297,7 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 	if joinable == 1 {
 		rows = "row names"
 	}
-	return fmt.Sprintf("%s: %d %s a credential, a pull request and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.", label, joinable, rows)
+	return fmt.Sprintf("%s: %d %s a credential, a %s and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.", label, joinable, rows, request)
 }
 
 // budgetRules are the rules that hold a figure to a USD budget or threshold.
@@ -286,18 +307,18 @@ var budgetRules = []string{policy.RuleRunBudget, policy.RuleRunCostThreshold, po
 // the rows kept the rule from passing although the figure was within it. It
 // is empty for any other rule, and for a rule that held no figure. The pack
 // reaches these reasons only after it found the figure not over the limit.
-func standing(result policy.Result, shown bool, bases []string) string {
+func standing(result policy.Result, shown bool, bases []string, request string) string {
 	if !slices.Contains(budgetRules, result.Rule) || result.CostUSD == "" || result.LimitUSD == "" {
 		return ""
 	}
 	noun := limitNouns[result.Rule]
 	switch {
 	case result.Rule == policy.RulePullRequestBudget && shown:
-		return fmt.Sprintf(" This pull request's runs cost %s of the %s budget. %s", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), totalBases(bases))
+		return fmt.Sprintf(" This %s's runs cost %s of the %s budget. %s", request, Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), totalBases(bases))
 	case result.Rule == policy.RulePullRequestBudget:
-		return " This pull request's runs are within the budget. " + totalBases(bases)
+		return " This " + request + "'s runs are within the budget. " + totalBases(bases)
 	case shown:
-		return fmt.Sprintf(" The run cost %s of the %s %s.", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), noun)
+		return fmt.Sprintf(" The run cost %s of the %s %s.", Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), noun)
 	}
 	return fmt.Sprintf(" The run is within the %s.", noun)
 }
@@ -388,17 +409,17 @@ func increaseSentence(result policy.Result, shown bool) string {
 	}
 	amounts := shown && result.CostUSD != "" && result.BaselineUSD != ""
 	if amounts && result.LimitUSD != "" {
-		allowed = money(budgetCurrency, result.LimitUSD)
+		allowed = Money(budgetCurrency, result.LimitUSD)
 	}
 	switch result.Reason {
 	case policy.ReasonOverBaseline:
 		if amounts {
-			return fmt.Sprintf("%s is more than %s over the %s median of earlier runs.", money(budgetCurrency, result.CostUSD), allowed, money(budgetCurrency, result.BaselineUSD))
+			return fmt.Sprintf("%s is more than %s over the %s median of earlier runs.", Money(budgetCurrency, result.CostUSD), allowed, Money(budgetCurrency, result.BaselineUSD))
 		}
 		return fmt.Sprintf("the run is more than %s over the median of earlier runs.", allowed)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s is at most %s over the %s median of earlier runs.", money(budgetCurrency, result.CostUSD), allowed, money(budgetCurrency, result.BaselineUSD))
+			return fmt.Sprintf("%s is at most %s over the %s median of earlier runs.", Money(budgetCurrency, result.CostUSD), allowed, Money(budgetCurrency, result.BaselineUSD))
 		}
 		return fmt.Sprintf("the run is at most %s over the median of earlier runs.", allowed)
 	case policy.ReasonNoBaseline:
@@ -409,23 +430,23 @@ func increaseSentence(result policy.Result, shown bool) string {
 
 // pullRequestSentence states the pull request's total against its budget, or
 // is empty for a reason every rule states alike.
-func pullRequestSentence(result policy.Result, shown bool, bases []string) string {
+func pullRequestSentence(result policy.Result, shown bool, bases []string, request string) string {
 	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("%s over this pull request's runs is over the %s budget. %s", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), totalBases(bases))
+			return fmt.Sprintf("%s over this %s's runs is over the %s budget. %s", Money(budgetCurrency, result.CostUSD), request, Money(budgetCurrency, result.LimitUSD), totalBases(bases))
 		}
-		return "this pull request's runs are over the budget. " + totalBases(bases)
+		return "this " + request + "'s runs are over the budget. " + totalBases(bases)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s over this pull request's runs is within the %s budget. %s", money(budgetCurrency, result.CostUSD), money(budgetCurrency, result.LimitUSD), totalBases(bases))
+			return fmt.Sprintf("%s over this %s's runs is within the %s budget. %s", Money(budgetCurrency, result.CostUSD), request, Money(budgetCurrency, result.LimitUSD), totalBases(bases))
 		}
-		return "this pull request's runs are within the budget. " + totalBases(bases)
+		return "this " + request + "'s runs are within the budget. " + totalBases(bases)
 	case policy.ReasonNoLifetime:
-		return "this check read no total for the pull request's earlier runs, so the rule did not run."
+		return "this check read no total for the " + request + "'s earlier runs, so the rule did not run."
 	case policy.ReasonRepeatPossible:
-		return "the pull request's total may count a report twice, so it cannot show the budget broken or kept."
+		return "the " + request + "'s total may count a report twice, so it cannot show the budget broken or kept."
 	}
 	return ""
 }
