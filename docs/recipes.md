@@ -2,7 +2,7 @@
 
 These recipes run a coding agent on a pull request under a budget and record what it cost. They use the repository's own token. They need no App, no server and no account.
 
-Each GitHub recipe pins Costroid's action to the commit of `v1.0.0-alpha.26`, and the GitLab template installs the same release. The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret, the provider key, and names no version and no checksum. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release. [`docs/verify.md`](verify.md) says what the action checks.
+Each GitHub recipe pins Costroid's action to the commit of `v1.0.0-alpha.27`, and the GitLab template installs the same release. The action installs the release its own commit belongs to. It checks that release's `SHA256SUMS` by its signature, then the binary against it, on `amd64` and `arm64` runners alike, so a GitHub repository sets one secret, the provider key, and names no version and no checksum. Set `COSTROID_VERSION` and `COSTROID_SHA256` only to install a different release. [`docs/verify.md`](verify.md) says what the action checks.
 
 ## Claude Code
 
@@ -145,6 +145,8 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. The
 
 [`recipes/github-connect.yml`](../recipes/github-connect.yml) binds the repository's owner to its Costroid Platform tenant from the default branch, so the agent recipes' `ingest` job can send rows there. [`docs/connect.md`](connect.md) says what it proves and what it binds.
 
+[`recipes/github-merged.yml`](../recipes/github-merged.yml) sends Costroid Platform one merge fact for each pull request a push to the default branch closed. Copy it to `.github/workflows/costroid-merged.yml` on the default branch, beside the connect workflow. It runs on a push, never on a pull request's close, because a push runs the default branch's own workflow file. [`docs/export.md`](export.md#merge-facts) says what a merge fact holds and what its run token proves.
+
 ## Vantage and Datadog
 
 [`recipes/github-vantage-upload.yml`](../recipes/github-vantage-upload.yml) and [`recipes/github-datadog-upload.yml`](../recipes/github-datadog-upload.yml) send one UTC day's rows to Vantage or to Datadog's Custom Costs, once a day, with your own token. Each reads the `costroid-rows` artifacts the repository's runs kept that day. Datadog counts a file sent twice twice. [`docs/export.md`](export.md#send-the-days-file) says what each needs and what a second send of a day does.
@@ -227,7 +229,8 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | `pull_request`, never `pull_request_target`                                 | A fork's code never runs with the base repository's secrets                         |
 | Permissions declared per job                                                | The workflow grants nothing, and each job names what it needs                       |
 | The agent's job holds `contents: read` and nothing else                     | GitHub grants permissions per job, so the agent runs in a job of its own            |
-| `id-token: write` on the `ingest` job, and on the jobs that mint and close a gateway key in its environment | An agent that could mint the token could forge its run's identity, and only a job the environment admitted may attest a key |
+| `id-token: write` on the `ingest` job, the connect job, the job that runs `costroid merged`, and the jobs that mint and close a gateway key in its environment | An agent that could mint the token could forge its run's identity, and only a job the environment admitted may attest a key |
+| A job that runs `costroid merged` holds `contents: read`, `pull-requests: read` and `id-token: write`, runs on `push` alone with the default-branch test joined by `&&` in its `if`, holds no code and no agent, and reads the integration token from one secret in the step's `env` | A pull request's event runs the pull request's own workflow file, so only the default branch's own file decides what a fact says |
 | Every action pinned to a full SHA, with its release beside it               | A moved tag cannot change what runs                                                 |
 | Content flags off                                                           | Prompts, responses, tool input and API bodies stay out of telemetry                 |
 | An agent outside `costroid run` sets the six join attributes               | The agent's own telemetry names the pull request, as under `costroid run`           |
@@ -268,7 +271,7 @@ Each SHA was read with `gh api repos/<action>/git/ref/tags/<release>` on Novembe
 | --------------------------- | ------- | ------------------------------------------ |
 | `actions/checkout`          | v7.0.1  | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | `step-security/harden-runner` | v2.22.3 | `46b06cea07f9e64621fdf066ba77ac6915163d43` |
-| `Costroid/costroid/action` | v1.0.0-alpha.26 | `18bac6f9753f2c19941e17e0429571274cf0a21a` |
+| `Costroid/costroid/action` | v1.0.0-alpha.27 | `89b6d38280eebb3da02635a6f161c83cc8c7327d` |
 | `anthropics/claude-code-action` | v1.0.248 | `1d6de8cb0c237e7c15e9e1bdf973826ebae490cc` |
 | `actions/upload-artifact`   | v7.0.2  | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
 | `actions/download-artifact` | v8.0.2  | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |

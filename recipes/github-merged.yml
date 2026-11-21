@@ -1,0 +1,38 @@
+# Sends Costroid Platform one merge fact for each pull request a push to the
+# default branch closed. Copy to .github/workflows/costroid-merged.yml on the
+# default branch, beside the connect workflow. docs/export.md says what a
+# merge fact holds and what its run token proves.
+name: costroid-merged
+
+on:
+  # A push runs the default branch's own workflow file, and its run token
+  # names the pushed commit, so the platform can hold the fact to it. A
+  # pull request's closed event runs the pull request's own file.
+  push:
+
+permissions: {}
+
+jobs:
+  merged:
+    if: >-
+      vars.COSTROID_PLATFORM_URL != ''
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      # Reads which merged pull requests each pushed commit closed.
+      contents: read
+      pull-requests: read
+      # The run token: the job's OIDC token, minted for the tenant's rows
+      # audience, which names the run and the pushed commit.
+      id-token: write
+    steps:
+      - uses: Costroid/costroid/action@89b6d38280eebb3da02635a6f161c83cc8c7327d # v1.0.0-alpha.27
+        with:
+          stage: install
+      - name: Send the merge facts
+        env:
+          COSTROID_PLATFORM_URL: ${{ vars.COSTROID_PLATFORM_URL }}
+          COSTROID_PLATFORM_TOKEN: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: costroid merged --platform-url "$COSTROID_PLATFORM_URL" --installation-id "github-owner:$GITHUB_REPOSITORY_OWNER_ID"

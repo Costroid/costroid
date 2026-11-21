@@ -48,7 +48,7 @@ jobs:
           path: ${{ runner.temp }}/info
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - uses: Costroid/costroid/action@18bac6f9753f2c19941e17e0429571274cf0a21a # v1.0.0-alpha.26
+      - uses: Costroid/costroid/action@89b6d38280eebb3da02635a6f161c83cc8c7327d # v1.0.0-alpha.27
         with:
           stage: install
       # A refused or missing artifact writes empty rows and the reason, which
@@ -83,7 +83,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@18bac6f9753f2c19941e17e0429571274cf0a21a # v1.0.0-alpha.26
+      - uses: Costroid/costroid/action@89b6d38280eebb3da02635a6f161c83cc8c7327d # v1.0.0-alpha.27
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}

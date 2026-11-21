@@ -29,7 +29,7 @@ jobs:
       # Lists the rows artifacts the day's runs kept, and downloads them.
       actions: read
     steps:
-      - uses: Costroid/costroid/action@18bac6f9753f2c19941e17e0429571274cf0a21a # v1.0.0-alpha.26
+      - uses: Costroid/costroid/action@89b6d38280eebb3da02635a6f161c83cc8c7327d # v1.0.0-alpha.27
         with:
           stage: install
       # The agents' jobs wrote these files. costroid reads them as rows, and no
