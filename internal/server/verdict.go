@@ -41,9 +41,12 @@ const (
 // the process's, as the children's memory is, so every Server shares them.
 var packChildren = make(chan struct{}, maxPackChildren)
 
-// packWait is how long a verdict waits for a slot: the deadline of a running
-// child, by which every slot it holds is free again.
-var packWait = 2 * time.Second
+// packRetrySeconds is when a refused verdict is told to ask again: the
+// deadline of a running child, by which every slot it holds is free again.
+const packRetrySeconds = 2
+
+// packWait is how long a verdict waits for a slot: the same deadline.
+var packWait = packRetrySeconds * time.Second
 
 // spendAttestation is what costroid gateway close sends once the run is over:
 // the run its key was minted for and what the gateway counted on the key. The
@@ -262,8 +265,8 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 	if request.Pack.Read() {
 		release, admitted := admitPack(r.Context())
 		if !admitted {
-			w.Header().Set("Retry-After", strconv.Itoa(int(packWait/time.Second)))
-			s.fail(w, r, refuse(http.StatusServiceUnavailable, codePackBusy, fmt.Sprintf("The service runs %d policy packs at once, and none ended within %s. Retry after %s.", maxPackChildren, packWait, packWait)))
+			w.Header().Set("Retry-After", strconv.Itoa(packRetrySeconds))
+			s.fail(w, r, refuse(http.StatusServiceUnavailable, codePackBusy, fmt.Sprintf("The service runs %d policy packs at once, and all %d were busy. Retry in %d seconds.", maxPackChildren, maxPackChildren, packRetrySeconds)))
 			return
 		}
 		defer release()
