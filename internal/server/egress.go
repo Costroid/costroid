@@ -14,11 +14,18 @@ import (
 	"github.com/Costroid/costroid/internal/store"
 )
 
-// EgressUsage is egress' help page. costroid help egress prints it on stdout,
-// and a command line egress cannot read prints it on stderr.
+// EgressUsage is egress' help page. costroid help egress prints it on stdout.
+// egressGroup is what costroid egress prints with no subcommand.
+var egressGroup = cli.Group{
+	Command:     "egress",
+	Summary:     "egress report prints the service's outbound calls: one line per UTC day, host and outcome, which is completed, failed or refused.",
+	Subcommands: []cli.Row{{"report", "print the calls by day, host and outcome"}},
+	Example:     []string{"costroid egress report"},
+}
+
 var EgressUsage = cli.Page{
 	Command:  "egress",
-	Summary:  "egress report prints the service's outbound calls: one line per UTC day, host and outcome, which is completed, failed or refused.",
+	Summary:  egressGroup.Summary,
 	Usage:    []string{"costroid egress report [--json]"},
 	Examples: []string{"costroid egress report", "costroid egress report --json"},
 	Flags:    []cli.Row{{"--json", "print JSON"}},
@@ -40,7 +47,11 @@ const noEgress = "No outbound call has been recorded."
 
 // EgressMain runs costroid egress and returns an exit code.
 func EgressMain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	err := egressCommand(ctx, args, stdout, stderr)
+	if len(args) == 0 {
+		fmt.Fprint(stdout, egressGroup)
+		return exitFailure
+	}
+	err := egressCommand(ctx, args, stdout)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -51,11 +62,7 @@ func EgressMain(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	return 0
 }
 
-func egressCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, EgressUsage)
-		return errors.New("egress needs report")
-	}
+func egressCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	switch args[0] {
 	case "report":
 		return egressReport(ctx, args[1:], stdout)
@@ -63,7 +70,7 @@ func egressCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		fmt.Fprint(stdout, EgressUsage)
 		return flag.ErrHelp
 	}
-	return fmt.Errorf("unknown egress command %q", args[0])
+	return egressGroup.Unknown(args[0])
 }
 
 func egressReport(ctx context.Context, args []string, stdout io.Writer) error {

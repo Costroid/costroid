@@ -41,7 +41,7 @@ const (
 
 // groupNames head the groups of the bare call. It sets them two abreast, in
 // this order.
-var groupNames = []string{"On your machine", "In a workflow job", "To a platform", "For a ledger of your own"}
+var groupNames = []string{"On your machine", "In a workflow job", "To a platform or a provider", "For a ledger of your own"}
 
 type runner func(ctx context.Context, args []string, std stdio) int
 
@@ -74,12 +74,12 @@ var commands = []command{
 	{name: "merged", where: toAPlatform, does: "send merge facts", help: mergedHelp, run: mergedCommand},
 	{name: "connect", where: toAPlatform, does: "bind an owner", help: connectHelp, run: connectCommand},
 	{name: "emit-otlp", where: toAPlatform, does: "send rows as OTLP spans", help: emitOTLPHelp, run: emitOTLPCommand},
+	{name: "reconcile", where: toAPlatform, does: "compare with a provider", help: reconcileHelp, run: reconcileWithProvider},
 	{name: "serve", where: forALedger, does: "run the ingest service", help: server.ServeUsage, run: func(ctx context.Context, args []string, std stdio) int { return server.Main(ctx, args, std.stderr) }},
 	{name: "keys", where: forALedger, does: "issue and revoke keys", help: server.KeysUsage, run: withOutputs(server.KeysMain)},
 	{name: "egress", where: forALedger, does: "report outbound calls", help: server.EgressUsage, run: withOutputs(server.EgressMain)},
 	{name: "gateway", where: forALedger, does: "give a run its own key", help: gatewayUsage, run: withOutputs(gatewayCommand)},
 	{name: "app", where: forALedger, does: "register the GitHub App", help: appHelp, run: appCommand},
-	{name: "reconcile", where: forALedger, does: "compare with a provider", help: reconcileHelp, run: reconcileWithProvider},
 }
 
 func withOutputs(fn func(ctx context.Context, args []string, stdout, stderr io.Writer) int) runner {
@@ -612,8 +612,10 @@ the schema allows.`,
 	Usage:    []string{"costroid validate [costroid.yml]"},
 	Examples: []string{"costroid validate", "costroid validate base.yml"},
 	Sections: []cli.Section{
-		{Heading: "What it checks and prints", Body: []cli.Block{cli.Text(`A policy amount or approval.expires_days that YAML reads as
-a float, such as 5.0, is a problem too, because the check refuses it. validate
+		{Heading: "What it checks and prints", Body: []cli.Block{cli.Text(`A policy amount is a plain decimal, quoted or not: 5, 5.0 and "2.50" are
+valid, and an amount written another way, such as 1e3, is a problem. An
+approval.expires_days that YAML reads as a float, such as 7.0, is a problem
+too, because the check refuses it. validate
 prints one line per problem, or valid. With no file named and no costroid.yml
 here, it says the defaults apply.
 

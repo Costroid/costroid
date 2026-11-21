@@ -26,10 +26,24 @@ import (
 	"github.com/Costroid/costroid/internal/scm"
 )
 
-var appHelp = cli.Page{
+// appGroup is what costroid app prints with no subcommand.
+var appGroup = cli.Group{
 	Command: "app",
 	Summary: `app registers the GitHub App that costroid serve posts the approve button's
 checks as.`,
+	Subcommands: []cli.Row{
+		{"manifest", "print the App's manifest as JSON"},
+		{"create", "create the App and import its private key"},
+	},
+	Example: []string{
+		`costroid app manifest --name "Costroid for example" \`,
+		"    --webhook-url https://costroid.example.com/webhooks/github",
+	},
+}
+
+var appHelp = cli.Page{
+	Command: "app",
+	Summary: appGroup.Summary,
 	Usage: []string{
 		"costroid app manifest --name NAME --webhook-url URL",
 		"costroid app create --name NAME --webhook-url URL --kms-key KEY [--org ORG]",
@@ -125,7 +139,7 @@ func appCommand(ctx context.Context, args []string, std stdio) int {
 
 func appMain(ctx context.Context, args []string, world appWorld, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, appHelp)
+		fmt.Fprint(stdout, appGroup)
 		return exitFailure
 	}
 	var err error
@@ -138,7 +152,7 @@ func appMain(ctx context.Context, args []string, world appWorld, stdout, stderr 
 		fmt.Fprint(stdout, appHelp)
 		return 0
 	default:
-		err = fmt.Errorf("unknown app command %q", args[0])
+		err = appGroup.Unknown(args[0])
 	}
 	if errors.Is(err, flag.ErrHelp) {
 		return 0

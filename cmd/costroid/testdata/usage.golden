@@ -10,13 +10,12 @@ On your machine                       In a workflow job
   validate  check costroid.yml          mcp           answer an agent over MCP
   version   print the release           lint-recipes  check Costroid's recipes
 
-To a platform                         For a ledger of your own
-  export     send or convert rows       serve      run the ingest service
-  merged     send merge facts           keys       issue and revoke keys
-  connect    bind an owner              egress     report outbound calls
-  emit-otlp  send rows as OTLP spans    gateway    give a run its own key
-                                        app        register the GitHub App
-                                        reconcile  compare with a provider
+To a platform or a provider           For a ledger of your own
+  export     send or convert rows       serve    run the ingest service
+  merged     send merge facts           keys     issue and revoke keys
+  connect    bind an owner              egress   report outbound calls
+  emit-otlp  send rows as OTLP spans    gateway  give a run its own key
+  reconcile  compare with a provider    app      register the GitHub App
 
 Example, with nothing set up:  costroid demo
 Help for one command:          costroid help <command>

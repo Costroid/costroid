@@ -12,11 +12,22 @@ import (
 	"github.com/Costroid/costroid/internal/store"
 )
 
-// KeysUsage is keys' help page. costroid help keys prints it on stdout, and a
-// command line keys cannot read prints it on stderr.
-var KeysUsage = cli.Page{
+// KeysUsage is keys' help page. costroid help keys prints it on stdout, and
+// keys revoke prints it on stderr when it is given no id.
+// keysGroup is what costroid keys prints with no subcommand.
+var keysGroup = cli.Group{
 	Command: "keys",
 	Summary: "keys issues and revokes tenant ingest keys.",
+	Subcommands: []cli.Row{
+		{"create", "issue a key for a tenant"},
+		{"revoke", "stop a key by its id"},
+	},
+	Example: []string{"costroid keys create --owner github.com:example > key"},
+}
+
+var KeysUsage = cli.Page{
+	Command: "keys",
+	Summary: keysGroup.Summary,
 	Usage: []string{
 		"costroid keys create --owner HOST:OWNER",
 		"costroid keys revoke <id>",
@@ -46,6 +57,10 @@ var keyID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // KeysMain runs costroid keys and returns an exit code.
 func KeysMain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprint(stdout, keysGroup)
+		return exitFailure
+	}
 	err := keysCommand(ctx, args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -58,10 +73,6 @@ func KeysMain(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 }
 
 func keysCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, KeysUsage)
-		return errors.New("keys needs create or revoke")
-	}
 	switch args[0] {
 	case "create":
 		return createKey(ctx, args[1:], stdout, stderr)
@@ -71,7 +82,7 @@ func keysCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		fmt.Fprint(stdout, KeysUsage)
 		return flag.ErrHelp
 	}
-	return fmt.Errorf("unknown keys command %q", args[0])
+	return keysGroup.Unknown(args[0])
 }
 
 func createKey(ctx context.Context, args []string, stdout, stderr io.Writer) error {

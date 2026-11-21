@@ -672,8 +672,8 @@ func TestGatewayCloseRefusesWhatItCannotCloseSafely(t *testing.T) {
 }
 
 func TestGatewayUsage(t *testing.T) {
-	if code, _, stderr := execute(t, "gateway"); code != exitFailure || !strings.Contains(stderr, "costroid gateway keygen") {
-		t.Errorf("no subcommand: exit %d, %s", code, stderr)
+	if code, stdout, stderr := execute(t, "gateway"); code != exitFailure || stdout != gatewayGroup.String() || stderr != "" {
+		t.Errorf("no subcommand: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	if code, stdout, _ := execute(t, "gateway", "help"); code != 0 || !strings.Contains(stdout, "https") {
 		t.Errorf("help: exit %d, %s", code, stdout)

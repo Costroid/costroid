@@ -20,9 +20,23 @@ import (
 	"github.com/Costroid/costroid/internal/gateway"
 )
 
-var gatewayUsage = cli.Page{
+// gatewayGroup is what costroid gateway prints with no subcommand.
+var gatewayGroup = cli.Group{
 	Command: "gateway",
 	Summary: "gateway gives one CI run its own key on a LiteLLM proxy.",
+	Subcommands: []cli.Row{
+		{"keygen", "draw a sealing key pair"},
+		{"public-key", "print the sealing key's public half"},
+		{"request", "draw the run's key and seal it"},
+		{"mint", "register the run's key on the gateway"},
+		{"close", "delete the run's key"},
+	},
+	Example: []string{"costroid gateway keygen --out sealing-key"},
+}
+
+var gatewayUsage = cli.Page{
+	Command: "gateway",
+	Summary: gatewayGroup.Summary,
 	Usage: []string{
 		"costroid gateway keygen --out FILE",
 		"costroid gateway public-key",
@@ -140,7 +154,7 @@ const (
 
 func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, gatewayUsage)
+		fmt.Fprint(stdout, gatewayGroup)
 		return exitFailure
 	}
 	var err error
@@ -159,7 +173,7 @@ func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprint(stdout, gatewayUsage)
 		return 0
 	default:
-		err = fmt.Errorf("unknown gateway command %q", args[0])
+		err = gatewayGroup.Unknown(args[0])
 	}
 	if errors.Is(err, flag.ErrHelp) {
 		return 0

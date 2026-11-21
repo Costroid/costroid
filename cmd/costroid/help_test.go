@@ -584,6 +584,97 @@ func TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp(t *testing.T) {
 	}
 }
 
+// TestAGroupCommandAloneListsItsSubcommands holds what a command that takes a
+// subcommand prints with none: the sentence its help page opens with, each
+// subcommand of its usage once with what it does, one of the page's own
+// examples and where the whole page is, on stdout, in one screen. A mistyped
+// subcommand gets what a mistyped command gets.
+func TestAGroupCommandAloneListsItsSubcommands(t *testing.T) {
+	for name, mistyped := range map[string][2]string{
+		"gateway": {"mnit", "The nearest command is mint."},
+		"app":     {"frob", "No command is near it."},
+		"keys":    {"crate", "The nearest command is create."},
+		"egress":  {"reprot", "The nearest command is report."},
+	} {
+		entry, _ := lookup(name)
+		code, stdout, stderr := execute(t, name)
+		if code != exitFailure || stderr != "" {
+			t.Fatalf("%s: exit %d, stderr %q", name, code, stderr)
+		}
+		summary, _, _ := pageParts(entry.help)
+		if !strings.HasPrefix(stdout, summary) {
+			t.Errorf("%s alone does not open with the sentence its help opens with:\n%s", name, stdout)
+		}
+		lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+		if len(lines) > screenLines || lines[len(lines)-1] != "Help for this command:  costroid help "+name {
+			t.Errorf("%s alone prints %d lines, and ends on %q", name, len(lines), lines[len(lines)-1])
+		}
+		for _, line := range lines {
+			if utf8.RuneCountInString(line) > usageWidth {
+				t.Errorf("%s alone prints a line of %d columns: %s", name, utf8.RuneCountInString(line), line)
+			}
+		}
+		subcommands := 0
+		for _, form := range usageForms(entry.help, func(string) bool { return true }) {
+			if len(form.words) == 0 {
+				t.Fatalf("a usage form of %s names no subcommand", name)
+			}
+			subcommands++
+			if found := len(regexp.MustCompile(`(?m)^  `+regexp.QuoteMeta(form.words[0])+` {2,}\S`).FindAllString(stdout, -1)); found != 1 {
+				t.Errorf("%s alone gives %s a line %d times, want once:\n%s", name, form.words[0], found, stdout)
+			}
+		}
+		if listed := len(regexp.MustCompile(`(?m)^  [a-z-]+ {2,}\S`).FindAllString(stdout, -1)); listed != subcommands {
+			t.Errorf("%s alone lists %d subcommands, and its usage has %d", name, listed, subcommands)
+		}
+		_, example, found := strings.Cut(stdout, "\nExample:\n")
+		example, _, _ = strings.Cut(example, "\n\n")
+		joined := strings.Join(strings.Fields(strings.ReplaceAll(example, "\\\n", " ")), " ")
+		held := slices.ContainsFunc(pageExamples(entry.help), func(line string) bool { return strings.Join(strings.Fields(line), " ") == joined })
+		if !found || !held {
+			t.Errorf("%s alone shows an example its help page does not hold: %q", name, joined)
+		}
+		if code, page, _ := execute(t, "help", name); code != 0 || page != entry.help || page == stdout {
+			t.Errorf("costroid help %s does not print the whole page: exit %d", name, code)
+		}
+		code, stdout, stderr = execute(t, name, mistyped[0])
+		want := fmt.Sprintf("costroid: unknown %s command %q\n%s\nRun costroid help %s to list its commands.\n", name, mistyped[0], mistyped[1], name)
+		if code != exitFailure || stdout != "" || stderr != want {
+			t.Errorf("%s %s: exit %d, stdout %q, stderr:\n%swant:\n%s", name, mistyped[0], code, stdout, stderr, want)
+		}
+	}
+}
+
+// TestValidatesHelpSaysWhatValidateDoes runs validate on each value its help
+// names: the amounts it calls valid, the amount it calls a problem, and the
+// float it says approval.expires_days may not be.
+func TestValidatesHelpSaysWhatValidateDoes(t *testing.T) {
+	help := strings.Join(strings.Fields(validateHelp), " ")
+	amounts := `A policy amount is a plain decimal, quoted or not: 5, 5.0 and "2.50" are valid, and an amount written another way, such as 1e3, is a problem.`
+	days := "An approval.expires_days that YAML reads as a float, such as 7.0, is a problem too, because the check refuses it."
+	for _, sentence := range []string{amounts, days} {
+		if !strings.Contains(help, sentence) {
+			t.Fatalf("validate's help does not say: %s", sentence)
+		}
+	}
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for file, valid := range map[string]bool{
+		"policy:\n  run_budget_usd: 5\n":        true,
+		"policy:\n  run_budget_usd: 5.0\n":      true,
+		"policy:\n  run_budget_usd: \"2.50\"\n": true,
+		"policy:\n  run_budget_usd: 1e3\n":      false,
+		"approval:\n  expires_days: 7\n":        true,
+		"approval:\n  expires_days: 7.0\n":      false,
+	} {
+		writeFile(t, filepath.Join(dir, "costroid.yml"), file)
+		code, stdout, stderr := execute(t, "validate")
+		if valid && (code != 0 || !strings.HasPrefix(stdout, "costroid.yml: valid\n")) || !valid && (code != exitRejected || strings.Contains(stdout, "valid\n")) {
+			t.Errorf("%q: valid %t in the help, and validate exits %d with %q %q", file, valid, code, stdout, stderr)
+		}
+	}
+}
+
 // TestAMistypedCommandGetsASuggestionAndIsNeverRun holds what an unknown
 // command prints: the command as typed, the nearest command when one is near,
 // and how to list the commands. The nearest command is named, never run.
@@ -668,6 +759,13 @@ func sentences(prose string) []string {
 	return found
 }
 
+// withdrawn are the sentences of an earlier page that were false and are no
+// longer said. validate takes a policy amount such as 5.0, as the schema and
+// the check do.
+var withdrawn = map[string][]string{
+	"validate": {"A policy amount or approval.expires_days that YAML reads as a float, such as 5.0, is a problem too, because the check refuses it."},
+}
+
 // TestNothingAHelpPageSaidIsDropped holds every sentence and every table row
 // of each command's earlier help page to the page the command prints now:
 // each stands there whole, wherever it moved to.
@@ -692,6 +790,9 @@ func TestNothingAHelpPageSaidIsDropped(t *testing.T) {
 			t.Errorf("%s: %d units read from %s, which is too few to be a page", name, len(units), path)
 		}
 		for _, unit := range units {
+			if slices.Contains(withdrawn[name], unit) {
+				continue
+			}
 			if !strings.Contains(now, unit) {
 				t.Errorf("help %s no longer says: %s", name, unit)
 			}
