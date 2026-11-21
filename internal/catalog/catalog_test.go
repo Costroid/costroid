@@ -61,9 +61,10 @@ func embedded(t *testing.T, version string) *Catalog {
 }
 
 // TestEmbeddedReleaseCarriesTheFiveSheets holds that a run prices with
-// release 0.4.2 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
-// sheets, and that releases 0.4.1, 0.3.0, 0.2.0 and 0.1.0, embedded beside
-// it, still parse on their own with five sheets, five, three and two.
+// release 0.4.3 and its Anthropic, OpenAI, Google, GitHub Copilot and Cursor
+// sheets, and that releases 0.4.2, 0.4.1, 0.3.0, 0.2.0 and 0.1.0, embedded
+// beside it, still parse on their own with five sheets, five, five, three and
+// two.
 func TestEmbeddedReleaseCarriesTheFiveSheets(t *testing.T) {
 	five := map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "github-copilot": "GitHub", "cursor": "Cursor"}
 	releases := []struct {
@@ -71,13 +72,14 @@ func TestEmbeddedReleaseCarriesTheFiveSheets(t *testing.T) {
 		version   string
 		providers map[string]string
 	}{
-		{pinned(t), "0.4.2", five},
+		{pinned(t), "0.4.3", five},
+		{embedded(t, "0.4.2"), "0.4.2", five},
 		{embedded(t, "0.4.1"), "0.4.1", five},
 		{embedded(t, "0.3.0"), "0.3.0", five},
 		{embedded(t, "0.2.0"), "0.2.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}},
 		{embedded(t, "0.1.0"), "0.1.0", map[string]string{"anthropic": "Anthropic", "openai": "OpenAI"}},
 	}
-	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0", "0.4.1", "0.4.2"}) {
+	if versions := embeddedVersions(t); !slices.Equal(versions, []string{"0.1.0", "0.2.0", "0.3.0", "0.4.1", "0.4.2", "0.4.3"}) {
 		t.Errorf("the binary carries releases %v", versions)
 	}
 	for _, release := range releases {
@@ -862,6 +864,8 @@ func TestAPromotionThatEndsFallsToTheFallback(t *testing.T) {
 	ends := []struct{ provider, model, day string }{
 		{ProviderOpenAI, "gpt-5.6-sol", "2026-12-01"},
 		{ProviderOpenAI, "gpt-6-astra-law", "2027-01-01"},
+		{ProviderOpenAI, "gpt-6.2-astra-law", "2027-01-01"},
+		{ProviderOpenAI, "gpt-6-rosalind", "2027-01-01"},
 		{"github-copilot", "gemini-3.8-flash", "2027-01-01"},
 		{"github-copilot", "gemini-4-argon", "2026-12-01"},
 		{"cursor", "gpt-5.6-sol", "2026-11-22"},
@@ -1030,6 +1034,207 @@ func TestAnEndedTierFallsToTheFallback(t *testing.T) {
 			if got := lookup(c, "gemini-4-argon", class); got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
 				t.Errorf("release %s gemini-4-argon contributor %s: %s at %s, fallback %t; want %s at %s", c.Version(), class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
 			}
+		}
+	}
+}
+
+// TestTheModelsOfCatalog043PriceAtTheirOwnRows holds the models release 0.4.3
+// adds to their own standard rows on each sheet that prices them, in USD per
+// million tokens of input, output and cache read. On OpenAI and GitHub
+// Copilot, GPT-6.2 Astra is 8.00, 40.00 and 0.40 up to 272,000 input tokens
+// and 16.00, 60.00 and 0.80 above; GPT-6.2 Sol is 2.00, 10.00 and 0.10, then
+// 4.00, 15.00 and 0.20. Gemini 4 Neon is 3.00, 15.00 and 0.15 on Google,
+// GitHub Copilot and Cursor. MAI Code 2 is 0.50, 2.50 and 0.025 on GitHub
+// Copilot. None is the fallback. Release 0.4.2 named none of them, and priced
+// each at its sheet's fallback.
+func TestTheModelsOfCatalog043PriceAtTheirOwnRows(t *testing.T) {
+	type prices struct{ input, output, cacheRead string }
+	cases := []struct {
+		provider, model, context string
+		inputTokens              int64
+		prices
+	}{
+		{ProviderOpenAI, "gpt-6.2-astra", "to-272000", 272000, prices{"8.00", "40.00", "0.40"}},
+		{ProviderOpenAI, "gpt-6.2-astra", "over-272000", 272001, prices{"16.00", "60.00", "0.80"}},
+		{ProviderOpenAI, "gpt-6.2-sol", "to-272000", 272000, prices{"2.00", "10.00", "0.10"}},
+		{ProviderOpenAI, "gpt-6.2-sol", "over-272000", 272001, prices{"4.00", "15.00", "0.20"}},
+		{"github-copilot", "gpt-6.2-astra", "to-272000", 272000, prices{"8.00", "40.00", "0.40"}},
+		{"github-copilot", "gpt-6.2-astra", "over-272000", 272001, prices{"16.00", "60.00", "0.80"}},
+		{"github-copilot", "gpt-6.2-sol", "to-272000", 272000, prices{"2.00", "10.00", "0.10"}},
+		{"github-copilot", "gpt-6.2-sol", "over-272000", 272001, prices{"4.00", "15.00", "0.20"}},
+		{ProviderGoogle, "gemini-4-neon", "all", 0, prices{"3.00", "15.00", "0.15"}},
+		{"github-copilot", "gemini-4-neon", "all", 0, prices{"3.00", "15.00", "0.15"}},
+		{"cursor", "gemini-4-neon", "all", 0, prices{"3", "15", "0.15"}},
+		{"github-copilot", "mai-code-2", "all", 0, prices{"0.50", "2.50", "0.025"}},
+	}
+	c, before := pinned(t), embedded(t, "0.4.2")
+	for _, tc := range cases {
+		for class, price := range map[focus.TokenClass]string{focus.InputUncached: tc.input, focus.Output: tc.output, focus.CacheRead: tc.cacheRead} {
+			q := query(tc.provider, tc.model, class)
+			q.ContextInputTokens, q.At = tc.inputTokens, time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := tc.provider + ":" + tc.model + ":global:standard:" + tc.context + ":" + string(class)
+			if got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("%s %s %s: %s at %s, fallback %t; want %s at %s", tc.provider, tc.model, class, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+			}
+			old, err := before.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !old.Fallback || old.SkuPriceID != tc.provider+":fallback:"+string(class) {
+				t.Errorf("release 0.4.2 %s %s %s: %s at %s, fallback %t; want the fallback", tc.provider, tc.model, class, old.SkuPriceID, old.ListUnitPrice, old.Fallback)
+			}
+		}
+	}
+}
+
+// TestAStatedPriceStepAppliesFromItsDay holds two prices the pages announce
+// for a later day, in USD per million tokens of input, output and cache read.
+// GPT-6.2 Astra's Ultrafast tier is 24.00, 120.00 and 1.20 up to 272,000
+// input tokens and 48.00, 180.00 and 2.40 above on 2027-02-28, and 48.00,
+// 240.00 and 2.40, then 96.00, 360.00 and 4.80, from 2027-03-01. MAI Code 2
+// on GitHub Copilot is 0.50, 2.50 and 0.025 on 2027-05-16, and 1.00, 5.00
+// and 0.05 from 2027-05-17. Each day prices at its own row, and none at the
+// fallback.
+func TestAStatedPriceStepAppliesFromItsDay(t *testing.T) {
+	type prices struct{ input, output, cacheRead string }
+	cases := []struct {
+		provider, model, tier, context, step string
+		inputTokens                          int64
+		before, after                        prices
+	}{
+		{ProviderOpenAI, "gpt-6.2-astra", "ultrafast", "to-272000", "2027-03-01", 272000, prices{"24.00", "120.00", "1.20"}, prices{"48.00", "240.00", "2.40"}},
+		{ProviderOpenAI, "gpt-6.2-astra", "ultrafast", "over-272000", "2027-03-01", 272001, prices{"48.00", "180.00", "2.40"}, prices{"96.00", "360.00", "4.80"}},
+		{"github-copilot", "mai-code-2", TierStandard, "all", "2027-05-17", 0, prices{"0.50", "2.50", "0.025"}, prices{"1.00", "5.00", "0.05"}},
+	}
+	byClass := func(p prices) map[focus.TokenClass]string {
+		return map[focus.TokenClass]string{focus.InputUncached: p.input, focus.Output: p.output, focus.CacheRead: p.cacheRead}
+	}
+	c := pinned(t)
+	for _, tc := range cases {
+		step, err := time.Parse(dayLayout, tc.step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after := byClass(tc.after)
+		for class, price := range byClass(tc.before) {
+			id := tc.provider + ":" + tc.model + ":global:" + tc.tier + ":" + tc.context + ":" + string(class)
+			for _, day := range []struct {
+				at        time.Time
+				id, price string
+			}{
+				{step.Add(-time.Second), id, price},
+				{step, id + ":from-" + tc.step, after[class]},
+			} {
+				q := query(tc.provider, tc.model, class)
+				q.ServiceTier, q.ContextInputTokens, q.At = tc.tier, tc.inputTokens, day.at
+				got, err := c.Lookup(q)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Fallback || got.SkuPriceID != day.id || got.ListUnitPrice.Cmp(decimal.MustParse(day.price)) != 0 {
+					t.Errorf("%s %s %s on %s: %s at %s, fallback %t; want %s at %s", tc.provider, tc.tier, class, day.at.Format(time.DateTime), got.SkuPriceID, got.ListUnitPrice, got.Fallback, day.id, day.price)
+				}
+			}
+		}
+	}
+}
+
+// TestAnEndedPromotionPricesAtTheFallback holds GPT-6 Rosalind, whose price
+// release 0.4.3 reads as a promotion OpenAI's page states through 2026-12-31
+// and no price after it. In USD per million tokens of input, output and cache
+// read, a request on 2026-12-31 prices at the promotion's rows, 10.00, 50.00
+// and 1.00 up to 272,000 input tokens and 20.00, 75.00 and 2.00 above. On
+// 2027-01-01 the lookup finds no row of the model, so the request prices at
+// OpenAI's fallback, 150.00, 600.00 and 12.00, marked as a fallback with its
+// basis, and not at another model's or tier's row: a run's row for it carries
+// the fallback note. Release 0.4.2 priced the model at 15.00, 75.00 and 1.50,
+// then 30.00, 112.50 and 3.00, with no end.
+func TestAnEndedPromotionPricesAtTheFallback(t *testing.T) {
+	type prices struct{ input, output, cacheRead string }
+	cases := []struct {
+		context      string
+		inputTokens  int64
+		promotion    prices
+		earlierPrice prices
+	}{
+		{"to-272000", 272000, prices{"10.00", "50.00", "1.00"}, prices{"15.00", "75.00", "1.50"}},
+		{"over-272000", 272001, prices{"20.00", "75.00", "2.00"}, prices{"30.00", "112.50", "3.00"}},
+	}
+	byClass := func(p prices) map[focus.TokenClass]string {
+		return map[focus.TokenClass]string{focus.InputUncached: p.input, focus.Output: p.output, focus.CacheRead: p.cacheRead}
+	}
+	fallback := byClass(prices{"150.00", "600.00", "12.00"})
+	lastDay := time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC)
+	ended := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	c, before := pinned(t), embedded(t, "0.4.2")
+	for _, tc := range cases {
+		earlier := byClass(tc.earlierPrice)
+		for class, price := range byClass(tc.promotion) {
+			id := "openai:gpt-6-rosalind:global:standard:" + tc.context + ":" + string(class)
+			q := query(ProviderOpenAI, "gpt-6-rosalind", class)
+			q.ContextInputTokens, q.At = tc.inputTokens, lastDay
+			got, err := c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+				t.Errorf("%s on 2026-12-31: %s at %s, fallback %t; want %s at %s", id, got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+			}
+			q.At = ended
+			got, err = c.Lookup(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "openai:fallback:" + string(class); !got.Fallback || got.FallbackBasis == "" || got.SkuPriceID != want || got.ListUnitPrice.Cmp(decimal.MustParse(fallback[class])) != 0 {
+				t.Errorf("%s on 2027-01-01: %s at %s, fallback %t, basis %q; want %s at %s, marked as a fallback", id, got.SkuPriceID, got.ListUnitPrice, got.Fallback, got.FallbackBasis, want, fallback[class])
+			}
+			for _, at := range []time.Time{lastDay, ended} {
+				q.At = at
+				old, err := before.Lookup(q)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if old.Fallback || old.SkuPriceID != id || old.ListUnitPrice.Cmp(decimal.MustParse(earlier[class])) != 0 {
+					t.Errorf("release 0.4.2 %s on %s: %s at %s, fallback %t; want %s at %s", id, at.Format(dayLayout), old.SkuPriceID, old.ListUnitPrice, old.Fallback, id, earlier[class])
+				}
+			}
+		}
+	}
+}
+
+// TestAModelThatLeftAPageKeepsItsRow holds Claude Opus 5 on GitHub Copilot,
+// whose page stopped listing it after release 0.4.2 read it on 2026-11-14.
+// Release 0.4.3 keeps its rows as 0.4.2 read them, so a request prices the
+// same in both, in USD per million tokens: 5.00 input, 25.00 output and 0.50
+// cache read, at the model's own row and not at the fallback, on the day 0.4.3
+// was read and on a later one. Each of its rows still starts on 2026-11-14,
+// with no end.
+func TestAModelThatLeftAPageKeepsItsRow(t *testing.T) {
+	prices := map[focus.TokenClass]string{focus.InputUncached: "5.00", focus.Output: "25.00", focus.CacheRead: "0.50"}
+	c, before := pinned(t), embedded(t, "0.4.2")
+	for class, price := range prices {
+		id := "github-copilot:claude-opus-5:global:standard:all:" + string(class)
+		for _, at := range []time.Time{time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC), time.Date(2027, 2, 1, 12, 0, 0, 0, time.UTC)} {
+			q := query("github-copilot", "claude-opus-5", class)
+			q.At = at
+			for _, release := range []*Catalog{before, c} {
+				got, err := release.Lookup(q)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Fallback || got.SkuPriceID != id || got.ListUnitPrice.Cmp(decimal.MustParse(price)) != 0 {
+					t.Errorf("release %s %s on %s: %s at %s, fallback %t; want %s at %s", release.Version(), class, at.Format(dayLayout), got.SkuPriceID, got.ListUnitPrice, got.Fallback, id, price)
+				}
+			}
+		}
+	}
+	for _, r := range c.sheets["github-copilot"].Rows {
+		if r.ModelID == "claude-opus-5" && (r.EffectiveStart != "2026-11-14" || r.EffectiveEnd != nil) {
+			t.Errorf("%s starts %s and ends %v, not as release 0.4.2 read it on 2026-11-14 with no end", r.SkuPriceID, r.EffectiveStart, r.EffectiveEnd)
 		}
 	}
 }
