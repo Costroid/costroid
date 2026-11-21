@@ -210,6 +210,64 @@ func TestAnApprovedFailureWithholdsWhereAmountsAreWithheld(t *testing.T) {
 	}
 }
 
+// TestApproveReadsNothingUntilItPosts counts what costroid approve asks the
+// host for the amounts setting: costroid.yml once more than the approval's own
+// rules read it, and the repository's visibility. A run that posts nothing
+// asks for neither: with no costroid check on the head, with no approval to
+// apply, and with the approval applied already. Only the run that posts reads
+// them, once each.
+func TestApproveReadsNothingUntilItPosts(t *testing.T) {
+	repository := branchPullRequest(t)
+	repository.Files[configFile] = enforcedOver + showCostOff
+	repository.SetPrivate(false)
+	approval := []map[string]any{review(31, approver, "APPROVED", headCommit, approvedAt)}
+	run := func(wantChecks int, says string) (settings, visibility int) {
+		t.Helper()
+		from := len(repository.Requests)
+		code, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit))
+		if code != 0 || len(repository.Checks) != wantChecks || !strings.Contains(stderr, says) {
+			t.Fatalf("exit %d, %d checks, want %d and %q: %s", code, len(repository.Checks), wantChecks, says, stderr)
+		}
+		for _, request := range repository.Requests[from:] {
+			switch {
+			case request == "GET /repos/example/widgets":
+				visibility++
+			case strings.HasPrefix(request, "GET /repos/example/widgets/contents/"+configFile):
+				settings++
+			}
+		}
+		return settings, visibility
+	}
+
+	repository.Reviews = approval
+	rules, visibility := run(0, "no costroid check is on commit")
+	if rules != 1 || visibility != 0 {
+		t.Errorf("with no check to post, approve read costroid.yml %d times and the visibility %d times, want 1 for the approval's rules and 0", rules, visibility)
+	}
+	repository.Reviews = nil
+	reportOn(t, repository, headCommit)
+	steps := []struct {
+		name                 string
+		reviews              []map[string]any
+		checks               int
+		says                 string
+		settings, visibility int
+	}{
+		{"no approval to apply", nil, 1, "already concludes failure", rules, 0},
+		{"an approval to apply", approval, 2, "conclusion neutral", rules + 1, 1},
+		{"the approval applied already", approval, 2, "already concludes neutral", rules, 0},
+	}
+	for _, step := range steps {
+		repository.Reviews = step.reviews
+		if settings, visibility := run(step.checks, step.says); settings != step.settings || visibility != step.visibility {
+			t.Errorf("%s: approve read costroid.yml %d times and the visibility %d times, want %d and %d", step.name, settings, visibility, step.settings, step.visibility)
+		}
+	}
+	if title := repository.Checks[1].Title; !strings.HasSuffix(title, " Amounts are withheld here.") {
+		t.Errorf("the check posted did not take the setting it read: %s", title)
+	}
+}
+
 // posted is a check run's result object.
 type posted struct {
 	CheckRunID *int64 `json:"check_run_id"`

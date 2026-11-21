@@ -41,14 +41,16 @@ type Option func(*recheck)
 
 // recheck is what Reconclude was told.
 type recheck struct {
-	amounts comment.Amounts
+	amounts func() comment.Amounts
 }
 
-// Showing passes on whether the report's comment shows amounts, as the report
-// decides it from comment.show_cost and the repository's visibility. The
-// check's result object does not say. Without it the zero value holds, and
-// the title and the summary of the check posted name no amount.
-func Showing(amounts comment.Amounts) Option {
+// Showing passes on how to learn whether the report's comment shows amounts,
+// as the report decides it from comment.show_cost and the repository's
+// visibility. The check's result object does not say. Reconclude asks only
+// once it has a check to post, so a run that posts nothing reads neither.
+// Without the option the title and the summary of the check posted name no
+// amount.
+func Showing(amounts func() comment.Amounts) Option {
 	return func(told *recheck) { told.amounts = amounts }
 }
 
@@ -72,12 +74,16 @@ func Reconclude(ctx context.Context, host Rechecker, head string, approval *comm
 	if block.Conclusion != nil && *block.Conclusion == done.Conclusion {
 		return done, ErrConcluded
 	}
+	var amounts comment.Amounts
+	if told.amounts != nil {
+		amounts = told.amounts()
+	}
 	render := func(id *int64) (comment.CheckOutput, error) {
 		named := block
 		if id != nil {
 			named.CheckRunID = id
 		}
-		return comment.Reconclude(named, approval, told.amounts, newest.CheckRun)
+		return comment.Reconclude(named, approval, amounts, newest.CheckRun)
 	}
 	output, err := render(nil)
 	if err != nil {

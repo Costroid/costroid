@@ -165,14 +165,15 @@ func readReviewEvent(eventName, path, repository string) (int, error) {
 // approval changes its conclusion, or when one no longer does. The check
 // shows or withholds amounts as the report's comment does: resolveAmounts
 // decides it for both, from costroid.yml at the settings commit and the
-// repository's visibility. An error says why nothing was posted.
+// repository's visibility, and is asked only once a check is to be posted. An
+// error says why nothing was posted.
 func reconclude(ctx context.Context, host approvalHost, pull pullContext, number int, now time.Time, stderr io.Writer) error {
 	current, err := host.PullRequest(ctx, number)
 	if err != nil {
 		return fmt.Errorf("read the pull request: %w", err)
 	}
 	approval := findApproval(ctx, host, pull.settingsRef(), current, now, stderr)
-	amounts := resolveAmounts(ctx, host, pull.settingsRef(), stderr)
+	amounts := func() comment.Amounts { return resolveAmounts(ctx, host, pull.settingsRef(), stderr) }
 	done, err := history.Reconclude(ctx, host, current.HeadSHA, approval, time.Now, history.Showing(amounts))
 	switch {
 	case errors.Is(err, history.ErrNoCheck):
