@@ -411,6 +411,18 @@ func goldenStates(t *testing.T) map[string]Input {
 	// other follows in the body.
 	states["two-rules-fail"] = withVerdict(t, rulesVerdict(t, settings("policy:\n  max_run_cost_usd: \"0.001\"\n  models:\n    - gpt-*\n"), afterPeriod, nil, nil))
 
+	// The rows name a credential, a pull request and a head commit, as a run
+	// in CI does, so the attribution rule warns: its line is folded, under a
+	// budget and with no rule set.
+	joinable := func(verdict *policy.Verdict) *policy.Verdict {
+		warned := *verdict
+		warned.Results = append(slices.Clone(verdict.Results), policy.Result{Rule: policy.RuleAttribution, Outcome: policy.Warn, Reason: policy.ReasonJoinableRows})
+		warned.JoinableRows = 19
+		return &warned
+	}
+	states["joinable-rows"] = withVerdict(t, joinable(neutral.Verdict))
+	states["joinable-rows-no-budget"] = withVerdict(t, joinable(goldenVerdict(t, "", policy.Unverified, insidePeriod)))
+
 	// A report states no cap for a run nothing held. A preview compares the
 	// cost with the cap it was given, and names the costroid.yml it read.
 	states["no-cap-held"] = unheldInput(t, policy.ConfigFile{})

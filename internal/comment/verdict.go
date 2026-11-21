@@ -74,7 +74,7 @@ func (i Input) reading(shown bool) []string {
 	} else {
 		add(i.why())
 	}
-	add(strings.Join(i.otherRules(shown), " "))
+	add(strings.Join(i.otherRules(shown, false), " "))
 	add(i.nextStep())
 	return paragraphs
 }
@@ -93,8 +93,10 @@ func named(result policy.Result) bool {
 }
 
 // otherRules are the lines of the rules the verdict sentence leaves to the
-// body: every rule but the one it states in full.
-func (i Input) otherRules(shown bool) []string {
+// body: every rule but the one it states in full. The attribution rule only
+// warns, and the reason line already says nothing outside the job checked the
+// rows, so its line is left to the fold unless attribution asks for it.
+func (i Input) otherRules(shown, attribution bool) []string {
 	if i.Verdict == nil {
 		return nil
 	}
@@ -102,12 +104,26 @@ func (i Input) otherRules(shown bool) []string {
 	stated := ruled && named(decided) && (i.State == Reported || broken(decided))
 	var lines []string
 	for _, result := range i.Verdict.Results {
-		if stated && result.Rule == decided.Rule {
-			continue
+		switch {
+		case stated && result.Rule == decided.Rule:
+		case result.Rule == policy.RuleAttribution && !attribution && result.Rule != decided.Rule:
+		default:
+			lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.lifetimeBases()))
 		}
-		lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.lifetimeBases()))
 	}
 	return lines
+}
+
+// attributionNote is the attribution rule's line, which the fold holds, and
+// empty when the rule said nothing or the reading states it.
+func (i Input) attributionNote() string {
+	decided, _ := deciding(i.Verdict)
+	for _, result := range i.Verdict.Results {
+		if result.Rule == policy.RuleAttribution && result.Rule != decided.Rule {
+			return resultSentence(result, i.Verdict.JoinableRows, false, nil)
+		}
+	}
+	return ""
 }
 
 // approvalPage says how a reviewer approves a failed check.
@@ -134,16 +150,19 @@ func (i Input) nextStep() string {
 // policyNotes are the sentences on the policy that a reader opens the fold
 // for: that no policy ran or no rule applied, what a budget kept on the
 // agent's own rows would conclude when broken, the page that says what lets a
-// rule pass, and where the settings were read.
+// rule pass, the attribution rule's line, and where the settings were read.
 func (i Input) policyNotes() string {
 	if i.Verdict == nil {
 		return "No policy ran on this change."
 	}
 	var notes []string
-	if len(i.Verdict.Results) == 0 && configSentence(*i.Verdict, i.configRead()) == "" {
+	if unruled(*i.Verdict) {
 		notes = append(notes, noRuleApplied(i.configRead()))
 	}
 	notes = append(notes, passNotes(*i.Verdict)...)
+	if attribution := i.attributionNote(); attribution != "" {
+		notes = append(notes, attribution)
+	}
 	if i.Verdict.ConfigFromBase {
 		notes = append(notes, fromBase)
 	}
@@ -160,8 +179,8 @@ func LocalConfig(path string) string {
 }
 
 // VerdictLines are what a terminal prints above the verdict sentence, one
-// sentence a line: why no rule ran, each rule the sentence does not name,
-// that no rule applied, and the warn-only period when it holds a rule. config
+// sentence a line: why no rule ran or that none applied, each rule the
+// sentence does not name, and the warn-only period when it holds a rule. config
 // names the costroid.yml the verdict read, as LocalConfig does. The lines
 // carry no link. They are built from the verdict's closed fields and its
 // amounts, so no text from the pull request reaches them.
@@ -174,10 +193,10 @@ func VerdictLines(input Input, config string) []string {
 	if problem := configSentence(verdict, config); problem != "" {
 		lines = append(lines, problem)
 	}
-	lines = append(lines, input.otherRules(input.Amounts == AmountsShown)...)
-	if len(verdict.Results) == 0 && len(lines) == 0 {
+	if unruled(verdict) {
 		lines = append(lines, noRuleApplied(config))
 	}
+	lines = append(lines, input.otherRules(input.Amounts == AmountsShown, true)...)
 	if slices.ContainsFunc(verdict.Results, func(result policy.Result) bool { return result.HeldByWarnOnly }) {
 		lines = append(lines, warnOnlySentence(verdict.WarnOnly))
 	}
@@ -201,6 +220,13 @@ func configSentence(verdict policy.Verdict, config string) string {
 		return "No rule ran, so the check concludes neutral: " + config + " could not be read, and a missing input never blocks a merge."
 	}
 	return ""
+}
+
+// unruled reports a verdict whose costroid.yml was read and set nothing a
+// rule reads: no rule ran but attribution, which needs no setting.
+func unruled(verdict policy.Verdict) bool {
+	_, ruled := deciding(&verdict)
+	return !ruled && configSentence(verdict, "") == ""
 }
 
 // noRuleApplied says the costroid.yml named sets nothing a rule reads, and
@@ -284,14 +310,16 @@ const setBudget = "Set `policy.run_budget_usd` to hold each run to a budget."
 
 // onAgentRows reports a neutral verdict that only the agent's own rows kept
 // from success: each rule that ran passed, or was within its limit on rows
-// the agent's job wrote. budget says one of those is a budget rule.
+// the agent's job wrote. The attribution rule warns of those same rows, so
+// its warning does not count against it. budget says one of the rules is a
+// budget rule.
 func onAgentRows(verdict policy.Verdict) (neutral, budget bool) {
 	if verdict.Conclusion != policy.Neutral {
 		return false, false
 	}
 	for _, result := range verdict.Results {
 		switch {
-		case result.Outcome == policy.Pass:
+		case result.Outcome == policy.Pass, result.Rule == policy.RuleAttribution:
 		case result.Outcome == policy.Unproven && result.Reason == policy.ReasonUnverifiedRows:
 			neutral = true
 			budget = budget || slices.Contains(budgetRules, result.Rule)

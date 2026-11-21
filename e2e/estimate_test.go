@@ -67,7 +67,7 @@ func TestAnInfrastructureEstimateTravelsApartFromTheAgentsCost(t *testing.T) {
 	for _, want := range []string{
 		"USD " + recordedTotal,
 		"Infrastructure, estimated: EUR 25.488 for " + ahead.name + ", from `infrastructure`.",
-		"Infrastructure, estimated: USD 1000 for " + ahead.name + ", from `infrastructure`.",
+		"Infrastructure, estimated: USD 1000.00 for " + ahead.name + ", from `infrastructure`.",
 		"The agent figure and these infrastructure figures are not added together, and no currency is added to another.",
 	} {
 		if !strings.Contains(report.comment, want) {

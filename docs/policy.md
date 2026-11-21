@@ -111,7 +111,7 @@ No figure (agent_error): the agent ended in an error before it reported usage, s
 
 `Over limit` and `Within limit` name `run_cost_threshold` and the two increase rules, whose amounts are limits. A budget is `run_budget`, `pr_budget` or `monthly_budget`.
 
-When several rules ran, the sentence names one: the first, in the order of the table of rules above, of the worst outcome the verdict holds. A rule that fails comes before one the warn-only period holds, that before one that cannot pass, and that before one that passed. `attribution` never names the sentence alone. Every other rule's line follows in the comment, above the folds.
+When several rules ran, the sentence names one: the first, in the order of the table of rules above, of the worst outcome the verdict holds. A rule that fails comes before one the warn-only period holds, that before one that cannot pass, and that before one that passed. Every other rule's line follows in the comment, above the folds. `attribution` never names the sentence alone, and its line is under the first fold.
 
 An amount shows at least two decimal places and every digit, such as `USD 5.00` and `USD 0.001619725`. Where amounts are withheld, the sentence names none and ends "Amounts are withheld here."
 

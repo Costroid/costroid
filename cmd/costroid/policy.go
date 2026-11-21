@@ -74,7 +74,7 @@ func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if problem := verdict.ConfigProblem(); problem != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", problem)
 	}
-	if err := printVerdict(stdout, verdict, flags); err != nil {
+	if err := printVerdict(ctx, stdout, verdict, flags); err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
 		return exitFailure
 	}
@@ -134,9 +134,10 @@ func historyOf(ctx context.Context, flags policyFlags) (earlierRuns, error) {
 }
 
 // printVerdict prints what the verdict sentence leaves unsaid, one sentence a
-// line, and last the sentence itself, which names the rows' figures. --json
-// prints the verdict alone.
-func printVerdict(stdout io.Writer, verdict policy.Verdict, flags policyFlags) error {
+// line, and last the sentence itself, which names the rows' figures and,
+// under --history, the bases of the pull request's total. --json prints the
+// verdict alone.
+func printVerdict(ctx context.Context, stdout io.Writer, verdict policy.Verdict, flags policyFlags) error {
 	if flags.json {
 		encoded, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
@@ -154,7 +155,11 @@ func printVerdict(stdout io.Writer, verdict policy.Verdict, flags policyFlags) e
 	if err != nil {
 		return err
 	}
-	report := comment.Input{Ledger: ledger, State: comment.Reported, Verdict: &verdict, Amounts: comment.AmountsShown}
+	runs, err := historyOf(ctx, flags)
+	if err != nil {
+		return err
+	}
+	report := comment.Input{Ledger: ledger, State: comment.Reported, Verdict: &verdict, Lifetime: runs.lifetime, Amounts: comment.AmountsShown}
 	if ledger.Rows == 0 {
 		report.State, report.Reason = comment.NoRows, comment.EmptyRowsFile
 	}

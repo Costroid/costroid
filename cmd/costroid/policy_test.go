@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -8,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/scm/scmtest"
 )
 
 const overBudget = "policy:\n  run_budget_usd: \"0.001\"\n"
@@ -118,6 +121,71 @@ func TestPolicyEndsOnTheVerdictSentence(t *testing.T) {
 	code, stdout, _ := execute(t, "policy", "--rows", realRows, "--config", writeBaseConfig(t, overBudget), "--json")
 	if code != 0 || strings.Contains(stdout, "Over budget") || !strings.HasSuffix(stdout, "}\n") {
 		t.Errorf("--json prints more than the verdict: exit %d:\n%s", code, stdout)
+	}
+}
+
+// TestPolicyEndsOnTheCheckTitleUnderEveryRule runs the report and costroid
+// policy over the same rows, costroid.yml and earlier runs, for each rule a
+// pull request's history lets run, and holds the last line policy prints to
+// the title the report's check carries.
+func TestPolicyEndsOnTheCheckTitleUnderEveryRule(t *testing.T) {
+	text := func(config string) *string { return &config }
+	for _, tc := range []pathCase{
+		{name: "the pull request over its budget", config: text("policy:\n  pr_budget_usd: \"0.011\"\n  enforce: true\n"), earlier: 10},
+		{name: "the pull request within its budget", config: text("policy:\n  pr_budget_usd: \"0.012\"\n  enforce: true\n"), earlier: 10},
+		{name: "a run over the P50 of ten earlier runs", config: text("policy:\n  max_increase_usd: \"0.0006\"\n  enforce: true\n"), earlier: 10},
+		{name: "a run within the P50 of ten earlier runs", config: text("policy:\n  max_increase_usd: \"0.0007\"\n  enforce: true\n"), earlier: 10},
+		{name: "nine earlier runs are no baseline", config: text("policy:\n  max_increase_usd: 0\n  enforce: true\n"), earlier: 9},
+		{name: "a model off the list", config: text("policy:\n  models:\n    - gpt-*\n  enforce: true\n")},
+		{name: "no costroid.yml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			objects := earlierReports(t, tc.earlier)
+			stub := reportEnvironment(t, pullRequestEvent())
+			stub.SetPrivate(true)
+			if tc.config != nil {
+				stub.Files[configFile] = *tc.config
+			}
+			stub.Pulls = []scmtest.Pull{{Number: 7, State: "open", HeadSHA: headCommit, Commits: []string{earlierCommit, headCommit}}}
+			for index, object := range objects {
+				stub.Checks = append(stub.Checks, scmtest.Check{
+					ID: int64(100 + index), Name: comment.CheckName, HeadSHA: earlierCommit, Conclusion: policy.Neutral,
+					Text: "```json\n" + object + "\n```", App: "github-actions",
+				})
+			}
+			if code, _, stderr := execute(t, "report", "--rows", realRows); code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			posted := stub.Checks[len(stub.Checks)-1]
+			if posted.HeadSHA != headCommit || posted.Title == "" {
+				t.Fatalf("the report posted no check with a title: %+v", posted)
+			}
+			directory := t.TempDir()
+			configPath := filepath.Join(directory, "base.yml")
+			if tc.config != nil {
+				if err := os.WriteFile(configPath, []byte(*tc.config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var lines bytes.Buffer
+			for _, object := range objects {
+				if err := json.Compact(&lines, []byte(object)); err != nil {
+					t.Fatal(err)
+				}
+				lines.WriteByte('\n')
+			}
+			historyPath := filepath.Join(directory, "earlier.jsonl")
+			if err := os.WriteFile(historyPath, lines.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", configPath, "--history", historyPath)
+			if code != 0 && code != exitRejected {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			if got := lastLine(stdout); got != posted.Title {
+				t.Errorf("policy ends on\n%s\nand the check's title is\n%s", got, posted.Title)
+			}
+		})
 	}
 }
 

@@ -226,7 +226,8 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 // worst outcome the verdict holds. A rule that fails decides before one the
 // warn-only period holds, that before one that could not pass, and that
 // before one that passed. Every other rule's own line follows above the
-// fold, and the rule the sentence states in full is not said twice.
+// fold, and the rule the sentence states in full is not said twice. The
+// attribution rule only warns, never decides alone, and its line is folded.
 func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 	budget := func(outcome, reason string) policy.Result {
 		return policy.Result{Rule: policy.RuleRunBudget, Outcome: outcome, Reason: reason, LimitUSD: "5", CostUSD: realTotal}
@@ -270,11 +271,11 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 		{"of two rules that could not pass, the first the pack lists", policy.Neutral,
 			[]policy.Result{budget(policy.Unproven, policy.ReasonUnverifiedRows), total, attribution},
 			"Within budget, by the job's own figures: " + figure + " of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
-			[]string{"Pull request budget: this check read no total", "Attribution: 0 rows name a credential"}, []string{"Run budget: "}},
+			[]string{"Pull request budget: this check read no total"}, []string{"Run budget: ", "Attribution: "}},
 		{"the attribution rule never decides alone", policy.Neutral,
 			[]policy.Result{attribution},
 			"No budget set: " + figure + ". No rule decides this check.",
-			[]string{"Attribution: 0 rows name a credential"}, nil},
+			nil, []string{"Attribution: "}},
 	} {
 		input := verdictOf(t, tc.conclusion, tc.results...)
 		input.Budget = nil
@@ -289,8 +290,11 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 		}
 		for _, gone := range tc.gone {
 			if strings.Contains(above, gone) {
-				t.Errorf("%s: the body says again what the sentence states, %q:\n%s", tc.name, gone, above)
+				t.Errorf("%s: the body says again what the sentence states, or states the attribution rule above the fold, %q:\n%s", tc.name, gone, above)
 			}
+		}
+		if folded := commentOf(t, input); slices.ContainsFunc(tc.results, func(result policy.Result) bool { return result.Rule == policy.RuleAttribution }) && !strings.Contains(folded, "Attribution: 0 rows name a credential") {
+			t.Errorf("%s: the fold does not hold the attribution rule's line:\n%s", tc.name, folded)
 		}
 	}
 }

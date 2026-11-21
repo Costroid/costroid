@@ -949,6 +949,130 @@ infrastructure-without-agent-rows	`Amazon EC2`
 infrastructure-without-agent-rows	`aws_ebs_volume.data`
 infrastructure-without-agent-rows	`aws_instance.web`
 infrastructure-without-agent-rows	`infrastructure`
+joinable-rows	0.0000008
+joinable-rows	0.000136
+joinable-rows	0.00015605
+joinable-rows	0.000436875
+joinable-rows	0.00089
+joinable-rows	0.001619725
+joinable-rows	0.01
+joinable-rows	0.10
+joinable-rows	0.125
+joinable-rows	0.20
+joinable-rows	0.50
+joinable-rows	121
+joinable-rows	15605
+joinable-rows	19
+joinable-rows	2026-11-21
+joinable-rows	272
+joinable-rows	3495
+joinable-rows	4.998380275
+joinable-rows	4450
+joinable-rows	5.00
+joinable-rows	8
+joinable-rows	Attribution: 19 rows name a credential, a pull request and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.
+joinable-rows	List-equivalent, not billed
+joinable-rows	Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+joinable-rows	USD 0.0000008
+joinable-rows	USD 0.000136
+joinable-rows	USD 0.00015605
+joinable-rows	USD 0.000436875
+joinable-rows	USD 0.00089
+joinable-rows	USD 0.001619725
+joinable-rows	USD 0.01
+joinable-rows	USD 0.10
+joinable-rows	USD 0.125
+joinable-rows	USD 0.20
+joinable-rows	USD 0.50
+joinable-rows	USD 4.998380275
+joinable-rows	USD 5.00
+joinable-rows	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+joinable-rows	](https://app.costroid.com/?installation=github%3A58120394)
+joinable-rows	](https://docs.costroid.com/export)
+joinable-rows	](https://docs.costroid.com/policy)
+joinable-rows	](https://github.com/example/widgets/actions/runs/19203384756)
+joinable-rows	`0.4.3`
+joinable-rows	`9f2c6e1`
+joinable-rows	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+joinable-rows	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+joinable-rows	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+joinable-rows	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+joinable-rows	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+joinable-rows	`anthropic:informational:cached_input_reported`
+joinable-rows	`anthropic:informational:reasoning_output`
+joinable-rows	`cache_read`
+joinable-rows	`cache_write_1h`
+joinable-rows	`cache_write_5m`
+joinable-rows	`cached_input_reported`
+joinable-rows	`claude-code`
+joinable-rows	`claude-haiku-5-5`
+joinable-rows	`costroid.yml`
+joinable-rows	`input_uncached`
+joinable-rows	`output`
+joinable-rows	`policy.run_budget_usd`
+joinable-rows	`reasoning_output`
+joinable-rows	| client-side estimate, can pass the cap |
+joinable-rows-no-budget	0.0000008
+joinable-rows-no-budget	0.000136
+joinable-rows-no-budget	0.00015605
+joinable-rows-no-budget	0.000436875
+joinable-rows-no-budget	0.00089
+joinable-rows-no-budget	0.001619725
+joinable-rows-no-budget	0.01
+joinable-rows-no-budget	0.10
+joinable-rows-no-budget	0.125
+joinable-rows-no-budget	0.20
+joinable-rows-no-budget	0.50
+joinable-rows-no-budget	121
+joinable-rows-no-budget	15605
+joinable-rows-no-budget	19
+joinable-rows-no-budget	2026-11-21
+joinable-rows-no-budget	272
+joinable-rows-no-budget	3495
+joinable-rows-no-budget	4.998380275
+joinable-rows-no-budget	4450
+joinable-rows-no-budget	5.00
+joinable-rows-no-budget	8
+joinable-rows-no-budget	Attribution: 19 rows name a credential, a pull request and a head commit, and stay unattributed until a ledger checks them against the job's OIDC token.
+joinable-rows-no-budget	List-equivalent, not billed
+joinable-rows-no-budget	No budget set: this run cost USD 0.001619725 at list (List-equivalent, not billed). No rule decides this check.
+joinable-rows-no-budget	USD 0.0000008
+joinable-rows-no-budget	USD 0.000136
+joinable-rows-no-budget	USD 0.00015605
+joinable-rows-no-budget	USD 0.000436875
+joinable-rows-no-budget	USD 0.00089
+joinable-rows-no-budget	USD 0.001619725
+joinable-rows-no-budget	USD 0.01
+joinable-rows-no-budget	USD 0.10
+joinable-rows-no-budget	USD 0.125
+joinable-rows-no-budget	USD 0.20
+joinable-rows-no-budget	USD 0.50
+joinable-rows-no-budget	USD 4.998380275
+joinable-rows-no-budget	USD 5.00
+joinable-rows-no-budget	](https://app.costroid.com/?installation=github%3A58120394)
+joinable-rows-no-budget	](https://docs.costroid.com/export)
+joinable-rows-no-budget	](https://github.com/example/widgets/actions/runs/19203384756)
+joinable-rows-no-budget	`0.4.3`
+joinable-rows-no-budget	`9f2c6e1`
+joinable-rows-no-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+joinable-rows-no-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+joinable-rows-no-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+joinable-rows-no-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+joinable-rows-no-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+joinable-rows-no-budget	`anthropic:informational:cached_input_reported`
+joinable-rows-no-budget	`anthropic:informational:reasoning_output`
+joinable-rows-no-budget	`cache_read`
+joinable-rows-no-budget	`cache_write_1h`
+joinable-rows-no-budget	`cache_write_5m`
+joinable-rows-no-budget	`cached_input_reported`
+joinable-rows-no-budget	`claude-code`
+joinable-rows-no-budget	`claude-haiku-5-5`
+joinable-rows-no-budget	`costroid.yml`
+joinable-rows-no-budget	`input_uncached`
+joinable-rows-no-budget	`output`
+joinable-rows-no-budget	`policy.run_budget_usd`
+joinable-rows-no-budget	`reasoning_output`
+joinable-rows-no-budget	| client-side estimate, can pass the cap |
 lifetime	0.0000008
 lifetime	0.000136
 lifetime	0.00015605
