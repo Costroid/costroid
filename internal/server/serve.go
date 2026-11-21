@@ -45,7 +45,8 @@ const (
 )
 
 // ServeUsage is serve's help page. costroid help serve prints it on stdout,
-// and a flag serve cannot parse prints it on stderr.
+// and serve, which holds no stdout, prints it on stderr when help is asked for
+// after other flags.
 var ServeUsage = cli.Page{
 	Command: "serve",
 	Summary: "serve runs the ingest service.",
