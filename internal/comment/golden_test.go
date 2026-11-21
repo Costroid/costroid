@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -466,9 +467,11 @@ func (r rendered) files() map[string]string {
 }
 
 // goldenProblems lists every invariant a state's rendering breaks: the comment
-// opens with the one marker and no other text holds it, each text GitHub
-// takes stays inside its limit, no output holds a line break, and a withheld
-// comment or summary holds no amount after a currency code.
+// opens with the one marker and no other text holds it, the check's title is
+// plain text inside the status limit and opens the comment and the job
+// summary, each text GitHub takes stays inside its limit, no output holds a
+// line break, and a withheld comment or summary holds no amount after a
+// currency code.
 func goldenProblems(input Input, r rendered) []string {
 	var problems []string
 	if strings.Count(r.comment, Marker) != 1 || !strings.HasPrefix(r.comment, Marker+"\n") {
@@ -478,6 +481,13 @@ func goldenProblems(input Input, r rendered) []string {
 		if strings.Contains(text, Marker) {
 			problems = append(problems, name+" holds the comment's marker")
 		}
+	}
+	title, _, _ := strings.Cut(strings.TrimPrefix(r.check, "# Title\n\n"), "\n")
+	if length := utf8.RuneCountInString(title); length == 0 || length > StatusLimit || strings.ContainsAny(title, markup) {
+		problems = append(problems, fmt.Sprintf("the check's title is %d characters, or holds markup: %q", length, title))
+	}
+	if opening := "**" + title + "**\n"; !strings.HasPrefix(r.comment, Marker+"\n"+opening) || !strings.HasPrefix(r.summary, opening) {
+		problems = append(problems, "the comment or the job summary does not open on the check's title")
 	}
 	for name, text := range map[string]string{goldenComment: r.comment, goldenSummary: r.summary, goldenCheck: r.check} {
 		if len(text) > githubLimit {
@@ -568,6 +578,17 @@ func TestGoldenInvariantsBite(t *testing.T) {
 		{"a second marker", input, func(r *rendered) { r.comment += Marker }},
 		{"no marker", input, func(r *rendered) { r.comment = strings.TrimPrefix(r.comment, Marker) }},
 		{"a marker in the summary", input, func(r *rendered) { r.summary = Marker + r.summary }},
+		{"a title past the status limit", input, func(r *rendered) {
+			long := strings.Repeat("x", StatusLimit+1)
+			r.check, r.comment, r.summary = "# Title\n\n"+long+"\n", Marker+"\n**"+long+"**\n", "**"+long+"**\n"
+		}},
+		{"a title that holds markup", input, func(r *rendered) {
+			r.check, r.comment, r.summary = "# Title\n\n`x`\n", Marker+"\n**`x`**\n", "**`x`**\n"
+		}},
+		{"a comment that opens on another line", input, func(r *rendered) {
+			r.comment = Marker + "\n### Costroid\n" + strings.TrimPrefix(r.comment, Marker+"\n")
+		}},
+		{"a job summary that opens on another line", input, func(r *rendered) { r.summary = "### Costroid\n\n" + r.summary }},
 		{"a comment over the limit", input, func(r *rendered) { r.comment += strings.Repeat("x", githubLimit) }},
 		{"a check over the limit", input, func(r *rendered) { r.check += strings.Repeat("x", githubLimit) }},
 		{"a line break in an output", input, func(r *rendered) { r.outputs[0].Value += "\nx" }},
