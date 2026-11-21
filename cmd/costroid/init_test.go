@@ -21,6 +21,7 @@ import (
 
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/agenttest"
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/config"
 	"github.com/Costroid/costroid/internal/recipelint"
 	"go.yaml.in/yaml/v3"
@@ -728,7 +729,7 @@ func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 	}{
 		{nil, "name the host", exitFailure},
 		{[]string{"bitbucket", "--agent", "claude"}, `not "bitbucket"`, exitUsage},
-		{[]string{"github"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk", exitUsage},
+		{[]string{"github"}, "name the agent with --agent", exitUsage},
 		{[]string{"gitlab", "--agent", "claude-code-action"}, "--agent on gitlab is one of claude, codex", exitUsage},
 		{[]string{"github", "--agent", "claude", "--existing", "x.yml"}, "--existing reads a GitHub workflow that runs claude-code-action", exitUsage},
 		{[]string{"github", "--agent", "claude-code-action", "--existing", "x.yml", "--force"}, "--existing writes nothing", exitUsage},
@@ -749,6 +750,190 @@ func TestInitRefusesWhatItCannotWrite(t *testing.T) {
 	if code != 0 || stdout != initHelp || stderr != "" {
 		t.Errorf("--help after the host: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
+}
+
+// noAgentOnGitHub is what init prints when the host is github and no agent
+// is named.
+const noAgentOnGitHub = `costroid: name the agent with --agent
+Agents on github that read ANTHROPIC_API_KEY:
+  claude              Runs Claude Code on a pull request under a budget
+  claude-agent-sdk    Runs your Claude Agent SDK program on a pull request
+  claude-code-action  Reads what a claude-code-action run cost
+Agents on github that read OPENAI_API_KEY:
+  codex         Runs Codex on a pull request under a budget
+  codex-action  Reads what an openai/codex-action run cost
+  codex-sdk     Runs your Codex SDK program on a pull request under a budget
+Example:
+  costroid init github --agent claude
+Run costroid help init to see its usage.
+`
+
+var agentHeading = regexp.MustCompile(`^Agents on (\S+) that read [A-Z_]+:$`)
+
+// listedAgents reads the agents a refusal of init lists, under the host each
+// stands under, and holds the refusal to one screen: 24 lines of at most 80
+// columns, each agent beside what its recipe does.
+func listedAgents(t *testing.T, refusal string) map[string][]string {
+	t.Helper()
+	lines := strings.Split(strings.TrimSuffix(refusal, "\n"), "\n")
+	if len(lines) > 24 {
+		t.Errorf("the refusal is %d lines, more than a screen of 24:\n%s", len(lines), refusal)
+	}
+	listed := map[string][]string{}
+	host := ""
+	for _, line := range lines {
+		if len(line) > usageWidth {
+			t.Errorf("%q is wider than %d columns", line, usageWidth)
+		}
+		heading := agentHeading.FindStringSubmatch(line)
+		switch {
+		case heading != nil:
+			host = heading[1]
+		case !strings.HasPrefix(line, "  "):
+			host = ""
+		case host != "":
+			row := strings.Fields(line)
+			if len(row) < 2 {
+				t.Errorf("%q says nothing of what the agent's recipe does", line)
+			}
+			listed[host] = append(listed[host], row[0])
+		}
+	}
+	return listed
+}
+
+// runsTheExample types the command a refusal of init gives as its example,
+// in the repository at root, and holds it to exit 0 and a written recipe.
+func runsTheExample(t *testing.T, root, refusal, host string) {
+	t.Helper()
+	_, example, found := strings.Cut(refusal, "\nExample:\n  costroid init ")
+	if !found {
+		t.Fatalf("the refusal gives no example:\n%s", refusal)
+	}
+	typed, _, _ := strings.Cut(example, "\n")
+	code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, strings.Fields(typed)...)
+	if code != 0 {
+		t.Fatalf("costroid init %s exited %d: %s", typed, code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(root, initOut[host])); err != nil {
+		t.Errorf("costroid init %s did not write %s: %v", typed, initOut[host], err)
+	}
+}
+
+// TestInitWithNoAgentListsEachAgentOnceWithAnExample runs init with a host
+// and no agent. It writes nothing and names no agent of its own choosing: it
+// lists every agent the host's recipes take, once, and ends on a command
+// that runs as printed and on its help.
+func TestInitWithNoAgentListsEachAgentOnceWithAnExample(t *testing.T) {
+	for host, agents := range initRecipes {
+		t.Run(host, func(t *testing.T) {
+			root := t.TempDir()
+			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, host)
+			if code != exitUsage || stdout != "" {
+				t.Fatalf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+			}
+			if host == githubHost && stderr != noAgentOnGitHub {
+				t.Errorf("init prints:\n%swant:\n%s", stderr, noAgentOnGitHub)
+			}
+			if !strings.HasPrefix(stderr, "costroid: name the agent with --agent\n") || !strings.HasSuffix(stderr, "\nExample:\n  costroid init "+host+" --agent claude\nRun costroid help init to see its usage.\n") {
+				t.Errorf("the refusal does not open with what is missing and end on an example and the help:\n%s", stderr)
+			}
+			listed := listedAgents(t, stderr)
+			if want := slices.Sorted(maps.Keys(agents)); len(listed) != 1 || !slices.Equal(slices.Sorted(slices.Values(listed[host])), want) {
+				t.Errorf("the refusal lists %v, want each of %v once under %s:\n%s", listed, want, host, stderr)
+			}
+			if files := tree(t, root); len(files) != 0 {
+				t.Errorf("init wrote %v", slices.Sorted(maps.Keys(files)))
+			}
+			runsTheExample(t, root, stderr, host)
+		})
+	}
+	page := strings.Split(noAgentOnGitHub, "\n")
+	troubleshootingLists(t, page[0], page[1])
+}
+
+// TestInitNamesTheHostAndTheAgentInOneRefusal runs init with nothing named in
+// a repository whose remote names no host. One refusal names the host and the
+// agent together, lists each host's agents and gives a command that runs
+// there as printed. With the agent named, the host alone is asked for; with
+// the host read from the remote, the agent alone.
+func TestInitNamesTheHostAndTheAgentInOneRefusal(t *testing.T) {
+	root := gitRepository(t)
+	code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes)
+	if code != exitFailure || stdout != "" || !strings.HasPrefix(stderr, "costroid: name the host and the agent: the repository has no remote\n") {
+		t.Fatalf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.HasSuffix(stderr, "\nExample:\n  costroid init github --agent claude\nRun costroid help init to see its usage.\n") {
+		t.Errorf("the refusal does not end on an example and the help:\n%s", stderr)
+	}
+	listed := listedAgents(t, stderr)
+	for host, agents := range initRecipes {
+		if want := slices.Sorted(maps.Keys(agents)); !slices.Equal(slices.Sorted(slices.Values(listed[host])), want) {
+			t.Errorf("the refusal lists %v under %s, want each of %v once:\n%s", listed[host], host, want, stderr)
+		}
+	}
+	if len(listed) != len(initRecipes) {
+		t.Errorf("the refusal lists the hosts %v, want %v", slices.Sorted(maps.Keys(listed)), slices.Sorted(maps.Keys(initRecipes)))
+	}
+	if files := tree(t, root); len(files) != 0 {
+		t.Errorf("init wrote %v", slices.Sorted(maps.Keys(files)))
+	}
+
+	code, _, hostAlone := runInit(t, root, releaseBuild, costroid.Recipes, "--agent", "claude")
+	if want := "costroid: name the host, github or gitlab: the repository has no remote\nSee " + cli.Troubleshooting + ".\n"; code != exitFailure || hostAlone != want {
+		t.Errorf("the agent named: exit %d, stderr:\n%swant:\n%s", code, hostAlone, want)
+	}
+	runsTheExample(t, root, stderr, githubHost)
+
+	remote := gitRepository(t)
+	runGit(t, remote, "remote", "add", "origin", "https://github.com/example/widgets.git")
+	if code, _, stderr := runInit(t, remote, releaseBuild, costroid.Recipes); code != exitUsage || stderr != noAgentOnGitHub {
+		t.Errorf("the host read from the remote: exit %d, stderr:\n%s", code, stderr)
+	}
+	troubleshootingLists(t, "costroid: name the host and the agent: <reason>", "costroid: name the host, github or gitlab: <reason>", "the repository has no remote")
+}
+
+// TestInitSaysWhenThePushHasNoRemote runs init where git lists no remote.
+// The push it prints has nowhere to go, and one line above the commands says
+// so, in the host's own name. A repository with a remote does not print it.
+func TestInitSaysWhenThePushHasNoRemote(t *testing.T) {
+	const left = "\n\nThese commands are left, and init ran none of them:\n"
+	for host, want := range map[string]string{
+		githubHost: "\n\nThis repository has no remote: create it on GitHub and add it as origin before\nthe push." + left,
+		gitlabHost: "\n\nThis repository has no remote: create it on GitLab and add it as origin before\nthe push." + left,
+	} {
+		t.Chdir(gitRepository(t))
+		var stdout, stderr bytes.Buffer
+		if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{host, "--agent", "claude"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), want) {
+			t.Errorf("%s: exit %d, stderr %q, and no line above the commands says the push has no remote:\n%s", host, code, stderr.String(), stdout.String())
+		}
+	}
+	root := gitRepository(t)
+	runGit(t, root, "remote", "add", "origin", "https://github.com/example/widgets.git")
+	t.Chdir(root)
+	var stdout, stderr bytes.Buffer
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"--agent", "claude"}, &stdout, &stderr); code != 0 || strings.Contains(stdout.String(), "has no remote") || !strings.Contains(stdout.String(), left) {
+		t.Errorf("a remote: exit %d, stderr %q, stdout:\n%s", code, stderr.String(), stdout.String())
+	}
+	troubleshootingLists(t, "This repository has no remote: create it on GitHub and add it as origin before the push.")
+}
+
+// TestInitNamesAMissingGit runs init on a machine with no git. It says so in
+// words, why init needs it and what to do, and never how the system said it.
+func TestInitNamesAMissingGit(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	directory := t.TempDir()
+	t.Chdir(directory)
+	const want = "costroid: git is not on PATH\ninit writes at a git repository's root.\nInstall git, then run costroid init again.\n"
+	var stdout, stderr bytes.Buffer
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"github", "--agent", "claude"}, &stdout, &stderr); code != exitFailure || stdout.Len() != 0 || stderr.String() != want {
+		t.Errorf("exit %d, stdout %q, stderr:\n%swant:\n%s", code, stdout.String(), stderr.String(), want)
+	}
+	if files := tree(t, directory); len(files) != 0 {
+		t.Errorf("init wrote %v", slices.Sorted(maps.Keys(files)))
+	}
+	lines := strings.Split(strings.TrimSuffix(want, "\n"), "\n")
+	troubleshootingLists(t, lines...)
 }
 
 // TestInstallPageInitExamplesRun runs every costroid init line of
@@ -1066,8 +1251,8 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 		want  string
 		code  int
 	}{
-		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk", exitUsage},
-		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "--agent is one of claude, claude-agent-sdk, claude-code-action, codex, codex-action, codex-sdk", exitUsage},
+		{"none", map[string]string{"lint.yml": "on: push\njobs: {}\n"}, "name the agent with --agent", exitUsage},
+		{"one that reports", map[string]string{"claude.yml": existingReview + "      - uses: " + costroidActionPath + "@" + otherCommit + " # v1.0.0-alpha.9\n"}, "name the agent with --agent", exitUsage},
 		{"two", map[string]string{"claude.yml": existingReview, "codex.yml": existingCodexReview}, ".github/workflows/claude.yml and .github/workflows/codex.yml each run an agent's action: name the one to report from with --existing", exitUsage},
 		{"a codex-home it cannot read", map[string]string{"codex.yml": strings.Replace(existingCodexReview, "codex-home: ${{ runner.temp }}/codex-home\n", "codex-home: [a, b]\n", 1)}, "sets a codex-home the read step cannot read: set it to one directory made for the job under runner.temp", exitFailure},
 	} {

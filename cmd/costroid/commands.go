@@ -170,7 +170,7 @@ func line(lines []string, i int) string {
 // The line a command that succeeded ends on names the command a person runs
 // next. demo ends on the verdict sentence, so its line stands above that.
 const (
-	nextAfterDemo     = "Next: costroid init writes the workflow that posts this on your pull requests."
+	nextAfterDemo     = "Next: costroid init github --agent claude writes the workflow that posts this."
 	nextAfterInit     = "Next: costroid doctor checks this repository before its first pull request."
 	nextAfterDoctor   = "Next: open a pull request, and its first run posts Costroid's comment."
 	nextAfterValidate = "Next: costroid policy --rows rows.jsonl gives the verdict this file gives a run."

@@ -1,8 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -10,23 +16,115 @@ import (
 	costroid "github.com/Costroid/costroid"
 )
 
-// nextCommand is the command a next-step line names.
-var nextCommand = regexp.MustCompile(`^Next: costroid (\S+) `)
+// nextSteps lists every line a command ends on that names what to do next:
+// the command that prints it, and the command line of costroid's it names.
+// doctor's names the pull request, which no command of costroid's opens.
+var nextSteps = []struct {
+	line, after string
+	names       []string
+}{
+	{nextAfterDemo, "demo", []string{"init", "github", "--agent", "claude"}},
+	{nextAfterInit, "init", []string{"doctor"}},
+	{nextAfterDoctor, "doctor", nil},
+	{nextAfterValidate, "validate", []string{"policy", "--rows", "rows.jsonl"}},
+}
 
+// nextLiterals reads every string the commands' source holds that opens a
+// next step.
+func nextLiterals(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			if literal, ok := node.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+				if text, err := strconv.Unquote(literal.Value); err == nil && strings.Contains(text, "Next:") {
+					lines = append(lines, text)
+				}
+			}
+			return true
+		})
+	}
+	return lines
+}
+
+// TestEveryNextStepIsOneLineAndNamesACommandThatExists walks every next step
+// the source holds. Each is one line of at most 80 columns. The command line
+// one names is run, on a machine with no program on PATH and in a directory
+// with nothing in it, far enough to know that the command exists and reads
+// every word of it: it does not end as a wrong command line does. No command
+// that prints a next step takes --json, so none prints one into JSON.
 func TestEveryNextStepIsOneLineAndNamesACommandThatExists(t *testing.T) {
-	for _, next := range []string{nextAfterDemo, nextAfterInit, nextAfterValidate} {
-		named := nextCommand.FindStringSubmatch(next)
-		if named == nil {
-			t.Errorf("%q names no command", next)
-		} else if _, ok := lookup(named[1]); !ok {
-			t.Errorf("%q names %s, which is no command", next, named[1])
+	clearCI(t)
+	var walked []string
+	for _, next := range nextSteps {
+		walked = append(walked, next.line)
+	}
+	if printed := nextLiterals(t); !slices.Equal(slices.Sorted(slices.Values(printed)), slices.Sorted(slices.Values(walked))) {
+		t.Fatalf("the source holds the next steps %q, and the walk holds %q", printed, walked)
+	}
+	t.Setenv("PATH", t.TempDir())
+	t.Chdir(t.TempDir())
+	for _, next := range nextSteps {
+		if utf8.RuneCountInString(next.line) > usageWidth || strings.Contains(next.line, "\n") || !strings.HasPrefix(next.line, "Next: ") {
+			t.Errorf("%q is not one line of at most %d columns that opens with Next", next.line, usageWidth)
+		}
+		if code, _, stderr := execute(t, next.after, "--json"); code != exitUsage || !strings.Contains(stderr, "--json is not a flag of costroid "+next.after) {
+			t.Errorf("%s takes --json, and nothing holds its next step out of the JSON: exit %d, stderr %q", next.after, code, stderr)
+		}
+		if next.names == nil {
+			continue
+		}
+		if !strings.HasPrefix(next.line, "Next: costroid "+strings.Join(next.names, " ")+" ") {
+			t.Errorf("%q does not name costroid %s", next.line, strings.Join(next.names, " "))
+		}
+		if _, ok := lookup(next.names[0]); !ok {
+			t.Errorf("%q names %s, which is no command", next.line, next.names[0])
+		}
+		if code, _, stderr := execute(t, next.names...); code == exitUsage || strings.Contains(stderr, "Run costroid help") {
+			t.Errorf("costroid %s, which %q names, is a wrong command line: exit %d, stderr %q", strings.Join(next.names, " "), next.line, code, stderr)
 		}
 	}
-	for _, next := range []string{nextAfterDemo, nextAfterInit, nextAfterDoctor, nextAfterValidate} {
-		if utf8.RuneCountInString(next) > usageWidth || strings.Contains(next, "\n") || !strings.HasPrefix(next, "Next: ") {
-			t.Errorf("%q is not one line of at most %d columns that opens with Next", next, usageWidth)
+}
+
+// TestDemoNamesACommandThatWritesTheWorkflow types the command demo's next
+// step names, as it is printed, in a repository git has just made, with no
+// remote. It exits 0 and writes the workflow and costroid.yml.
+func TestDemoNamesACommandThatWritesTheWorkflow(t *testing.T) {
+	code, stdout, stderr := execute(t, "demo")
+	if code != 0 {
+		t.Fatalf("demo exited %d: %s", code, stderr)
+	}
+	named, _, found := strings.Cut(strings.TrimPrefix(lineWith(stdout, "Next: "), "Next: costroid "), " writes ")
+	if !found {
+		t.Fatalf("demo names no command that writes:\n%s", stdout)
+	}
+	typed := strings.Fields(named)
+	if typed[0] != "init" {
+		t.Fatalf("demo names costroid %s", named)
+	}
+	root := gitRepository(t)
+	t.Chdir(root)
+	var out, refused bytes.Buffer
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, typed[1:], &out, &refused); code != 0 {
+		t.Fatalf("costroid %s exited %d in a repository with no remote:\n%s", named, code, refused.String())
+	}
+	for _, name := range []string{initOut[githubHost], configFile} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Errorf("costroid %s did not write %s: %v", named, name, err)
 		}
 	}
+	troubleshootingLists(t, nextAfterDemo)
 }
 
 // TestDemoNamesInitAboveTheVerdictSentence holds demo to the verdict sentence

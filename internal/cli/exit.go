@@ -44,8 +44,14 @@ func Mistaken(command string, err error) error {
 	if mistake := new(Mistake); errors.As(err, &mistake) {
 		return err
 	}
+	return &Mistake{lines: []string{err.Error(), Usage(command)}}
+}
+
+// Usage is the line that says where the usage of command is, which a
+// command's own finding about its command line ends on.
+func Usage(command string) string {
 	command, _, _ = strings.Cut(command, " ")
-	return &Mistake{lines: []string{err.Error(), fmt.Sprintf("Run costroid help %s to see its usage.", command)}}
+	return fmt.Sprintf("Run costroid help %s to see its usage.", command)
 }
 
 // stopped is work a command could not do, in the lines Explain prints.
@@ -56,8 +62,9 @@ type stopped struct {
 func (s *stopped) Error() string { return strings.Join(s.lines, "\n") }
 
 // Stopped is work a command could not do: what is wrong, then why when
-// costroid knows it, then what to do next. Each line after the first is a
-// sentence, and the last names a command, a file or a page.
+// costroid knows it or the choices the reader has, then what to do next. A
+// line of why or of what to do is a sentence, and the last line names a
+// command, a file or a page.
 func Stopped(what string, then ...string) error {
 	return &stopped{lines: append([]string{what}, then...)}
 }

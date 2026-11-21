@@ -77,6 +77,25 @@ func TestLintReadsGitHubsWorkflowsByDefault(t *testing.T) {
 	}
 }
 
+// TestLintNamesADirectoryWithNoWorkflows runs lint with no path where
+// GitHub's directory is not there. It names the directory, what lint reads
+// and the two ways on, and never how the system said it. A path the reader
+// named keeps its own line.
+func TestLintNamesADirectoryWithNoWorkflows(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const want = "costroid: .github/workflows does not exist\n" +
+		"lint reads the GitHub workflows of the repository it runs in.\n" +
+		"Run costroid lint at a repository's root, or name the files: costroid lint <paths>.\n"
+	if code, stdout, stderr := runLint(t); code != exitFailure || stdout != "" || stderr != want {
+		t.Errorf("exit %d, stdout %q, stderr:\n%swant:\n%s", code, stdout, stderr, want)
+	}
+	if code, _, stderr := runLint(t, "absent.yml"); code != exitFailure || !strings.HasPrefix(stderr, "costroid: absent.yml does not exist\n") || strings.Contains(stderr, "lint reads") {
+		t.Errorf("a path that was named: exit %d, stderr:\n%s", code, stderr)
+	}
+	under := strings.Split(strings.TrimSuffix(want, "\n"), "\n")[1:]
+	troubleshootingLists(t, append(under, "costroid: <path> does not exist")...)
+}
+
 func TestLintRefusesAPathItCannotRead(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for name, args := range map[string][]string{

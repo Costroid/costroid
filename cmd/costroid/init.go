@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -201,6 +202,9 @@ var initOut = map[string]string{
 	gitlabHost: ".gitlab/costroid.yml",
 }
 
+// hostNames is each host as its own pages write it.
+var hostNames = map[string]string{githubHost: "GitHub", gitlabHost: "GitLab"}
+
 // gitlabKeys names the provider key each agent reads on GitLab, where the
 // template takes it from the job's environment.
 var gitlabKeys = map[string]string{"claude": "ANTHROPIC_API_KEY", "codex": "CODEX_API_KEY"}
@@ -243,9 +247,15 @@ var (
 	// copyInstruction is a recipe header's sentence that tells a reader where
 	// to copy the file, which init has done.
 	copyInstruction = regexp.MustCompile(`Copy (?:to|into) .*?(?:\.(?: |$)|, then )`)
+	// headerClause is the clause a recipe's header opens with: what the
+	// recipe runs or reads, before what it does with the cost.
+	headerClause = regexp.MustCompile(`^(.+?)(?:, then | and records |\.(?: |$))`)
 )
 
-var errNoRepository = cli.Stopped("this directory is in no git repository", "init writes at a repository's root.", "Run costroid init inside your repository.")
+var (
+	errNoRepository = cli.Stopped("this directory is in no git repository", "init writes at a repository's root.", "Run costroid init inside your repository.")
+	errNoGit        = cli.Stopped("git is not on PATH", "init writes at a git repository's root.", "Install git, then run costroid init again.")
+)
 
 // buildInfo is the release this binary belongs to: what the linker stamped,
 // or what the go command recorded. tagCommit reads the commit a release's tag
@@ -291,9 +301,11 @@ func (p pin) String() string {
 }
 
 // repository is where init runs: the root of the working tree, and the
-// directory the command was started in, inside it.
+// directory the command was started in, inside it. noRemote is set when git
+// lists no remote for it, so the push init prints has nowhere to go.
 type repository struct {
 	root, dir string
+	noRemote  bool
 }
 
 // place reads a path as the shell that started init would, and returns it
@@ -322,7 +334,7 @@ func initCommand(args []string, stdout, stderr io.Writer) int {
 }
 
 // locateRepository asks git for the root of the working tree the current
-// directory is in.
+// directory is in, and whether it has a remote.
 func locateRepository() (repository, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -335,6 +347,8 @@ func locateRepository() (repository, error) {
 	switch {
 	case errors.As(err, &exit):
 		return repository{}, errNoRepository
+	case errors.Is(err, exec.ErrNotFound):
+		return repository{}, errNoGit
 	case err != nil:
 		return repository{}, fmt.Errorf("find the repository's root with git: %w", err)
 	}
@@ -345,7 +359,8 @@ func locateRepository() (repository, error) {
 	if dir, err = filepath.EvalSymlinks(dir); err != nil {
 		return repository{}, fmt.Errorf("read the current directory: %w", err)
 	}
-	return repository{root: root, dir: dir}, nil
+	remotes, err := gitOutput(root, "remote")
+	return repository{root: root, dir: dir, noRemote: err == nil && strings.TrimSpace(remotes) == ""}, nil
 }
 
 // initRepository runs init in the repository find returns, with the recipes
@@ -363,7 +378,7 @@ func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, 
 	if err != nil {
 		return cli.Fail(stderr, err)
 	}
-	flags, switched, err := resolveTarget(repo, flags)
+	flags, switched, err := resolveTarget(repo, flags, recipes)
 	if err != nil {
 		return cli.Fail(stderr, err)
 	}
@@ -481,15 +496,20 @@ func (f initFlags) checkHost() error {
 
 // resolveTarget settles the host, the agent and the workflow --existing
 // reads, from the flags and the repository. It reports whether a workflow
-// the repository already has switched init to --existing.
-func resolveTarget(repo repository, flags initFlags) (initFlags, bool, error) {
+// the repository already has switched init to --existing. A command line
+// that names no agent, or neither the host nor the agent where the remote
+// names no host, is refused once, with the agents the recipes hold.
+func resolveTarget(repo repository, flags initFlags, recipes fs.FS) (initFlags, bool, error) {
 	if flags.host == "" && flags.existing != "" {
 		flags.host = githubHost
 	}
 	if flags.host == "" {
 		host, err := remoteHost(repo.root)
-		if err != nil {
-			return flags, false, err
+		switch {
+		case err != nil && flags.agent == "":
+			return flags, false, neitherNamed(recipes, err)
+		case err != nil:
+			return flags, false, fmt.Errorf("name the host, github or gitlab: %w", err)
 		}
 		flags.host = host
 	}
@@ -530,7 +550,7 @@ func resolveTarget(repo repository, flags initFlags) (initFlags, bool, error) {
 	case flags.existing != "":
 		return flags, switched, cli.Mistaken("init", errors.Join(flags.checkAuth(), flags.checkHost()))
 	case flags.agent == "":
-		return flags, false, cli.Mistaken("init", fmt.Errorf("--agent is one of %s", agentNames(agents)))
+		return flags, false, agentNotNamed(recipes, flags.host)
 	case agents[flags.agent] == "":
 		return flags, false, cli.Mistaken("init", fmt.Errorf("--agent on %s is one of %s, not %q", flags.host, agentNames(agents), flags.agent))
 	}
@@ -584,17 +604,96 @@ func agentNames(agents map[string]string) string {
 	return strings.Join(names, ", ")
 }
 
+// agentNotNamed is the mistake of a command line with a host and no agent:
+// it lists the host's agents, and init chooses none.
+func agentNotNamed(recipes fs.FS, host string) error {
+	choices, err := agentChoices(recipes, host)
+	if err != nil {
+		return err
+	}
+	return cli.Mistaken("init", cli.Stopped("name the agent with --agent", choices...))
+}
+
+// neitherNamed refuses a command line that names neither the host nor the
+// agent, in a repository whose remote names no host, for the reason given.
+// One refusal asks for both and lists each host's agents.
+func neitherNamed(recipes fs.FS, reason error) error {
+	choices, err := agentChoices(recipes, githubHost, gitlabHost)
+	if err != nil {
+		return err
+	}
+	return cli.Stopped("name the host and the agent: "+cli.Plain(reason), append(choices, cli.Usage("init"))...)
+}
+
+// agentChoices lists the agents init writes a recipe for on each host, each
+// once: under the key its recipe reads, on one line beside what the recipe's
+// header says it does. The list ends on the command that writes the recipe
+// for Claude Code on the first host.
+func agentChoices(recipes fs.FS, hosts ...string) ([]string, error) {
+	var lines []string
+	for _, host := range hosts {
+		var keys []string
+		agents := map[string][]string{}
+		does := map[string]string{}
+		for _, agent := range slices.Sorted(maps.Keys(initRecipes[host])) {
+			name := initRecipes[host][agent]
+			source, err := fs.ReadFile(recipes, path.Join("recipes", name))
+			if err != nil {
+				return nil, fmt.Errorf("read the shipped recipe: %w", err)
+			}
+			key := gitlabKeys[agent]
+			if host == githubHost {
+				secrets := secretNames(source)
+				if len(secrets) == 0 {
+					return nil, fmt.Errorf("recipes/%s reads no key, which is a defect in costroid", name)
+				}
+				key = secrets[0]
+			}
+			if !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+			agents[key] = append(agents[key], agent)
+			does[agent] = recipeDoes(source)
+		}
+		for _, key := range keys {
+			lines = append(lines, fmt.Sprintf("Agents on %s that read %s:", host, key))
+			widest := 0
+			for _, agent := range agents[key] {
+				widest = max(widest, len(agent))
+			}
+			for _, agent := range agents[key] {
+				lines = append(lines, fmt.Sprintf("  %-*s  %s", widest, agent, does[agent]))
+			}
+		}
+	}
+	return append(lines, "Example:", "  "+initExample(hosts[0])), nil
+}
+
+// initExample is the command that writes the recipe for Claude Code on host.
+func initExample(host string) string {
+	return "costroid init " + host + " --agent claude"
+}
+
+// recipeDoes is what a recipe's header says the recipe does, up to what it
+// does with the cost, which every recipe reports.
+func recipeDoes(recipe []byte) string {
+	header, _ := recipeHeader(recipe)
+	if clause := headerClause.FindStringSubmatch(header); clause != nil {
+		return clause[1]
+	}
+	return header
+}
+
 // remoteHost is the host the repository's remote names: origin's, or the
 // only remote's.
 func remoteHost(root string) (string, error) {
-	const fix = "name the host, github or gitlab"
 	name, err := remoteName(root)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", fix, err)
+		return "", err
 	}
 	address, err := gitOutput(root, "remote", "get-url", name)
 	if err != nil {
-		return "", fmt.Errorf("%s: git could not read the remote %s: %w", fix, name, err)
+		return "", fmt.Errorf("git could not read the remote %s: %w", name, err)
 	}
 	server := remoteServer(strings.TrimSpace(address))
 	switch {
@@ -603,7 +702,7 @@ func remoteHost(root string) (string, error) {
 	case strings.Contains(server, gitlabHost):
 		return gitlabHost, nil
 	}
-	return "", fmt.Errorf("%s: the remote %s names neither", fix, name)
+	return "", fmt.Errorf("the remote %s names neither", name)
 }
 
 // remoteName is the remote init reads the host from and --pr pushes to:
@@ -1164,6 +1263,9 @@ func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed 
 	commands = append(commands, "git switch -c try-costroid", "git add "+strings.Join(changed, " "), `git commit -m "Add the costroid check"`, "git push --set-upstream origin try-costroid")
 	if flags.host != gitlabHost {
 		commands = append(commands, "gh pr create --fill")
+	}
+	if repo.noRemote {
+		fmt.Fprint(stdout, "\n"+wrap(fmt.Sprintf("This repository has no remote: create it on %s and add it as origin before the push.", hostNames[flags.host]), usageWidth))
 	}
 	fmt.Fprint(stdout, "\nThese commands are left, and init ran none of them:\n")
 	for _, command := range commands {
