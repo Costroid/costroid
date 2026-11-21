@@ -138,7 +138,7 @@ func BenchmarkOverrides(b *testing.B) {
 	}
 	explainOverrides(b, db, a, query())
 	var samples []time.Duration
-	var failing int
+	full := 0
 	for b.Loop() {
 		started := time.Now()
 		count, err := record.Overrides(ctx, a, query())
@@ -146,15 +146,17 @@ func BenchmarkOverrides(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		failing += count.Failing
+		if count.Failing == store.OverrideWindowPullRequests {
+			full++
+		}
 	}
 	b.StopTimer()
 	slices.Sort(samples)
 	p50, p99 := percentile(samples, 50), percentile(samples, 99)
 	b.ReportMetric(p50.Seconds()*1000, "p50-ms")
 	b.ReportMetric(p99.Seconds()*1000, "p99-ms")
-	fmt.Printf("override query: %d queries over %d failing verdicts, %.1f pull requests in a window on average: p50 %s, p99 %s, max %s\n",
-		len(samples), overrideBenchFailures, float64(failing)/float64(len(samples)), p50, p99, samples[len(samples)-1])
+	fmt.Printf("override query: %d queries over %d failing verdicts, %d of them on a full window of %d pull requests: p50 %s, p99 %s, max %s\n",
+		len(samples), overrideBenchFailures, full, store.OverrideWindowPullRequests, p50, p99, samples[len(samples)-1])
 }
 
 func percentile(sorted []time.Duration, percent int) time.Duration {
