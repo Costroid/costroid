@@ -840,7 +840,7 @@ func (i Input) why() string {
 	case i.refused():
 		said = append(said, i.refusedLine())
 	case i.Reason == AgentSkipped:
-		said = append(said, "The agent did not run on this pull request: the workflow skipped its job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request.")
+		said = append(said, "The recipes skip the agent's job for a first-time contributor without the `costroid-agent` label and for a fork's pull request.")
 	case i.readerLine() != "":
 		said = append(said, fmt.Sprintf("The reader's first error: `%s`.", i.readerLine()))
 	case i.agentError() != "":

@@ -281,12 +281,14 @@ request, in place of a report with no rows.
 
 --preview prints, as Markdown, the comment report would post for the rows, and
 reads and posts nothing on any host. Its verdict holds the rows to costroid.yml
-in the working directory, as costroid policy does.
+in the working directory, as costroid policy does. Standard output is the
+comment alone. The last line, on standard error, is the verdict sentence the
+comment opens with.
 
 --recorded says the rows are a recorded run's, not the pull request's: CI run
 RUN_ID's, recorded on DATE, written YYYY-MM-DD. The check, the comment and the
-job summary open with a line that says so, without the head commit, and the
-result object names the run under recorded. The pull request's total neither
+job summary say so in the line under their first, without the head commit, and
+the result object names the run under recorded. The pull request's total neither
 reads these figures nor counts them. On the workflow_run event of a fork's
 pull request, whose own run holds a read-only token, report posts the check
 and the comment there, on the one open pull request follow-up would find.
@@ -386,7 +388,8 @@ one per line, each with its check_run_id: the pull request's total and the
 agent's baseline are read from them as the report reads them. --workflow-added
 and --at state when the workflow reached the base branch and when the check
 ran, both as RFC 3339. Without --workflow-added the warn-only period has not
-ended. --json prints the verdict as the check's machine block carries it.
+ended. The last line is the verdict sentence, the title the check gets. --json
+prints the verdict as the check's machine block carries it.
 
 Exit codes of policy:
   0                 success or neutral
@@ -442,8 +445,8 @@ const demoHelp = `Usage:
   costroid demo [--state STATE] [--markdown]
 
 demo prints the comment Costroid posts on a pull request, built from the rows of
-a recorded run, as plain text for a terminal. It reads nothing and posts
-nothing.
+a recorded run, as plain text for a terminal. It ends on the verdict sentence
+the comment opens with. It reads nothing and posts nothing.
 
 --state picks the comment:
   neutral           a recorded claude-code-action run that nothing held to a

@@ -1,5 +1,5 @@
 <!-- costroid:comment -->
-**Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
+**Within budget, by the job's own figures: the recorded run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 

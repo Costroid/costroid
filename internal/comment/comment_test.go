@@ -347,7 +347,7 @@ func TestEveryReasonForNoFiguresIsStatedAndNoneShowsAFigure(t *testing.T) {
 	}{
 		{NoRows, EmptyRowsFile, 0, "No figure (empty_rows_file): the rows file holds no rows. Either the agent printed no usage or its job stopped before it wrote a row, and that job's log says which. No rule ran."},
 		{Unreadable, NoRowsFile, 0, "No figure (no_rows_file): no rows file reached this report. The agent's job log says why it wrote none. No rule ran."},
-		{Unreadable, ForkNoRows, 0, "No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none. No rule ran."},
+		{Unreadable, ForkNoRows, 0, "No figure (fork_no_rows): this pull request comes from a fork, and its workflow run left no rows. No rule ran."},
 		{Unreadable, NotAFile, 0, "No figure (rows_path_not_a_file): the rows path is not a regular file, so this report did not read it. No rule ran."},
 		{Unreadable, UnreadRowsFile, 0, "No figure (rows_file_unread): the rows file could not be read. No rule ran."},
 		{Unreadable, InvalidRow, 3, "No figure (invalid_row): line 3 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran."},

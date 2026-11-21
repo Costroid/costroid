@@ -244,7 +244,7 @@ func (b Block) against(result policy.Result, said cut, over bool) (figure, limit
 			used = "used models that are not on the list"
 		}
 		if !shown {
-			return "this run " + used + b.priced(said), ""
+			return b.subject() + " " + used + b.priced(said), ""
 		}
 		return b.runCost(said), " and " + used
 	case policy.RuleRunIncrease, policy.RuleRunIncreasePercent:
@@ -255,7 +255,7 @@ func (b Block) against(result policy.Result, said cut, over bool) (figure, limit
 		reach += allowedIncrease(result, shown) + " over the "
 		switch {
 		case !shown:
-			return "this run is " + reach + "median of earlier runs" + b.priced(said), ""
+			return b.subject() + " is " + reach + "median of earlier runs" + b.priced(said), ""
 		case result.BaselineUSD == "":
 			return b.runCost(said), ", " + reach + "median of earlier runs"
 		}
@@ -268,7 +268,7 @@ func (b Block) against(result policy.Result, said cut, over bool) (figure, limit
 	}
 	switch {
 	case !shown:
-		return "this run is " + standingWord(over) + " its " + noun + b.priced(said), ""
+		return b.subject() + " is " + standingWord(over) + " its " + noun + b.priced(said), ""
 	case result.LimitUSD == "":
 		return b.runCost(said), ", " + standingWord(over) + " its " + noun
 	}
@@ -331,9 +331,19 @@ func (b Block) totalBases() string {
 // and basis. Withheld, it says how the run was priced and names no amount.
 func (b Block) runCost(said cut) string {
 	if b.Amounts != amountsShown {
-		return "this run was priced " + b.figures(said)
+		return b.subject() + " was priced " + b.figures(said)
 	}
-	return "this run cost " + b.figures(said)
+	return b.subject() + " cost " + b.figures(said)
+}
+
+// subject names the run the figures are: this pull request's own, or the
+// recorded run a report shows in its place, so no sentence gives a recorded
+// run's cost as the pull request's.
+func (b Block) subject() string {
+	if b.Recorded != nil {
+		return "the recorded run"
+	}
+	return "this run"
 }
 
 // priced ends a figure that names no amount with how the run was priced.
@@ -408,7 +418,9 @@ func (b Block) absence(besideEstimates bool) (code, why string) {
 	switch {
 	case b.RunReason.Sentence() != "":
 		return string(b.RunReason), b.RunReason.Sentence()
-	case b.Reason == NoRowsFile || b.Reason == ForkNoRows:
+	case b.Reason == ForkNoRows:
+		return code, "this pull request comes from a fork, and its workflow run left no rows"
+	case b.Reason == NoRowsFile:
 		return code, "no rows file reached this report. The agent's job log says why it wrote none"
 	case b.Reason == NotAFile:
 		return code, "the rows path is not a regular file, so this report did not read it"

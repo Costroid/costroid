@@ -101,9 +101,9 @@ func TestSkippedAgentIsNamedAsSkipped(t *testing.T) {
 		t.Fatalf("report exit %d, %d checks, %d comments: %s", code, len(stub.Checks), len(stub.Comments), stderr)
 	}
 	validateResult(t, reported)
-	sentence := "The agent did not run on this pull request: the workflow skipped its job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request."
+	sentence := "**No agent run: the workflow skipped the agent's job on this pull request, so there is no cost to report.**\n\nThe recipes skip the agent's job for a first-time contributor without the `costroid-agent` label and for a fork's pull request.\n"
 	body := stub.Comments[0].Body
-	if !strings.Contains(body, sentence) || !strings.Contains(stub.Checks[0].Summary, sentence) {
+	if !strings.Contains(body, sentence) || !strings.HasPrefix(stub.Checks[0].Summary, sentence) {
 		t.Errorf("no %q in\n%s", sentence, body)
 	}
 	if strings.Contains(body, "job log") || strings.Contains(body, "The rows file holds no rows") {

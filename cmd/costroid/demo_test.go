@@ -139,10 +139,11 @@ func TestDemoEndsOnTheVerdictSentence(t *testing.T) {
 	}
 }
 
-// TestPreviewEndsOnTheVerdictSentence holds report --preview to the comment
-// the report would post, byte for byte, and after it one last line: the
-// sentence that comment opens with.
-func TestPreviewEndsOnTheVerdictSentence(t *testing.T) {
+// TestPreviewEndsOnTheVerdictSentenceOnStandardError holds report --preview
+// to two streams. Standard output is the comment the report would post and
+// nothing after it, so a preview written to a file is what would be posted.
+// Standard error ends on the sentence that comment opens with.
+func TestPreviewEndsOnTheVerdictSentenceOnStandardError(t *testing.T) {
 	outsideCI(t)
 	t.Setenv(installationVariable, "")
 	rows := absolute(t, demoRowsFile)
@@ -165,12 +166,11 @@ func TestPreviewEndsOnTheVerdictSentence(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("costroid.yml %q: exit %d: %s", config, code, stderr)
 		}
-		body, closed := strings.CutSuffix(stdout, "\n"+sentence+"\n")
-		if !closed || !strings.HasSuffix(body, "\n```\n\n</details>\n") || lastLine(stdout) != sentence {
-			t.Errorf("costroid.yml %q: after the comment the preview ends on\n%s\nwant\n%s", config, lastLine(stdout), sentence)
+		if !strings.HasSuffix(stderr, sentence+"\n") || lastLine(stderr) != sentence {
+			t.Errorf("costroid.yml %q: standard error ends on\n%s\nwant\n%s", config, lastLine(stderr), sentence)
 		}
-		if !strings.HasPrefix(body, comment.Marker+"\n**"+sentence+"**\n\n") || strings.Count(stdout, sentence) != 2 {
-			t.Errorf("costroid.yml %q: the comment does not open on the sentence the preview ends on:\n%s", config, stdout)
+		if !strings.HasPrefix(stdout, comment.Marker+"\n**"+sentence+"**\n\n") || !strings.HasSuffix(stdout, "\n```\n\n</details>\n") || strings.Count(stdout, sentence) != 1 {
+			t.Errorf("costroid.yml %q: standard output is not the comment alone, opening on the sentence standard error ends on:\n%s", config, stdout)
 		}
 	}
 }
@@ -353,7 +353,7 @@ func TestPreviewNamesThisDirectory(t *testing.T) {
 		t.Errorf("a missing rows file: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	code, stdout, stderr = execute(t, "report", "--preview", "--rows", missing, "--agent-result", "skipped")
-	if code != 0 || !strings.Contains(stdout, "The agent did not run on this pull request") || strings.Contains(stdout, "job log") {
+	if code != 0 || !strings.Contains(stdout, "**No agent run: the workflow skipped the agent's job on this pull request") || strings.Contains(stdout, "job log") {
 		t.Errorf("a skipped agent's missing rows file: exit %d:\n%s%s", code, stdout, stderr)
 	}
 }

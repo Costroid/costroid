@@ -345,7 +345,7 @@ func TestRecordedRowsSayRecordedAndTheDate(t *testing.T) {
 		if read := requestsWith(stub.Requests, "/pulls/7/commits"); len(read) != 0 {
 			t.Errorf("the report read the pull request's total: %v", read)
 		}
-		if !strings.Contains(body, "this run cost USD "+demoTotal+" at list (Measured) of the USD 5.00 run budget.") {
+		if !strings.Contains(body, "the recorded run cost USD "+demoTotal+" at list (Measured) of the USD 5.00 run budget.") {
 			t.Errorf("the comment does not state the recorded figure:\n%s", body)
 		}
 	})

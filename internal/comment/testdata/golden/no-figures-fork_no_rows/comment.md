@@ -1,5 +1,5 @@
 <!-- costroid:comment -->
-**No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none. No rule ran.**
+**No figure (fork_no_rows): this pull request comes from a fork, and its workflow run left no rows. No rule ran.**
 
 ### Costroid
 

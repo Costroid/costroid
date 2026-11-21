@@ -90,8 +90,8 @@ func TestReportReadsTheCapFromTheRunObject(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("report --preview: exit %d: %s", code, printed)
 			}
-			if printed != test.warning {
-				t.Errorf("report --preview printed %q, want %q", printed, test.warning)
+			if sentence := strings.Trim(lineWith(stdout, "**"), "*"); sentence == "" || printed != test.warning+sentence+"\n" {
+				t.Errorf("report --preview printed %q, want %q and then the comment's first line", printed, test.warning)
 			}
 			if held := strings.Contains(stdout, "Cap: USD "+test.budget+".00 ("); held != (test.budget != "") {
 				t.Errorf("the comment states the cap: %v, want USD %q:\n%s", held, test.budget, stdout)

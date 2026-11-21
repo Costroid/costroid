@@ -371,14 +371,15 @@ The check's title, the first line of the comment and the first line of the job s
 
 | The title opens | Meaning | Fix |
 | --------------- | ------- | --- |
-| `No figure (no_rows_file)`, `No figure (fork_no_rows)` | No rows file reached the report | Read the agent's job log, which says why it wrote none |
+| `No figure (no_rows_file)` | No rows file reached the report | Read the agent's job log, which says why it wrote none |
+| `No figure (fork_no_rows)` | The pull request comes from a fork, and its workflow run left no rows. The recipes run no agent on a fork's pull request | None |
 | `No figure (empty_rows_file)` | The rows file holds no rows: the agent printed no usage, or its job stopped before it wrote a row | Read the agent's job log, which says which |
 | `No figure (rows_path_not_a_file)` | The rows path is not a regular file, so the report did not read it | Write the rows to a plain file, as `costroid run --out` does |
 | `No figure (rows_file_unread)` | The rows file could not be read | Read the report's `costroid: warning:` line, which gives the reason |
 | `No figure (invalid_row)` | A line of the rows file is not a valid row. The report shows no partial total, which would read as a smaller cost | Read the report's `costroid: warning:` line, which names the line |
 | `No figure (no_usage)`, `No figure (concurrent_run)`, `No figure (reader_refused)`, `No figure (agent_error)` | The run stated why it wrote no rows | [Running the agent](#running-the-agent) and [The run's summary](#the-runs-summary) have each reason's line, and [Agent errors](#agent-errors) the fix for each class |
 | `No figure (artifact_refused)` | The `costroid-rows` artifact held entries besides the rows and the run object, so the report read none of it and the check fails | [Installing the binary](#installing-the-binary) has the refused artifact's line |
-| `No agent run` | The workflow skipped the agent's job, as the recipes do for a first-time contributor without the `costroid-agent` label and for a fork's pull request | None |
+| `No agent run` | The workflow skipped the agent's job. The recipes skip it for a first-time contributor without the `costroid-agent` label and for a fork's pull request | None |
 
 ## costroid.yml
 

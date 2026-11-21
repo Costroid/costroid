@@ -1467,7 +1467,7 @@ no-figures-empty_rows_file	](https://app.costroid.com/?installation=github%3A581
 no-figures-empty_rows_file	](https://docs.costroid.com/export)
 no-figures-empty_rows_file	](https://github.com/example/widgets/actions/runs/19203384756)
 no-figures-empty_rows_file	`9f2c6e1`
-no-figures-fork_no_rows	No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none. No rule ran.
+no-figures-fork_no_rows	No figure (fork_no_rows): this pull request comes from a fork, and its workflow run left no rows. No rule ran.
 no-figures-fork_no_rows	](https://app.costroid.com/?installation=github%3A58120394)
 no-figures-fork_no_rows	](https://docs.costroid.com/export)
 no-figures-fork_no_rows	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1952,7 +1952,7 @@ recorded-run	USD 0.20
 recorded-run	USD 0.50
 recorded-run	USD 4.998380275
 recorded-run	USD 5.00
-recorded-run	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+recorded-run	Within budget, by the job's own figures: the recorded run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 recorded-run	](https://app.costroid.com/?installation=github%3A58120394)
 recorded-run	](https://docs.costroid.com/export)
 recorded-run	](https://docs.costroid.com/policy)
@@ -1982,7 +1982,7 @@ recorded-run-withheld	2026-11-07
 recorded-run-withheld	2026-11-21
 recorded-run-withheld	42368537950
 recorded-run-withheld	List-equivalent, not billed
-recorded-run-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
+recorded-run-withheld	Within budget, by the job's own figures: the recorded run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 recorded-run-withheld	](https://app.costroid.com/?installation=github%3A58120394)
 recorded-run-withheld	](https://docs.costroid.com/export)
 recorded-run-withheld	](https://docs.costroid.com/policy)

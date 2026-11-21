@@ -88,7 +88,7 @@ GitHub counts `neutral` as passing: "Required status checks must have a `success
 
 ## What the check says
 
-One sentence says what is true of the run. It is the check's title, the first line of the comment and of the job summary, and the last line that `costroid policy`, `costroid report --preview` and `costroid demo` print. It opens with a state, then gives the figure with its currency and basis, the budget, and what was checked or what follows:
+One sentence says what is true of the run. It is the check's title, the first line of the comment and of the job summary, and the last line that `costroid policy` and `costroid demo` print. `costroid report --preview` prints it last too, on standard error, so its standard output is the comment alone. It opens with a state, then gives the figure with its currency and basis, the budget, and what was checked or what follows:
 
 ```text
 Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.

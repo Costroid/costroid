@@ -477,3 +477,36 @@ func TestTroubleshootingListsEveryNoFigureCode(t *testing.T) {
 		t.Error("docs/troubleshooting.md has no row for a skipped agent, or its sentence opens otherwise")
 	}
 }
+
+// TestRecordedRunSentenceNamesTheRecordedRun holds a report on a recorded
+// run's rows to a sentence that says whose cost it states, in every state it
+// can be in: under a budget, over one, with no rule, with a costroid.yml that
+// is not valid, and with amounts withheld. No such sentence says "this run".
+func TestRecordedRunSentenceNamesTheRecordedRun(t *testing.T) {
+	states := goldenStates(t)
+	figure := "USD " + realTotal + " at list (List-equivalent, not billed)"
+	for name, tc := range map[string]struct {
+		input Input
+		want  string
+	}{
+		"within the budget": {states["neutral-shown"], "Within budget, by the job's own figures: the recorded run cost " + figure + " of the USD 5.00 run budget."},
+		"over the budget":   {states["fail-shown"], "Over budget: the recorded run cost " + figure + ", over the USD 0.001 run budget."},
+		"no rule":           {realInput(t), "No budget set: the recorded run cost " + figure + ". No rule decides this check."},
+		"not decided":       {states["config-unread"], "Not decided: costroid.yml could not be read, so no rule ran. The recorded run cost " + figure + "."},
+		"withheld":          {states["fail-withheld"], "Over budget: the recorded run is over its run budget, priced at list (List-equivalent, not billed). Amounts are withheld here."},
+		"no rule, withheld": {withheld(realInput(t)), "No budget set: the recorded run was priced at list (List-equivalent, not billed). No rule decides this check. Amounts are withheld here."},
+	} {
+		own := VerdictSentence(tc.input)
+		tc.input.Recorded = &Recorded{RunID: 42368537950, Date: "2026-11-07"}
+		sentence := VerdictSentence(tc.input)
+		if !strings.HasPrefix(sentence, tc.want) || strings.Contains(strings.ToLower(sentence), "this run") {
+			t.Errorf("%s:\n got %s\nwant %s", name, sentence, tc.want)
+		}
+		if !strings.Contains(strings.ToLower(own), "this run") || strings.Contains(own, "recorded") {
+			t.Errorf("%s: a report on the pull request's own rows reads %q", name, own)
+		}
+		if body := commentOf(t, tc.input); !strings.HasPrefix(body, Marker+"\n**"+sentence+"**\n\nThese figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.\n") {
+			t.Errorf("%s: the recorded line does not stand under the sentence:\n%s", name, body)
+		}
+	}
+}

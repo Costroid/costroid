@@ -1,10 +1,10 @@
 # Title
 
-Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
+Within budget, by the job's own figures: the recorded run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 
 # Summary
 
-**Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
+**Within budget, by the job's own figures: the recorded run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 

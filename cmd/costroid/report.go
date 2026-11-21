@@ -466,7 +466,7 @@ func previewReport(ctx context.Context, flags reportFlags, at time.Time, stdout,
 		input.Amounts = comment.AmountsShown
 		input.Verdict = previewVerdict(ctx, flags.rows, input.State, at, stderr)
 		input.Preview = true
-		err = printPreview(stdout, input)
+		err = printPreview(stdout, stderr, input)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: %v\n", fmt.Errorf("preview: %w", err))
@@ -475,14 +475,19 @@ func previewReport(ctx context.Context, flags reportFlags, at time.Time, stdout,
 	return 0
 }
 
-// printPreview prints the comment, then the verdict sentence again as the
-// last line, where a terminal leaves the eye.
-func printPreview(stdout io.Writer, input comment.Input) error {
+// printPreview prints the comment on standard output and nothing else there,
+// so a preview written to a file is what the report would post. The verdict
+// sentence then goes to standard error as the last line, where a terminal
+// leaves the eye.
+func printPreview(stdout, stderr io.Writer, input comment.Input) error {
 	body, err := comment.Comment(input)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "%s\n%s\n", body, comment.VerdictSentence(input))
+	if _, err := io.WriteString(stdout, body); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stderr, comment.VerdictSentence(input))
 	return err
 }
 

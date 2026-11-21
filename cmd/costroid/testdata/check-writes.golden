@@ -590,9 +590,9 @@ costroid: warning: lstat testdata/no-such-run/costroid-rows.jsonl: no such file 
 costroid: check run 1001, conclusion neutral
 -- check 1001 costroid 9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d neutral
 -- title
-No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none.
+No figure (fork_no_rows): this pull request comes from a fork, and its workflow run left no rows.
 -- summary
-**No figure (fork_no_rows): no rows file reached this report. The agent's job log says why it wrote none.**
+**No figure (fork_no_rows): this pull request comes from a fork, and its workflow run left no rows.**
 
 Run budget: this check read no rows, so it cannot pass.
 
