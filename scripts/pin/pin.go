@@ -44,6 +44,9 @@ const (
 	// schemaFile is read on its $id line alone, which names a tag only when
 	// the schema is published at one.
 	schemaFile = "costroid.schema.json"
+	// accuracyPage holds one row per reconciled day. A day's row names the
+	// release that day's agent ran under, a record a pin never rewrites.
+	accuracyPage = "docs/accuracy.md"
 )
 
 // pinnedTrees are read whole, and pinnedFiles alone. Paths are from the
@@ -54,6 +57,8 @@ var (
 	// neverChanged are files a pin leaves alone wherever they stand: the
 	// changelog records each release as it was, and the two tests hold
 	// versions of their own.
+	// dayRow is a row of the accuracy page's table of days.
+	dayRow       = regexp.MustCompile(`^\| [0-9]{4}-[0-9]{2}-[0-9]{2} \|`)
 	neverChanged = []string{"CHANGELOG.md", "docs_test.go", "version_test.go"}
 )
 
@@ -256,6 +261,11 @@ func references(name, text string, from, to release) []span {
 	if name == schemaFile {
 		spans = slices.DeleteFunc(spans, func(s span) bool {
 			return !strings.Contains(lineAt(text, s.start), `"$id"`)
+		})
+	}
+	if name == accuracyPage {
+		spans = slices.DeleteFunc(spans, func(s span) bool {
+			return dayRow.MatchString(lineAt(text, s.start))
 		})
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })

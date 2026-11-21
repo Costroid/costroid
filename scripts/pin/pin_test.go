@@ -171,6 +171,23 @@ func TestPinLeavesRecordedFixturesAlone(t *testing.T) {
 	}
 }
 
+func TestPinLeavesTheAccuracyPagesDaysAlone(t *testing.T) {
+	page := "# Accuracy\n\nThe commands below check `" + oldVersion + "`.\n\n" +
+		"| Day (UTC) | Agent, Costroid release | Verdict |\n| --- | --- | --- |\n" +
+		"| 2026-11-13 | claude-code 2.1.316, Costroid " + oldVersion + " | pass |\n"
+	before := pinnedTree()
+	before["docs/accuracy.md"] = page
+	root := before.write(t)
+	if code, _, stderr := runPin(t, root, newVersion, newCommit); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	after := readTree(t, root)["docs/accuracy.md"]
+	want := strings.Replace(page, "check `"+oldVersion+"`", "check `"+newVersion+"`", 1)
+	if after != want {
+		t.Errorf("the pin wrote the accuracy page as:\n%s\nwant:\n%s", after, want)
+	}
+}
+
 func TestPinRefusesAVersionInAHistorySentence(t *testing.T) {
 	for name, sentence := range map[string]struct {
 		path, text string
