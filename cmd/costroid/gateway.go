@@ -501,7 +501,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Client: gateway.NewClient(*address), AdminKey: admin, Run: binding,
 		Poll: gatewayPoll, Stable: gatewaySpendStable, Settle: gatewaySpendSettle,
 	}
-	return closeKey(ctx, counter, *retry, asking(&http.Client{Timeout: 30 * time.Second}, stderr), stdout, stderr)
+	return closeKey(ctx, counter, *retry, &http.Client{Timeout: 30 * time.Second}, stdout, stderr)
 }
 
 // closeKey deletes the run's key, and when a ledger is named, reads the key's
