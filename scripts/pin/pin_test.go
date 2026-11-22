@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,13 +28,14 @@ type tree map[string]string
 
 func pinnedTree() tree {
 	return tree{
-		"README.md": "The recipes pin `" + oldVersion + "`: [install it](docs/install.md).\n",
+		"README.md": "## Install\n\n```sh\ncurl -fsSLO https://github.com/Costroid/costroid/releases/download/v" + oldVersion + "/costroid-install.sh\n```\n",
 		"recipes/github-claude-code.yml": "# Runs Claude Code under a budget.\nsteps:\n" +
 			"  - uses: Costroid/costroid/action@" + oldCommit + " # v" + oldVersion + "\n",
 		"recipes/gitlab-ci.yml": "variables:\n  COSTROID_VERSION: " + oldVersion + "\n  COSTROID_COMMIT: " + oldCommit + "\n",
 		"docs/install.md": "# Install\n\nThe commands below install `" + oldVersion + "`, the release the recipes pin.\n\n" +
 			"```sh\ncurl -fsSLO https://github.com/Costroid/costroid/releases/download/v" + oldVersion + "/SHA256SUMS\n" +
 			"go install github.com/Costroid/costroid/cmd/costroid@v" + oldVersion + "\n```\n\n" +
+			"```sh\n" + imageLine(oldVersion) + "\n```\n\n" +
 			"Where github.com is unreachable, pass the commit of `v" + oldVersion + "` with `--action-ref " + oldCommit + "`.\n",
 		"docs/recipes.md": "| `Costroid/costroid/action` | v" + oldVersion + " | `" + oldCommit + "` |\n",
 		// Neither is the pinned release: one is a prefix of it, and one has
@@ -102,7 +104,15 @@ func runPin(t *testing.T, root string, version, commit string) (int, string, str
 
 func moved(text string) string {
 	return strings.NewReplacer(oldVersion+"`", newVersion+"`", oldCommit, newCommit, "v"+oldVersion, "v"+newVersion,
-		" "+oldVersion+"\n", " "+newVersion+"\n", ":"+oldVersion+"\n", ":"+newVersion+"\n").Replace(text)
+		" "+oldVersion+"\n", " "+newVersion+"\n", ":"+oldVersion+"\n", ":"+newVersion+"\n",
+		imageLine(oldVersion), imageLine(newVersion)).Replace(text)
+}
+
+// imageLine is the install page's line that runs the demo from a release's
+// image. It names the image by the release's tag, and mounts and reads
+// nothing.
+func imageLine(version string) string {
+	return "docker run --rm ghcr.io/costroid/costroid:" + version + " demo"
 }
 
 func TestPinMovesEveryPinnedReference(t *testing.T) {
@@ -140,7 +150,7 @@ func TestPinMovesEveryPinnedReference(t *testing.T) {
 	if got := strings.Join(changed[:len(changed)-1], " "); got != "README.md costroid.schema.json deploy/compose.yaml deploy/helm/costroid/Chart.yaml docs/install.md docs/ledger.md docs/recipes.md internal/recipelint/testdata/customer/two-block.yml internal/recipelint/testdata/github-merged.yml recipes/github-claude-code.yml recipes/gitlab-ci.yml" {
 		t.Errorf("the pin listed the files %s", got)
 	}
-	if want := "pin: " + oldVersion + " at " + oldCommit + " to " + newVersion + " at " + newCommit + ": 22 references moved in 11 files"; count != want {
+	if want := "pin: " + oldVersion + " at " + oldCommit + " to " + newVersion + " at " + newCommit + ": 23 references moved in 11 files"; count != want {
 		t.Errorf("the count reads %q, want %q", count, want)
 	}
 
@@ -153,6 +163,46 @@ func TestPinMovesEveryPinnedReference(t *testing.T) {
 	err := stillStanding(root, []string{"docs/install.md"}, release{oldVersion, oldCommit}, release{newVersion, newCommit})
 	if err == nil || !strings.Contains(err.Error(), "docs/install.md:3") {
 		t.Errorf("the check after a pin passed a file that still names the old release: %v", err)
+	}
+}
+
+// TestInstallPageImageLineNamesThePinnedRelease holds the install page's
+// image line to the release the recipes pin, and to a form a pin moves to the
+// next release without a refusal.
+func TestInstallPageImageLineNamesThePinnedRelease(t *testing.T) {
+	const root, page = "../..", "docs/install.md"
+	from, err := pinnedRelease(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := readText(root, page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, found := strings.Cut(text, "\n## From the image\n")
+	if !found {
+		t.Fatalf("%s has no section From the image", page)
+	}
+	section, _, _ = strings.Cut(section, "\n## ")
+	if want := "\n```sh\n" + imageLine(from.version) + "\n```\n"; !strings.Contains(section, want) {
+		t.Fatalf("the section does not run the demo from the image of %s, the release the recipes pin, with %q:\n%s", from.version, imageLine(from.version), section)
+	}
+	paths, err := pinnedPaths(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(paths, page) {
+		t.Fatalf("a pin does not read %s", page)
+	}
+	to := release{version: newVersion, commit: newCommit}
+	pinned, _, refused := move(page, text, from, to)
+	for _, refusal := range refused {
+		if refusal.line == lineOf(text, strings.Index(text, imageLine(from.version))) {
+			t.Errorf("a pin refuses the image line: %s", refusal)
+		}
+	}
+	if !strings.Contains(pinned, "\n"+imageLine(to.version)+"\n") || strings.Contains(pinned, imageLine(from.version)) {
+		t.Errorf("a pin to %s does not move the image line:\n%s", to.version, pinned)
 	}
 }
 

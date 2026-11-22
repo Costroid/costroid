@@ -57,6 +57,16 @@ go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.27
 
 To build from a checkout instead, run `make build`. That build belongs to no release either.
 
+## From the image
+
+With Docker:
+
+```sh
+docker run --rm ghcr.io/costroid/costroid:1.0.0-alpha.27 demo
+```
+
+The image runs `demo`. It holds no git, so `init` needs the binary.
+
 ## In GitHub Actions
 
 The workflow `init` writes needs no install step of yours. Costroid's action installs the release its own commit belongs to and checks it by its signature, on `amd64` and `arm64` runners alike. The Claude Code and Codex recipes then need one secret, the provider's API key. [`docs/bases.md`](bases.md#which-key-each-recipe-takes) lists what each recipe takes, and what its figures read as a result. The same action is listed on the [GitHub Marketplace](https://github.com/marketplace/actions/costroid-cost-check) as `Costroid/costroid-action`.
