@@ -2,6 +2,39 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.29 (2026-11-22)
+
+### Breaking changes
+
+Standard output and standard error. [`docs/output.md`](docs/output.md) states what every command prints on each. Standard output now holds only what a command was asked to print, and everything a command says about its work is on standard error. A script that read one stream alone reads these lines on the other; `2>&1` reads both as before.
+
+- `costroid lint` prints its high and medium findings on standard output, above its notes and its count. They were on standard error, and the notes came first. `costroid lint-recipes` prints each rejected line on standard output.
+- The `Next:` line of `costroid demo`, `costroid init`, `costroid doctor` and `costroid validate` is on standard error. It was on standard output.
+- `costroid init` says what it wrote and what is left on standard error: each `costroid: wrote ...` line, `costroid: <file> exists, and init left it as it is`, GitLab's include line, what each push can spend, the commands left, the notes. Standard output is empty unless `--existing` prints its patch there. With `--pr`, each `$ <command>` line and init's own lines are on standard error too.
+- `costroid export` says what it sent or wrote on standard error: `costroid: batch <id>, <n> rows, sha256 ...`, `costroid: batch <id> ingested, <n> rows`, `costroid: pull request <n> of <repository>: <link>`, `costroid: <file> holds no rows, so nothing was sent`, and with `--format --out` `costroid: wrote <n> rows as <format> to <path>`. `--format` without `--out` still prints the file on standard output. The action's `ingest` stage prints the same lines as before: it reads both streams as one.
+- `costroid merged` says what the platform stored on standard error, with or without `--json`. `costroid connect` prints `costroid: <installation> is bound to tenant <tenant>, proven at <time>` there, `costroid emit-otlp` its `costroid: sent <n> spans ...` line, `costroid reconcile --export` its two lines about what the platform took, and `costroid app create` the address to open and the lines about the App it created.
+
+Command lines and exit codes.
+
+- `costroid serve`, `costroid keys create`, `costroid egress report`, and `costroid gateway keygen`, `public-key`, `request`, `mint` and `close` refuse an argument they do not read: `costroid: <command> takes no argument`, exit 2, and none of their work is done. They ignored it. `costroid report` and `costroid follow-up` still ignore one, so a job that passes one keeps running, and their help says so.
+- Ctrl-C ends every command but `costroid serve` with exit 130. `costroid run` first stops the agent and every process it started, writes the rows of what was spent, and then exits 130; it exited with the agent's own code. A command waiting on standard input or on a prompt ends too. `costroid serve` drains and exits 0, as before.
+- A rows file with a row that states the tag `costroid/origin` is refused whole. `costroid report` and `costroid follow-up` state no figure, with reason `invalid_row`. `costroid policy`, `costroid export`, `costroid reconcile` and `costroid emit-otlp` exit 125 before they send or write anything. Only the report builds such rows, in memory, from a receipt.
+
+### What you can now do
+
+- State what your own machine spent on a branch: `costroid receipt` prints the token counts of your Claude Code sessions on the branch as a comment for its pull request. Post it with `costroid receipt | gh pr comment <number> --body-file -`, or paste it. It reads no prompt, answer, tool input or output, or file contents, prints no amount, refuses to run in a CI job, and sends nothing. [`docs/receipt.md`](docs/receipt.md) says what it reads and what the posted comment reveals.
+- Show a receipt on the pull request: the action's report stage takes `receipts: "true"`. The report reads the newest unedited receipt the pull request's author posted, prices it at the catalog it carries, and states it on one line on the comment, the check and the job summary, apart from the run's cost and marked unchecked. No budget, rule, total, title, conclusion or output reads it. `comment.receipts: false` in `costroid.yml` on the base branch turns it off, and a pull request cannot turn it back on.
+- Read the new result by its version: a report that read a receipt writes `costroid.result/0.13`. Every other report writes the object it wrote before, byte for byte.
+- Silence a command: `-q` and `--quiet` on every command keep warnings and errors on standard error and drop every other line. Standard output and the exit code do not change.
+- Read three more commands from a script: `costroid doctor --json`, `costroid lint --json` and `costroid validate --json` print one object on standard output, `costroid.doctor/0.1`, `costroid.lint/0.1` and `costroid.validate/0.1`. Standard error and the exit code are as without the flag. A field is added under the same first number and never removed or renamed under it.
+- Give a bug report what it needs: `costroid version --verbose` adds the build's commit, the operating system and architecture, the result versions this release writes, and whether the directory holds `costroid.yml`. It prints no secret, no value of the environment and no path. `costroid version --json` prints the same facts as `costroid.version/0.1`.
+- See that a command is waiting: `costroid export`, `merged`, `connect`, `reconcile`, `doctor`, `app create` and `gateway mint` say `costroid: asking <host>` before their first request to a host.
+- Have `costroid lint` and `costroid lint-recipes` name a `receipts` input on a stage that posts no report (`receipts-input`).
+
+### Changed
+
+- `costroid doctor` with nothing left to fix ends on `Next: gh pr create --fill opens the pull request that Costroid comments on.`, and on GitLab on `Next: open a merge request, as https://docs.costroid.com/recipes#gitlab-ci says.`
+
 ## 1.0.0-alpha.28 (2026-11-22)
 
 ### Breaking changes
