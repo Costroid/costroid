@@ -798,9 +798,9 @@ func printResult(stdout io.Writer, input comment.Input) error {
 }
 
 // resolveAmounts says whether the report's comment shows amounts, by the
-// comment.show_cost rule as amounts.Read applies it. What could not be read is
-// a warning. It spends part of the report's time at most, so the check still
-// posts.
+// comment.show_cost rule as amounts.Read applies it. What costroid.yml holds
+// that the comment does not read, and what could not be read, are warnings.
+// It spends part of the report's time at most, so the check still posts.
 func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) comment.Amounts {
 	shown, _ := resolveSettings(ctx, host, ref, stderr)
 	return shown
@@ -812,6 +812,9 @@ func resolveSettings(ctx context.Context, host scm.Reporter, ref string, stderr 
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
 	setting := amounts.Read(ctx, host, ref)
+	for _, line := range setting.Warnings {
+		fmt.Fprintln(stderr, line)
+	}
 	if setting.Unread != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %s: %v\n", configFile, setting.Unread)
 	}

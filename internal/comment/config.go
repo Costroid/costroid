@@ -3,8 +3,6 @@ package comment
 import (
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"regexp"
 	"strings"
 
@@ -50,62 +48,64 @@ func keySet(keys []string) map[string]bool {
 // repository's own text, and a log line must never carry a workflow command.
 var printableKey = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
-// configWarnings is where ParseConfig names the keys it does not read. The
-// report job's log is where a reader of costroid.yml looks.
-var configWarnings io.Writer = os.Stderr
-
 // ParseConfig reads costroid.yml. A file that is empty, ~, null or only ---,
 // a section with no value, or an absent key leaves the default. A key the
-// comment does not read is named on stderr and never fails the read.
-func ParseConfig(data []byte) (Config, error) {
+// comment does not read never fails the read: it is a warning. The warnings
+// come back in the file's order, with or without an error, each the line a
+// job's log shows for it, without its line feed. The caller prints or logs
+// them: the report job's log is where a reader of costroid.yml looks, and a
+// service's log has a form of its own.
+func ParseConfig(data []byte) (Config, []string, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return Config{}, fmt.Errorf("comment: parse costroid.yml: %w", err)
+		return Config{}, nil, fmt.Errorf("comment: parse costroid.yml: %w", err)
 	}
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 && root.Content[0].Kind != yaml.MappingNode && root.Content[0].Tag != "!!null" {
-		return Config{}, errors.New("comment: costroid.yml is not a mapping")
+		return Config{}, nil, errors.New("comment: costroid.yml is not a mapping")
 	}
-	for _, warning := range unreadKeys(&root) {
-		fmt.Fprintf(configWarnings, "costroid: warning: costroid.yml: %s\n", warning)
+	var warnings []string
+	for _, unread := range unreadKeys(&root) {
+		warnings = append(warnings, fmt.Sprintf("costroid: warning: costroid.yml: %s", unread))
 	}
-	showCost, err := readSwitch(&root, "show_cost")
+	showCost, word, err := readSwitch(&root, "show_cost")
+	warnings = append(warnings, word...)
 	if err != nil {
-		return Config{}, err
+		return Config{}, warnings, err
 	}
 	// A receipts value that is not a switch turns receipts off, and leaves
 	// show_cost as the file sets it.
-	receipts, err := readSwitch(&root, "receipts")
+	receipts, word, err := readSwitch(&root, "receipts")
+	warnings = append(warnings, word...)
 	if err != nil {
-		fmt.Fprintf(configWarnings, "costroid: warning: no receipt is read: %s\n", strings.TrimPrefix(err.Error(), "comment: "))
+		warnings = append(warnings, fmt.Sprintf("costroid: warning: no receipt is read: %s", strings.TrimPrefix(err.Error(), "comment: ")))
 	}
-	return Config{ShowCost: showCost, ReceiptsOff: !receipts || err != nil}, nil
+	return Config{ShowCost: showCost, ReceiptsOff: !receipts || err != nil}, warnings, nil
 }
 
 // readSwitch reads comment.show_cost or comment.receipts, each true when
-// absent. A YAML 1.1 word such as yes or no keeps its meaning and warns,
-// because YAML 1.2 reads it as a string. Any other value is an error. The
-// error never repeats the value, which is the repository's own text.
-func readSwitch(root *yaml.Node, key string) (bool, error) {
+// absent. A YAML 1.1 word such as yes or no keeps its meaning and comes back
+// with a warning, because YAML 1.2 reads it as a string. Any other value is
+// an error. The error never repeats the value, which is the repository's own
+// text.
+func readSwitch(root *yaml.Node, key string) (on bool, warnings []string, err error) {
 	section := child(root, "comment")
 	if section == nil || section.Tag == "!!null" {
-		return true, nil
+		return true, nil, nil
 	}
 	if section.Kind != yaml.MappingNode {
-		return false, errors.New("comment: comment in costroid.yml is not a mapping")
+		return false, nil, errors.New("comment: comment in costroid.yml is not a mapping")
 	}
 	value := child(section, key)
 	if value == nil {
-		return true, nil
+		return true, nil, nil
 	}
 	if value.Kind == yaml.ScalarNode && value.Tag == "!!bool" {
-		return value.Value == "true", nil
+		return value.Value == "true", nil, nil
 	}
-	var on bool
 	if value.Kind == yaml.ScalarNode && value.Decode(&on) == nil {
-		fmt.Fprintf(configWarnings, "costroid: warning: costroid.yml: comment.%s is a YAML 1.1 word and reads as %t; write true or false\n", key, on)
-		return on, nil
+		return on, []string{fmt.Sprintf("costroid: warning: costroid.yml: comment.%s is a YAML 1.1 word and reads as %t; write true or false", key, on)}, nil
 	}
-	return false, fmt.Errorf("comment: comment.%s in costroid.yml must be true or false", key)
+	return false, nil, fmt.Errorf("comment: comment.%s in costroid.yml must be true or false", key)
 }
 
 // child is the value of a mapping's key, nil when the node is not a mapping

@@ -31,6 +31,10 @@ type Setting struct {
 	// repository's visibility could not. Each is nil when the read succeeded
 	// or the rule did not need it.
 	Unread, Unseen error
+	// Warnings are what costroid.yml holds that the comment does not read as
+	// written, each the line comment.ParseConfig gives for it. Read prints
+	// none of them: a command prints each, and a service logs it.
+	Warnings []string
 }
 
 // Read applies the rule to costroid.yml at the commit ref and to the
@@ -40,11 +44,11 @@ type Setting struct {
 // or the visibility cannot be read, a repository not known to be private
 // withholds them, as unsettled.
 func Read(ctx context.Context, host Host, ref string) Setting {
-	config, err := readConfig(ctx, host, ref)
+	config, warnings, err := readConfig(ctx, host, ref)
 	if err == nil && config.ShowCost {
-		return Setting{Amounts: comment.AmountsShown, Config: &config}
+		return Setting{Amounts: comment.AmountsShown, Config: &config, Warnings: warnings}
 	}
-	setting := Setting{Config: &config, Unread: err}
+	setting := Setting{Config: &config, Unread: err, Warnings: warnings}
 	if err != nil {
 		setting.Config = nil
 	}
@@ -65,16 +69,16 @@ func Read(ctx context.Context, host Host, ref string) Setting {
 
 // readConfig reads the comment's settings at a commit. A repository with no
 // costroid.yml there has the defaults.
-func readConfig(ctx context.Context, host Host, ref string) (comment.Config, error) {
+func readConfig(ctx context.Context, host Host, ref string) (comment.Config, []string, error) {
 	if !vcs.IsCommit(ref) {
-		return comment.Config{}, errors.New("no commit to read it from")
+		return comment.Config{}, nil, errors.New("no commit to read it from")
 	}
 	data, err := host.ReadFile(ctx, policy.ConfigPath, ref)
 	if errors.Is(err, scm.ErrNotFound) {
 		return comment.ParseConfig(nil)
 	}
 	if err != nil {
-		return comment.Config{}, err
+		return comment.Config{}, nil, err
 	}
 	return comment.ParseConfig(data)
 }

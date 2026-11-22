@@ -209,7 +209,9 @@ func (s *Server) pressApprove(ctx context.Context, event scm.Event, logger *slog
 	if err != nil {
 		return err
 	}
-	shown := func() comment.Amounts { return showsAmounts(ctx, host, base, logger) }
+	shown := func() comment.Amounts {
+		return showsAmounts(ctx, host, base, logger.With("repository", event.Repository))
+	}
 	id, conclusion, err := s.reconclude(ctx, host, approval, shown, logger)
 	if err != nil {
 		return err
@@ -236,9 +238,14 @@ func allowAuthor(ctx context.Context, host ApprovalHost, base string) (bool, err
 // report decides it: from costroid.yml at base, the head of the base branch,
 // and the repository's visibility. The check the button posts then names the
 // amount where the comment does. Where a read fails and the check withholds
-// for it, the log says which read and why.
+// for it, the log says which read and why. What costroid.yml holds that the
+// comment does not read as written is logged too, one line of the log for
+// each, so nothing of the read reaches the log in another form.
 func showsAmounts(ctx context.Context, host ApprovalHost, base string, logger *slog.Logger) comment.Amounts {
 	setting := amounts.Read(ctx, host, base)
+	for _, line := range setting.Warnings {
+		logger.Warn("costroid.yml read with a warning", "line", line)
+	}
 	if setting.Amounts == comment.AmountsUnsettled {
 		why := []any{}
 		if setting.Unread != nil {

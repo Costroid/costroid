@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -610,6 +612,72 @@ func TestTheApproveButtonNamesTheAmountWhereTheCommentDoes(t *testing.T) {
 				t.Errorf("a press that posts nothing asked for the visibility: %d requests, were %d", visibility(stub), asked)
 			}
 		})
+	}
+}
+
+// TestTheServiceLogsASettingsWarningAsJSON presses the button on a
+// repository whose costroid.yml holds a reserved key, a key Costroid does not
+// read, a YAML 1.1 word for show_cost and a receipts value that is no switch.
+// The reader of the setting gives a warning for each. The service writes each
+// as the line field of a JSON line of its log, in the file's order and with
+// the repository, every line of the log is one JSON object, and nothing
+// reaches the process's standard error, where a command prints the same
+// warnings as plain lines. A press that posts nothing reads no setting and
+// logs none.
+func TestTheServiceLogsASettingsWarningAsJSON(t *testing.T) {
+	const file = "catalog: 0.1.0\ncolour: blue\ncomment:\n  show_cost: no\n  receipts: maybe\n"
+	_, want, err := comment.ParseConfig([]byte(file))
+	if err != nil || len(want) != 4 {
+		t.Fatalf("the reader gives %d warnings for the file, want 4: %v %q", len(want), err, want)
+	}
+	stub := approvalStub(t)
+	stub.Files["costroid.yml"] = file
+	stub.SetPrivate(false)
+	h := installed(t, stub)
+	plain, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := os.Stderr
+	os.Stderr = plain
+	t.Cleanup(func() { os.Stderr = stderr })
+	logged := func() []string {
+		var lines []string
+		for line := range strings.SplitSeq(strings.TrimSuffix(h.log.String(), "\n"), "\n") {
+			var entry map[string]any
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatalf("a line of the service's log is not a JSON object: %v\n%s", err, line)
+			}
+			if entry["msg"] != "costroid.yml read with a warning" {
+				continue
+			}
+			if entry["level"] != "WARN" || entry["repository"] != approvalRepo {
+				t.Errorf("a settings warning is logged at level %v for the repository %v:\n%s", entry["level"], entry["repository"], line)
+			}
+			text, _ := entry["line"].(string)
+			lines = append(lines, text)
+		}
+		return lines
+	}
+	h.send(t, scm.EventCheckRun, "press-1", pressBody(approverLogin, acmeSHA, scm.ApproveAction), http.StatusAccepted)
+	h.settle(t)
+	if checks := posted(stub); len(checks) != 1 || !strings.HasSuffix(checks[0].Title, " Amounts are withheld here.") {
+		t.Fatalf("the press posted %+v\n%s", checks, h.log.String())
+	}
+	if got := logged(); !slices.Equal(got, want) {
+		t.Errorf("the log holds the warnings %q, want %q", got, want)
+	}
+	h.send(t, scm.EventCheckRun, "press-2", pressBody(approverLogin, acmeSHA, scm.ApproveAction), http.StatusAccepted)
+	h.settle(t)
+	if got := logged(); len(posted(stub)) != 1 || len(got) != len(want) {
+		t.Errorf("a press that posts nothing logged a settings warning: %q", got)
+	}
+	os.Stderr = stderr
+	if err := plain.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if printed := readFile(t, plain.Name()); len(printed) != 0 {
+		t.Errorf("the service wrote outside its log, on standard error:\n%s", printed)
 	}
 }
 

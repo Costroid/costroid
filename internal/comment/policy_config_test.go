@@ -61,7 +61,7 @@ func TestShowCostNonBoolWarns(t *testing.T) {
 		"comment:\n  show_cost: \"x\\n::warning::forged\"\n",
 		"comment:\n  show_cost: [false]\n",
 	} {
-		_, err := ParseConfig([]byte(document))
+		_, _, err := ParseConfig([]byte(document))
 		if err == nil || err.Error() != "comment: comment.show_cost in costroid.yml must be true or false" {
 			t.Errorf("%q: %v", document, err)
 		}

@@ -45,7 +45,7 @@ func FuzzValidate(f *testing.F) {
 		_, settingsErr := policy.ParseSettings(data)
 		_, approvalErr := policy.ParseApproval(data)
 		if len(problems) == 0 {
-			_, commentErr := comment.ParseConfig(data)
+			_, _, commentErr := comment.ParseConfig(data)
 			if settingsErr != nil || approvalErr != nil || commentErr != nil {
 				t.Fatalf("validate passed a file the report refuses: policy %v, approval %v, comment %v", settingsErr, approvalErr, commentErr)
 			}

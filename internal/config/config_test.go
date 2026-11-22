@@ -91,7 +91,7 @@ func TestSchemaAndTheCommentAgreeOnShowCost(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, parseErr := comment.ParseConfig([]byte(tc.body))
+		_, _, parseErr := comment.ParseConfig([]byte(tc.body))
 		if (len(problems) == 0) != tc.valid || (parseErr == nil) != tc.valid {
 			t.Errorf("%q: schema %v, parser %v, want valid %v", tc.body, problems, parseErr, tc.valid)
 		}
@@ -347,7 +347,7 @@ var readers = map[string]func(data []byte) (bool, error){
 		return true, nil
 	},
 	"comment": func(data []byte) (bool, error) {
-		config, err := comment.ParseConfig(data)
+		config, _, err := comment.ParseConfig(data)
 		return config == comment.Config{ShowCost: true}, err
 	},
 	"policy": func(data []byte) (bool, error) {

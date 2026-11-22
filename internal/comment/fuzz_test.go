@@ -199,11 +199,12 @@ func FuzzParseConfig(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var log bytes.Buffer
-		previous := configWarnings
-		configWarnings = &log
-		defer func() { configWarnings = previous }()
-		if _, err := ParseConfig(data); err != nil && strings.Contains(err.Error(), "\n") {
+		_, warnings, err := ParseConfig(data)
+		if err != nil && strings.Contains(err.Error(), "\n") {
 			t.Fatalf("the error spans lines: %q", err)
+		}
+		for _, warning := range warnings {
+			log.WriteString(warning + "\n")
 		}
 		for _, line := range strings.Split(strings.TrimSuffix(log.String(), "\n"), "\n") {
 			if line != "" && (!warningLine.MatchString(line) || strings.Contains(line, "::")) {

@@ -210,6 +210,29 @@ func TestAnApprovedFailureWithholdsWhereAmountsAreWithheld(t *testing.T) {
 	}
 }
 
+// TestReportAndApprovePrintWhatCostroidYmlHoldsUnread reports and approves on
+// a repository whose costroid.yml holds a key Costroid does not read and a
+// YAML 1.1 word for show_cost. The reader of the setting gives a warning for
+// each, and each command prints them on its standard error as the lines they
+// are, once per read of the setting, where --quiet keeps them.
+func TestReportAndApprovePrintWhatCostroidYmlHoldsUnread(t *testing.T) {
+	const unread = "costroid: warning: costroid.yml: colour is not a key Costroid reads, so it has no effect\n" +
+		"costroid: warning: costroid.yml: comment.show_cost is a YAML 1.1 word and reads as false; write true or false\n"
+	repository := branchPullRequest(t)
+	repository.Files[configFile] = enforcedOver + "colour: blue\ncomment:\n  show_cost: no\n"
+	repository.SetPrivate(false)
+	setEvent(t, "pull_request", pullEvent(headCommit))
+	for _, args := range [][]string{{"report", "--rows", realRows}, {"report", "--rows", realRows, "--quiet"}} {
+		if code, _, stderr := execute(t, args...); code != 0 || strings.Count(stderr, unread) != 1 {
+			t.Errorf("costroid %s: exit %d, and standard error does not hold the two warnings once, together:\n%s", strings.Join(args, " "), code, stderr)
+		}
+	}
+	repository.Reviews = []map[string]any{review(31, approver, "APPROVED", headCommit, approvedAt)}
+	if code, stderr := approve(t, reviewEventJSON("submitted", approver, headCommit)); code != 0 || strings.Count(stderr, unread) != 1 || !strings.Contains(stderr, "conclusion neutral") {
+		t.Errorf("costroid approve: exit %d, and standard error does not hold the two warnings once:\n%s", code, stderr)
+	}
+}
+
 // TestApproveReadsNothingUntilItPosts counts what costroid approve asks the
 // host for the amounts setting: costroid.yml once more than the approval's own
 // rules read it, and the repository's visibility. A run that posts nothing
@@ -628,7 +651,7 @@ func TestApprovalSettingsMatchTheSchema(t *testing.T) {
 	if settings, err := policy.ParseApproval([]byte("approval:\n  allow_author: true\n  expires_days: 90\n")); err != nil || !settings.AllowAuthor || settings.ExpiresDays != 90 {
 		t.Errorf("%+v, %v", settings, err)
 	}
-	if _, err := comment.ParseConfig([]byte("approval:\n  allow_author: true\n")); err != nil {
+	if _, _, err := comment.ParseConfig([]byte("approval:\n  allow_author: true\n")); err != nil {
 		t.Errorf("the comment's reader: %v", err)
 	}
 }

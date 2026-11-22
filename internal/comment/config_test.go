@@ -12,12 +12,12 @@ import (
 func parseWarnings(t *testing.T, document string) (Config, string) {
 	t.Helper()
 	var output bytes.Buffer
-	previous := configWarnings
-	configWarnings = &output
-	t.Cleanup(func() { configWarnings = previous })
-	config, err := ParseConfig([]byte(document))
+	config, warnings, err := ParseConfig([]byte(document))
 	if err != nil {
 		t.Fatalf("%q: %v", document, err)
+	}
+	for _, warning := range warnings {
+		output.WriteString(warning + "\n")
 	}
 	return config, output.String()
 }

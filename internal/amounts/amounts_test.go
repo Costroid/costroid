@@ -88,3 +88,18 @@ func TestReadAppliesTheShowCostRule(t *testing.T) {
 		}
 	}
 }
+
+// TestReadReturnsTheFilesWarnings reads a costroid.yml that
+// holds a key Costroid does not read, with show_cost on, off and not a
+// switch. The warning comes back with the setting each time, also beside the
+// error, as the line the comment's reader gives for it.
+func TestReadReturnsTheFilesWarnings(t *testing.T) {
+	const want = "costroid: warning: costroid.yml: colour is not a key Costroid reads, so it has no effect"
+	for name, setting := range map[string]string{"on": "", "off": "comment:\n  show_cost: false\n", "no switch": "comment:\n  show_cost: sometimes\n"} {
+		host := repository{file: "colour: blue\n" + setting, visibility: scm.Public}
+		got := Read(context.Background(), &host, settingsCommit)
+		if len(got.Warnings) != 1 || got.Warnings[0] != want || (got.Unread != nil) != (name == "no switch") {
+			t.Errorf("show_cost %s: warnings %q, unread %v, want %q", name, got.Warnings, got.Unread, want)
+		}
+	}
+}

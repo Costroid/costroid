@@ -912,7 +912,7 @@ func TestConfigReadsShowCost(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			config, err := ParseConfig([]byte(test.document))
+			config, _, err := ParseConfig([]byte(test.document))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -925,7 +925,7 @@ func TestConfigReadsShowCost(t *testing.T) {
 
 func TestConfigRefusesAShowCostThatIsNotABoolean(t *testing.T) {
 	for _, document := range []string{"comment:\n  show_cost: \"false\"\n", "comment:\n  show_cost: 0\n", "comment: off\n", "comment: [", "- a\n"} {
-		if _, err := ParseConfig([]byte(document)); err == nil {
+		if _, _, err := ParseConfig([]byte(document)); err == nil {
 			t.Errorf("%q was read", document)
 		}
 	}
