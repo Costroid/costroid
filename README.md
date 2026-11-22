@@ -8,6 +8,20 @@ Within budget, by the job's own figures: this run cost USD 0.0391529 at list
 figures, so the check is neutral.
 ```
 
+[The whole comment](docs/comment-example.md) is one page.
+
+## Install
+
+On Linux or macOS, with `curl`:
+
+```sh
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-install.sh
+less costroid-install.sh
+sh costroid-install.sh
+```
+
+The script checks the release's signature and checksum, then puts one binary in `$HOME/.local/bin`. [`docs/install.md`](docs/install.md) installs it by hand, with Go, or runs it from the image.
+
 ## First commands
 
 They need no key and spend nothing:
@@ -16,27 +30,7 @@ They need no key and spend nothing:
 costroid demo                  # the whole comment a pull request gets, from a recorded run
 costroid demo --state capped   # a run stopped at its cap; also failure and skipped
 costroid demo --markdown       # the same comment as the Markdown the report posts
-costroid lint                  # judges the agent workflows in .github/workflows
 ```
-
-## Without installing anything
-
-Copy a recipe to `.github/workflows/costroid.yml`, set its one secret and open a pull request: [`github-claude-code-action.yml`](recipes/github-claude-code-action.yml) for Claude Code through `anthropics/claude-code-action`, on `ANTHROPIC_API_KEY` and capped at USD 5 a run, or [`github-codex-action.yml`](recipes/github-codex-action.yml) for `openai/codex-action`, on `OPENAI_API_KEY` and uncapped. Costroid's action installs its own binary. On a private repository, [`harden-runner`](docs/recipes.md#egress-in-the-agents-job) limits egress only with StepSecurity's subscription.
-
-## Install
-
-The recipes pin `1.0.0-alpha.27`: [install it](docs/install.md).
-
-## Add it to the workflow you have
-
-Already on `claude-code-action`, or on `openai/codex-action`:
-
-```sh
-costroid init github --existing .github/workflows/claude.yml > costroid.patch
-git apply costroid.patch
-```
-
-[The patch](docs/existing-workflow.md) adds a `read` step and a `report` job.
 
 ## Try it on a pull request
 
@@ -51,6 +45,26 @@ git commit -m "Add the costroid check"
 git push --set-upstream origin try-costroid
 gh pr create --fill
 ```
+
+## Without installing anything
+
+1. Copy a recipe to `.github/workflows/costroid.yml`: [`github-claude-code-action.yml`](recipes/github-claude-code-action.yml), capped at USD 5 a run, or [`github-codex-action.yml`](recipes/github-codex-action.yml), uncapped.
+2. Set its one secret, `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+3. Open a pull request.
+
+Costroid's action installs its own binary. On a private repository, [`harden-runner`](docs/recipes.md#egress-in-the-agents-job) limits egress only with StepSecurity's subscription.
+
+## Add it to the workflow you have
+
+Already on `claude-code-action`, or on `openai/codex-action`:
+
+```sh
+costroid lint                  # judges the agent workflows in .github/workflows
+costroid init github --existing .github/workflows/claude.yml > costroid.patch
+git apply costroid.patch
+```
+
+[The patch](docs/existing-workflow.md) adds a `read` step and a `report` job.
 
 ## A run on your machine
 

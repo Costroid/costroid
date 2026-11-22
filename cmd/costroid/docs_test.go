@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -11,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	costroid "github.com/Costroid/costroid"
 	catalogdata "github.com/Costroid/costroid/catalog"
 	"go.yaml.in/yaml/v3"
 )
@@ -226,33 +230,139 @@ func readmeSection(t *testing.T, heading string) string {
 	return section
 }
 
-// TestReadmeFirstCommandsRunWithNoKey runs each command of the README's first
-// block, as a reader would, in a repository that holds one recipe and no key.
-func TestReadmeFirstCommandsRunWithNoKey(t *testing.T) {
-	block := markdownShell.FindStringSubmatch(readmeSection(t, "First commands"))
+// readmeCommands are the lines of the first shell block under a heading of
+// the README, each without its comment.
+func readmeCommands(t *testing.T, heading string) []string {
+	t.Helper()
+	block := markdownShell.FindStringSubmatch(readmeSection(t, heading))
 	if block == nil {
-		t.Fatal("the README's first commands have no shell block")
+		t.Fatalf("the README's section %q has no shell block", heading)
 	}
-	dir := t.TempDir()
-	copyInto(t, filepath.Join(repositoryRoot, "recipes", "github-claude-code-action.yml"), filepath.Join(dir, ".github", "workflows", "costroid.yml"))
-	t.Chdir(dir)
-	for _, key := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"} {
-		t.Setenv(key, "")
-	}
-	ran := 0
+	var commands []string
 	for line := range strings.SplitSeq(strings.TrimSuffix(block[1], "\n"), "\n") {
 		command, _, _ := strings.Cut(line, "#")
+		commands = append(commands, strings.TrimSpace(command))
+	}
+	return commands
+}
+
+// noKeyNoSettings empties the provider keys and keeps git from the settings
+// of the machine the test runs on.
+func noKeyNoSettings(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN", "GH_TOKEN"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+}
+
+// runsCostroid finds a shell line that starts the costroid binary.
+var runsCostroid = regexp.MustCompile(`(?m)(?:^|[\s;&|(])costroid\s`)
+
+// TestReadmeInstallsBeforeItRunsCostroid holds the README's order: nothing
+// above the end of its Install section runs costroid, in a shell block or in
+// a command quoted in a sentence, and the block that installs it stands above
+// the first block that runs it.
+func TestReadmeInstallsBeforeItRunsCostroid(t *testing.T) {
+	readme := readFile(t, filepath.Join(repositoryRoot, "README.md"))
+	above, section, found := strings.Cut(readme, "\n## Install\n")
+	if !found {
+		t.Fatal("README.md has no section Install")
+	}
+	install := markdownShell.FindStringSubmatchIndex(section)
+	if install == nil || strings.Contains(section[:install[0]], "\n## ") {
+		t.Fatal("the README's Install section has no shell block")
+	}
+	if block := section[install[2]:install[3]]; !strings.Contains(block, "\nsh costroid-install.sh\n") {
+		t.Errorf("the Install block does not run the install script:\n%s", block)
+	}
+	installed := len(readme) - len(section) + install[1]
+	for _, block := range markdownShell.FindAllStringSubmatch(readme[:installed], -1) {
+		if runsCostroid.MatchString(block[1]) {
+			t.Errorf("a block above the end of Install runs costroid, which is not installed yet:\n%s", block[1])
+		}
+	}
+	for _, span := range regexp.MustCompile("`costroid [^`]+`").FindAllString(above, -1) {
+		t.Errorf("a sentence above Install names the command %s, which is not installed yet", span)
+	}
+	if !runsCostroid.MatchString(readme[installed:]) {
+		t.Fatal("nothing under the Install block runs costroid")
+	}
+}
+
+// TestReadmeFirstCommandsRunWithNoKey runs each command of the README's first
+// block as a reader would after the install, with no key and in no
+// repository, then the command that writes the workflow, the first of the
+// block under it, in a new git repository with no remote.
+func TestReadmeFirstCommandsRunWithNoKey(t *testing.T) {
+	first := readmeCommands(t, "First commands")
+	workflow := readmeCommands(t, "Try it on a pull request")[0]
+	noKeyNoSettings(t)
+	t.Chdir(t.TempDir())
+	if _, err := locateRepository(); !errors.Is(err, errNoRepository) {
+		t.Fatalf("the test's directory is in a repository, so it cannot show the commands need none: %v", err)
+	}
+	if first[0] != "costroid demo" {
+		t.Errorf("the first command is %q, want costroid demo", first[0])
+	}
+	for _, command := range first {
 		args := strings.Fields(command)
 		if len(args) == 0 || args[0] != "costroid" {
-			t.Fatalf("the block holds %q, which is not a costroid command", line)
+			t.Fatalf("the block holds %q, which is not a costroid command", command)
 		}
 		if code, _, stderr := execute(t, args[1:]...); code != 0 {
-			t.Errorf("%s exited %d: %s", strings.Join(args, " "), code, stderr)
+			t.Errorf("%s exited %d: %s", command, code, stderr)
 		}
-		ran++
 	}
-	if ran < 2 {
-		t.Errorf("the block runs %d commands, want demo and lint", ran)
+
+	args := strings.Fields(workflow)
+	if len(args) < 2 || args[0] != "costroid" || args[1] != "init" {
+		t.Fatalf("the block under the first commands opens with %q, not costroid init", workflow)
+	}
+	root := t.TempDir()
+	runGit(t, root, "init", "--quiet")
+	t.Chdir(root)
+	var stdout, stderr bytes.Buffer
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, args[2:], &stdout, &stderr); code != 0 {
+		t.Fatalf("%s exited %d in a new repository with no remote: %s", workflow, code, stderr.String())
+	}
+	for _, name := range []string{filepath.Join(".github", "workflows", "costroid.yml"), "costroid.yml"} {
+		if _, err := os.Stat(name); err != nil {
+			t.Errorf("%s did not write %s: %v", workflow, name, err)
+		}
+	}
+}
+
+// TestReadmeExistingWorkflowBlockRunsOnAClaudeCodeActionWorkflow runs the
+// block the README gives a team that already runs claude-code-action, in a
+// repository that holds such a workflow under the name the block uses: lint
+// judges it, init prints a patch, and git applies the patch.
+func TestReadmeExistingWorkflowBlockRunsOnAClaudeCodeActionWorkflow(t *testing.T) {
+	commands := readmeCommands(t, "Add it to the workflow you have")
+	if want := []string{"costroid lint", "costroid init github --existing .github/workflows/claude.yml > costroid.patch", "git apply costroid.patch"}; !slices.Equal(commands, want) {
+		t.Fatalf("the block runs %q, and this test runs %q", commands, want)
+	}
+	noKeyNoSettings(t)
+	root := t.TempDir()
+	runGit(t, root, "init", "--quiet")
+	workflow := filepath.Join(root, ".github", "workflows", "claude.yml")
+	writeFile(t, workflow, existingReview)
+	t.Chdir(root)
+	if code, _, stderr := execute(t, "lint"); code != 0 {
+		t.Fatalf("costroid lint exited %d: %s", code, stderr)
+	}
+	var patch, stderr bytes.Buffer
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"github", "--existing", ".github/workflows/claude.yml"}, &patch, &stderr); code != 0 {
+		t.Fatalf("%s exited %d: %s", commands[1], code, stderr.String())
+	}
+	writeFile(t, filepath.Join(root, "costroid.patch"), patch.String())
+	if output, err := exec.Command("git", "apply", "costroid.patch").CombinedOutput(); err != nil {
+		t.Fatalf("git apply costroid.patch: %v: %s", err, output)
+	}
+	if applied := readFile(t, workflow); applied == existingReview || !strings.Contains(applied, costroidActionPath+"@") {
+		t.Errorf("the patch did not add Costroid's action to the workflow:\n%s", applied)
 	}
 }
 
@@ -270,7 +380,6 @@ func TestReadmePastedRecipesNeedNoInstall(t *testing.T) {
 		t.Fatalf("the section offers %v, want %v", names, want)
 	}
 	pin := pinnedRelease(t)
-	runsCostroid := regexp.MustCompile(`(?m)(?:^|[\s;&|(])costroid\s`)
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			source := readFile(t, filepath.Join(repositoryRoot, "recipes", name))

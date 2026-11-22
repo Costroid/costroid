@@ -319,6 +319,44 @@ func TestChecksumBlocksUseTheFlagBusyBoxTakes(t *testing.T) {
 	}
 }
 
+// notesShell is the shell block of the release notes, as release.yml writes
+// it inside a here-document, with each backtick escaped.
+var notesShell = regexp.MustCompile("(?s)" + regexp.QuoteMeta("\\`\\`\\`sh") + "\n(.*?)" + regexp.QuoteMeta("\\`\\`\\`"))
+
+// TestReadmeInstallBlockIsTheInstallPagesOwn holds the README's install block
+// to the block under "In one step" of the install page, byte for byte, and
+// both to the block the release notes carry for the release the recipes pin.
+func TestReadmeInstallBlockIsTheInstallPagesOwn(t *testing.T) {
+	pin := pinnedRelease(t)
+	blocks := shellBlock.FindAllStringSubmatch(section(t, read(t, readmePath), "Install"), -1)
+	if len(blocks) != 1 {
+		t.Fatalf("the README's Install section has %d shell blocks, want the install", len(blocks))
+	}
+	readme := blocks[0][1]
+	page := shellBlock.FindStringSubmatch(section(t, read(t, installPage), "In one step"))
+	if page == nil {
+		t.Fatal("the install page has no shell block under In one step")
+	}
+	if readme != page[1] {
+		t.Errorf("the README installs with\n%sand the install page with\n%s", readme, page[1])
+	}
+	if want := "curl -fsSLO https://github.com/Costroid/costroid/releases/download/v" + pin + "/costroid-install.sh\n"; !strings.HasPrefix(readme, want) {
+		t.Errorf("the README's block does not open with %q, the script of the release the recipes pin:\n%s", want, readme)
+	}
+
+	notes := notesShell.FindAllStringSubmatch(read(t, releaseWorkflowFile), -1)
+	if len(notes) != 1 {
+		t.Fatalf("release.yml writes %d shell blocks into the notes, want the install", len(notes))
+	}
+	var published strings.Builder
+	for _, line := range strings.SplitAfter(notes[0][1], "\n") {
+		published.WriteString(strings.TrimLeft(line, " "))
+	}
+	if got := strings.NewReplacer("$GH_REPO", strings.TrimSuffix(costroidAction, "/action"), "$TAG", "v"+pin).Replace(published.String()); got != readme {
+		t.Errorf("the release notes of v%s install with\n%sand the README with\n%s", pin, got, readme)
+	}
+}
+
 // readingWords counts the words a reader reads: those outside fenced blocks,
 // which are copied rather than read, with link targets left out.
 func readingWords(text string) int {
@@ -334,9 +372,9 @@ func readingWords(text string) int {
 
 // TestReadmeReadsInAMinute holds the README to STYLE.md's minute. The licence
 // is a legal statement, not reading toward the first command, so it is not
-// counted. The README leads with the two commands that cost nothing, demo and
-// lint, then a recipe pasted with no install, then the path for a workflow a
-// team already runs, then init --pr, then a run on the reader's own machine.
+// counted. The README installs, then leads with demo, which costs nothing,
+// then init --pr, then a recipe pasted with no install, then lint and the path
+// for a workflow a team already runs, then a run on the reader's own machine.
 func TestReadmeReadsInAMinute(t *testing.T) {
 	readme := read(t, readmePath)
 	body, _, found := strings.Cut(readme, "\n## Licence\n")
@@ -347,10 +385,10 @@ func TestReadmeReadsInAMinute(t *testing.T) {
 		t.Errorf("README.md reads %d words outside its code and its licence, past a minute at %d", words, minuteOfReading)
 	}
 	at := 0
-	for _, step := range []string{"\ncostroid demo ", "\ncostroid lint ", "\n## Without installing anything\n", "costroid init github --existing ", "`--pr`", "costroid report --preview --rows rows.jsonl\n"} {
+	for _, step := range []string{"\nsh costroid-install.sh\n", "\ncostroid demo ", "`--pr`", "\n## Without installing anything\n", "\ncostroid lint ", "costroid init github --existing ", "costroid report --preview --rows rows.jsonl\n"} {
 		next := strings.Index(readme[at:], step)
 		if next < 0 {
-			t.Fatalf("README.md does not name %q after byte %d: it leads with demo, lint, a pasted recipe, --existing, --pr, then report --preview", step, at)
+			t.Fatalf("README.md does not name %q after byte %d: it leads with the install, demo, --pr, a pasted recipe, lint, --existing, then report --preview", step, at)
 		}
 		at += next + len(step)
 	}
