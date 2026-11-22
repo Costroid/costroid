@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Costroid/costroid/internal/amounts"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/history"
 	"github.com/Costroid/costroid/internal/policy"
@@ -193,7 +194,14 @@ func (s *Server) pressApprove(ctx context.Context, event scm.Event, logger *slog
 	if err != nil {
 		return err
 	}
-	request.AllowAuthor, err = allowAuthor(ctx, host, event.BaseBranch)
+	if event.BaseBranch == "" {
+		return errNoBaseBranch
+	}
+	base, err := policy.BaseHead(ctx, host, event.BaseBranch)
+	if err != nil {
+		return err
+	}
+	request.AllowAuthor, err = allowAuthor(ctx, host, base)
 	if err != nil {
 		return err
 	}
@@ -201,7 +209,8 @@ func (s *Server) pressApprove(ctx context.Context, event scm.Event, logger *slog
 	if err != nil {
 		return err
 	}
-	id, conclusion, err := s.reconclude(ctx, host, approval, logger)
+	shown := func() comment.Amounts { return showsAmounts(ctx, host, base, logger) }
+	id, conclusion, err := s.reconclude(ctx, host, approval, shown, logger)
 	if err != nil {
 		return err
 	}
@@ -209,16 +218,9 @@ func (s *Server) pressApprove(ctx context.Context, event scm.Event, logger *slog
 	return nil
 }
 
-// allowAuthor reads approval.allow_author from costroid.yml at the head of
-// the base branch, so a pull request cannot widen who approves it.
-func allowAuthor(ctx context.Context, host ApprovalHost, branch string) (bool, error) {
-	if branch == "" {
-		return false, errNoBaseBranch
-	}
-	base, err := policy.BaseHead(ctx, host, branch)
-	if err != nil {
-		return false, err
-	}
+// allowAuthor reads approval.allow_author from costroid.yml at base, the head
+// of the base branch, so a pull request cannot widen who approves it.
+func allowAuthor(ctx context.Context, host ApprovalHost, base string) (bool, error) {
 	config := policy.ReadConfig(ctx, host, policy.Commits{Base: base, PullRequest: true})
 	if config.Unread != nil {
 		return false, config.Unread
@@ -230,13 +232,34 @@ func allowAuthor(ctx context.Context, host ApprovalHost, branch string) (bool, e
 	return settings.AllowAuthor, nil
 }
 
+// showsAmounts says whether the repository's comment shows amounts, as the
+// report decides it: from costroid.yml at base, the head of the base branch,
+// and the repository's visibility. The check the button posts then names the
+// amount where the comment does. Where a read fails and the check withholds
+// for it, the log says which read and why.
+func showsAmounts(ctx context.Context, host ApprovalHost, base string, logger *slog.Logger) comment.Amounts {
+	setting := amounts.Read(ctx, host, base)
+	if setting.Amounts == comment.AmountsUnsettled {
+		why := []any{}
+		if setting.Unread != nil {
+			why = append(why, "costroid_yml", setting.Unread.Error())
+		}
+		if setting.Unseen != nil {
+			why = append(why, "visibility", setting.Unseen.Error())
+		}
+		logger.Warn("check run withholds amounts; comment.show_cost could not be settled", why...)
+	}
+	return setting.Amounts
+}
+
 // reconclude posts the newest costroid check on the approved head again, with
 // the conclusion the approval gives it, and names the new check run in its
 // own result object. It posts nothing when the newest check already concludes
-// so.
-func (s *Server) reconclude(ctx context.Context, host ApprovalHost, approval scm.Approval, logger *slog.Logger) (int64, string, error) {
+// so, and asks shown, whether the comment shows amounts, only once it has a
+// check to post.
+func (s *Server) reconclude(ctx context.Context, host ApprovalHost, approval scm.Approval, shown func() comment.Amounts, logger *slog.Logger) (int64, string, error) {
 	approved := &comment.Approval{Approver: approval.Approver, HeadSHA: approval.HeadSHA, At: approval.At}
-	done, err := history.Reconclude(ctx, host, approval.HeadSHA, approved, s.Now)
+	done, err := history.Reconclude(ctx, host, approval.HeadSHA, approved, s.Now, history.Showing(shown))
 	switch {
 	case errors.Is(err, history.ErrNoCheck):
 		return 0, "", errNoCheckYet

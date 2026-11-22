@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -520,6 +521,106 @@ func TestApproveButtonReconcludes(t *testing.T) {
 	if front.minted.Load() != 1 || signs != 1 {
 		t.Errorf("%d installation tokens minted, %d KMS signatures: the token is not held for its hour", front.minted.Load(), signs)
 	}
+}
+
+// TestTheApproveButtonNamesTheAmountWhereTheCommentDoes presses the button
+// on a failed check, on repositories whose comment shows amounts and on ones
+// whose comment withholds them. The check the service posts has the title and
+// the summary costroid approve gives the same approval under the same
+// setting: the amount and the budget where the comment shows amounts, and
+// "Amounts are withheld here." where it does not. Where the service could not
+// read the setting, the check withholds and the log says which read failed. A
+// press that posts nothing reads neither the setting nor the visibility.
+func TestTheApproveButtonNamesTheAmountWhereTheCommentDoes(t *testing.T) {
+	const showCostOff, notASwitch = "comment:\n  show_cost: false\n", "comment:\n  show_cost: sometimes\n"
+	yes, no := true, false
+	visibility := func(stub *scmtest.Stub) int {
+		return len(slices.DeleteFunc(slices.Clone(stub.Requests), func(request string) bool { return request != "GET /repos/"+approvalRepo }))
+	}
+	for name, tc := range map[string]struct {
+		config  string
+		private *bool
+		amounts comment.Amounts
+		// logs are what the log says of a setting it could not settle.
+		logs []string
+	}{
+		"a private repository":                                   {private: &yes, amounts: comment.AmountsShown},
+		"a private repository that sets show_cost off":           {config: showCostOff, private: &yes, amounts: comment.AmountsShown},
+		"a public repository that leaves show_cost on":           {private: &no, amounts: comment.AmountsShown},
+		"a visibility GitHub does not answer, with show_cost on": {amounts: comment.AmountsShown},
+		"a public repository that sets show_cost off":            {config: showCostOff, private: &no, amounts: comment.AmountsOff},
+		"a visibility GitHub does not answer, with show_cost off": {
+			config: showCostOff, amounts: comment.AmountsUnsettled, logs: []string{`"visibility":"`},
+		},
+		"a public repository whose show_cost is no switch": {
+			config: notASwitch, private: &no, amounts: comment.AmountsUnsettled, logs: []string{`"costroid_yml":"`},
+		},
+		"a visibility GitHub does not answer, with a show_cost that is no switch": {
+			config: notASwitch, amounts: comment.AmountsUnsettled, logs: []string{`"costroid_yml":"`, `"visibility":"`},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := approvalStub(t)
+			if tc.config != "" {
+				stub.Files["costroid.yml"] = tc.config
+			}
+			stub.Private = tc.private
+			h := installed(t, stub)
+			h.send(t, scm.EventCheckRun, "press-1", pressBody(approverLogin, acmeSHA, scm.ApproveAction), http.StatusAccepted)
+			h.settle(t)
+			checks := posted(stub)
+			if len(checks) != 1 {
+				t.Fatalf("%d checks posted\n%s", len(checks), h.log.String())
+			}
+			block, err := comment.ParseResult(failedText(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			approved := &comment.Approval{Approver: approverLogin, HeadSHA: acmeSHA, At: testNow}
+			named := block
+			named.CheckRunID = &checks[0].ID
+			want, err := comment.Reconclude(named, approved, tc.amounts, failedCheck)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checks[0].Title != want.Title || checks[0].Summary != want.Summary {
+				t.Errorf("the button titles the check\n%s\nand costroid approve, under the same setting\n%s\nsummary:\n%s", checks[0].Title, want.Title, checks[0].Summary)
+			}
+			amount := "this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget."
+			shown := tc.amounts == comment.AmountsShown
+			if strings.Contains(checks[0].Title, amount) != shown || strings.HasSuffix(checks[0].Title, " Amounts are withheld here.") == shown {
+				t.Errorf("amounts shown is %t, and the title reads\n%s", shown, checks[0].Title)
+			}
+			if money := regexp.MustCompile(`[A-Z]{3} [0-9]`).FindString(checks[0].Title + checks[0].Summary); !shown && money != "" {
+				t.Errorf("a check that withholds amounts names %q:\n%s", money, checks[0].Summary)
+			}
+			const withheld = `"msg":"check run withholds amounts; comment.show_cost could not be settled"`
+			if said := strings.Contains(h.log.String(), withheld); said != (len(tc.logs) > 0) {
+				t.Errorf("the log says the setting could not be settled: %t\n%s", said, h.log.String())
+			}
+			for _, why := range tc.logs {
+				if !strings.Contains(lineOf(h.log.String(), withheld), why) {
+					t.Errorf("the log does not say why with %s:\n%s", why, h.log.String())
+				}
+			}
+			asked := visibility(stub)
+			h.send(t, scm.EventCheckRun, "press-2", pressBody(approverLogin, acmeSHA, scm.ApproveAction), http.StatusAccepted)
+			h.settle(t)
+			if len(posted(stub)) != 1 || visibility(stub) != asked {
+				t.Errorf("a press that posts nothing asked for the visibility: %d requests, were %d", visibility(stub), asked)
+			}
+		})
+	}
+}
+
+// lineOf is the line of a log that holds text, empty when none does.
+func lineOf(log, text string) string {
+	for line := range strings.SplitSeq(log, "\n") {
+		if strings.Contains(line, text) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestApproveButtonRefusesAndChangesNothing(t *testing.T) {

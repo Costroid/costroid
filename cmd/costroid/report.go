@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/amounts"
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/cli"
@@ -31,7 +32,6 @@ import (
 	"github.com/Costroid/costroid/internal/reason"
 	receipts "github.com/Costroid/costroid/internal/receipt"
 	"github.com/Costroid/costroid/internal/scm"
-	"github.com/Costroid/costroid/internal/vcs"
 )
 
 const (
@@ -696,8 +696,8 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Platform, input.Repository, input.PullRequest = target.platform, target.repository, pull.pullRequest
-	amounts, settings := resolveSettings(ctx, host, pull.settingsRef(), stderr)
-	input.Amounts = amounts
+	shown, settings := resolveSettings(ctx, host, pull.settingsRef(), stderr)
+	input.Amounts = shown
 	if input.ReceiptsAsked {
 		input.Receipt, input.ReceiptsAsked = readReceipt(ctx, host, pull, settings, rowsPath, stderr)
 	}
@@ -797,12 +797,13 @@ func printResult(stdout io.Writer, input comment.Input) error {
 	return nil
 }
 
-// resolveAmounts applies the comment.show_cost rule. When the setting or the visibility
-// cannot be read, a repository not known to be private withholds amounts. It
-// spends part of the report's time at most, so the check still posts.
+// resolveAmounts says whether the report's comment shows amounts, by the
+// comment.show_cost rule as amounts.Read applies it. What could not be read is
+// a warning. It spends part of the report's time at most, so the check still
+// posts.
 func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) comment.Amounts {
-	amounts, _ := resolveSettings(ctx, host, ref, stderr)
-	return amounts
+	shown, _ := resolveSettings(ctx, host, ref, stderr)
+	return shown
 }
 
 // resolveSettings is resolveAmounts, beside the comment's settings as
@@ -810,42 +811,14 @@ func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr i
 func resolveSettings(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) (comment.Amounts, *comment.Config) {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
-	config, err := readConfig(ctx, host, ref)
-	if err != nil {
-		fmt.Fprintf(stderr, "costroid: warning: %s: %v\n", configFile, err)
+	setting := amounts.Read(ctx, host, ref)
+	if setting.Unread != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %s: %v\n", configFile, setting.Unread)
 	}
-	if err == nil && config.ShowCost {
-		return comment.AmountsShown, &config
+	if setting.Unseen != nil {
+		fmt.Fprintf(stderr, "costroid: warning: repository visibility: %v\n", setting.Unseen)
 	}
-	read := &config
-	if err != nil {
-		read = nil
-	}
-	visibility, visibilityErr := host.Visibility(ctx)
-	switch {
-	case visibilityErr != nil:
-		fmt.Fprintf(stderr, "costroid: warning: repository visibility: %v\n", visibilityErr)
-		return comment.AmountsUnsettled, read
-	case visibility == scm.Private:
-		return comment.AmountsShown, read
-	case err != nil:
-		return comment.AmountsUnsettled, read
-	}
-	return comment.AmountsOff, read
-}
-
-func readConfig(ctx context.Context, host scm.Reporter, ref string) (comment.Config, error) {
-	if !vcs.IsCommit(ref) {
-		return comment.Config{}, errors.New("no commit to read it from")
-	}
-	data, err := host.ReadFile(ctx, configFile, ref)
-	if errors.Is(err, scm.ErrNotFound) {
-		return comment.ParseConfig(nil)
-	}
-	if err != nil {
-		return comment.Config{}, err
-	}
-	return comment.ParseConfig(data)
+	return setting.Amounts, setting.Config
 }
 
 func postComment(ctx context.Context, host scm.Reporter, input comment.Input, lifetime *comment.Lifetime, pullRequest int, stderr io.Writer) {

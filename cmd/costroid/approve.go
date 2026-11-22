@@ -179,8 +179,8 @@ func reconclude(ctx context.Context, host approvalHost, pull pullContext, number
 		return fmt.Errorf("read the pull request: %w", err)
 	}
 	approval := findApproval(ctx, host, pull.settingsRef(), current, now, stderr)
-	amounts := func() comment.Amounts { return resolveAmounts(ctx, host, pull.settingsRef(), stderr) }
-	done, err := history.Reconclude(ctx, host, current.HeadSHA, approval, time.Now, history.Showing(amounts))
+	shown := func() comment.Amounts { return resolveAmounts(ctx, host, pull.settingsRef(), stderr) }
+	done, err := history.Reconclude(ctx, host, current.HeadSHA, approval, time.Now, history.Showing(shown))
 	switch {
 	case errors.Is(err, history.ErrNoCheck):
 		return fmt.Errorf("no costroid check is on commit %s yet, and the report applies an approval when it posts", current.HeadSHA)

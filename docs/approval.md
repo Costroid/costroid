@@ -77,7 +77,7 @@ A press counts under the rules a review counts under in `costroid approve`, for 
 
 The press is the approval, so `approval.expires_days` does not apply to it. The App's installation must be held in the installations table and not suspended.
 
-When a press counts, the service posts the newest `costroid` check on the head again with the conclusion `costroid approve` gives it: an approved failure concludes `neutral`, and the summary names the presser, the commit and the time. The service does not read `comment.show_cost`, so its title and summary name no amount on any repository. When the newest check already concludes so, it posts nothing. A press that does not count changes nothing, and the service's log says why.
+When a press counts, the service posts the newest `costroid` check on the head again with the conclusion `costroid approve` gives it: an approved failure concludes `neutral`, and the summary names the presser, the commit and the time. Its title names the amount where the report's comment shows amounts: the service decides it as `costroid approve` does, from `comment.show_cost` at the head of the base branch and the repository's visibility. Where it cannot read one of them and the repository is not known to be private, the check names no amount, and the service's log says which read failed. When the newest check already concludes so, it posts nothing. A press that does not count changes nothing, and the service's log says why.
 
 The service posts only when it holds the App's key in a KMS, as [`docs/github-app.md`](github-app.md) sets up; without it, it posts nothing. The check the report posts carries no button yet.
 
