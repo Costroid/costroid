@@ -101,16 +101,23 @@ sha256sum costroid-rows.jsonl
 {
   "figures": [
     {
-      "currency": "USD",
+      "currency": "EUR",
       "cost_basis": "measured",
-      "list_cost": "0.15",
-      "reports": 2,
+      "list_cost": "0.25",
+      "reports": 1,
       "may_repeat": false
+    },
+    {
+      "currency": "USD",
+      "cost_basis": "list_equivalent",
+      "list_cost": "0.00323945",
+      "reports": 2,
+      "may_repeat": true
     }
   ],
   "figures_omitted": 0,
-  "capped": false,
-  "unread": 0
+  "capped": true,
+  "unread": 1
 }
 ```
 

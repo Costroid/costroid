@@ -74,7 +74,7 @@ The gateway needs each Codex model on its OpenAI route. Codex calls the Response
 A run reads `gateway-precheck` only when every request it makes passes through the gateway on the run's key. Under `--gateway`, `costroid run` refuses a command that holds a flag that sends requests anywhere else. It refuses before it asks the gateway anything, and starts no agent:
 
 ```text
-costroid: run: <flag> sends <agent>'s requests around the gateway, and a gateway cannot hold a run that routes around it; remove it
+costroid: <flag> sends <agent>'s requests around the gateway, and a gateway cannot hold a run that routes around it; remove it
 ```
 
 | Agent       | Refused                                                                                                  | Why                                                                                                                                                                                                                                                         |

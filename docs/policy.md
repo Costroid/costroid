@@ -291,8 +291,8 @@ The check run's machine block carries the verdict under `policy`. It records eac
   "config_ref": "<head of the base branch>",
   "config": "found",
   "config_from_base": true,
-  "evaluated_at": "2026-11-09T10:00:00Z",
-  "warn_only": { "active": false, "reason": "ended", "started": "2026-11-01T10:00:00Z", "ends": "2026-11-08T10:00:00Z" },
+  "evaluated_at": "2026-11-12T09:00:00Z",
+  "warn_only": { "active": false, "reason": "ended", "started": "2026-11-02T09:00:00Z", "ends": "2026-11-09T09:00:00Z" },
   "results": [
     { "rule": "run_budget", "outcome": "fail", "reason": "over_limit", "limit_usd": "0.001", "cost_usd": "0.001619725" }
   ],

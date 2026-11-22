@@ -71,10 +71,18 @@ Each check has the `status` it ended in, `ok`, `warn` or `fail`, and the `line` 
     { "status": "ok", "line": "ok: costroid.yml: valid" },
     {
       "status": "warn",
-      "line": "warn: the repository has no remote, so no pull request can be opened from it: create it on GitHub and add it as origin"
+      "line": "warn: no workflow in .github/workflows calls Costroid's action: run costroid init github --agent claude"
+    },
+    {
+      "status": "warn",
+      "line": "warn: claude is not on PATH, so costroid run cannot start it on this machine, though CI installs its own: install it with npm install --global @anthropic-ai/claude-code@2.1.316"
+    },
+    {
+      "status": "ok",
+      "line": "ok: ANTHROPIC_API_KEY is not set in this shell, so a local run of claude uses its own sign-in, priced as docs/bases.md says"
     }
   ],
-  "count": { "fail": 0, "warn": 1, "ok": 2 }
+  "count": { "fail": 0, "warn": 2, "ok": 3 }
 }
 ```
 
@@ -93,10 +101,24 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
       "severity": "high",
       "file": ".github/workflows/review.yml",
       "line": 11,
-      "message": "job claude holds id-token: write, so an injected agent can mint a token that claims this repository's identity"
+      "message": "job review holds id-token: write, so an injected agent can mint a token that claims this repository's identity"
+    },
+    {
+      "rule": "agent-budget",
+      "severity": "note",
+      "file": ".github/workflows/review.yml",
+      "line": 21,
+      "message": "claude_args give Claude Code no --max-budget-usd, so no cap stops a run, whatever it spends: add --max-budget-usd and your cap in USD to claude_args, such as --max-budget-usd 5"
+    },
+    {
+      "rule": "join-attributes",
+      "severity": "note",
+      "file": ".github/workflows/review.yml",
+      "line": 21,
+      "message": "claude starts outside costroid run, so its step must set cicd.pipeline.run.id, cicd.pipeline.task.run.id, vcs.change.id, vcs.ref.base.revision, vcs.ref.head.revision and vcs.repository.url.full in OTEL_RESOURCE_ATTRIBUTES, or its telemetry names no pull request: docs/adapters.md#join-attributes lists the values"
     }
   ],
-  "count": { "high": 1, "medium": 0, "note": 0 }
+  "count": { "high": 1, "medium": 0, "note": 2 }
 }
 ```
 
