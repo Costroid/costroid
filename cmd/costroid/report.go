@@ -482,7 +482,7 @@ func printPreview(stdout, stderr io.Writer, input comment.Input) error {
 	if _, err := io.WriteString(stdout, body); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stderr, comment.VerdictSentence(input))
+	_, err = fmt.Fprintln(cli.Notes(stderr), comment.VerdictSentence(input))
 	return err
 }
 

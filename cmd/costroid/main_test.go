@@ -25,12 +25,12 @@ const (
 )
 
 // TestMain runs main when a customer pack's runner starts the test binary as
-// its child, and replays a recorded stream when the harness runs the test
+// its child, or a test starts it as costroid itself, and replays a recorded stream when the harness runs the test
 // binary under the name claude. Otherwise it records, as main does, that this
 // executable hands a child to the pack, and runs the tests with a stub first
 // on PATH for every agent, so no test can start the machine's own.
 func TestMain(m *testing.M) {
-	if len(os.Args) == 2 && os.Args[1] == policy.PackChildArgument {
+	if len(os.Args) == 2 && os.Args[1] == policy.PackChildArgument || os.Getenv(runsMain) != "" {
 		main()
 	}
 	if stream := os.Getenv(replayStream); stream != "" {

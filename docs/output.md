@@ -120,7 +120,7 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
 {
   "schema": "costroid.version/0.1",
   "release": "1.0.0-alpha.28",
-  "commit": "378ac22d7fd8e3ad6bd2cb1b8e3e3d5b3a6f0f11",
+  "commit": "378ac227c3ede2ab236d18f8c156c2e80c3dc317",
   "os": "linux",
   "arch": "amd64",
   "catalog": { "version": "0.4.3", "prices_read": "2026-11-21" },
