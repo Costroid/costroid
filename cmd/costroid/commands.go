@@ -178,7 +178,7 @@ const (
 	nextAfterInit           = "Next: costroid doctor checks this repository before its first pull request."
 	nextAfterDoctor         = "Next: gh pr create --fill opens the pull request that Costroid comments on."
 	nextAfterDoctorOnGitLab = "Next: open a merge request, as " + cli.Documentation + "/recipes#gitlab-ci says."
-	nextAfterValidate       = "Next: costroid policy --rows rows.jsonl gives the verdict this file gives a run."
+	nextAfterValidate       = "Next: costroid policy --rows FILE holds a run's rows to this file."
 )
 
 // printObject prints, under --json, one object on one line of stdout, which

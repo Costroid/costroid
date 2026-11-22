@@ -33,7 +33,7 @@ var nextSteps = []struct {
 	{line: nextAfterInit, after: "init", names: []string{"doctor"}},
 	{line: nextAfterDoctor, after: "doctor", left: []string{"gh", "pr", "create", "--fill"}},
 	{line: nextAfterDoctorOnGitLab, after: "doctor", page: "recipes#gitlab-ci"},
-	{line: nextAfterValidate, after: "validate", names: []string{"policy", "--rows", "rows.jsonl"}},
+	{line: nextAfterValidate, after: "validate", names: []string{"policy", "--rows", "FILE"}},
 }
 
 // nextLiterals reads every string the commands' source holds that opens a
@@ -87,9 +87,11 @@ func leftByInit(t *testing.T) []string {
 // costroid's that one names is run, on a machine with no program on PATH and
 // in a directory with nothing in it, far enough to know that the command
 // exists and reads every word of it: it does not end as a wrong command line
-// does. A command of another program is one init leaves to the reader, word
-// for word. Only where no command does the act does a line name a page, and
-// the documentation holds that page and its heading.
+// does. Where the command's help calls a flag's value FILE, the line writes
+// FILE, never a name: the reader may hold no such file yet. A command of
+// another program is one init leaves to the reader, word for word. Only where
+// no command does the act does a line name a page, and the documentation
+// holds that page and its heading.
 func TestEveryNextStepIsOneLineAndNamesACommandThatExists(t *testing.T) {
 	clearCI(t)
 	left := leftByInit(t)
@@ -111,8 +113,15 @@ func TestEveryNextStepIsOneLineAndNamesACommandThatExists(t *testing.T) {
 			if !strings.HasPrefix(next.line, "Next: costroid "+strings.Join(next.names, " ")+" ") {
 				t.Errorf("%q does not name costroid %s", next.line, strings.Join(next.names, " "))
 			}
-			if _, ok := lookup(next.names[0]); !ok {
+			entry, ok := lookup(next.names[0])
+			if !ok {
 				t.Errorf("%q names %s, which is no command", next.line, next.names[0])
+			}
+			for i, word := range next.names[:len(next.names)-1] {
+				takesAFile := regexp.MustCompile(`(?m)^ +` + regexp.QuoteMeta(word) + ` FILE  `).MatchString(entry.help)
+				if strings.HasPrefix(word, "-") && takesAFile && next.names[i+1] != "FILE" {
+					t.Errorf("%q names the file %s, which the reader may not have: costroid help %s calls it FILE", next.line, next.names[i+1], next.names[0])
+				}
 			}
 			if code, _, stderr := execute(t, next.names...); code == exitUsage || strings.Contains(stderr, "Run costroid help") {
 				t.Errorf("costroid %s, which %q names, is a wrong command line: exit %d, stderr %q", strings.Join(next.names, " "), next.line, code, stderr)
