@@ -7,7 +7,7 @@
 The release carries `costroid-install.sh`. It checks the release's signature with cosign and the binary against `SHA256SUMS` before it installs anything, to `$HOME/.local/bin`, and asks for no privilege. Read it first:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-install.sh
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.28/costroid-install.sh
 cat costroid-install.sh
 sh costroid-install.sh
 ```
@@ -18,11 +18,11 @@ Its last line is the command to run next, `costroid demo`. When `$HOME/.local/bi
 
 ## The binary
 
-The commands below install `1.0.0-alpha.27`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.27), check it against `SHA256SUMS`, and put it in `~/.local/bin`, where the script installs, with no `sudo`:
+The commands below install `1.0.0-alpha.28`, the release the recipes pin. It is a pre-release. Download the binary for your platform from [the release](https://github.com/Costroid/costroid/releases/tag/v1.0.0-alpha.28), check it against `SHA256SUMS`, and put it in `~/.local/bin`, where the script installs, with no `sudo`:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-linux-amd64
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/SHA256SUMS
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.28/costroid-linux-amd64
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.28/SHA256SUMS
 grep ' costroid-linux-amd64$' SHA256SUMS | sha256sum -c
 chmod +x costroid-linux-amd64
 mkdir -p ~/.local/bin
@@ -30,16 +30,16 @@ mv costroid-linux-amd64 ~/.local/bin/costroid
 ~/.local/bin/costroid version
 ```
 
-The last line prints `costroid 1.0.0-alpha.27, catalog 0.4.3, prices read 2026-11-21`. Any directory works in place of `~/.local/bin`, such as `/usr/local/bin` with `sudo mv`. With `~/.local/bin` on your `PATH`, `costroid` alone runs it. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`.
+The last line prints `costroid 1.0.0-alpha.28, catalog 0.4.3, prices read 2026-11-21`. Any directory works in place of `~/.local/bin`, such as `/usr/local/bin` with `sudo mv`. With `~/.local/bin` on your `PATH`, `costroid` alone runs it. The release holds four binaries: `costroid-linux-amd64`, `costroid-linux-arm64`, `costroid-darwin-amd64` and `costroid-darwin-arm64`. For another platform, replace `linux-amd64` in every line. On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`.
 
 ## The signature
 
 Each file is signed with cosign, keyless, by this repository's release workflow. To check the binary's signature, with cosign 3 or later:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-linux-amd64.sigstore.json
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.28/costroid-linux-amd64.sigstore.json
 cosign verify-blob --bundle costroid-linux-amd64.sigstore.json \
-  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.27 \
+  --certificate-identity https://github.com/Costroid/costroid/.github/workflows/release.yml@refs/tags/v1.0.0-alpha.28 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com ~/.local/bin/costroid
 ```
 
@@ -50,10 +50,10 @@ The identity is the release workflow at the release's tag, so a file signed by a
 With Go 1.27 or later:
 
 ```sh
-go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.27
+go install github.com/Costroid/costroid/cmd/costroid@v1.0.0-alpha.28
 ```
 
-`go install` records the release's version, so `costroid version` prints it. The build records no commit, so `init` reads the commit the release's tag names from github.com with `git ls-remote`, pins it and says so. Where github.com is unreachable, pass the commit of `v1.0.0-alpha.27` with `--action-ref 89b6d38280eebb3da02635a6f161c83cc8c7327d`.
+`go install` records the release's version, so `costroid version` prints it. The build records no commit, so `init` reads the commit the release's tag names from github.com with `git ls-remote`, pins it and says so. Where github.com is unreachable, pass the commit of `v1.0.0-alpha.28` with `--action-ref 378ac227c3ede2ab236d18f8c156c2e80c3dc317`.
 
 To build from a checkout instead, run `make build`. That build belongs to no release either.
 
@@ -62,7 +62,7 @@ To build from a checkout instead, run `make build`. That build belongs to no rel
 With Docker:
 
 ```sh
-docker run --rm ghcr.io/costroid/costroid:1.0.0-alpha.27 demo
+docker run --rm ghcr.io/costroid/costroid:1.0.0-alpha.28 demo
 ```
 
 The image runs `demo`. It holds no git, so `init` needs the binary.
