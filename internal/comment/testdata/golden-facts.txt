@@ -755,6 +755,68 @@ fork-limit-held	`output`
 fork-limit-held	`policy.max_run_cost_usd`
 fork-limit-held	`reasoning_output`
 fork-limit-held	| client-side estimate, can pass the cap |
+fork-within-budget	0.0000008
+fork-within-budget	0.000136
+fork-within-budget	0.00015605
+fork-within-budget	0.000436875
+fork-within-budget	0.00089
+fork-within-budget	0.001619725
+fork-within-budget	0.01
+fork-within-budget	0.10
+fork-within-budget	0.125
+fork-within-budget	0.20
+fork-within-budget	0.50
+fork-within-budget	121
+fork-within-budget	15605
+fork-within-budget	19
+fork-within-budget	2026-11-21
+fork-within-budget	272
+fork-within-budget	3495
+fork-within-budget	4.998380275
+fork-within-budget	4450
+fork-within-budget	5.00
+fork-within-budget	8
+fork-within-budget	List-equivalent, not billed
+fork-within-budget	Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+fork-within-budget	USD 0.0000008
+fork-within-budget	USD 0.000136
+fork-within-budget	USD 0.00015605
+fork-within-budget	USD 0.000436875
+fork-within-budget	USD 0.00089
+fork-within-budget	USD 0.001619725
+fork-within-budget	USD 0.01
+fork-within-budget	USD 0.10
+fork-within-budget	USD 0.125
+fork-within-budget	USD 0.20
+fork-within-budget	USD 0.50
+fork-within-budget	USD 4.998380275
+fork-within-budget	USD 5.00
+fork-within-budget	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+fork-within-budget	](https://app.costroid.com/?installation=github%3A58120394)
+fork-within-budget	](https://docs.costroid.com/export)
+fork-within-budget	](https://docs.costroid.com/policy)
+fork-within-budget	](https://github.com/example/widgets/actions/runs/19203384756)
+fork-within-budget	`0.4.3`
+fork-within-budget	`9f2c6e1`
+fork-within-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+fork-within-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+fork-within-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+fork-within-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+fork-within-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+fork-within-budget	`anthropic:informational:cached_input_reported`
+fork-within-budget	`anthropic:informational:reasoning_output`
+fork-within-budget	`cache_read`
+fork-within-budget	`cache_write_1h`
+fork-within-budget	`cache_write_5m`
+fork-within-budget	`cached_input_reported`
+fork-within-budget	`claude-code`
+fork-within-budget	`claude-haiku-5-5`
+fork-within-budget	`costroid.yml`
+fork-within-budget	`input_uncached`
+fork-within-budget	`output`
+fork-within-budget	`policy.run_budget_usd`
+fork-within-budget	`reasoning_output`
+fork-within-budget	| client-side estimate, can pass the cap |
 gh-aw-stated-credits	0.000006
 gh-aw-stated-credits	0.000031
 gh-aw-stated-credits	0.004922

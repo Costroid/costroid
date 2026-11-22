@@ -253,7 +253,7 @@ func (i Input) policyNotes() string {
 	if unruled(*i.Verdict) {
 		notes = append(notes, noRuleApplied(i.configRead()))
 	}
-	notes = append(notes, passNotes(*i.Verdict)...)
+	notes = append(notes, passNotes(*i.Verdict, i.forkRows)...)
 	if attribution := i.attributionNote(); attribution != "" {
 		notes = append(notes, attribution)
 	}
@@ -462,8 +462,9 @@ func onAgentRows(verdict policy.Verdict) (neutral, budget bool) {
 
 // passNotes say what a budget kept on the agent's own rows would conclude
 // when broken, and which page says what lets a rule pass. They are empty for
-// any verdict but one only the agent's own rows kept from success.
-func passNotes(verdict policy.Verdict) []string {
+// any verdict but one only the agent's own rows kept from success. forkRows
+// says the rows are a fork's own, whose check a broken budget leaves neutral.
+func passNotes(verdict policy.Verdict, forkRows bool) []string {
 	neutral, budget := onAgentRows(verdict)
 	if !neutral {
 		return nil
@@ -473,7 +474,10 @@ func passNotes(verdict policy.Verdict) []string {
 	if budget {
 		rule = "budget"
 		over := "Over budget, the rule would fail."
-		if verdict.WarnOnly.Active {
+		switch {
+		case forkRows:
+			over = forkOverBudget
+		case verdict.WarnOnly.Active:
 			over = "Over budget, the rule would warn until the warn-only period ends, then fail."
 		}
 		notes = append(notes, over)

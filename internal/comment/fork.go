@@ -32,3 +32,9 @@ func forkHeldLine(request string) string {
 	return "This " + request + " comes from a fork, and the fork's own run wrote these rows. " +
 		"Its check concludes neutral at most, so a rule that fails here warns and does not block a merge."
 }
+
+// forkOverBudget is the fold's line on a fork's own rows within a budget: what
+// a run over it would conclude. The follow-up holds such a check at neutral,
+// in the warn-only period and after it, so the line never says a rule would
+// fail.
+const forkOverBudget = "Over budget, on a fork's own rows, the check stays neutral: a fork's rows are the fork's own claim."
