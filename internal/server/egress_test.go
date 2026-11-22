@@ -197,7 +197,7 @@ func TestServeRefusesAWildcardOnTheList(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if code := Main(context.Background(), setup(), &stderr); code != cli.ExitCouldNot {
+			if code := Main(context.Background(), setup(), new(bytes.Buffer), &stderr); code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if !strings.Contains(stderr.String(), "wildcard") {

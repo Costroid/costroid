@@ -23,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	receipts "github.com/Costroid/costroid/internal/receipt"
+	"github.com/Costroid/costroid/internal/server"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -636,6 +637,28 @@ func TestEightFormsRefuseAnArgumentTooMany(t *testing.T) {
 		entry, _ := lookup(name)
 		if want := name + " reads no argument, and ignores one it is given"; !strings.Contains(strings.Join(strings.Fields(entry.help), " "), want) {
 			t.Errorf("help %s does not say %q", name, want)
+		}
+	}
+}
+
+// TestServesHelpIsOnStdoutWhereverItIsAsked asks serve for its help first on
+// the command line, after other flags, under --quiet, and through costroid
+// help. Each prints the same page on stdout, says nothing on stderr, exits 0,
+// and starts no service: the variables a service needs are unset.
+func TestServesHelpIsOnStdoutWhereverItIsAsked(t *testing.T) {
+	for _, variable := range []string{"COSTROID_DATABASE_URL", "COSTROID_MIGRATION_DATABASE_URL", "COSTROID_OIDC_AUDIENCE", "COSTROID_PSEUDONYM_KEY"} {
+		t.Setenv(variable, "")
+	}
+	for _, args := range [][]string{
+		{"help", "serve"},
+		{"serve", "--help"},
+		{"serve", "-h"},
+		{"serve", "--addr", ":0", "--help"},
+		{"serve", "--addr", ":0", "--bind", "github.com:example", "-h"},
+		{"serve", "--quiet", "--egress-allow", "gitlab.example.com", "--help"},
+	} {
+		if code, stdout, stderr := execute(t, args...); code != 0 || stdout != server.ServeUsage || stderr != "" {
+			t.Errorf("costroid %s: exit %d, stderr %q, and stdout does not hold the page alone:\n%s", strings.Join(args, " "), code, stderr, stdout)
 		}
 	}
 }

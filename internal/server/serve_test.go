@@ -39,7 +39,7 @@ func TestServeRefusesAMissingOrShortConfiguration(t *testing.T) {
 			t.Setenv(envAudience, tc.audience)
 			t.Setenv(envPseudonym, tc.key)
 			var stderr bytes.Buffer
-			if code := Main(context.Background(), nil, &stderr); code != cli.ExitCouldNot {
+			if code := Main(context.Background(), nil, new(bytes.Buffer), &stderr); code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
@@ -51,7 +51,7 @@ func TestServeRefusesAMissingOrShortConfiguration(t *testing.T) {
 
 func TestServeRefusesABindThatIsNotHostAndOwner(t *testing.T) {
 	var stderr bytes.Buffer
-	if code := Main(context.Background(), []string{"--bind", "acme"}, &stderr); code != cli.ExitUsage {
+	if code := Main(context.Background(), []string{"--bind", "acme"}, new(bytes.Buffer), &stderr); code != cli.ExitUsage {
 		t.Fatalf("exit %d", code)
 	}
 }
@@ -77,7 +77,7 @@ func startServe(t *testing.T, addr string, args ...string) (string, *lockedBuffe
 	var code int
 	go func() {
 		defer close(done)
-		code = Main(ctx, append([]string{"--addr", addr}, args...), log)
+		code = Main(ctx, append([]string{"--addr", addr}, args...), new(bytes.Buffer), log)
 	}()
 	stop := sync.OnceFunc(func() {
 		cancel()

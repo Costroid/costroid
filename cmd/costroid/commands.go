@@ -77,7 +77,7 @@ var commands = []command{
 	{name: "connect", where: toAPlatform, does: "bind an owner", help: connectHelp, run: connectCommand},
 	{name: "emit-otlp", where: toAPlatform, does: "send rows as OTLP spans", help: emitOTLPHelp, run: emitOTLPCommand},
 	{name: "reconcile", where: toAPlatform, does: "compare with a provider", help: reconcileHelp, run: reconcileWithProvider},
-	{name: "serve", where: forALedger, does: "run the ingest service", help: server.ServeUsage, run: func(ctx context.Context, args []string, std stdio) int { return server.Main(ctx, args, std.stderr) }},
+	{name: "serve", where: forALedger, does: "run the ingest service", help: server.ServeUsage, run: withOutputs(server.Main)},
 	{name: "keys", where: forALedger, does: "issue and revoke keys", help: server.KeysUsage, run: withOutputs(server.KeysMain)},
 	{name: "egress", where: forALedger, does: "report outbound calls", help: server.EgressUsage, run: withOutputs(server.EgressMain)},
 	{name: "gateway", where: forALedger, does: "give a run its own key", help: gatewayUsage, run: withOutputs(gatewayCommand)},

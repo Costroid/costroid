@@ -43,9 +43,8 @@ const (
 	shutdownTimeout      = 20 * time.Second
 )
 
-// ServeUsage is serve's help page. costroid help serve prints it on stdout,
-// and serve, which holds no stdout, prints it on stderr when help is asked for
-// after other flags.
+// ServeUsage is serve's help page, which goes to stdout wherever it is asked
+// for: costroid help serve, serve --help, and --help after other flags.
 var ServeUsage = cli.Page{
 	Command: "serve",
 	Summary: "serve runs the ingest service.",
@@ -141,9 +140,6 @@ func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	set.Var(&binds, "bind", "an SCM owner for this instance's tenant, host:owner")
 	set.Var(&allow, "egress-allow", "an exact host the service may call")
 	if err := cli.Parse(set, args, stderr); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(stderr, ServeUsage)
-		}
 		return serveOptions{}, err
 	}
 	if err := cli.NoArgument(set); err != nil {
@@ -175,10 +171,12 @@ func parseBinding(flagName, text string) (store.Binding, error) {
 
 // Main runs costroid serve until ctx ends and returns an exit code. An
 // interrupt stops the service as SIGTERM does: it drains its requests, and
-// exits with its own code.
-func Main(ctx context.Context, args []string, stderr io.Writer) int {
+// exits with its own code. The service's log goes to stderr, and stdout holds
+// the help page alone, when the command line asks for it.
+func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	options, err := parseServe(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprint(stdout, ServeUsage)
 		return 0
 	}
 	if err == nil {

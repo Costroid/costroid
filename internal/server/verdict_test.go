@@ -362,7 +362,7 @@ func TestDefaultAudienceRefused(t *testing.T) {
 			t.Setenv(envAudience, value)
 			t.Setenv(envPseudonym, long)
 			var stderr bytes.Buffer
-			if code := Main(context.Background(), nil, &stderr); code != cli.ExitCouldNot {
+			if code := Main(context.Background(), nil, new(bytes.Buffer), &stderr); code != cli.ExitCouldNot {
 				t.Fatalf("exit %d", code)
 			}
 			if !strings.Contains(stderr.String(), "GitHub's default audience") {
