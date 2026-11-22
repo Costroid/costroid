@@ -60,6 +60,10 @@ type Options struct {
 	Grace time.Duration
 	// Gateway is the run's own key on a gateway. Nil runs without one.
 	Gateway *gateway.Session
+	// Starting, when set, is called once with the agent's name, when nothing
+	// is left that can refuse the run without starting the agent, just before
+	// its process starts.
+	Starting func(agent string)
 }
 
 // installLines are the commands that install each agent at the version this
@@ -476,6 +480,9 @@ func (o Options) execute(ctx context.Context, plan adapter.Plan, session adapter
 		return 0, false, fmt.Errorf("run: open the agent's stdout: %w", err)
 	}
 	defer stdout.Close()
+	if _, err := exec.LookPath(plan.Argv[0]); err == nil && o.Starting != nil {
+		o.Starting(builder.agent)
+	}
 	command, contained, err := startContained(func() *exec.Cmd { return o.command(plan, held, writer) })
 	// The agent holds its own copy, so the run's end of it closes when the
 	// agent and everything it left have exited.

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -146,6 +148,75 @@ func TestReadmeFirstCommandShowsWhatTheProgramPrints(t *testing.T) {
 	first := firstRow(t, filepath.Join(directory, "rows.jsonl"))
 	if !bytes.Contains(readme, []byte(fmt.Sprintf(`"SkuMeter":"%s"`, first["SkuMeter"]))) {
 		t.Errorf("README.md does not show the first row's class %v", first["SkuMeter"])
+	}
+}
+
+// startWatch is a standard error that notes, when run's opening line reaches
+// it, whether the agent has left its file yet.
+type startWatch struct {
+	bytes.Buffer
+	started string
+	// early says the line arrived before the agent's file did, nil until the
+	// line arrives.
+	early *bool
+}
+
+func (w *startWatch) Write(p []byte) (int, error) {
+	if w.early == nil && bytes.Contains(p, []byte("costroid: running ")) {
+		_, err := os.Stat(w.started)
+		early := errors.Is(err, fs.ErrNotExist)
+		w.early = &early
+	}
+	return w.Buffer.Write(p)
+}
+
+// TestRunSaysItHasStartedBeforeTheAgent runs the recorded run through an
+// agent that leaves a file as it starts. The first line run writes on stderr
+// names the agent as the summary's first line does, and the cap with the
+// amount as the summary's cap line draws it, and it is written while the
+// agent's file is not there yet. --quiet drops the line, and stdout and the
+// exit code are the same without it. A run that starts no agent never says
+// the line: one whose command is not there opens on what is wrong.
+func TestRunSaysItHasStartedBeforeTheAgent(t *testing.T) {
+	replayClaude(t)
+	claude := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(claude, []byte("#!/bin/sh\n: > \"$COSTROID_TEST_STARTED\"\ncat \"$"+replayStream+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for cap, amount := range map[string]string{"5": "USD 5.00", "0.5": "USD 0.50", "0.0001": "USD 0.0001"} {
+		started := filepath.Join(t.TempDir(), "started")
+		t.Setenv("COSTROID_TEST_STARTED", started)
+		args := []string{"run", "--budget-usd", cap, "--out", filepath.Join(t.TempDir(), "rows.jsonl"), "--", claude, "-p", "work"}
+		stderr := &startWatch{started: started}
+		var stdout bytes.Buffer
+		code := dispatch(context.Background(), args, strings.NewReader(""), &stdout, stderr)
+		if _, err := os.Stat(started); code != 0 || err != nil {
+			t.Fatalf("a cap of %s: exit %d, the agent's file: %v\n%s", cap, code, err, stderr.String())
+		}
+		first, _, _ := strings.Cut(stderr.String(), "\n")
+		if want := "costroid: running claude-code under a cap of " + amount; first != want {
+			t.Errorf("a cap of %s: run opens on %q, want %q", cap, first, want)
+		}
+		if !strings.Contains(stderr.String(), "\ncostroid: claude-code, ") {
+			t.Errorf("a cap of %s: the summary names another agent than the opening line:\n%s", cap, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "\ncostroid: cap "+amount+" (") {
+			t.Errorf("a cap of %s: the summary's cap line draws another amount than %s:\n%s", cap, amount, stderr.String())
+		}
+		if stderr.early == nil || !*stderr.early {
+			t.Errorf("a cap of %s: run did not say it had started before the agent did", cap)
+		}
+		quiet := slices.Insert(slices.Clone(args), 1, "--quiet")
+		quiet[5] = filepath.Join(t.TempDir(), "rows.jsonl")
+		quietCode, quietOut, said := execute(t, quiet...)
+		if quietCode != code || quietOut != stdout.String() || strings.Contains(said, "costroid: running") {
+			t.Errorf("a cap of %s under --quiet: exit %d, stderr %q", cap, quietCode, said)
+		}
+	}
+	absent := filepath.Join(t.TempDir(), "claude")
+	code, _, stderr := execute(t, "run", "--budget-usd", "5", "--out", filepath.Join(t.TempDir(), "rows.jsonl"), "--", absent, "-p", "work")
+	if first, _, _ := strings.Cut(stderr, "\n"); code != exitFailure || strings.Contains(stderr, "costroid: running") || !strings.HasPrefix(first, "costroid: ") {
+		t.Errorf("a command that is not there: exit %d, and run says it is running an agent, or opens on no error:\n%s", code, stderr)
 	}
 }
 

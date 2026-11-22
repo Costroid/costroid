@@ -334,6 +334,11 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		Stderr:         cli.Under(stderr),
 		Catalog:        pinned,
 		Gateway:        session,
+		// The agent can work for minutes and print nothing, so run says it
+		// is starting it, by the name and with the cap the summary states.
+		Starting: func(agent string) {
+			cli.Say(stderr, "costroid: running %s under a cap of %s\n", agent, comment.Money(runCurrency, flags.budget.String()))
+		},
 	})
 	if closeErr := rows.Close(); err == nil && closeErr != nil {
 		err = fmt.Errorf("close %s: %w", flags.out, closeErr)

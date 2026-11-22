@@ -78,6 +78,7 @@ costroid report --preview --rows rows.jsonl
 `run` prints, for a recorded subscription run:
 
 ```text
+costroid: running claude-code under a cap of USD 5.00
 costroid: claude-code, 4 requests
 costroid: 19 rows in rows.jsonl, catalog 0.4.3
 costroid: USD 0.001619725 at list (List-equivalent, not billed)

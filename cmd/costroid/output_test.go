@@ -907,8 +907,8 @@ func TestAResultIsOnStdoutAndAMessageOnStderr(t *testing.T) {
 		{"policy", ran("policy", "--rows", rows), "", ""},
 		{"report --preview", ran("report", "--preview", "--rows", rows), comment.Marker, "Within budget..."},
 		{"export --format", ran("export", "--rows", requestRows, "--format", "focus-csv"), "", ""},
-		{"run", ran("run", "--budget-usd", "5", "--out", "run.jsonl", "--", claude, "-p", "work"), "{", "costroid: claude-code, ..."},
-		{"run --json", ran("run", "--budget-usd", "5", "--out", "object.jsonl", "--json", "--", claude, "-p", "work"), "{\n  \"schema\": \"costroid.result/", "{..."},
+		{"run", ran("run", "--budget-usd", "5", "--out", "run.jsonl", "--", claude, "-p", "work"), "{", "costroid: running claude-code under a cap of USD 5.00\ncostroid: claude-code, ..."},
+		{"run --json", ran("run", "--budget-usd", "5", "--out", "object.jsonl", "--json", "--", claude, "-p", "work"), "{\n  \"schema\": \"costroid.result/", "costroid: running claude-code under a cap of USD 5.00\n{..."},
 	}
 	for _, result := range results {
 		if !strings.HasPrefix(result.got.stdout, result.stdout) || result.got.stdout == "" {

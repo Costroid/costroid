@@ -154,7 +154,7 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
 
 ## A step that waits
 
-`costroid export`, `merged`, `connect`, `reconcile`, `doctor`, `app create` and `gateway mint` say `costroid: asking <host>` on standard error before their first request to a host, once per host, and then nothing while they wait. `costroid doctor` says `costroid: asking GitHub through gh` before it first runs `gh`. `--quiet` drops both lines.
+`costroid export`, `merged`, `connect`, `reconcile`, `doctor`, `app create` and `gateway mint` say `costroid: asking <host>` on standard error before their first request to a host, once per host, and then nothing while they wait. `costroid doctor` says `costroid: asking GitHub through gh` before it first runs `gh`. `costroid run` says `costroid: running <agent> under a cap of USD <amount>` before it starts the agent. `--quiet` drops all three lines.
 
 ## Ctrl-C
 
