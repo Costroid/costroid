@@ -1,0 +1,31 @@
+{
+  "schema": "costroid.receipt/0.1",
+  "branch": "feature/csv-export",
+  "written": "2026-11-20",
+  "since": "2026-11-18",
+  "agents": [
+    "codex"
+  ],
+  "sessions": [
+    {
+      "agent": "codex",
+      "agent_version": "0.98.0",
+      "session_id": "019a8f3e-27c4-7d10-b5e2-3c9d4a1f8e07",
+      "model": "example-coder-1",
+      "service_tier": null,
+      "region": null,
+      "first_day": "2026-11-20",
+      "last_day": "2026-11-20",
+      "requests": 58,
+      "largest_input": "96310",
+      "tokens": {
+        "input_uncached": "41907",
+        "cache_read": "2210650",
+        "cache_write_5m": "0",
+        "cache_write_1h": "0",
+        "output": "60118"
+      }
+    }
+  ],
+  "sessions_omitted": 0
+}

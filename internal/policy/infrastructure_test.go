@@ -72,21 +72,25 @@ func TestInfrastructureRowsNeverReachAnAgentBudget(t *testing.T) {
 func TestARowIsAnAgentsWhenItNamesOneOrStatesNoSource(t *testing.T) {
 	cases := []struct {
 		tags string
-		want bool
+		want Kind
 	}{
-		{`{"costroid/agent":"codex","costroid/cost_source":"agent_stream"}`, true},
-		{`{"costroid/cost_basis":"measured"}`, true},
-		{`{}`, true},
-		{`{"costroid/cost_source":"infrastructure"}`, false},
-		{`{"costroid/cost_source":"infrastructure","costroid/agent":""}`, false},
-		{`{"costroid/cost_source":"infrastructure","costroid/agent":7}`, false},
+		{`{"costroid/agent":"codex","costroid/cost_source":"agent_stream"}`, RunRow},
+		{`{"costroid/cost_basis":"measured"}`, RunRow},
+		{`{}`, RunRow},
+		{`{"costroid/cost_source":"infrastructure"}`, EstimateRow},
+		{`{"costroid/cost_source":"infrastructure","costroid/agent":""}`, EstimateRow},
+		{`{"costroid/cost_source":"infrastructure","costroid/agent":7}`, EstimateRow},
+		{`{"costroid/agent":"claude-code","costroid/origin":"developer_machine"}`, ReceiptRow},
+		{`{"costroid/agent":"claude-code","costroid/origin":"ci_runner"}`, ReceiptRow},
+		{`{"costroid/origin":null}`, ReceiptRow},
+		{`{"costroid/cost_source":"infrastructure","costroid/origin":7}`, ReceiptRow},
 	}
 	for _, tc := range cases {
 		var tags focus.Tags
 		if err := json.Unmarshal([]byte(tc.tags), &tags); err != nil {
 			t.Fatal(err)
 		}
-		if got := FromAgent(tags); got != tc.want {
+		if got := Classify(tags); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.tags, got, tc.want)
 		}
 	}

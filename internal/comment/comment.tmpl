@@ -23,6 +23,10 @@
 
 {{.EstimateUnavailable}}
 {{- end}}
+{{- if .Receipt}}
+
+{{.Receipt}}
+{{- end}}
 {{- else}}
 
 {{if .ShowAmounts -}}
@@ -46,6 +50,9 @@
 
 {{end -}}
 {{if .EstimateUnavailable}}{{.EstimateUnavailable}}
+
+{{end -}}
+{{if .Receipt}}{{.Receipt}}
 
 {{end -}}
 {{if .Fallback -}}
@@ -203,6 +210,10 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.FiguresOmitted}} more lines are left out of this table.
 
 {{end -}}
+{{if .Receipt -}}
+{{.Receipt}}
+
+{{end -}}
 {{if .ShowAmounts -}}
 {{template "details" .}}
 {{- else if .AmountsOff -}}
@@ -210,5 +221,7 @@ Amounts and token counts are off on this public repository (`comment.show_cost: 
 {{- else -}}
 Amounts and token counts are withheld, because `comment.show_cost` or the repository's visibility could not be read. The step's outputs and the check run's machine block carry them.
 {{- end}}
+{{else if .Receipt}}
+{{.Receipt}}
 {{end -}}
 {{end -}}

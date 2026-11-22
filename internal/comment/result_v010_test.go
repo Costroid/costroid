@@ -182,8 +182,8 @@ func TestMachineBlockStatesEveryEstimateFigureOrCountsIt(t *testing.T) {
 }
 
 // TestResultWithoutAnEstimateIsWhatItWas holds every golden state that states
-// no estimate, and holds no value only result/v0.11 or result/v0.12 defines,
-// to result/v0.9:
+// no estimate, and holds no value only result/v0.11, result/v0.12 or
+// result/v0.13 defines, to result/v0.9:
 // its schema string, no estimates field, and the copied 0.9 schema. A note
 // whose reason is off the closed list states no line, so it states no
 // estimate either.
@@ -199,7 +199,7 @@ func TestResultWithoutAnEstimateIsWhatItWas(t *testing.T) {
 			stated++
 			continue
 		}
-		if holdsP95(input) || holdsPack(input) {
+		if holdsP95(input) || holdsPack(input) || holdsReceipt(input) {
 			continue
 		}
 		for file, object := range machineBlocks(t, input) {
@@ -338,8 +338,14 @@ func TestResultV010SchemaCopyMatchesItsDigest(t *testing.T) {
 	}
 }
 
-// blockKeys are Block's JSON keys, sorted.
+// blockKeys are Block's JSON keys, sorted, but receipts, which only
+// result/v0.13 holds.
 func blockKeys() []string {
+	return slices.DeleteFunc(allBlockKeys(), func(key string) bool { return key == "receipts" })
+}
+
+// allBlockKeys are Block's JSON keys, sorted.
+func allBlockKeys() []string {
 	var keys []string
 	blockType := reflect.TypeFor[Block]()
 	for index := range blockType.NumField() {

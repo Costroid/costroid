@@ -1,0 +1,48 @@
+# Title
+
+No figure (invalid_row): line 3 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran.
+
+# Summary
+
+**No figure (invalid_row): line 3 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran.**
+
+That row states `costroid/origin`, which marks a row from a developer's machine. A report builds such rows from a receipt in its own memory, and no rows file carries one, so this report read none of the file.
+
+This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
+
+# Text
+
+```json
+{
+  "schema": "costroid.result/0.9",
+  "conclusion": "neutral",
+  "state": "rows_unreadable",
+  "reason": "invalid_row",
+  "reason_line": 3,
+  "agent_error": null,
+  "agent_skipped": null,
+  "head_sha": "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
+  "ci_run": null,
+  "rows_sha256": null,
+  "rows_file_sha256": null,
+  "amounts": "shown",
+  "rows": 0,
+  "run_identity": "unverified",
+  "figures": [],
+  "figures_omitted": 0,
+  "cap": null,
+  "data": {
+    "agents": [],
+    "models": [],
+    "models_omitted": 0,
+    "catalog_versions": [],
+    "fallback_models": [],
+    "fallback_models_omitted": 0,
+    "fallback_price_ids": [],
+    "fallback_price_ids_omitted": 0
+  },
+  "lifetime": null,
+  "agent_stated": null,
+  "recorded": null
+}
+```

@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/tags/v0.5/tags.schema.json",
+  "title": "Costroid per-PR tag set, version 0.5",
+  "description": "The value of the FOCUS Tags column on a Costroid row. Every Costroid key carries the costroid/ prefix. Keys without the prefix are user-defined tags and pass through, except on the hosted ingest path, costroid serve, which drops them and counts them by name.",
+  "type": "object",
+  "properties": {
+    "costroid/repo": {
+      "description": "The repository: host and path, no scheme, in lower case, the whole string with its host. Maps to vcs.repository.url.full.",
+      "type": "string",
+      "pattern": "^[a-z0-9.-]+(/[a-z0-9._~%-]+){1,8}$",
+      "maxLength": 256
+    },
+    "costroid/pr": {
+      "description": "The pull request or merge request number, as a string. Maps to vcs.change.id.",
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$"
+    },
+    "costroid/commit_sha": {
+      "description": "The head commit: 40 hexadecimal characters for SHA-1, 64 for SHA-256, lower case. Maps to vcs.ref.head.revision.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
+    "costroid/workflow_run_id": {
+      "description": "The CI run. Maps to cicd.pipeline.run.id.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "costroid/session_id": {
+      "description": "The agent session. It joins a row and never earns exact. Maps to gen_ai.conversation.id, with session.id as its alias.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,256}$"
+    },
+    "costroid/agent": {
+      "description": "The agent, lower-case kebab: claude-code, codex, copilot, cursor, opencode. Maps to gen_ai.agent.name.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "costroid/agent_version": {
+      "description": "The agent's own version string. Maps to gen_ai.agent.version.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._+-]{1,64}$"
+    },
+    "costroid/model": {
+      "description": "The model that served the request. Maps to gen_ai.response.model, then gen_ai.request.model.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:/@-]{1,128}$"
+    },
+    "costroid/cost_source": {
+      "description": "What produced the figure. Open by design: agent_stream, agent_session_file, otlp and provider_report are defined here, and an adapter names itself.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+([_-][a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "costroid/cost_basis": { "$ref": "#/$defs/costBasis" },
+    "costroid/attribution_grade": { "$ref": "#/$defs/attributionGrade" },
+    "costroid/enforcement_grade": { "$ref": "#/$defs/enforcementGrade" },
+    "costroid/run_identity": { "$ref": "#/$defs/runIdentity" },
+    "costroid/assumed_ttl": { "$ref": "#/$defs/assumedTtl" },
+    "costroid/work_item": {
+      "description": "The issue the run worked on, by its key: an upper-case project key, a hyphen and a number, as in ENG-142. The caller names it.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*-[1-9][0-9]*$",
+      "maxLength": 64
+    },
+    "costroid/arm": {
+      "description": "The arm of an experiment the run belongs to. The caller names it.",
+      "$ref": "#/$defs/label"
+    },
+    "costroid/team": {
+      "description": "The team the run is counted to. The caller names it.",
+      "$ref": "#/$defs/label"
+    },
+    "costroid/repo_visibility": { "$ref": "#/$defs/repoVisibility" },
+    "costroid/origin": { "$ref": "#/$defs/origin" }
+  },
+  "required": [
+    "costroid/cost_source",
+    "costroid/cost_basis",
+    "costroid/attribution_grade",
+    "costroid/enforcement_grade",
+    "costroid/run_identity"
+  ],
+  "propertyNames": {
+    "anyOf": [
+      {
+        "enum": [
+          "costroid/repo",
+          "costroid/pr",
+          "costroid/commit_sha",
+          "costroid/workflow_run_id",
+          "costroid/session_id",
+          "costroid/agent",
+          "costroid/agent_version",
+          "costroid/model",
+          "costroid/cost_source",
+          "costroid/cost_basis",
+          "costroid/attribution_grade",
+          "costroid/enforcement_grade",
+          "costroid/run_identity",
+          "costroid/assumed_ttl",
+          "costroid/work_item",
+          "costroid/arm",
+          "costroid/team",
+          "costroid/repo_visibility",
+          "costroid/origin"
+        ]
+      },
+      { "not": { "pattern": "^costroid/" } }
+    ]
+  },
+  "additionalProperties": { "type": ["string", "number", "boolean", "null"] },
+  "allOf": [
+    {
+      "description": "A row whose run identity was not token-verified is unattributed.",
+      "if": {
+        "properties": { "costroid/run_identity": { "const": "unverified" } },
+        "required": ["costroid/run_identity"]
+      },
+      "then": {
+        "properties": { "costroid/attribution_grade": { "const": "unattributed" } }
+      }
+    },
+    {
+      "description": "An exact join names the repository, the pull request, the commit and the run.",
+      "if": {
+        "properties": { "costroid/attribution_grade": { "const": "exact" } },
+        "required": ["costroid/attribution_grade"]
+      },
+      "then": {
+        "required": [
+          "costroid/repo",
+          "costroid/pr",
+          "costroid/commit_sha",
+          "costroid/workflow_run_id"
+        ]
+      }
+    },
+    {
+      "description": "A windowed join names the repository, because the repository is part of the join.",
+      "if": {
+        "properties": { "costroid/attribution_grade": { "const": "windowed" } },
+        "required": ["costroid/attribution_grade"]
+      },
+      "then": { "required": ["costroid/repo"] }
+    },
+    {
+      "description": "A row from a developer's machine is never a run's row: it names its session and no CI run, read from the agent's session file, at the list-equivalent basis, unattributed, unverified and held by nothing.",
+      "if": { "required": ["costroid/origin"] },
+      "then": {
+        "required": ["costroid/session_id", "costroid/agent", "costroid/model"],
+        "properties": {
+          "costroid/cost_source": { "const": "agent_session_file" },
+          "costroid/cost_basis": { "const": "list_equivalent" },
+          "costroid/attribution_grade": { "const": "unattributed" },
+          "costroid/enforcement_grade": { "const": "none" },
+          "costroid/run_identity": { "const": "unverified" }
+        },
+        "not": { "required": ["costroid/workflow_run_id"] }
+      }
+    }
+  ],
+  "$defs": {
+    "costBasis": {
+      "description": "What the figure is. One value for each accuracy label.",
+      "enum": ["measured", "list_equivalent", "estimate", "billed", "derived"]
+    },
+    "attributionGrade": {
+      "description": "How the row is joined to the pull request. A property of the join, not of the agent.",
+      "enum": ["exact", "windowed", "unattributed"]
+    },
+    "enforcementGrade": {
+      "description": "What held the run to its budget.",
+      "enum": ["gateway-precheck", "agent-flag", "wrapper-watchdog", "provider", "none"]
+    },
+    "runIdentity": {
+      "description": "Whether the run identity was verified from the CI system's token.",
+      "enum": ["token_verified", "unverified"]
+    },
+    "assumedTtl": {
+      "description": "The cache lifetime an adapter's rule assigned, because the source did not state one. Absent when the source stated it. Has no OpenTelemetry attribute.",
+      "enum": ["5m", "1h", "30m", "12h"]
+    },
+    "repoVisibility": {
+      "description": "Who can read the repository, as the CI system states it to the job. Absent when the CI system does not state it. This version maps it to no OpenTelemetry attribute.",
+      "enum": ["public", "private", "internal"]
+    },
+    "origin": {
+      "description": "Where the session behind the row ran, when it ran outside a CI run. Absent on a run's row. This version maps it to no OpenTelemetry attribute.",
+      "enum": ["developer_machine"]
+    },
+    "label": {
+      "description": "A value a caller names: the character allowlist every string from a pull request passes, at most 128 characters, and never a provider key.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+_-]*$",
+      "maxLength": 128,
+      "not": { "type": "string", "pattern": "^sk-" }
+    }
+  }
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 
@@ -15,6 +16,9 @@ import (
 // Config is what the comment reads from costroid.yml.
 type Config struct {
 	ShowCost bool
+	// ReceiptsOff is true when comment.receipts turns receipts off, or is
+	// not a switch, so a report reads none whatever the workflow asks.
+	ReceiptsOff bool
 }
 
 // reservedKeys are named by the schema and read by nothing yet.
@@ -29,7 +33,7 @@ var reservedKeys = map[string]bool{
 // The policy's own parser names its keys, so the two never drift apart.
 var knownKeys = map[string]map[string]bool{
 	"":         {"comment": true, "policy": true, "approval": true, policy.PackKey: true},
-	"comment":  {"show_cost": true},
+	"comment":  {"show_cost": true, "receipts": true},
 	"policy":   keySet(policy.Keys()),
 	"approval": keySet(policy.ApprovalKeys()),
 }
@@ -64,19 +68,24 @@ func ParseConfig(data []byte) (Config, error) {
 	for _, warning := range unreadKeys(&root) {
 		fmt.Fprintf(configWarnings, "costroid: warning: costroid.yml: %s\n", warning)
 	}
-	showCost, err := readShowCost(&root)
+	showCost, err := readSwitch(&root, "show_cost")
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{ShowCost: showCost}, nil
+	// A receipts value that is not a switch turns receipts off, and leaves
+	// show_cost as the file sets it.
+	receipts, err := readSwitch(&root, "receipts")
+	if err != nil {
+		fmt.Fprintf(configWarnings, "costroid: warning: no receipt is read: %s\n", strings.TrimPrefix(err.Error(), "comment: "))
+	}
+	return Config{ShowCost: showCost, ReceiptsOff: !receipts || err != nil}, nil
 }
 
-// readShowCost reads comment.show_cost. A YAML 1.1 word such as yes or no
-// keeps its meaning and warns, because YAML 1.2 reads it as a string. Any
-// other value is an error, and the report withholds amounts on a repository
-// not known to be private. The error never repeats the value, which is the
-// repository's own text.
-func readShowCost(root *yaml.Node) (bool, error) {
+// readSwitch reads comment.show_cost or comment.receipts, each true when
+// absent. A YAML 1.1 word such as yes or no keeps its meaning and warns,
+// because YAML 1.2 reads it as a string. Any other value is an error. The
+// error never repeats the value, which is the repository's own text.
+func readSwitch(root *yaml.Node, key string) (bool, error) {
 	section := child(root, "comment")
 	if section == nil || section.Tag == "!!null" {
 		return true, nil
@@ -84,19 +93,19 @@ func readShowCost(root *yaml.Node) (bool, error) {
 	if section.Kind != yaml.MappingNode {
 		return false, errors.New("comment: comment in costroid.yml is not a mapping")
 	}
-	value := child(section, "show_cost")
+	value := child(section, key)
 	if value == nil {
 		return true, nil
 	}
 	if value.Kind == yaml.ScalarNode && value.Tag == "!!bool" {
 		return value.Value == "true", nil
 	}
-	var show bool
-	if value.Kind == yaml.ScalarNode && value.Decode(&show) == nil {
-		fmt.Fprintf(configWarnings, "costroid: warning: costroid.yml: comment.show_cost is a YAML 1.1 word and reads as %t; write true or false\n", show)
-		return show, nil
+	var on bool
+	if value.Kind == yaml.ScalarNode && value.Decode(&on) == nil {
+		fmt.Fprintf(configWarnings, "costroid: warning: costroid.yml: comment.%s is a YAML 1.1 word and reads as %t; write true or false\n", key, on)
+		return on, nil
 	}
-	return false, errors.New("comment: comment.show_cost in costroid.yml must be true or false")
+	return false, fmt.Errorf("comment: comment.%s in costroid.yml must be true or false", key)
 }
 
 // child is the value of a mapping's key, nil when the node is not a mapping

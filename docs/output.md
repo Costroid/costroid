@@ -11,6 +11,7 @@ Every `costroid` command writes to two streams. Standard output holds what the c
 | `costroid doctor` | One line per check, then the count |
 | `costroid validate` | One line per problem, or that the file is valid, or that there is none |
 | `costroid policy` | The verdict's lines, then the verdict sentence |
+| `costroid receipt` | The receipt, as the body of the comment to post |
 | `costroid version` | The release and the catalog |
 | `costroid result` | The check's result |
 | `costroid run` | The agent's own output |

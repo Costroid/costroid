@@ -11,6 +11,7 @@ comment:
 | Key                 | Default | What it does                                                                                                                                               |
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `comment.show_cost` | `true`  | Off, a public repository's comment and job summary show the verdict and what held the run to its cap, without amounts or token counts. The rows, the check run's machine block and the action's outputs keep them. A private repository always prints them, and a GitLab project set to internal counts as private |
+| `comment.receipts` | `true` | Off, a report reads no receipt of developer-machine sessions, whatever the workflow's `receipts` input says: a receipt the pull request's author posts is refused for `receipts_off`, and none of its sessions is read. On, a report reads one only where the workflow sets `receipts: "true"`. [`docs/receipt.md`](receipt.md) says what a receipt holds |
 | `policy.run_budget_usd` | none | The budget each run is held to, in USD, such as `5` or `"5.00"`. Unset, the rule does not run |
 | `policy.max_run_cost_usd` | none | A ceiling on one run's cost at list, in USD. Unset, the rule does not run |
 | `policy.max_increase_usd` | none | How far a run may cost more than the median of this agent's 10 or more runs on merged pull requests, in USD. Unset, the rule does not run |
@@ -35,7 +36,7 @@ policy:
     - "gpt-5*"
 ```
 
-`comment.show_cost` is `true` or `false`. A YAML 1.1 word such as `yes` or `no` is read as it meant, and the report's log names it so it can be rewritten. Any other value cannot be read: a repository not known to be private then withholds amounts, and the comment says the setting could not be read.
+`comment.show_cost` is `true` or `false`. A YAML 1.1 word such as `yes` or `no` is read as it meant, and the report's log names it so it can be rewritten. Any other value cannot be read: a repository not known to be private then withholds amounts, and the comment says the setting could not be read. `comment.receipts` is read the same way, and a value that cannot be read turns receipts off and leaves `comment.show_cost` as it is.
 
 A file that is empty, `~`, `null` or only `---` reads as no file. A section written with no value, such as `approval:` alone or `policy: ~`, reads as that section's defaults. `validate`, the report, `costroid policy` and `costroid approve` read both the same way.
 

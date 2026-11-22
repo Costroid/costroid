@@ -21,11 +21,13 @@ import (
 )
 
 // Comment is a stored issue comment. Login is its author's account, and an
-// App's account ends in [bot].
+// App's account ends in [bot]. CreatedAt and UpdatedAt are listed when set.
 type Comment struct {
-	ID    int64
-	Body  string
-	Login string
+	ID        int64
+	Body      string
+	Login     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Pull is one pull request of the repository. HeadRepository is owner/name,
@@ -91,13 +93,17 @@ type Stub struct {
 	App string
 	// Commits maps a path to the dates of the commits that touched it,
 	// newest first, as the commits API lists them.
-	Commits    map[string][]time.Time
-	Private    *bool
-	Requests   []string
-	Head       string
-	Author     string
-	Permission string
-	nextID     int64
+	Commits  map[string][]time.Time
+	Private  *bool
+	Requests []string
+	Head     string
+	Author   string
+	// HeadBranch and HeadRepository are the pull request's head branch and
+	// the owner/name it is in, which its answer names when set.
+	HeadBranch     string
+	HeadRepository string
+	Permission     string
+	nextID         int64
 }
 
 // New starts a stub and stops it with the test.
@@ -189,7 +195,11 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(path, "/git/ref/heads/"):
 		s.readBranch(w, path[strings.Index(path, "/git/ref/heads/")+len("/git/ref/heads/"):])
 	case strings.Contains(path, "/pulls/"):
-		s.answer(w, map[string]any{"head": map[string]string{"sha": s.Head}, "user": map[string]string{"login": s.Author}})
+		head := map[string]any{"sha": s.Head, "ref": s.HeadBranch, "repo": nil}
+		if s.HeadRepository != "" {
+			head["repo"] = map[string]string{"full_name": s.HeadRepository}
+		}
+		s.answer(w, map[string]any{"head": head, "user": map[string]string{"login": s.Author}})
 	case strings.Contains(path, "/collaborators/"):
 		s.answer(w, map[string]string{"permission": s.Permission})
 	case strings.HasPrefix(path, "/repos/"):
@@ -477,9 +487,11 @@ func (s *Stub) listComments(w http.ResponseWriter, r *http.Request) {
 		Type  string `json:"type"`
 	}
 	type comment struct {
-		ID   int64   `json:"id"`
-		Body string  `json:"body"`
-		User account `json:"user"`
+		ID        int64   `json:"id"`
+		Body      string  `json:"body"`
+		User      account `json:"user"`
+		CreatedAt string  `json:"created_at,omitempty"`
+		UpdatedAt string  `json:"updated_at,omitempty"`
 	}
 	listed := []comment{}
 	start := (page - 1) * size
@@ -489,9 +501,17 @@ func (s *Stub) listComments(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(stored.Login, "[bot]") {
 			kind = "Bot"
 		}
-		listed = append(listed, comment{stored.ID, stored.Body, account{stored.Login, kind}})
+		listed = append(listed, comment{stored.ID, stored.Body, account{stored.Login, kind}, stamp(stored.CreatedAt), stamp(stored.UpdatedAt)})
 	}
 	s.answer(w, listed)
+}
+
+// stamp is a time as GitHub writes it, empty for none.
+func stamp(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.UTC().Format(time.RFC3339)
 }
 
 func (s *Stub) listCommits(w http.ResponseWriter, r *http.Request) {

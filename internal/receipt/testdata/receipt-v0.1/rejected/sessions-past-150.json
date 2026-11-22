@@ -1,0 +1,2881 @@
+{
+  "schema": "costroid.receipt/0.1",
+  "branch": "fix/retry-backoff",
+  "written": "2026-11-20",
+  "since": "2026-11-18",
+  "agents": [
+    "claude-code"
+  ],
+  "sessions": [
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000000",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000003",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000004",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000005",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000006",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000007",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000008",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000009",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000010",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000011",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000012",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000013",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000014",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000015",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000016",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000017",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000018",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000019",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000020",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000021",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000022",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000023",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000024",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000025",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000026",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000027",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000028",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000029",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000030",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000031",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000032",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000033",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000034",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000035",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000036",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000037",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000038",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000039",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000040",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000041",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000042",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000043",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000044",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000045",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000046",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000047",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000048",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000049",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000050",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000051",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000052",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000053",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000054",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000055",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000056",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000057",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000058",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000059",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000060",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000061",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000062",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000063",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000064",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000065",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000066",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000067",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000068",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000069",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000070",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000071",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000072",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000073",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000074",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000075",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000076",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000077",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000078",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000079",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000080",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000081",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000082",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000083",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000084",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000085",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000086",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000087",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000088",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000089",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000090",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000091",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000092",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000093",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000094",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000095",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000096",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000097",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000098",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000099",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000100",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000101",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000102",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000103",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000104",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000105",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000106",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000107",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000108",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000109",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000110",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000111",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000112",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000113",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000114",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000115",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000116",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000117",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000118",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000119",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000120",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000121",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000122",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000123",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000124",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000125",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000126",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000127",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000128",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000129",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000130",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000131",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000132",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000133",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000134",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000135",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000136",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000137",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000138",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000139",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000140",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000141",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000142",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000143",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000144",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000145",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000146",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000147",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000148",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000149",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "00000000-0000-4000-8000-000000000150",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    }
+  ],
+  "sessions_omitted": 0
+}

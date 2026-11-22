@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/focus-row/v0.6/row.schema.json",
+  "title": "Costroid FOCUS row, version 0.6",
+  "description": "One FOCUS 1.4 Cost and Usage row: one model request, one token class. In JSON lines every column is present and an absent value is null, except x_CostroidMeasuredCost, which a strict row alone carries. In CSV an absent value is an empty cell and Tags is a serialized JSON object.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "BilledCost",
+    "BillingAccountId",
+    "BillingAccountName",
+    "BillingCurrency",
+    "BillingPeriodEnd",
+    "BillingPeriodStart",
+    "ChargeCategory",
+    "ChargeClass",
+    "ChargeDescription",
+    "ChargeFrequency",
+    "ChargePeriodEnd",
+    "ChargePeriodStart",
+    "ConsumedQuantity",
+    "ConsumedUnit",
+    "ContractedCost",
+    "ContractedUnitPrice",
+    "EffectiveCost",
+    "HostProviderName",
+    "InvoiceIssuerName",
+    "ListCost",
+    "ListUnitPrice",
+    "PricingCategory",
+    "PricingQuantity",
+    "PricingUnit",
+    "RegionId",
+    "RegionName",
+    "ServiceCategory",
+    "ServiceName",
+    "ServiceProviderName",
+    "ServiceSubcategory",
+    "SkuId",
+    "SkuMeter",
+    "SkuPriceId",
+    "SubAccountId",
+    "SubAccountName",
+    "Tags",
+    "x_CostroidCatalogVersion",
+    "x_CostroidOvershootBound",
+    "x_CostroidRowId",
+    "x_CostroidServiceTier"
+  ],
+  "properties": {
+    "BilledCost": { "$ref": "#/$defs/zero" },
+    "BillingAccountId": { "$ref": "#/$defs/text" },
+    "BillingAccountName": { "$ref": "#/$defs/nullableText" },
+    "BillingCurrency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "BillingPeriodEnd": { "$ref": "#/$defs/instant" },
+    "BillingPeriodStart": { "$ref": "#/$defs/instant" },
+    "ChargeCategory": { "const": "Usage" },
+    "ChargeClass": { "type": "null" },
+    "ChargeDescription": { "$ref": "#/$defs/text" },
+    "ChargeFrequency": { "const": "Usage-Based" },
+    "ChargePeriodEnd": { "$ref": "#/$defs/instant" },
+    "ChargePeriodStart": { "$ref": "#/$defs/instant" },
+    "ConsumedQuantity": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "ConsumedUnit": { "$ref": "#/$defs/text" },
+    "ContractedCost": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "ContractedUnitPrice": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "EffectiveCost": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "HostProviderName": { "$ref": "#/$defs/nullableText" },
+    "InvoiceIssuerName": { "$ref": "#/$defs/text" },
+    "ListCost": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "ListUnitPrice": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "PricingCategory": { "const": "Standard" },
+    "PricingQuantity": { "$ref": "#/$defs/nonNegativeDecimal" },
+    "PricingUnit": { "$ref": "#/$defs/text" },
+    "RegionId": {
+      "description": "The region the request was held to. Null on default routing, which is no distinct region.",
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9-]{1,64}$",
+      "not": { "const": "global" }
+    },
+    "RegionName": { "$ref": "#/$defs/nullableText" },
+    "ServiceCategory": {
+      "enum": [
+        "AI and Machine Learning",
+        "Analytics",
+        "Business Applications",
+        "Compute",
+        "Databases",
+        "Developer Tools",
+        "Multicloud",
+        "Identity",
+        "Integration",
+        "Internet of Things",
+        "Management and Governance",
+        "Media",
+        "Migration",
+        "Mobile",
+        "Networking",
+        "Security",
+        "Storage",
+        "Web",
+        "Other"
+      ]
+    },
+    "ServiceName": { "$ref": "#/$defs/text" },
+    "ServiceProviderName": { "$ref": "#/$defs/text" },
+    "ServiceSubcategory": { "$ref": "#/$defs/text" },
+    "SkuId": { "$ref": "#/$defs/text" },
+    "SkuMeter": { "$ref": "#/$defs/text" },
+    "SkuPriceId": { "$ref": "#/$defs/text" },
+    "SubAccountId": { "$ref": "#/$defs/nullableText" },
+    "SubAccountName": { "$ref": "#/$defs/nullableText" },
+    "Tags": {
+      "$ref": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/tags/v0.5/tags.schema.json"
+    },
+    "x_CostroidCatalogVersion": {
+      "description": "The price catalog version that priced the row.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "x_CostroidMeasuredCost": {
+      "description": "On a strict row alone: the EffectiveCost the default profile writes, byte for byte, in BillingCurrency.",
+      "$ref": "#/$defs/nonNegativeDecimal"
+    },
+    "x_CostroidOvershootBound": {
+      "description": "The bound on budget overshoot for the run, in BillingCurrency: concurrency times max_tokens times price.",
+      "oneOf": [{ "$ref": "#/$defs/nonNegativeDecimal" }, { "type": "null" }]
+    },
+    "x_CostroidServiceTier": {
+      "description": "The service tier as the catalog names it: standard, batch, priority, fast or a provider's own. Null when the source states none.",
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9_-]{1,64}$"
+    },
+    "x_CostroidRowId": {
+      "description": "SHA-256 of the UTF-8 text <request id>:<token class>, in lower-case hexadecimal. The request id is the provider's, or the adapter's stated stand-in when the agent reports none.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "description": "RegionName is null exactly when RegionId is null, as FOCUS requires.",
+      "if": { "properties": { "RegionId": { "type": "null" } } },
+      "then": { "properties": { "RegionName": { "type": "null" } } },
+      "else": { "properties": { "RegionName": { "type": "string" } } }
+    },
+    {
+      "description": "A model request is an AI row: one token class, an agent and a model.",
+      "if": {
+        "properties": { "ServiceCategory": { "const": "AI and Machine Learning" } }
+      },
+      "then": {
+        "properties": {
+          "ServiceSubcategory": { "const": "Generative AI" },
+          "SkuMeter": {
+            "enum": [
+              "input_uncached",
+              "cache_read",
+              "cache_write_5m",
+              "cache_write_1h",
+              "cache_write_30m",
+              "cache_write_12h",
+              "output",
+              "reasoning_output",
+              "cached_input_reported"
+            ]
+          },
+          "Tags": { "type": "object", "required": ["costroid/agent", "costroid/model"] }
+        }
+      }
+    },
+    {
+      "description": "A billed token class is priced per million tokens.",
+      "if": {
+        "properties": {
+          "SkuMeter": {
+            "enum": [
+              "input_uncached",
+              "cache_read",
+              "cache_write_5m",
+              "cache_write_1h",
+              "cache_write_30m",
+              "cache_write_12h",
+              "output"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "PricingUnit": { "const": "1000000 Tokens" },
+          "ConsumedUnit": { "enum": ["Tokens", "Credits"] }
+        }
+      }
+    },
+    {
+      "description": "An informational token class never carries a price, and its unit keeps it out of a sum of tokens.",
+      "if": {
+        "properties": { "SkuMeter": { "enum": ["reasoning_output", "cached_input_reported"] } }
+      },
+      "then": {
+        "properties": {
+          "ContractedCost": { "$ref": "#/$defs/zero" },
+          "ContractedUnitPrice": { "$ref": "#/$defs/zero" },
+          "EffectiveCost": { "$ref": "#/$defs/zero" },
+          "ListCost": { "$ref": "#/$defs/zero" },
+          "ListUnitPrice": { "$ref": "#/$defs/zero" },
+          "x_CostroidMeasuredCost": { "$ref": "#/$defs/zero" },
+          "PricingUnit": { "const": "Informational Tokens" },
+          "ConsumedUnit": { "const": "Informational Tokens" }
+        }
+      }
+    },
+    {
+      "description": "A list-equivalent or estimated figure is not a cost incurred, so it stays out of EffectiveCost.",
+      "if": {
+        "properties": {
+          "Tags": {
+            "type": "object",
+            "properties": { "costroid/cost_basis": { "enum": ["list_equivalent", "estimate"] } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "EffectiveCost": { "$ref": "#/$defs/zero" },
+          "x_CostroidMeasuredCost": { "$ref": "#/$defs/zero" }
+        }
+      }
+    },
+    {
+      "description": "A strict row carries the figure in x_CostroidMeasuredCost, so its EffectiveCost is 0, as FOCUS 1.4 requires of an entity that does not originate the cost and usage data.",
+      "if": { "required": ["x_CostroidMeasuredCost"] },
+      "then": { "properties": { "EffectiveCost": { "$ref": "#/$defs/zero" } } }
+    },
+    {
+      "description": "A figure priced from the catalog names the catalog version.",
+      "if": {
+        "properties": {
+          "Tags": {
+            "type": "object",
+            "properties": { "costroid/cost_basis": { "enum": ["measured", "list_equivalent"] } }
+          }
+        }
+      },
+      "then": { "properties": { "x_CostroidCatalogVersion": { "type": "string" } } }
+    },
+    {
+      "description": "A gateway precheck writes its overshoot bound on the row.",
+      "if": {
+        "properties": {
+          "Tags": {
+            "type": "object",
+            "properties": { "costroid/enforcement_grade": { "const": "gateway-precheck" } }
+          }
+        }
+      },
+      "then": { "properties": { "x_CostroidOvershootBound": { "type": "string" } } }
+    },
+    {
+      "description": "An exact join rests on a credential the provider's report can be filtered by, so the row names it. A session id is not one.",
+      "if": {
+        "properties": {
+          "Tags": {
+            "type": "object",
+            "properties": { "costroid/attribution_grade": { "const": "exact" } }
+          }
+        }
+      },
+      "then": { "properties": { "SubAccountId": { "type": "string" } } }
+    },
+    {
+      "description": "An assumed lifetime is the lifetime of the row's own cache write class. No other class carries the tag.",
+      "if": {
+        "properties": {
+          "Tags": { "type": "object", "required": ["costroid/assumed_ttl"] }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "SkuMeter": { "const": "cache_write_5m" },
+              "Tags": {
+                "type": "object",
+                "properties": { "costroid/assumed_ttl": { "const": "5m" } }
+              }
+            }
+          },
+          {
+            "properties": {
+              "SkuMeter": { "const": "cache_write_1h" },
+              "Tags": {
+                "type": "object",
+                "properties": { "costroid/assumed_ttl": { "const": "1h" } }
+              }
+            }
+          },
+          {
+            "properties": {
+              "SkuMeter": { "const": "cache_write_30m" },
+              "Tags": {
+                "type": "object",
+                "properties": { "costroid/assumed_ttl": { "const": "30m" } }
+              }
+            }
+          },
+          {
+            "properties": {
+              "SkuMeter": { "const": "cache_write_12h" },
+              "Tags": {
+                "type": "object",
+                "properties": { "costroid/assumed_ttl": { "const": "12h" } }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "nullableText": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+    "instant": {
+      "description": "FOCUS Date/Time Format: UTC, to the second.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "nonNegativeDecimal": {
+      "description": "A decimal string with at most 26 integer digits and 12 fractional digits. Never a JSON number and never scientific notation.",
+      "type": "string",
+      "pattern": "^[0-9]{1,26}(\\.[0-9]{1,12})?$"
+    },
+    "zero": { "type": "string", "pattern": "^0(\\.0{1,12})?$" }
+  }
+}

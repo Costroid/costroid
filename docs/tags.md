@@ -39,6 +39,8 @@ The tags travel with the rows. Costroid Platform keeps every tag under `costroid
 
 The comment and `costroid report` do not show the tags.
 
+A row priced from a receipt of a developer's own sessions carries one more key, `costroid/origin`, with the value `developer_machine`. The version of the tag set after the one these rows follow defines it, and `--tag` does not take it. The report builds such rows in memory, prices them and writes them to no file. A rows file that holds a row with the tag is refused whole, before any of it is read, sent or written, by `costroid report`, `follow-up`, `policy`, `export`, `reconcile` and `emit-otlp`, and the ledger refuses such a row with 422 `ROW_INVALID`. [`docs/receipt.md`](receipt.md) says more.
+
 ## The repository's visibility
 
 `costroid run` and `costroid ingest-run` also write `costroid/repo_visibility` on every row: who can read the repository the run belongs to. No caller names it, and `--tag` does not take it. [The tag set](https://github.com/Costroid/costroid-schemas/tree/main/tags/v0.4) of [the row contract](export.md#the-row-contract) defines it, and it takes one of three values: `public`, `private` or `internal`.

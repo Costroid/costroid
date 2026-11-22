@@ -27,6 +27,8 @@ The settings are out of that reach: the report reads `costroid.yml` on the base 
 
 A check that a branch cannot post has to come from a GitHub App other than GitHub Actions, named as the check's source in the ruleset. Costroid ships no such App.
 
+A receipt of a developer's own sessions, posted as a comment, reaches no rule, budget, total, title, conclusion or output, so no one can make a check pass or fail by posting one. The report reads only the pull request's author's newest receipt, refuses an edited one, and reads none where `comment.receipts` is `false` on the base branch. [`docs/receipt.md`](receipt.md) says what a receipt reveals.
+
 ## The agent's processes
 
 On Linux, `costroid run` is the child subreaper of every process the agent starts. When the agent exits, each process it left running, one in a session of its own included, is killed and waited for before the rows are written, and a warning counts them. None of them can keep spending on the agent's key or rewrite the rows file after the run. Where the run may write to its own cgroup v2 directory, the agent also starts in a cgroup of its own, which is killed whole. A process another service starts for the agent, such as a container through the Docker daemon, is not the agent's descendant and keeps running. On macOS only the agent's process group is killed, so a process that leaves the group outlives the run.

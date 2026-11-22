@@ -342,6 +342,11 @@ func goldenStates(t *testing.T) map[string]Input {
 	invalid := noFigures(Unreadable, InvalidRow)
 	invalid.ReasonLine = 3
 	states["no-figures-"+string(InvalidRow)] = invalid
+	// A row of the rows file states costroid/origin, which only a report's
+	// own receipt rows carry, in memory.
+	origin := invalid
+	origin.OriginRow = true
+	states["no-figures-"+string(InvalidRow)+"-origin"] = origin
 	states["no-figures-"+string(EmptyRowsFile)] = noFigures(NoRows, EmptyRowsFile)
 	skipped := noFigures(NoRows, AgentSkipped)
 	yes := true
@@ -470,6 +475,7 @@ func goldenStates(t *testing.T) map[string]Input {
 
 	maps.Copy(states, p95States(t))
 	maps.Copy(states, packStates(t))
+	maps.Copy(states, receiptStates(neutral))
 
 	// A fork's own rows fail a rule. The follow-up holds the check at neutral,
 	// and the sentence says so with the rule's own noun, shown and withheld.

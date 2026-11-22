@@ -70,6 +70,10 @@ type Block struct {
 	EstimatesOmitted int             `json:"estimates_omitted"`
 	// Policy is the verdict, without its amounts when amounts are withheld.
 	Policy *policy.Verdict `json:"policy,omitempty"`
+	// Receipts is the receipt the pull request's author posted, read or
+	// refused, apart from every field above. Only a result/0.13 object holds
+	// it, and nothing above reads it.
+	Receipts []BlockReceipt `json:"receipts,omitempty"`
 }
 
 // BlockEstimate is one entry of a result/0.10 object's estimates. A figure
@@ -209,11 +213,12 @@ func Result(input Input) (string, error) {
 }
 
 func (i Input) block() (string, error) {
-	return i.fields().encode()
+	return i.withReceipts(i.fields(), i.Amounts == AmountsShown).encode()
 }
 
 // fields is the result object before it is written: what the machine block
-// states, and what the verdict sentence is built from.
+// states, and what the verdict sentence is built from. It holds no receipt:
+// block adds one after, so no sentence, conclusion or output reads it.
 func (i Input) fields() Block {
 	block := Block{
 		Schema:         schema,
@@ -336,11 +341,13 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
 }
 
-// The versions other than result/0.10. This release writes 0.12 only for an
-// object that holds a customer pack, 0.11 for one that holds a value only
-// 0.11 defines, 0.10 for one that states an estimate, and 0.9 for any other,
-// and a pull request whose newest check a release that wrote an older one
-// posted can still be approved, so ParseResult reads them all. 0.12 holds
+// The versions other than result/0.10. This release writes 0.13 only for an
+// object that holds a receipt, 0.12 for one that holds a customer pack, 0.11
+// for one that holds a value only 0.11 defines, 0.10 for one that states an
+// estimate, and 0.9 for any other, and a pull request whose newest check a
+// release that wrote an older one posted can still be approved, so
+// ParseResult reads them all. 0.13 holds the fields of 0.12 and receipts,
+// with estimates and estimates_omitted only beside an estimate. 0.12 holds
 // the fields of 0.11, policy.pack, and a customer_pack result with its four
 // reasons and its line. 0.11 holds the fields of 0.10, with estimates and
 // estimates_omitted only beside an estimate, and a run_p95 result with its
@@ -361,9 +368,9 @@ const (
 
 var (
 	// readSchemas are the versions ParseResult reads, oldest first.
-	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema, schemaV011, schemaV012}
+	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema, schemaV011, schemaV012, schemaV013}
 	// writtenSchemas are the versions this release writes.
-	writtenSchemas = []string{schemaV09, schema, schemaV011, schemaV012}
+	writtenSchemas = []string{schemaV09, schema, schemaV011, schemaV012, schemaV013}
 )
 
 // WrittenSchemas are the versions of the result object this release writes,
@@ -427,7 +434,7 @@ func (b Block) encode() (string, error) {
 		object = blockV07{Block: b}
 	case schemaV08, schemaV09:
 		object = blockV09{Block: b}
-	case schemaV011, schemaV012:
+	case schemaV011, schemaV012, schemaV013:
 		if len(b.Estimates) == 0 {
 			object = blockV09{Block: b}
 		}
@@ -530,7 +537,7 @@ func ParseResult(text string) (Block, error) {
 	if block.Schema == schema && len(block.Estimates) == 0 {
 		return Block{}, fmt.Errorf("comment: the result object states no estimate, and a release writes %s only for an object that states one", schema)
 	}
-	for _, version := range []string{schemaV011, schemaV012} {
+	for _, version := range []string{schemaV011, schemaV012, schemaV013} {
 		if block.Schema == version && !addedIn(added, version) {
 			return Block{}, fmt.Errorf("comment: the result object holds nothing only %s defines, and a release writes %s only for an object that does", version, version)
 		}
@@ -573,7 +580,7 @@ var (
 	// present in every object of that version, null or not.
 	fieldsAdded = []addedValue{
 		{"rows_sha256", schemaV06}, {"rows_file_sha256", schemaV06}, {"lifetime", schemaV06}, {"agent_stated", schemaV07},
-		{"recorded", schemaV08}, {"estimates", schema}, {"estimates_omitted", schema},
+		{"recorded", schemaV08}, {"estimates", schema}, {"estimates_omitted", schema}, {"receipts", schemaV013},
 	}
 )
 
@@ -670,6 +677,9 @@ func Reconclude(block Block, approval *Approval, amounts Amounts, previous int64
 	conclusion := block.ApprovedConclusion(approval)
 	block.Conclusion = &conclusion
 	encoded, err := block.encode()
+	// The sentence is told from the object without its receipts, as a
+	// report's own is.
+	block.Receipts = nil
 	if err != nil {
 		return CheckOutput{}, err
 	}
@@ -703,5 +713,6 @@ func (b Block) withoutAmounts() Block {
 	}
 	b.Cap, b.Lifetime, b.AgentStated = nil, nil, nil
 	b.Policy = blockVerdict(b.Policy, false)
+	b.Receipts = withoutReceiptAmounts(b.Receipts)
 	return b
 }

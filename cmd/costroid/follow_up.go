@@ -131,6 +131,7 @@ func followUpInput(flags followUpFlags, fork bool, stderr io.Writer) comment.Inp
 		State:      rows.state,
 		Reason:     rows.reason,
 		ReasonLine: rows.line,
+		OriginRow:  rows.origin,
 	}
 	if flags.ingested {
 		stated := readRunReason(flags.rows, stderr)

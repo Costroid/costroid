@@ -22,6 +22,7 @@ import (
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
+	receipts "github.com/Costroid/costroid/internal/receipt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -354,6 +355,15 @@ func quietWalk() []quietLine {
 		{name: "a file that is not there", args: fixed("validate", "absent.yml"), errors: []string{"costroid: absent.yml does not exist", "See "}},
 		{name: "a wrong command line", args: fixed("demo", "extra"), errors: []string{"costroid: demo takes no argument", "Run costroid help"}},
 		{name: "report outside a job", args: fixed("report", "--rows", recordedRows), errors: []string{"costroid: report refused", "report posts from", "Run costroid report --preview"}},
+		{name: "receipt", args: func(t *testing.T) []string {
+			onAReceiptMachine(t)
+			return []string{"receipt"}
+		}},
+		{name: "receipt in a job", args: func(t *testing.T) []string {
+			onAReceiptMachine(t)
+			t.Setenv("CI", "true")
+			return []string{"receipt"}
+		}, errors: []string{"costroid: receipt refused", "A receipt states", "Run costroid receipt"}},
 	}
 }
 
@@ -555,6 +565,16 @@ func TestQuietNeverChangesStdoutOrTheExitCode(t *testing.T) {
 		}
 		if !strings.Contains(entry.help, "\n  "+cli.QuietRow[0]+"  ") {
 			t.Errorf("help %s does not list %s", entry.name, cli.QuietRow[0])
+		}
+	}
+	onAReceiptMachine(t)
+	code, stdout, stderr := execute(t, "receipt")
+	if code != 0 || !strings.HasPrefix(stdout, receipts.Marker+"\n") || stderr == "" {
+		t.Fatalf("receipt: exit %d, stderr %q", code, stderr)
+	}
+	for _, flag := range []string{"-q", "--quiet"} {
+		if quietCode, quietStdout, quietStderr := execute(t, "receipt", flag); quietCode != code || quietStdout != stdout || quietStderr != "" {
+			t.Errorf("receipt %s: exit %d, stderr %q, and stdout\n%swithout it\n%s", flag, quietCode, quietStderr, quietStdout, stdout)
 		}
 	}
 }
@@ -900,6 +920,11 @@ func TestAResultIsOnStdoutAndAMessageOnStderr(t *testing.T) {
 	patch := ran("init", "github", "--agent", "claude-code-action", "--action-ref", testCommit, "--existing", "review.yml")
 	if !strings.HasPrefix(patch.stdout, "--- a/review.yml\n") || said.MatchString(patch.stdout) || !strings.HasPrefix(patch.stderr, "costroid: printed a patch for review.yml") {
 		t.Errorf("init --existing: stdout is not the patch alone, or stderr does not say so:\n%s%s", patch.stdout, patch.stderr)
+	}
+	onAReceiptMachine(t)
+	if printed := ran("receipt"); !strings.HasPrefix(printed.stdout, receipts.Marker+"\n") || said.MatchString(printed.stdout) ||
+		!strings.HasPrefix(printed.stderr, "costroid: counted 1 request of 1 Claude Code session on branch "+receiptBranch) {
+		t.Errorf("receipt: stdout is not the comment's body alone, or stderr does not say what it counted:\n%s%s", printed.stdout, printed.stderr)
 	}
 	seen := 0
 	printCalls(t, func(function, writer, text string) {

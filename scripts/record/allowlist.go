@@ -10,9 +10,11 @@ import (
 // keys joined by ".", "[]" for an array's elements and "*" for a model name
 // under modelUsage. The list is the keys of the recordings committed on
 // 2026-11-01, plus the keys an adapter reads that those runs did not write:
-// cwd, Codex's thread_source and session_id, and Claude Code's error.
+// cwd, Claude Code's gitBranch, Codex's thread_source and session_id, and
+// Claude Code's error.
 var keptPaths = []string{
 	"apiBlockIndex",
+	"gitBranch",
 	"apiKeySource",
 	"cache_creation_1h_tokens",
 	"cache_creation_5m_tokens",
@@ -306,6 +308,10 @@ var (
 	checkRunIDs = idKind{"check run", regexp.MustCompile(`^9000([0-9]{4})$`), "9000%04d", true}
 	ciRunIDs    = idKind{"workflow run", regexp.MustCompile(`^8000([0-9]{4})$`), "8000%04d", true}
 	commitIDs   = idKind{"commit", regexp.MustCompile(`^0{32}([0-9]{8})$`), "%040d", false}
+	// branchNames stand in for the git branch a session line recorded: each
+	// branch a run names becomes the next synthetic one, so a session that
+	// moved to another branch still shows where it moved.
+	branchNames = idKind{"branch", regexp.MustCompile(`^fixture/branch-([0-9]+)$`), "fixture/branch-%d", false}
 )
 
 // idPaths are the kept keys that hold an identifier. Each is replaced by its
@@ -329,6 +335,7 @@ var idPaths = map[string]*idKind{
 	"payload.response_id": &responseIDs,
 	"payload.turn_id":     &turnIDs,
 	"item.id":             &itemIDs,
+	"gitBranch":           &branchNames,
 
 	// GitHub's list of a commit's check runs, and the result object in each.
 	"check_runs[].id":          &checkRunIDs,

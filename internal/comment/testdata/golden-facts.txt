@@ -1748,6 +1748,13 @@ no-figures-invalid_row	](https://app.costroid.com/?installation=github%3A5812039
 no-figures-invalid_row	](https://docs.costroid.com/export)
 no-figures-invalid_row	](https://github.com/example/widgets/actions/runs/19203384756)
 no-figures-invalid_row	`9f2c6e1`
+no-figures-invalid_row-origin	3
+no-figures-invalid_row-origin	No figure (invalid_row): line 3 of the rows file is not a valid row. A partial total would read as a smaller cost. No rule ran.
+no-figures-invalid_row-origin	](https://app.costroid.com/?installation=github%3A58120394)
+no-figures-invalid_row-origin	](https://docs.costroid.com/export)
+no-figures-invalid_row-origin	](https://github.com/example/widgets/actions/runs/19203384756)
+no-figures-invalid_row-origin	`9f2c6e1`
+no-figures-invalid_row-origin	`costroid/origin`
 no-figures-no_rows_file	No figure (no_rows_file): no rows file reached this report. The agent's job log says why it wrote none. No rule ran.
 no-figures-no_rows_file	](https://app.costroid.com/?installation=github%3A58120394)
 no-figures-no_rows_file	](https://docs.costroid.com/export)
@@ -3432,6 +3439,227 @@ pull-request-budget-over	`input_uncached`
 pull-request-budget-over	`output`
 pull-request-budget-over	`reasoning_output`
 pull-request-budget-over	| client-side estimate, can pass the cap |
+receipt	0.0000008
+receipt	0.000136
+receipt	0.00015605
+receipt	0.000436875
+receipt	0.00089
+receipt	0.001619725
+receipt	0.01
+receipt	0.10
+receipt	0.125
+receipt	0.20
+receipt	0.50
+receipt	11.4619213
+receipt	121
+receipt	15605
+receipt	19
+receipt	2
+receipt	2026-11-18
+receipt	2026-11-20
+receipt	2026-11-21
+receipt	272
+receipt	3495
+receipt	4.998380275
+receipt	4450
+receipt	5.00
+receipt	8
+receipt	List-equivalent, not billed
+receipt	Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+receipt	USD 0.0000008
+receipt	USD 0.000136
+receipt	USD 0.00015605
+receipt	USD 0.000436875
+receipt	USD 0.00089
+receipt	USD 0.001619725
+receipt	USD 0.01
+receipt	USD 0.10
+receipt	USD 0.125
+receipt	USD 0.20
+receipt	USD 0.50
+receipt	USD 11.4619213
+receipt	USD 4.998380275
+receipt	USD 5.00
+receipt	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+receipt	](https://app.costroid.com/?installation=github%3A58120394)
+receipt	](https://docs.costroid.com/export)
+receipt	](https://docs.costroid.com/policy)
+receipt	](https://github.com/example/widgets/actions/runs/19203384756)
+receipt	](https://github.com/example/widgets/pull/7#issuecomment-2471000001)
+receipt	`0.4.3`
+receipt	`9f2c6e1`
+receipt	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+receipt	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+receipt	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+receipt	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+receipt	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+receipt	`anthropic:informational:cached_input_reported`
+receipt	`anthropic:informational:reasoning_output`
+receipt	`cache_read`
+receipt	`cache_write_1h`
+receipt	`cache_write_5m`
+receipt	`cached_input_reported`
+receipt	`claude-code`
+receipt	`claude-haiku-5-5`
+receipt	`costroid.yml`
+receipt	`input_uncached`
+receipt	`octocat`
+receipt	`output`
+receipt	`policy.run_budget_usd`
+receipt	`reasoning_output`
+receipt	| client-side estimate, can pass the cap |
+receipt-none	0.0000008
+receipt-none	0.000136
+receipt-none	0.00015605
+receipt-none	0.000436875
+receipt-none	0.00089
+receipt-none	0.001619725
+receipt-none	0.01
+receipt-none	0.10
+receipt-none	0.125
+receipt-none	0.20
+receipt-none	0.50
+receipt-none	121
+receipt-none	15605
+receipt-none	19
+receipt-none	2026-11-21
+receipt-none	272
+receipt-none	3495
+receipt-none	4.998380275
+receipt-none	4450
+receipt-none	5.00
+receipt-none	8
+receipt-none	List-equivalent, not billed
+receipt-none	Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+receipt-none	USD 0.0000008
+receipt-none	USD 0.000136
+receipt-none	USD 0.00015605
+receipt-none	USD 0.000436875
+receipt-none	USD 0.00089
+receipt-none	USD 0.001619725
+receipt-none	USD 0.01
+receipt-none	USD 0.10
+receipt-none	USD 0.125
+receipt-none	USD 0.20
+receipt-none	USD 0.50
+receipt-none	USD 4.998380275
+receipt-none	USD 5.00
+receipt-none	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+receipt-none	](https://app.costroid.com/?installation=github%3A58120394)
+receipt-none	](https://docs.costroid.com/export)
+receipt-none	](https://docs.costroid.com/policy)
+receipt-none	](https://github.com/example/widgets/actions/runs/19203384756)
+receipt-none	`0.4.3`
+receipt-none	`9f2c6e1`
+receipt-none	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+receipt-none	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+receipt-none	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+receipt-none	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+receipt-none	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+receipt-none	`anthropic:informational:cached_input_reported`
+receipt-none	`anthropic:informational:reasoning_output`
+receipt-none	`cache_read`
+receipt-none	`cache_write_1h`
+receipt-none	`cache_write_5m`
+receipt-none	`cached_input_reported`
+receipt-none	`claude-code`
+receipt-none	`claude-haiku-5-5`
+receipt-none	`costroid.yml`
+receipt-none	`input_uncached`
+receipt-none	`output`
+receipt-none	`policy.run_budget_usd`
+receipt-none	`reasoning_output`
+receipt-none	| client-side estimate, can pass the cap |
+receipt-refused	0.0000008
+receipt-refused	0.000136
+receipt-refused	0.00015605
+receipt-refused	0.000436875
+receipt-refused	0.00089
+receipt-refused	0.001619725
+receipt-refused	0.01
+receipt-refused	0.10
+receipt-refused	0.125
+receipt-refused	0.20
+receipt-refused	0.50
+receipt-refused	121
+receipt-refused	15605
+receipt-refused	19
+receipt-refused	2026-11-21
+receipt-refused	272
+receipt-refused	3495
+receipt-refused	4.998380275
+receipt-refused	4450
+receipt-refused	5.00
+receipt-refused	8
+receipt-refused	List-equivalent, not billed
+receipt-refused	Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+receipt-refused	USD 0.0000008
+receipt-refused	USD 0.000136
+receipt-refused	USD 0.00015605
+receipt-refused	USD 0.000436875
+receipt-refused	USD 0.00089
+receipt-refused	USD 0.001619725
+receipt-refused	USD 0.01
+receipt-refused	USD 0.10
+receipt-refused	USD 0.125
+receipt-refused	USD 0.20
+receipt-refused	USD 0.50
+receipt-refused	USD 4.998380275
+receipt-refused	USD 5.00
+receipt-refused	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+receipt-refused	](https://app.costroid.com/?installation=github%3A58120394)
+receipt-refused	](https://docs.costroid.com/export)
+receipt-refused	](https://docs.costroid.com/policy)
+receipt-refused	](https://github.com/example/widgets/actions/runs/19203384756)
+receipt-refused	`0.4.3`
+receipt-refused	`9f2c6e1`
+receipt-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+receipt-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+receipt-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+receipt-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+receipt-refused	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+receipt-refused	`anthropic:informational:cached_input_reported`
+receipt-refused	`anthropic:informational:reasoning_output`
+receipt-refused	`cache_read`
+receipt-refused	`cache_write_1h`
+receipt-refused	`cache_write_5m`
+receipt-refused	`cached_input_reported`
+receipt-refused	`claude-code`
+receipt-refused	`claude-haiku-5-5`
+receipt-refused	`costroid.yml`
+receipt-refused	`input_uncached`
+receipt-refused	`octocat`
+receipt-refused	`output`
+receipt-refused	`policy.run_budget_usd`
+receipt-refused	`reasoning_output`
+receipt-refused	| client-side estimate, can pass the cap |
+receipt-withheld	19
+receipt-withheld	2
+receipt-withheld	2026-11-18
+receipt-withheld	2026-11-20
+receipt-withheld	2026-11-21
+receipt-withheld	List-equivalent, not billed
+receipt-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
+receipt-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+receipt-withheld	](https://docs.costroid.com/export)
+receipt-withheld	](https://docs.costroid.com/policy)
+receipt-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+receipt-withheld	](https://github.com/example/widgets/pull/7#issuecomment-2471000001)
+receipt-withheld	`0.4.3`
+receipt-withheld	`9f2c6e1`
+receipt-withheld	`cache_read`
+receipt-withheld	`cache_write_1h`
+receipt-withheld	`cache_write_5m`
+receipt-withheld	`cached_input_reported`
+receipt-withheld	`claude-code`
+receipt-withheld	`claude-haiku-5-5`
+receipt-withheld	`comment.show_cost: false`
+receipt-withheld	`costroid.yml`
+receipt-withheld	`input_uncached`
+receipt-withheld	`octocat`
+receipt-withheld	`output`
+receipt-withheld	`reasoning_output`
+receipt-withheld	| client-side estimate, can pass the cap |
 reconciliation	0.0000008
 reconciliation	0.000136
 reconciliation	0.00015605

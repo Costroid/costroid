@@ -9,6 +9,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/otlpemit"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 var emitOTLPHelp = cli.Page{
@@ -76,6 +77,9 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 		fmt.Fprintf(stderr, "costroid: warning: %s\n", warning)
 	}
 	data, err := readNamed(*rows, std.stdin)
+	if err == nil {
+		err = policy.RefuseOriginRows(data)
+	}
 	if err != nil {
 		return cli.Fail(stderr, err)
 	}

@@ -1,0 +1,69 @@
+{
+  "schema": "costroid.receipt/0.1",
+  "branch": "fix/retry.lock",
+  "written": "2026-11-20",
+  "since": "2026-11-18",
+  "agents": [
+    "claude-code"
+  ],
+  "sessions": [
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "4f1c9a70-2b1e-4c55-9a1d-7be0a3c1d2ef",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "4f1c9a70-2b1e-4c55-9a1d-7be0a3c1d2ef",
+      "model": "example-small-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-19",
+      "last_day": "2026-11-19",
+      "requests": 31,
+      "largest_input": "40112",
+      "tokens": {
+        "input_uncached": "2210",
+        "cache_read": "801430",
+        "cache_write_5m": "61200",
+        "cache_write_1h": "0",
+        "output": "9035"
+      }
+    },
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.5",
+      "session_id": "b81d02e4-6c3a-4f0e-8d5b-19a4c7e2f360",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-20",
+      "last_day": "2026-11-20",
+      "requests": 96,
+      "largest_input": "121904",
+      "tokens": {
+        "input_uncached": "7311",
+        "cache_read": "3904812",
+        "cache_write_5m": "0",
+        "cache_write_1h": "188040",
+        "output": "88214"
+      }
+    }
+  ],
+  "sessions_omitted": 0
+}

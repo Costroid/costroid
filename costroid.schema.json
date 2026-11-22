@@ -15,6 +15,11 @@
           "description": "Whether a public repository's comment prints amounts. Off, it shows the verdict and the grades, and the rows and the check run's machine block keep the amounts. A private repository always prints them.",
           "type": "boolean",
           "default": true
+        },
+        "receipts": {
+          "description": "Whether a report reads the receipt of developer-machine sessions the pull request's author posted, where the workflow asks for receipts. false reads none, and a pull request cannot turn it back on.",
+          "type": "boolean",
+          "default": true
         }
       }
     },

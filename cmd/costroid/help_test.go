@@ -25,7 +25,7 @@ var flagSources = []string{".", filepath.Join("..", "..", "internal", "server")}
 
 // flagless are the commands that define no flag of their own. Each takes
 // --quiet, which internal/cli gives every command.
-var flagless = []string{"approve", "lint-recipes"}
+var flagless = []string{"approve", "lint-recipes", "receipt"}
 
 // computedFlags gives the names of flags a command defines from a table of its
 // own, rather than as a literal.
@@ -567,7 +567,7 @@ func TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp(t *testing.T) {
 			t.Errorf("%v: exit %d, stdout %q, stderr:\n%swant:\n%s", mistake.args, code, stdout, stderr, want)
 		}
 	}
-	lines := map[string][][]string{"serve": {{"serve"}}, "keys": {{"keys", "create"}}, "egress": {{"egress", "report"}}, "validate": {{"validate"}}, "lint-recipes": {{"lint-recipes"}}}
+	lines := map[string][][]string{"serve": {{"serve"}}, "keys": {{"keys", "create"}}, "egress": {{"egress", "report"}}, "validate": {{"validate"}}, "lint-recipes": {{"lint-recipes"}}, "receipt": {{"receipt"}}}
 	for name, given := range helpAfterFlags {
 		lines[name] = given
 	}

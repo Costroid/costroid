@@ -96,7 +96,7 @@ func TestRecordLocalReadsOnlyItsSession(t *testing.T) {
 	if wantNames := []string{"manifest.json", "session.jsonl", "stream.jsonl", "subagents/agent-1.jsonl"}; !slices.Equal(names, wantNames) {
 		t.Errorf("the recording holds %v, want %v", names, wantNames)
 	}
-	for _, leaked := range []string{otherSecret, otherSession, runSession, runPrompt, "/home/", "gitBranch", "from the subagent"} {
+	for _, leaked := range []string{otherSecret, otherSession, runSession, runPrompt, "/home/", `"main"`, "from the subagent"} {
 		if hit := grepDir(t, out, leaked); hit != "" {
 			t.Errorf("%s holds %q", hit, leaked)
 		}

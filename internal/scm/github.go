@@ -296,7 +296,11 @@ func (g *GitHub) UpdateCheck(ctx context.Context, id int64, check CheckRun) erro
 type issueComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
-	User struct {
+	// CreatedAt and UpdatedAt are kept as the host wrote them, so a value
+	// that is no time costs only the comment that holds it.
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	User      struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
@@ -335,22 +339,99 @@ func (g *GitHub) ownLogin() string {
 
 func (g *GitHub) findComment(ctx context.Context, pullRequest int, marker string) (int64, error) {
 	login := g.ownLogin()
+	var found int64
+	err := g.eachComment(ctx, pullRequest, func(comment issueComment) bool {
+		if strings.EqualFold(comment.User.Login, login) && strings.HasPrefix(comment.Body, marker) {
+			found = comment.ID
+			return false
+		}
+		return true
+	})
+	return found, err
+}
+
+// eachComment pages through a pull request's comments, oldest first, and
+// hands each to visit until visit answers false or the pages end, at
+// maxCommentPages.
+func (g *GitHub) eachComment(ctx context.Context, pullRequest int, visit func(issueComment) bool) error {
 	for page := 1; page <= maxCommentPages; page++ {
 		var comments []issueComment
 		path := g.repo(fmt.Sprintf("/issues/%d/comments?per_page=%d&page=%d", pullRequest, commentsPerPage, page))
 		if err := g.do(ctx, http.MethodGet, path, nil, &comments); err != nil {
-			return 0, err
+			return err
 		}
 		for _, comment := range comments {
-			if strings.EqualFold(comment.User.Login, login) && strings.HasPrefix(comment.Body, marker) {
-				return comment.ID, nil
+			if !visit(comment) {
+				return nil
 			}
 		}
 		if len(comments) < commentsPerPage {
-			return 0, nil
+			return nil
 		}
 	}
-	return 0, nil
+	return nil
+}
+
+// AuthoredComment is a comment as the host states it: its id, its body, when
+// it was created and when it was last changed.
+type AuthoredComment struct {
+	ID        int64
+	Body      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// PullOrigin is who opened a pull request and the branch it comes from, as
+// the host states them now. Fork says the branch is in another repository.
+type PullOrigin struct {
+	Author string
+	Branch string
+	Fork   bool
+}
+
+// PullOrigin reads the pull request's author and head branch.
+func (g *GitHub) PullOrigin(ctx context.Context, number int) (PullOrigin, error) {
+	var answer struct {
+		Head struct {
+			Ref  string `json:"ref"`
+			Repo *struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
+		} `json:"head"`
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := g.do(ctx, http.MethodGet, g.repo(fmt.Sprintf("/pulls/%d", number)), nil, &answer); err != nil {
+		return PullOrigin{}, err
+	}
+	fork := answer.Head.Repo == nil || !strings.EqualFold(answer.Head.Repo.FullName, g.repository)
+	return PullOrigin{Author: answer.User.Login, Branch: answer.Head.Ref, Fork: fork}, nil
+}
+
+// AuthorComments lists the comments on the pull request that author posted
+// and that open with marker, oldest first. A comment the token's own account
+// posted is never one, and neither is an App's, so Costroid's own comment is
+// never taken for a person's whatever marker it opens with. A comment whose
+// times are not RFC 3339 is left out.
+func (g *GitHub) AuthorComments(ctx context.Context, pullRequest int, author, marker string) ([]AuthoredComment, error) {
+	own := g.ownLogin()
+	if author == "" || strings.HasSuffix(author, botSuffix) || strings.EqualFold(author, own) {
+		return nil, nil
+	}
+	var found []AuthoredComment
+	err := g.eachComment(ctx, pullRequest, func(comment issueComment) bool {
+		if !strings.EqualFold(comment.User.Login, author) || !strings.HasPrefix(comment.Body, marker) {
+			return true
+		}
+		created, createdErr := time.Parse(time.RFC3339, comment.CreatedAt)
+		updated, updatedErr := time.Parse(time.RFC3339, comment.UpdatedAt)
+		if createdErr == nil && updatedErr == nil {
+			found = append(found, AuthoredComment{ID: comment.ID, Body: comment.Body, CreatedAt: created, UpdatedAt: updated})
+		}
+		return true
+	})
+	return found, err
 }
 
 type commitEntry struct {

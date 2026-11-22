@@ -93,15 +93,15 @@ func TestResultV011SchemaCopyMatchesItsDigest(t *testing.T) {
 // TestAnObjectWithNothingNewIsNotWrittenAsV011 holds every golden state's
 // objects, as the comment, the check run and the result output carry them and
 // as a withheld copy and a run before its check write them, to one rule: an
-// object without a pack is result/v0.11 exactly when its verdict holds a
-// run_p95 result, and holds to that version's copied schema. Every other
+// object without a pack or a receipt is result/v0.11 exactly when its
+// verdict holds a run_p95 result, and holds to that version's copied schema. Every other
 // object without a pack is the result/v0.9 or result/v0.10 it was, holds no
 // key only result/v0.11 defines, and holds to its own version's copied
 // schema. An object with a pack is result/v0.12, which
 // TestAnObjectWithAPackIsWrittenAsV012 holds. The goldens hold each object
 // byte for byte.
 func TestAnObjectWithNothingNewIsNotWrittenAsV011(t *testing.T) {
-	compiled := map[string]string{schemaV09: resultSchemaPath, schema: resultV010SchemaPath, schemaV011: resultV011SchemaPath, schemaV012: resultV012SchemaPath}
+	compiled := map[string]string{schemaV09: resultSchemaPath, schema: resultV010SchemaPath, schemaV011: resultV011SchemaPath, schemaV012: resultV012SchemaPath, schemaV013: resultV013SchemaPath}
 	newer := []string{`"run_p95"`, `"p95_usd"`, `"limit_factor"`, `"baseline_runs"`, `"pack"`, `"customer_pack"`, `"line"`}
 	written := map[string]int{}
 	for name, input := range goldenStates(t) {
@@ -118,8 +118,8 @@ func TestAnObjectWithNothingNewIsNotWrittenAsV011(t *testing.T) {
 			}
 			written[head.Schema]++
 			holds := slices.ContainsFunc(newer, func(key string) bool { return strings.Contains(object, key) })
-			newest := head.Schema == schemaV011 || head.Schema == schemaV012
-			if (head.Schema == schemaV011) != (holdsP95(input) && !holdsPack(input)) || (!newest && holds) {
+			newest := head.Schema == schemaV011 || head.Schema == schemaV012 || head.Schema == schemaV013
+			if (head.Schema == schemaV011) != (holdsP95(input) && !holdsPack(input) && !holdsReceipt(input)) || (!newest && holds) {
 				t.Errorf("%s, %s: written as %s, holding a run_p95 result %t, holding a key of 0.11 or 0.12 %t", name, copied, head.Schema, holdsP95(input), holds)
 			}
 			if err := resultSchemaErrors(compileSchemaFile(t, compiled[head.Schema]), object); err != nil {

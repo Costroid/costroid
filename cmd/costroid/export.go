@@ -24,6 +24,7 @@ import (
 	exportformat "github.com/Costroid/costroid/internal/export"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 const (
@@ -391,12 +392,14 @@ func parseFormatFlags(flags exportFlags, format string, sends bool) (exportFlags
 // writeFormat writes the rows file in its format. Nothing is written until
 // every row is taken, so a refused export leaves no file.
 func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
-	file, err := os.Open(flags.rows)
+	rows, err := os.ReadFile(flags.rows)
+	if err == nil {
+		err = policy.RefuseOriginRows(rows)
+	}
 	if err != nil {
 		return cli.Fail(stderr, err)
 	}
-	defer file.Close()
-	written, err := exportformat.Write(flags.format, file, exportformat.Options{Now: time.Now().UTC(), RootDir: flags.rootDir})
+	written, err := exportformat.Write(flags.format, bytes.NewReader(rows), exportformat.Options{Now: time.Now().UTC(), RootDir: flags.rootDir})
 	var refused *exportformat.RowsError
 	switch {
 	case errors.Is(err, exportformat.ErrNoRows):
@@ -632,6 +635,9 @@ type stampedRows struct {
 
 func readStamped(path string, claim runClaim) (stampedRows, error) {
 	data, err := os.ReadFile(path)
+	if err == nil {
+		err = policy.RefuseOriginRows(data)
+	}
 	if err != nil {
 		return stampedRows{}, err
 	}

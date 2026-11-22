@@ -1,0 +1,31 @@
+{
+  "schema": "costroid.receipt/0.1",
+  "branch": "fix/retry-backoff",
+  "written": "2026-11-20",
+  "since": null,
+  "agents": [
+    "claude-code"
+  ],
+  "sessions": [
+    {
+      "agent": "claude-code",
+      "agent_version": "2.1.4",
+      "session_id": "4f1c9a70-2b1e-4c55-9a1d-7be0a3c1d2ef",
+      "model": "example-large-1",
+      "service_tier": "standard",
+      "region": null,
+      "first_day": "2026-11-18",
+      "last_day": "2026-11-19",
+      "requests": 214,
+      "largest_input": "148230",
+      "tokens": {
+        "input_uncached": "18402",
+        "cache_read": "9120544",
+        "cache_write_5m": "402118",
+        "cache_write_1h": "0",
+        "output": "220917"
+      }
+    }
+  ],
+  "sessions_omitted": 0
+}

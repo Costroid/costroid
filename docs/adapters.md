@@ -138,6 +138,8 @@ What Costroid cannot see:
 - A process that runs under another `CLAUDE_CONFIG_DIR`.
 - Which of two agents started the other. Two agents run at once look like a run and its nested session, so a run that started before the other and ended after it would count the other's spend a second time. `costroid run` holds a lock, `costroid-run.lock` in the config directory, for as long as the agent runs. A second `costroid run` of Claude Code in that directory is refused before its agent starts, with the reason `concurrent_run`, and writes no rows. A `claude` started without Costroid takes no lock, so it still reads as a nested session.
 
+`costroid receipt` reads the same session files on a developer's machine, with the same reader, and also the `gitBranch` each line records, to count a branch's requests. No recording holds `gitBranch`: the recordings name each branch as a synthetic `fixture/branch-<n>`, and the tests plant the branch on copies of the recordings. That every assistant line of a current Claude Code carries it, and what it holds on a detached head or in a subagent's file, is unverified. [`docs/receipt.md`](receipt.md) says what the command reads.
+
 No recorded run holds a nested session. The tests use `testdata/not-recorded/nested/`, written in the line shapes of the `subagent` recording. The recordings cut `cwd` because it holds a path. Claude Code 2.1.318 wrote `cwd` on its user, assistant and system lines on 2026-11-04. No recording shows `cwd` on the stream's `init` line, so that source is unverified.
 
 ## Codex

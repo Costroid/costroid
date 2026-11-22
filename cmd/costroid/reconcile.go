@@ -18,6 +18,7 @@ import (
 	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/focus"
+	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reconcile"
 )
 
@@ -222,15 +223,14 @@ func reconcileRows(ctx context.Context, flags reconcileFlags, getenv func(string
 }
 
 func readLedger(flags reconcileFlags) (*reconcile.Ledger, error) {
-	rows, err := os.Open(flags.rows)
+	rows, err := os.ReadFile(flags.rows)
+	if err == nil {
+		err = policy.RefuseOriginRows(rows)
+	}
 	if err != nil {
 		return nil, err
 	}
-	ledger, err := reconcile.ReadLedgerWith(rows, flags.days, reconcile.LedgerOptions{Credential: flags.credential, Upstream: flags.upstream})
-	if closeErr := rows.Close(); err == nil && closeErr != nil {
-		err = fmt.Errorf("close %s: %w", flags.rows, closeErr)
-	}
-	return ledger, err
+	return reconcile.ReadLedgerWith(bytes.NewReader(rows), flags.days, reconcile.LedgerOptions{Credential: flags.credential, Upstream: flags.upstream})
 }
 
 // providersFor reads each admin key from this process's own environment. A key

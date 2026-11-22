@@ -1,0 +1,11 @@
+{
+  "schema": "costroid.receipt/0.1",
+  "branch": "fix/retry-backoff",
+  "written": "2026-11-20",
+  "since": "2026-11-18",
+  "agents": [
+    "claude-code"
+  ],
+  "sessions": [],
+  "sessions_omitted": 0
+}

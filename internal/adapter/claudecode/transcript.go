@@ -22,6 +22,7 @@ type sessionEnvelope struct {
 	SessionID   json.RawMessage `json:"sessionId"`
 	IsSidechain json.RawMessage `json:"isSidechain"`
 	CWD         json.RawMessage `json:"cwd"`
+	GitBranch   json.RawMessage `json:"gitBranch"`
 	Version     json.RawMessage `json:"version"`
 	ID          json.RawMessage `json:"id"`
 	RequestID   json.RawMessage `json:"requestId"`
@@ -31,12 +32,14 @@ type sessionEnvelope struct {
 }
 
 // sessionLine is what a session file line states about itself. A field that
-// is absent or of another type reads as empty.
+// is absent or of another type reads as empty. branch is the git branch the
+// line recorded.
 type sessionLine struct {
 	kind       string
 	sessionID  string
 	sidechain  bool
 	cwd        string
+	branch     string
 	version    string
 	id         string
 	requestRef string
@@ -67,6 +70,7 @@ func parseSessionLine(raw []byte) (sessionLine, bool) {
 		sessionID:  text(envelope.SessionID),
 		sidechain:  string(envelope.IsSidechain) == "true",
 		cwd:        text(envelope.CWD),
+		branch:     text(envelope.GitBranch),
 		version:    text(envelope.Version),
 		id:         text(envelope.ID),
 		requestRef: text(envelope.RequestRef),
@@ -179,6 +183,14 @@ type requestBuilder struct {
 	order     []string
 	startedAt map[string]time.Time
 	refs      map[string]string
+	// places are where each request was made, as the first line of its
+	// response recorded it.
+	places map[string]place
+}
+
+// place is the working directory and the git branch a line recorded.
+type place struct {
+	dir, branch string
 }
 
 func newRequestBuilder(unsplit focus.TokenClass) *requestBuilder {
@@ -187,6 +199,7 @@ func newRequestBuilder(unsplit focus.TokenClass) *requestBuilder {
 		byID:      map[string]*adapter.Request{},
 		startedAt: map[string]time.Time{},
 		refs:      map[string]string{},
+		places:    map[string]place{},
 	}
 }
 
@@ -291,6 +304,7 @@ func (b *requestBuilder) addResponse(id string, line sessionLine) error {
 		request = &adapter.Request{ID: id, Provider: provider, Grain: adapter.PerRequest}
 		b.byID[id] = request
 		b.order = append(b.order, id)
+		b.places[id] = place{dir: line.cwd, branch: line.branch}
 	}
 	b.refs[id] = line.requestRef
 	if request.Start.IsZero() {

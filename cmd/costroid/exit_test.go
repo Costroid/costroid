@@ -77,6 +77,13 @@ var wrongLines = map[string]map[string]any{
 		leftOut:     []string{"policy"},
 		oneTooMany:  []string{"policy", "--rows", "rows.jsonl", "extra"},
 	},
+	"receipt": {
+		unknownFlag: []string{"receipt", "--frob"},
+		flagAlone:   "receipt has no flag",
+		wrongForm:   "receipt has no flag",
+		leftOut:     "receipt needs no argument",
+		oneTooMany:  []string{"receipt", "extra"},
+	},
 	"validate": {
 		unknownFlag: []string{"validate", "--frob"},
 		flagAlone:   "its one flag takes no value",

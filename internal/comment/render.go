@@ -220,9 +220,11 @@ type Input struct {
 	// says how its cost compares with the cap it was given.
 	Preview bool
 	// Reason says why there are no figures, and ReasonLine names the line of
-	// an InvalidRow.
+	// an InvalidRow. OriginRow says that line states costroid/origin, which
+	// no rows file carries.
 	Reason     Reason
 	ReasonLine int
+	OriginRow  bool
 	// RunReason is why the run wrote no rows, as the run stated it. It is
 	// shown only when the rows file holds no rows.
 	RunReason reason.Reason
@@ -279,6 +281,12 @@ type Input struct {
 	// none. Its reason is from a closed list. The machine block states it
 	// among its estimates.
 	EstimateUnavailable *focusfile.Unavailable
+	// ReceiptsAsked says the workflow asked for receipts, so a pull request
+	// whose author posted none says so. Receipt is the receipt the author
+	// posted, read or refused, nil for none. It is one line on each surface
+	// and receipts in the result object, and nothing else reads it.
+	ReceiptsAsked bool
+	Receipt       *Receipt
 	// forkRows says a fork's own workflow run wrote the rows, as OnForkRows
 	// sets it.
 	forkRows bool
@@ -571,10 +579,13 @@ type view struct {
 	// EstimateUnavailable says an estimate the workflow named was not there,
 	// empty when none is missing.
 	EstimateUnavailable string
-	AccountURL          string
-	ExportURL           string
-	CheckRunID          *int64
-	Block               string
+	// Receipt is the receipt's one line, empty where the workflow did not
+	// ask for receipts.
+	Receipt    string
+	AccountURL string
+	ExportURL  string
+	CheckRunID *int64
+	Block      string
 }
 
 // fallbackMark sits in the first cell of a figure the fallback tier priced in
@@ -606,6 +617,7 @@ func (i Input) view() view {
 	}
 	result.Infrastructure = i.Ledger.Infrastructure.view(shown, result.CheckRuns)
 	result.EstimateUnavailable = i.estimateUnavailable()
+	result.Receipt = i.receiptLine(shown)
 	if shown && i.capCheck().passed() {
 		result.PastCap = i.capLine()
 	}
@@ -861,6 +873,8 @@ func (i Input) why() string {
 		said = append(said, "The recipes skip the agent's job for a first-time contributor without the `costroid-agent` label and for a fork's "+i.request()+".")
 	case i.Reason == ForkNoRows:
 		said = append(said, "The recipes run no agent on a fork's "+i.request()+". A neutral check does not block a merge.")
+	case i.Reason == InvalidRow && i.OriginRow:
+		said = append(said, originRowLine)
 	case i.readerLine() != "":
 		said = append(said, fmt.Sprintf("The reader's first error: `%s`.", i.readerLine()))
 	case i.agentError() != "":
@@ -868,6 +882,10 @@ func (i Input) why() string {
 	}
 	return strings.Join(said, " ")
 }
+
+// originRowLine says why a rows file that holds a row from a developer's
+// machine is read whole as no figure.
+const originRowLine = "That row states `costroid/origin`, which marks a row from a developer's machine. A report builds such rows from a receipt in its own memory, and no rows file carries one, so this report read none of the file."
 
 // agentErrorBesideFigures says the agent ended in an error after the requests
 // the figures cover, and what to do about it.

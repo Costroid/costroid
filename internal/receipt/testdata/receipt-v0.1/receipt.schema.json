@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid-schemas/main/receipt/v0.1/receipt.schema.json",
+  "title": "Costroid receipt, version 0.1",
+  "description": "The token counts of a developer's own agent sessions on one branch, as costroid receipt prints them for the developer to post on the pull request. It states counts and never an amount: no cost, no price and no currency. Every string is a closed word, a day or a pattern, and no field holds text a person or a model wrote.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.receipt/0.1"
+    },
+    "branch": {
+      "$ref": "#/$defs/branch"
+    },
+    "written": {
+      "description": "The UTC day the receipt was written.",
+      "$ref": "#/$defs/day"
+    },
+    "since": {
+      "description": "The lower bound: the UTC day of the oldest entry of the branch's reflog on the machine. A session that ended before it is not counted. Null when the reflog holds no entry for the branch, so the receipt states no lower bound.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/day"
+        }
+      ]
+    },
+    "agents": {
+      "description": "The agents whose session files were read, each once. This version reads Claude Code's alone. An agent that was read and held no session is named too.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/agent"
+      }
+    },
+    "sessions": {
+      "description": "One entry per session, model, service tier and region, at most 150.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 150,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/session"
+      }
+    },
+    "sessions_omitted": {
+      "description": "The oldest sessions left out so that the receipt fits in one comment.",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema",
+    "branch",
+    "written",
+    "since",
+    "agents",
+    "sessions",
+    "sessions_omitted"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agent": {
+      "description": "The agents whose session files this version reads: Claude Code alone. A later version adds an agent.",
+      "enum": [
+        "claude-code"
+      ]
+    },
+    "branch": {
+      "description": "The branch the receipt is for, as git names it: letters, digits and . _ + - in components joined by /, opening with a letter or a digit. No component opens with a dot or ends with .lock, the name holds no .. and does not end with a dot, and it is never HEAD. A detached head has no branch and gets no receipt.",
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*(/[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$",
+      "not": {
+        "anyOf": [
+          {
+            "const": "HEAD"
+          },
+          {
+            "type": "string",
+            "pattern": "(\\.\\.|\\.$|\\.lock(/|$))"
+          }
+        ]
+      }
+    },
+    "day": {
+      "description": "A UTC day, YYYY-MM-DD.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "count": {
+      "description": "A whole number of tokens as a decimal string: no sign, no fraction, no leading zero, below 10^15. Never a JSON number.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,14})$"
+    },
+    "session": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/agent"
+        },
+        "agent_version": {
+          "description": "The agent's own version string, as its session file states it.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._+-]{1,64}$"
+        },
+        "session_id": {
+          "description": "The agent's session id. A join, never a credential.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,256}$"
+        },
+        "model": {
+          "description": "The model that served the requests, as the session file states it.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:/@-]{1,128}$"
+        },
+        "service_tier": {
+          "description": "The service tier as the catalog names it. Null when the session file states none.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z0-9_-]{1,64}$"
+        },
+        "region": {
+          "description": "The region the requests were held to. Null on default routing, which is no distinct region.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z0-9-]{1,64}$",
+          "not": {
+            "const": "global"
+          }
+        },
+        "first_day": {
+          "description": "The UTC day of the entry's first request.",
+          "$ref": "#/$defs/day"
+        },
+        "last_day": {
+          "description": "The UTC day of the entry's last request.",
+          "$ref": "#/$defs/day"
+        },
+        "requests": {
+          "description": "The model requests the entry sums.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "largest_input": {
+          "description": "The largest whole input of any one request the entry sums: its uncached input, its cache reads and its cache writes. It selects a context tier.",
+          "$ref": "#/$defs/count"
+        },
+        "tokens": {
+          "description": "Token counts by billed class, as the row a run writes names them: uncached input, cache reads, cache writes at five minutes and at one hour, and output, each stated, 0 included. The informational classes repeat a billed class and are never stated.",
+          "type": "object",
+          "properties": {
+            "input_uncached": {
+              "$ref": "#/$defs/count"
+            },
+            "cache_read": {
+              "$ref": "#/$defs/count"
+            },
+            "cache_write_5m": {
+              "$ref": "#/$defs/count"
+            },
+            "cache_write_1h": {
+              "$ref": "#/$defs/count"
+            },
+            "output": {
+              "$ref": "#/$defs/count"
+            }
+          },
+          "required": [
+            "input_uncached",
+            "cache_read",
+            "cache_write_5m",
+            "cache_write_1h",
+            "output"
+          ],
+          "additionalProperties": false
+        },
+        "assumed_ttl": {
+          "description": "The cache lifetimes an adapter's rule assigned because the session file did not state them, as the row's costroid/assumed_ttl tag names them. Absent when the file stated every lifetime.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "5m",
+              "1h"
+            ]
+          }
+        }
+      },
+      "required": [
+        "agent",
+        "agent_version",
+        "session_id",
+        "model",
+        "service_tier",
+        "region",
+        "first_day",
+        "last_day",
+        "requests",
+        "largest_input",
+        "tokens"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

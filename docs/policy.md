@@ -20,6 +20,8 @@ A rule without its setting does not run. With no `costroid.yml`, only `attributi
 
 The budget rules compare USD amounts as exact decimals. A row in another currency is never converted, and never compared with a USD limit.
 
+No rule reads a row that carries `costroid/origin`, whatever else the row states: a receipt of your own sessions, which [`docs/receipt.md`](receipt.md) describes, never raises, satisfies or fails a budget, a limit or the model list, and neither does such a row in a rows file.
+
 Five rules read figures from outside the run. One that is set and lacks its figure concludes `unproven`, so the check cannot conclude `success`, and the comment names the rule and says why it did not run:
 
 | Rule                                   | Reads                                                         | In this release                                                                        |
@@ -298,7 +300,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
 }
 ```
 
-A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a pack, under `policy.pack`, is `costroid.result/0.12`, and its `policy.results` can hold Costroid's `customer_pack` result with `line`. Any other block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
+A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a pack, under `policy.pack`, is `costroid.result/0.12`, and its `policy.results` can hold Costroid's `customer_pack` result with `line`. Any other block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. A block that holds a receipt, under `receipts`, is `costroid.result/0.13`, whatever else it holds. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
 
 ## The engine
 

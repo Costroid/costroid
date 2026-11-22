@@ -119,6 +119,14 @@ inputs:
       set. The ingest step takes the file whatever this says and deletes it unread.
       docs/review.md says what the comment shows.
     default: "false"
+  receipts:
+    description: >-
+      For stage report, true reads the newest receipt of developer-machine sessions the pull
+      request's author posted as a comment, and states its figure on one line, apart from the
+      run's. No budget reads it. It is off by default, and comment.receipts false in costroid.yml
+      on the base branch turns it off whatever this says. docs/receipt.md says what a receipt
+      holds.
+    default: "false"
   infrastructure-file:
     description: >-
       For stages run, read and all, a FOCUS cost file, as CSV, that an earlier step of the job
@@ -214,6 +222,7 @@ runs:
         installation-id: ${{ inputs.installation-id }}
         platform-token: ${{ inputs.platform-token }}
         post-review: ${{ inputs.post-review }}
+        receipts: ${{ inputs.receipts }}
         infrastructure-file: ${{ inputs.infrastructure-file }}
         infrastructure-source: ${{ inputs.infrastructure-source }}
         infrastructure-optional: ${{ inputs.infrastructure-optional }}

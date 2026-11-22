@@ -17,6 +17,9 @@ const (
 	plantedKey    = "sk-ant-api03-planted0123456789abcdefghijklmnopqrstuvwxyz"
 	plantedPath   = "/srv/checkout/planted-app"
 	plantedBranch = "feature/planted-branch-name"
+	// syntheticBranch is what the scrubber writes for the one branch a run
+	// names.
+	syntheticBranch = "fixture/branch-1"
 )
 
 // moduleRoot is the repository's root, two levels above this package.
@@ -103,6 +106,7 @@ func plant(raw bool) func(*value) {
 			setField(payload, "cwd", stringValue(cwd))
 		}
 		if !raw {
+			setField(line, "gitBranch", stringValue(syntheticBranch))
 			return
 		}
 		setField(line, "gitBranch", stringValue(plantedBranch))
@@ -191,7 +195,7 @@ func TestScrubReproducesCommittedFixtures(t *testing.T) {
 			transformDir(t, want, wantPlanted, plant(false))
 			got := scrubbed(t, raw, []string{plantedPrompt})
 			sameFiles(t, got, wantPlanted)
-			for _, planted := range []string{plantedPrompt, plantedKey, plantedPath, plantedBranch, "gitBranch", "plantedCredential"} {
+			for _, planted := range []string{plantedPrompt, plantedKey, plantedPath, plantedBranch, "plantedCredential"} {
 				if hit := grepDir(t, got, planted); hit != "" {
 					t.Errorf("%s still holds %q", hit, planted)
 				}
@@ -284,9 +288,14 @@ func TestVerifyRefusesContent(t *testing.T) {
 		{"the prompt", setModel("said: " + plantedPrompt), "", "holds the run's prompt"},
 		{"a key outside the allowlist", func(line *value) {
 			if isInit(line) {
+				setField(line, "plantedKey", stringValue("main"))
+			}
+		}, "", "key outside the allowlist: plantedKey"},
+		{"a raw branch", func(line *value) {
+			if isInit(line) {
 				setField(line, "gitBranch", stringValue("main"))
 			}
-		}, "", "key outside the allowlist: gitBranch"},
+		}, "", "gitBranch is not a synthetic branch"},
 		{"a raw session id", func(line *value) {
 			setField(line, "session_id", stringValue("3f1c9a52-7b1d-4e1f-9a7e-0c2b5d6e7f80"))
 		}, "", "session_id is not a synthetic session id"},

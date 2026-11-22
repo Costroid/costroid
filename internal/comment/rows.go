@@ -239,8 +239,9 @@ type tally struct {
 
 // ReadRows reads FOCUS rows as JSON lines. One bad row refuses the file: a
 // partial total would read as a smaller cost. A line at fault comes back as a
-// RowError. A row that is not an agent's, as policy.FromAgent tells, is read
-// into Ledger.Infrastructure and into no agent's figure.
+// RowError. policy.Classify says what each row is: an estimate's row is read
+// into Ledger.Infrastructure and into no agent's figure, and a row from a
+// developer's machine refuses the file with policy.ErrOriginRow.
 func ReadRows(source io.Reader) (Ledger, error) {
 	total := tally{
 		figures:          map[figureKey]*figureTally{},
@@ -272,8 +273,11 @@ func (t *tally) add(line []byte) error {
 	if !currencyPattern.MatchString(parsed.BillingCurrency) {
 		return fmt.Errorf("BillingCurrency %q is not an ISO code", string(Clean(parsed.BillingCurrency)))
 	}
-	if !policy.FromAgent(parsed.Tags) {
+	switch policy.Classify(parsed.Tags) {
+	case policy.EstimateRow:
 		return t.infrastructure.add(parsed)
+	case policy.ReceiptRow:
+		return policy.ErrOriginRow
 	}
 	priced, err := parsed.arithmetic()
 	if err != nil {

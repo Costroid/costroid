@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Costroid/costroid/internal/adapter"
+	"github.com/Costroid/costroid/internal/catalog"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
@@ -28,6 +29,7 @@ import (
 	"github.com/Costroid/costroid/internal/focusfile"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/reason"
+	receipts "github.com/Costroid/costroid/internal/receipt"
 	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/vcs"
 )
@@ -155,11 +157,13 @@ func parseRecorded(value string) (*comment.Recorded, error) {
 // rowsReading is what the rows file gave the report, and why it gave no
 // figures when it gave none. rowsSHA256 and fileSHA256 are the digests of
 // the rows and of the file, empty when the file was not read to its end.
+// origin says the line at fault states costroid/origin.
 type rowsReading struct {
 	ledger     comment.Ledger
 	state      comment.State
 	reason     comment.Reason
 	line       int
+	origin     bool
 	rowsSHA256 string
 	fileSHA256 string
 }
@@ -253,7 +257,7 @@ func readReportRows(path string) (rowsReading, error) {
 	ledger, err := comment.ReadRows(io.TeeReader(file, digest))
 	var invalid *comment.RowError
 	if errors.As(err, &invalid) {
-		return rowsReading{state: comment.Unreadable, reason: comment.InvalidRow, line: invalid.Line}, err
+		return rowsReading{state: comment.Unreadable, reason: comment.InvalidRow, line: invalid.Line, origin: errors.Is(err, policy.ErrOriginRow)}, err
 	}
 	if err != nil {
 		return unread, err
@@ -301,6 +305,7 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	input := rowsInput(flags, stderr)
 	input.RunURL = runURL(system)
 	input.CIRun = ciRunFromEnvironment(os.Getenv)
+	input.ReceiptsAsked = receiptsAsked(system, stderr)
 	target, err := targetFromEnvironment(system, flags, stderr)
 	input.HeadSHA = target.pull.head
 	if err != nil {
@@ -383,6 +388,7 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		State:               rows.state,
 		Reason:              rows.reason,
 		ReasonLine:          rows.line,
+		OriginRow:           rows.origin,
 		RunReason:           runReasonFor(rows.state, stated.RunReason, stderr),
 		ReaderLine:          stated.ReaderError,
 		AgentError:          agentErrorFor(stated.AgentError, stderr),
@@ -690,7 +696,11 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	input.Installation = target.installation
 	input.AccountHost = target.accountHost
 	input.Platform, input.Repository, input.PullRequest = target.platform, target.repository, pull.pullRequest
-	input.Amounts = resolveAmounts(ctx, host, pull.settingsRef(), stderr)
+	amounts, settings := resolveSettings(ctx, host, pull.settingsRef(), stderr)
+	input.Amounts = amounts
+	if input.ReceiptsAsked {
+		input.Receipt, input.ReceiptsAsked = readReceipt(ctx, host, pull, settings, rowsPath, stderr)
+	}
 	// A recorded run's figures were spent on no commit of this pull request,
 	// so they join no total and no baseline.
 	var runs earlierRuns
@@ -791,6 +801,13 @@ func printResult(stdout io.Writer, input comment.Input) error {
 // cannot be read, a repository not known to be private withholds amounts. It
 // spends part of the report's time at most, so the check still posts.
 func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) comment.Amounts {
+	amounts, _ := resolveSettings(ctx, host, ref, stderr)
+	return amounts
+}
+
+// resolveSettings is resolveAmounts, beside the comment's settings as
+// costroid.yml states them at ref, nil when the file could not be read.
+func resolveSettings(ctx context.Context, host scm.Reporter, ref string, stderr io.Writer) (comment.Amounts, *comment.Config) {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
 	config, err := readConfig(ctx, host, ref)
@@ -798,19 +815,23 @@ func resolveAmounts(ctx context.Context, host scm.Reporter, ref string, stderr i
 		fmt.Fprintf(stderr, "costroid: warning: %s: %v\n", configFile, err)
 	}
 	if err == nil && config.ShowCost {
-		return comment.AmountsShown
+		return comment.AmountsShown, &config
+	}
+	read := &config
+	if err != nil {
+		read = nil
 	}
 	visibility, visibilityErr := host.Visibility(ctx)
 	switch {
 	case visibilityErr != nil:
 		fmt.Fprintf(stderr, "costroid: warning: repository visibility: %v\n", visibilityErr)
-		return comment.AmountsUnsettled
+		return comment.AmountsUnsettled, read
 	case visibility == scm.Private:
-		return comment.AmountsShown
+		return comment.AmountsShown, read
 	case err != nil:
-		return comment.AmountsUnsettled
+		return comment.AmountsUnsettled, read
 	}
-	return comment.AmountsOff
+	return comment.AmountsOff, read
 }
 
 func readConfig(ctx context.Context, host scm.Reporter, ref string) (comment.Config, error) {
@@ -895,4 +916,134 @@ func workflowStart(ctx context.Context, host scm.Reporter, pull pullContext, std
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	return start
+}
+
+// receiptsVariable is the action's receipts input: true asks the report to
+// read the receipt the pull request's author posted.
+const receiptsVariable = "COSTROID_RECEIPTS"
+
+// receiptsAsked reads whether the workflow asked for receipts. Only a report
+// on GitHub reads one in this release.
+func receiptsAsked(system cicontext.System, stderr io.Writer) bool {
+	switch value := os.Getenv(receiptsVariable); {
+	case value == "" || value == "false":
+		return false
+	case value != "true":
+		noReceipt(stderr, fmt.Sprintf("%s is %q, neither true nor false", receiptsVariable, value))
+		return false
+	case system != cicontext.GitHubActions:
+		noReceipt(stderr, "this release reads a receipt on GitHub alone")
+		return false
+	}
+	return true
+}
+
+// receiptHost is what reading a receipt needs from the host: who opened the
+// pull request and from which branch, and the comments its author posted.
+type receiptHost interface {
+	PullOrigin(ctx context.Context, number int) (scm.PullOrigin, error)
+	AuthorComments(ctx context.Context, pullRequest int, author, marker string) ([]scm.AuthoredComment, error)
+}
+
+// readReceipt reads the newest receipt the pull request's author posted, and
+// prices its sessions at the catalog this binary carries. It answers whether
+// the comment states a receipt line: false when it could not read one, on a
+// fork's pull request, which this release leaves out, and when every session
+// the receipt states is one the run's own rows hold. Nothing it returns
+// reaches a rule, a total or the verdict.
+func readReceipt(ctx context.Context, host scm.Reporter, pull pullContext, settings *comment.Config, rowsPath string, stderr io.Writer) (*comment.Receipt, bool) {
+	reader, readable := host.(receiptHost)
+	if !readable || pull.pullRequest < 1 {
+		return nil, false
+	}
+	if settings == nil {
+		noReceipt(stderr, configFile+" on the base branch could not be read")
+		return nil, false
+	}
+	origin, err := reader.PullOrigin(ctx, pull.pullRequest)
+	if err != nil {
+		noReceipt(stderr, cli.Plain(err))
+		return nil, false
+	}
+	if origin.Fork {
+		noReceipt(stderr, "this release reads none on a fork's pull request")
+		return nil, false
+	}
+	posted, err := reader.AuthorComments(ctx, pull.pullRequest, origin.Author, receipts.Marker)
+	if err != nil {
+		noReceipt(stderr, cli.Plain(err))
+		return nil, false
+	}
+	comments := make([]receipts.Posted, len(posted))
+	for index, each := range posted {
+		comments[index] = receipts.Posted{ID: each.ID, Body: each.Body, CreatedAt: each.CreatedAt, UpdatedAt: each.UpdatedAt}
+	}
+	reading, found := receipts.Newest(comments, origin.Branch, !settings.ReceiptsOff)
+	if !found {
+		return nil, true
+	}
+	stated := &comment.Receipt{CommentID: reading.Comment.ID, CreatedAt: reading.Comment.CreatedAt, SHA256: reading.SHA256, Author: origin.Author}
+	if reading.Refused != "" {
+		stated.Refused = comment.ReceiptReason(reading.Refused)
+		return stated, true
+	}
+	if err := priceReceipt(stated, reading.Receipt, runSessions(rowsPath)); err != nil {
+		noReceipt(stderr, err.Error())
+		return nil, false
+	}
+	return stated, true
+}
+
+// noReceipt says why the report reads no receipt, and the comment states no
+// receipt line.
+func noReceipt(stderr io.Writer, why string) {
+	fmt.Fprintf(stderr, "costroid: warning: no receipt is read: %s\n", why)
+}
+
+// priceReceipt prices a receipt's sessions, but those the run's own rows
+// hold, into stated.
+func priceReceipt(stated *comment.Receipt, read receipts.Receipt, held func(string) bool) error {
+	prices, err := catalog.Load()
+	if err != nil {
+		return err
+	}
+	ci, _ := cicontext.Read(os.Getenv)
+	rows, err := receipts.Rows(read, prices, ci.Tags(), held)
+	if err != nil {
+		return err
+	}
+	_, _, all := receipts.Days(read, nil)
+	first, last, sessions := receipts.Days(read, held)
+	if sessions == 0 {
+		return errors.New("every session the receipt states is one the run's own rows hold")
+	}
+	stated.Sessions, stated.FirstDay, stated.LastDay, stated.Held = sessions, first, last, all-sessions
+	for _, figure := range receipts.Figures(rows) {
+		stated.Figures = append(stated.Figures, comment.ReceiptFigure{Currency: figure.Currency, Cost: figure.Cost, Rows: figure.Rows})
+	}
+	return nil
+}
+
+// runSessions reports a session id that a row of the rows file names, so a
+// session the run also holds is counted once. A file that cannot be read
+// names none.
+func runSessions(rowsPath string) func(string) bool {
+	named := map[string]bool{}
+	file, err := os.Open(rowsPath)
+	if err != nil {
+		return func(string) bool { return false }
+	}
+	defer file.Close()
+	_ = focus.EachLine(file, func(line []byte) error {
+		var row struct {
+			Tags focus.Tags `json:"Tags"`
+		}
+		if json.Unmarshal(line, &row) == nil {
+			if session, err := row.Tags.Text(focus.TagSessionID); err == nil && session != "" {
+				named[session] = true
+			}
+		}
+		return nil
+	})
+	return func(session string) bool { return named[session] }
 }

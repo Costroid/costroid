@@ -7,8 +7,9 @@ On your machine                       In a workflow job
   doctor    check a repository          approve       post an approved check
   run       run an agent under a cap    review        post the agent's answer
   policy    give the verdict offline    result        print a check's result
-  validate  check costroid.yml          mcp           answer an agent over MCP
-  version   print the release           lint-recipes  check Costroid's recipes
+  receipt   count your own sessions     mcp           answer an agent over MCP
+  validate  check costroid.yml          lint-recipes  check Costroid's recipes
+  version   print the release
 
 To a platform or a provider           For a ledger of your own
   export     send or convert rows       serve    run the ingest service
