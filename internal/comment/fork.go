@@ -35,6 +35,6 @@ func forkHeldLine(request string) string {
 
 // forkOverBudget is the fold's line on a fork's own rows within a budget: what
 // a run over it would conclude. The follow-up holds such a check at neutral,
-// in the warn-only period and after it, so the line never says a rule would
-// fail.
-const forkOverBudget = "Over budget, on a fork's own rows, the check stays neutral: a fork's rows are the fork's own claim."
+// in the warn-only period and after it, so the line is one sentence in both
+// and never says a rule would fail.
+const forkOverBudget = "Over budget, the check would stay neutral, because a fork's rows are the fork's own claim."

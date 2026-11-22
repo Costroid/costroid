@@ -15,7 +15,7 @@ Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, L
 
 Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
 
-Over budget, on a fork's own rows, the check stays neutral: a fork's rows are the fork's own claim. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+Over budget, the check would stay neutral, because a fork's rows are the fork's own claim. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
 

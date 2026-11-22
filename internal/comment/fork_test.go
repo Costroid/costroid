@@ -72,15 +72,16 @@ func TestOnForkRowsHoldsEachRulesFailureAtNeutral(t *testing.T) {
 // TestAForksRowsWithinBudgetFoldWhatIsTrueOfAFork reports a fork's own rows
 // within a budget, inside the warn-only period, after it and with amounts
 // withheld. Under the fold, once, the comment says what a run over the budget
-// would conclude on a fork, in the words of a held check's title: the check
-// stays neutral. It never says that the rule would fail, or would warn until
-// the period ends. That line is all that differs from the same rows off a
+// would conclude on a fork, in the words of a held check's title and in the
+// conditional the fold uses off a fork: the check would stay neutral. It is
+// the same sentence inside the period and after it, and never says that the
+// rule would fail, or would warn until the period ends. That line is all that differs from the same rows off a
 // fork: the title, the machine block and the outputs are the same, and rows
 // that are no fork's keep the line they had. The golden state holds it.
 func TestAForksRowsWithinBudgetFoldWhatIsTrueOfAFork(t *testing.T) {
-	for _, words := range []string{"Over budget, on a fork's own rows", "the fork's own claim", "neutral"} {
-		if !strings.Contains(forkOverBudget, words) {
-			t.Errorf("the fold's line does not say %q, as a held check's title does: %s", words, forkOverBudget)
+	for _, words := range []string{"Over budget, the check would stay neutral", "a fork's rows are the fork's own claim"} {
+		if !strings.Contains(forkOverBudget, words) || !strings.Contains(forkClosing, "A fork's rows are the fork's own claim") {
+			t.Errorf("the fold's line does not say %q, in the words a held check's title closes on: %s", words, forkOverBudget)
 		}
 	}
 	inside := neutralOnAgentRows(t)
