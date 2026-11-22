@@ -18,7 +18,13 @@ The `report` stage sets `cost`, `currency`, `cost_basis`, `enforcement_grade`, `
 
 ## Run Claude Code under a budget
 
-From the root of your repository, `costroid init github --agent claude` writes this workflow to `.github/workflows/costroid.yml`. Pasted as it stands, it runs as well:
+1. Set one secret, `ANTHROPIC_API_KEY`, an Anthropic API key. The recipe runs Claude Code with `--bare`, which signs in with an API key alone, so a Claude subscription's token does not work here.
+2. Copy the workflow below to `.github/workflows/costroid.yml`, on a new branch.
+3. Open a pull request.
+
+Each push to the pull request runs the agent again, with a budget of USD 5 for each run. [The Codex recipe](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/recipes/github-codex.yml) runs Codex the same way.
+
+From the root of your repository, `costroid init github --agent claude` writes this workflow to `.github/workflows/costroid.yml`, once [`costroid` is installed](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/docs/install.md). Pasted as it stands, it runs as well:
 
 ```yaml
 # Runs Claude Code on a pull request under a budget, then reports what it cost.
@@ -154,10 +160,6 @@ jobs:
           # A skipped agent job then reads as skipped, not as a run with no rows.
           agent-result: ${{ needs.agent.result }}
 ```
-
-Set one secret, `ANTHROPIC_API_KEY`, an Anthropic API key. The recipe runs Claude Code with `--bare`, which signs in with an API key alone, so a Claude subscription's token does not work here. Then open a pull request.
-
-Each push to the pull request runs the agent again, with a budget of USD 5 for each run. [The Codex recipe](https://github.com/Costroid/costroid/blob/__RELEASE_TAG__/recipes/github-codex.yml) runs Codex the same way.
 
 ## Already on claude-code-action
 

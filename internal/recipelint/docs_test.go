@@ -357,6 +357,40 @@ func TestReadmeInstallBlockIsTheInstallPagesOwn(t *testing.T) {
 	}
 }
 
+// TestListingStatesItsStepsBeforeTheWorkflow holds the listing to say what a
+// person does on GitHub, as three numbered steps in order, the secret, the
+// workflow's file and the pull request, above the workflow it asks them to
+// paste, with the install page linked for a reader who wants costroid init.
+// Nothing follows the workflow in its section, where a reader would miss it.
+func TestListingStatesItsStepsBeforeTheWorkflow(t *testing.T) {
+	body := section(t, read(t, listingTemplate), "Run Claude Code under a budget")
+	above, workflow, found := strings.Cut(body, "\n```yaml\n")
+	if !found {
+		t.Fatal("the listing's section holds no workflow")
+	}
+	var steps []string
+	for _, line := range strings.Split(above, "\n") {
+		if number, step, numbered := strings.Cut(line, ". "); numbered && number == strconv.Itoa(len(steps)+1) {
+			steps = append(steps, step)
+		}
+	}
+	names := []string{"Set one secret, `ANTHROPIC_API_KEY`", "`.github/workflows/costroid.yml`", "pull request"}
+	if len(steps) != len(names) {
+		t.Fatalf("the listing counts %d steps above the workflow, want %d: %q", len(steps), len(names), steps)
+	}
+	for index, name := range names {
+		if !strings.Contains(steps[index], name) {
+			t.Errorf("step %d reads %q and does not name %s", index+1, steps[index], name)
+		}
+	}
+	if !strings.Contains(above, "/docs/install.md)") {
+		t.Error("the listing does not link the install page above the workflow")
+	}
+	if _, below, _ := strings.Cut(workflow, "\n```\n"); strings.TrimSpace(below) != "" {
+		t.Errorf("the listing goes on under the workflow, where a reader misses it:\n%s", below)
+	}
+}
+
 // readingWords counts the words a reader reads: those outside fenced blocks,
 // which are copied rather than read, with link targets left out.
 func readingWords(text string) int {
