@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cli"
@@ -33,14 +34,21 @@ var doctorHelp = cli.Page{
 Costroid: this binary's release, costroid.yml, the workflows and their pins,
 the agents and keys on this machine, and the repository's secrets and
 variables.`,
-	Usage:    []string{"costroid doctor [--ci]"},
-	Examples: []string{"costroid doctor", "costroid doctor --ci"},
-	Flags:    []cli.Row{{"--ci", "add the checks only a GitHub Actions job can make"}},
+	Usage:    []string{"costroid doctor [--ci] [--json]"},
+	Examples: []string{"costroid doctor", "costroid doctor --ci", "costroid doctor --json"},
+	Flags: []cli.Row{
+		{"--ci", "add the checks only a GitHub Actions job can make"},
+		{"--json", "print the checks as one JSON object"},
+	},
 	Sections: []cli.Section{
 		{Heading: "What it prints", Body: []cli.Block{cli.Text(`It prints one line per check: ok, warn or fail, the fact and, after
 warn or fail, the fix. It reads secret names through gh secret list when gh is
 on PATH, and those of the environment a job names through gh secret list
---env. It never prints a secret's value, prefix or length.`)}},
+--env. It never prints a secret's value, prefix or length.
+
+--json prints one object on stdout in their place, costroid.doctor/0.1: each
+check's status and line, and the count of each status. docs/output.md
+describes the object.`)}},
 		{Heading: "On GitLab, and outside a repository", Body: []cli.Block{cli.Text(`On GitLab it checks the template that installs Costroid, .gitlab/costroid.yml
 or a local file .gitlab-ci.yml includes, and its pins, in place of the
 workflows. It reads no CI/CD variable there and runs no gh. Outside a git
@@ -125,6 +133,18 @@ func runOutput(ctx context.Context, dir, name string, args ...string) ([]byte, e
 	return out, err
 }
 
+// askingGitHub is output with one line said on stderr before the first run of
+// gh, which waits on GitHub. --quiet drops the line.
+func askingGitHub(output func(ctx context.Context, dir, name string, args ...string) ([]byte, error), stderr io.Writer) func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	var once sync.Once
+	return func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+		if name == "gh" {
+			once.Do(func() { cli.Say(stderr, "costroid: asking GitHub through gh\n") })
+		}
+		return output(ctx, dir, name, args...)
+	}
+}
+
 func firstLineOf(text string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
 	return line
@@ -137,15 +157,38 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		Timeout:       doctorTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	host := doctorHost{getenv: os.Getenv, lookPath: exec.LookPath, output: runOutput, client: client, now: time.Now}
+	host := doctorHost{getenv: os.Getenv, lookPath: exec.LookPath, output: askingGitHub(runOutput, stderr), client: asking(client, stderr), now: time.Now}
 	return doctor(ctx, ".", buildInfo{version: version, commit: commit}, host, args, stdout, stderr)
+}
+
+// doctorSchema names the object doctor --json prints.
+const doctorSchema = "costroid.doctor/0.1"
+
+// checkup is what doctor found: costroid.doctor/0.1. A check's line is the
+// line doctor prints for it.
+type checkup struct {
+	Schema string        `json:"schema"`
+	Checks []doctorCheck `json:"checks"`
+	Count  doctorCount   `json:"count"`
+}
+
+type doctorCheck struct {
+	Status verdict `json:"status"`
+	Line   string  `json:"line"`
+}
+
+type doctorCount struct {
+	Fail int `json:"fail"`
+	Warn int `json:"warn"`
+	OK   int `json:"ok"`
 }
 
 // doctor checks the repository at root and prints its table.
 func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	ci := set.Bool("ci", false, "add the checks only a GitHub Actions job can make")
-	err := parseFlags(set, args, doctorHelp, stdout)
+	asJSON := set.Bool("json", false, "print the checks as one JSON object")
+	err := parseFlags(set, args, doctorHelp, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -158,46 +201,67 @@ func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, 
 	if *ci && host.getenv("GITHUB_ACTIONS") != "true" {
 		return cli.Fail(stderr, errors.New("--ci runs as a step of a GitHub Actions job, and GITHUB_ACTIONS is not true here"))
 	}
-	lines, err := examine(ctx, root, build, host, *ci)
+	lines, gitlab, err := examine(ctx, root, build, host, *ci)
 	if err != nil {
 		return cli.Fail(stderr, cli.File(err))
 	}
-	counts := map[verdict]int{}
+	found := checkup{Schema: doctorSchema, Checks: []doctorCheck{}}
 	for _, line := range lines {
-		fmt.Fprintln(stdout, line)
-		counts[line.verdict]++
+		found.Checks = append(found.Checks, doctorCheck{Status: line.verdict, Line: line.String()})
+		switch line.verdict {
+		case verdictFail:
+			found.Count.Fail++
+		case verdictWarn:
+			found.Count.Warn++
+		default:
+			found.Count.OK++
+		}
 	}
-	fmt.Fprintf(stdout, "costroid: doctor: %d fail, %d warn, %d ok\n", counts[verdictFail], counts[verdictWarn], counts[verdictOK])
-	if counts[verdictFail] > 0 {
+	if *asJSON {
+		if err := printObject(stdout, found); err != nil {
+			return cli.Fail(stderr, err)
+		}
+	} else {
+		for _, check := range found.Checks {
+			fmt.Fprintln(stdout, check.Line)
+		}
+		fmt.Fprintf(stdout, "costroid: doctor: %d fail, %d warn, %d ok\n", found.Count.Fail, found.Count.Warn, found.Count.OK)
+	}
+	if found.Count.Fail > 0 {
 		return exitRejected
 	}
-	if counts[verdictWarn] == 0 && !*ci {
-		fmt.Fprintln(stdout, nextAfterDoctor)
+	if found.Count.Warn == 0 && !*ci {
+		next := nextAfterDoctor
+		if gitlab {
+			next = nextAfterDoctorOnGitLab
+		}
+		cli.Say(stderr, "%s\n", next)
 	}
 	return 0
 }
 
-// examine runs every check in the order the table prints them. Outside a git
-// repository it checks this machine alone. On GitLab it reads the templates
-// that install Costroid in place of the workflows, and never runs gh.
-func examine(ctx context.Context, root string, build buildInfo, host doctorHost, ci bool) ([]finding, error) {
+// examine runs every check in the order the table prints them, and says
+// whether the repository runs Costroid on GitLab. Outside a git repository it
+// checks this machine alone. On GitLab it reads the templates that install
+// Costroid in place of the workflows, and never runs gh.
+func examine(ctx context.Context, root string, build buildInfo, host doctorHost, ci bool) ([]finding, bool, error) {
 	if outsideRepository(ctx, root, host) {
 		lines := []finding{releaseLine(build, nil, nil), fail("this directory is in no git repository, so doctor checked only this machine", "run doctor at the root of your repository")}
-		return append(lines, machineLines(ctx, root, host, agentsRun(nil, nil))...), nil
+		return append(lines, machineLines(ctx, root, host, agentsRun(nil, nil))...), false, nil
 	}
 	flows, err := readWorkflows(root)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	templates, err := readGitLabTemplates(root)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	gitlab := onGitLab(ctx, root, host, flows, templates)
 	lines := []finding{releaseLine(build, flows, templates)}
 	settings, err := configLines(root)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	lines = append(lines, settings...)
 	if !gitlab {
@@ -215,7 +279,7 @@ func examine(ctx context.Context, root string, build buildInfo, host doctorHost,
 	if ci {
 		lines = append(lines, jobLines(root, host)...)
 	}
-	return lines, nil
+	return lines, gitlab, nil
 }
 
 // machineLines check the agents and the keys on this machine.

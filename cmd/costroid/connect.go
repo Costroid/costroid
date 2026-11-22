@@ -130,13 +130,13 @@ type binding struct {
 	sent bool
 }
 
-func (b binding) print(stdout io.Writer) {
+func (b binding) print(stderr io.Writer) {
 	proven := b.provenAt.UTC().Format(time.RFC3339)
 	if b.sent {
-		fmt.Fprintf(stdout, "costroid: %s is bound to tenant %s, proven at %s\n", b.installation, b.tenant, proven)
+		cli.Say(stderr, "costroid: %s is bound to tenant %s, proven at %s\n", b.installation, b.tenant, proven)
 		return
 	}
-	fmt.Fprintf(stdout, "costroid: %s is bound to tenant %s, proven at %s, so no proof was sent\n", b.installation, b.tenant, proven)
+	cli.Say(stderr, "costroid: %s is bound to tenant %s, proven at %s, so no proof was sent\n", b.installation, b.tenant, proven)
 }
 
 // connectCommand sends with a client that follows no redirect, so the token
@@ -146,7 +146,7 @@ func connectCommand(ctx context.Context, args []string, std stdio) int {
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return connect(ctx, args, client, os.Getenv, connectClock{now: time.Now, wait: waitFor}, std.stdout, std.stderr)
+	return connect(ctx, args, asking(client, std.stderr), os.Getenv, connectClock{now: time.Now, wait: waitFor}, std.stdout, std.stderr)
 }
 
 // connectClock is the time connect reads and how it waits before a retry.
@@ -169,7 +169,7 @@ func waitFor(ctx context.Context, d time.Duration) error {
 }
 
 func connect(ctx context.Context, args []string, client *http.Client, getenv func(string) string, clock connectClock, stdout, stderr io.Writer) int {
-	flags, err := parseConnect(args, stdout)
+	flags, err := parseConnect(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -185,7 +185,7 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 	var refused *refusal
 	switch {
 	case err == nil:
-		bound.print(stdout)
+		bound.print(stderr)
 		return 0
 	case errors.As(err, &refused):
 		code := refused.code
@@ -199,11 +199,11 @@ func connect(ctx context.Context, args []string, client *http.Client, getenv fun
 	}
 }
 
-func parseConnect(args []string, stdout io.Writer) (connectFlags, error) {
+func parseConnect(args []string, stdout, stderr io.Writer) (connectFlags, error) {
 	set := flag.NewFlagSet("connect", flag.ContinueOnError)
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation to bind: github-owner:<id> or gitlab-namespace:<id>")
-	if err := parseFlags(set, args, connectHelp, stdout); err != nil {
+	if err := parseFlags(set, args, connectHelp, stdout, stderr); err != nil {
 		return connectFlags{}, err
 	}
 	if set.NArg() > 0 {
@@ -306,7 +306,7 @@ func bind(ctx context.Context, target platform, job ciJob, clock connectClock, s
 	}
 	sent, err := target.sendProof(ctx, job.installation, identity.Tenant.ID, proof)
 	if pause, ok := retryAfterKeys(err); ok {
-		fmt.Fprintf(stderr, "costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(pause.Seconds()))
+		cli.Say(stderr, "costroid: Costroid Platform could not read the CI system's keys, so connect sends the proof again in %d s\n", int(pause.Seconds()))
 		if pause > 0 {
 			if err := clock.wait(ctx, pause); err != nil {
 				return named, fmt.Errorf("wait to send the proof again: %w", err)

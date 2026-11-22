@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/focusfile"
@@ -40,7 +41,7 @@ func ingestEstimate(flags ingestRunFlags, stderr io.Writer) error {
 	info, err := os.Lstat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist) && flags.estimate.optional:
-		fmt.Fprintf(stderr, "costroid: the infrastructure estimate is not available: there is no file at %s. The step that writes it did not run or wrote nothing, as on a fork's pull request that gets no secret. No rows were added to %s\n", path, flags.out)
+		cli.Say(stderr, "costroid: the infrastructure estimate is not available: there is no file at %s. The step that writes it did not run or wrote nothing, as on a fork's pull request that gets no secret. No rows were added to %s\n", path, flags.out)
 		writeEstimateNote(flags, stderr)
 		return nil
 	case errors.Is(err, fs.ErrNotExist):
@@ -148,19 +149,19 @@ func endsInLineFeed(path string, size int64) error {
 // were dropped.
 func summarizeEstimate(stderr io.Writer, path, out string, read focusfile.File, rows []byte) {
 	if len(read.Rows) == 0 {
-		fmt.Fprintf(stderr, "costroid: %s holds no rows, so no rows were added to %s\n", path, out)
+		cli.Say(stderr, "costroid: %s holds no rows, so no rows were added to %s\n", path, out)
 		return
 	}
-	fmt.Fprintf(stderr, "costroid: added %d %s from %s to %s, each figure read from %s, with the basis estimate\n", len(read.Rows), plural("row", len(read.Rows)), path, out, read.CostColumn)
+	cli.Say(stderr, "costroid: added %d %s from %s to %s, each figure read from %s, with the basis estimate\n", len(read.Rows), plural("row", len(read.Rows)), path, out, read.CostColumn)
 	ledger, err := comment.ReadRows(bytes.NewReader(rows))
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
 	for _, figure := range ledger.Infrastructure.Figures {
-		fmt.Fprintf(stderr, "costroid: %s %s for %s, estimated, from %s, %d %s\n", figure.Currency, figure.Cost, figure.Period, figure.Source, figure.Rows, plural("row", figure.Rows))
+		cli.Say(stderr, "costroid: %s %s for %s, estimated, from %s, %d %s\n", figure.Currency, figure.Cost, figure.Period, figure.Source, figure.Rows, plural("row", figure.Rows))
 	}
 	if more := ledger.Infrastructure.FiguresOmitted; more > 0 {
-		fmt.Fprintf(stderr, "costroid: %d more %s\n", more, plural("figure", more))
+		cli.Say(stderr, "costroid: %d more %s\n", more, plural("figure", more))
 	}
 	if read.TaggedRows > 0 {
 		fmt.Fprintf(stderr, "costroid: warning: %d %s of %s carried Tags, which were dropped: a file can carry any tag, and the rows take the pull request's from the CI system\n", read.TaggedRows, plural("row", read.TaggedRows), path)

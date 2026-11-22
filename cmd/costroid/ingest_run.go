@@ -106,7 +106,7 @@ func kindNames(kinds []sourceKind, word string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " " + word + " " + names[len(names)-1]
 }
 
-func parseIngestRun(args []string, stdout io.Writer) (ingestRunFlags, error) {
+func parseIngestRun(args []string, stdout, stderr io.Writer) (ingestRunFlags, error) {
 	set := flag.NewFlagSet("ingest-run", flag.ContinueOnError)
 	var sources sourcesFlag
 	set.Func("from", "KIND=PATH, the source to read", sources.from)
@@ -131,7 +131,7 @@ func parseIngestRun(args []string, stdout io.Writer) (ingestRunFlags, error) {
 	optional := set.Bool("optional", false, "with focus, add no rows and say why when the file is not there")
 	account := addAccountFlags(set)
 	shaping := addRowFlags(set)
-	if err := parseFlags(set, args, ingestRunHelp, stdout); err != nil {
+	if err := parseFlags(set, args, ingestRunHelp, stdout, stderr); err != nil {
 		return ingestRunFlags{}, err
 	}
 	given := sources.given
@@ -334,7 +334,7 @@ func (e openedExecution) read() (adapter.Report, error) {
 }
 
 func ingestRunCommand(args []string, stdout, stderr io.Writer) int {
-	flags, err := parseIngestRun(args, stdout)
+	flags, err := parseIngestRun(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -389,9 +389,9 @@ func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 	}
 	recordRunResult(io.Discard, stderr, record)
 	summarizeRows(stderr, flags.out, pinned.Version(), result)
-	fmt.Fprintf(stderr, "costroid: %s\n", result.Enforcement.Note)
+	cli.Say(stderr, "costroid: %s\n", result.Enforcement.Note)
 	if stated := result.Report.AgentStated; stated != nil {
-		fmt.Fprintf(stderr, "costroid: %s stated %s AI credits for this run. Costroid does not convert credits.\n", stated.Source, stated.Quantity)
+		cli.Say(stderr, "costroid: %s stated %s AI credits for this run. Costroid does not convert credits.\n", stated.Source, stated.Quantity)
 	}
 	warnAccount(stderr, flags.account)
 	for _, warning := range result.Report.Warnings {

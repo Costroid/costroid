@@ -65,7 +65,7 @@ A note says something you should know. Many teams need an agent that writes to t
 costroid lint --strict .github/workflows/claude.yml
 ```
 
-Each finding prints as `file:line: severity: rule: message`. High and medium findings go to standard error, notes to standard output.
+Each finding prints as `file:line: severity: rule: message` on standard output: the high and medium findings, then the notes, then the count. `--json` prints them as one object, which [`output.md`](output.md#costroid-lint---json) describes.
 
 ## Report from the workflow you have
 

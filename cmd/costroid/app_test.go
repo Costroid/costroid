@@ -179,15 +179,15 @@ func githubConversions(t *testing.T, pemText []byte) *httptest.Server {
 
 // browse plays the browser: it opens the address create printed, reads the
 // form GitHub would take, and comes back with the code for the form's state.
-func browse(t *testing.T, client *http.Client, stdout *lockedBuffer) {
+func browse(t *testing.T, client *http.Client, said *lockedBuffer) {
 	t.Helper()
 	address := regexp.MustCompile(`costroid: open (http://127\.0\.0\.1:[0-9]+)/ in a browser`)
 	var origin string
 	for deadline := time.Now().Add(10 * time.Second); origin == ""; time.Sleep(10 * time.Millisecond) {
-		if match := address.FindStringSubmatch(stdout.String()); match != nil {
+		if match := address.FindStringSubmatch(said.String()); match != nil {
 			origin = match[1]
 		} else if time.Now().After(deadline) {
-			t.Fatalf("no address was printed:\n%s", stdout.String())
+			t.Fatalf("no address was printed:\n%s", said.String())
 		}
 	}
 	page := get(t, client, origin+"/", http.StatusOK)
@@ -275,8 +275,8 @@ func TestAppCreateNeverWritesPEM(t *testing.T) {
 		exit <- appMain(context.Background(), []string{"create", "--name", "Costroid for example", "--webhook-url", appWebhook,
 			"--kms-key", kmstest.ImportKey, "--org", "example"}, world, stdout, stderr)
 	}()
-	browse(t, client, stdout)
-	if code := <-exit; code != 0 {
+	browse(t, client, stderr)
+	if code := <-exit; code != 0 || stdout.String() != "" {
 		t.Fatalf("exit %d:\n%s%s", code, stdout.String(), stderr.String())
 	}
 	if imported := kms.Key(kmstest.ImportKey); imported == nil || !imported.Equal(key) {
@@ -322,8 +322,8 @@ func TestAppCreateNeverWritesPEM(t *testing.T) {
 		"at " + appWeb + "/organizations/example/settings/apps/costroid-for-example, and give costroid serve",
 		"costroid: give costroid serve COSTROID_GITHUB_APP_ID=987654 and COSTROID_GITHUB_APP_KMS_KEY=" + kmstest.ImportKey + "\n",
 	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Errorf("stdout does not say %q:\n%s", want, stdout.String())
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr does not say %q:\n%s", want, stderr.String())
 		}
 	}
 }

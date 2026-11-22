@@ -9,11 +9,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Costroid/costroid/internal/adapter"
@@ -53,13 +52,16 @@ func main() {
 	if code, child := policy.PackChild(); child {
 		os.Exit(code)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := dispatch(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
-	stop()
-	os.Exit(code)
+	os.Exit(cli.Main(func(ctx context.Context) int {
+		return dispatch(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+	}))
 }
 
+// dispatch runs one command line. What the command prints because it was
+// asked to goes to stdout. What it says about its work goes to stderr, which
+// --quiet holds to warnings and errors.
 func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	stderr = cli.NewMessages(stderr)
 	std := stdio{stdin: stdin, stdout: stdout, stderr: stderr}
 	if len(args) == 0 {
 		fmt.Fprint(stdout, usage)
@@ -82,30 +84,6 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return 0
 	}
 	return entry.run(ctx, args[1:], std)
-}
-
-func versionCommand(_ context.Context, args []string, std stdio) int {
-	set := flag.NewFlagSet("version", flag.ContinueOnError)
-	err := parseFlags(set, args, versionHelp, std.stdout)
-	if errors.Is(err, flag.ErrHelp) {
-		return 0
-	}
-	if err == nil && set.NArg() > 0 {
-		err = errors.New("version takes no argument")
-	}
-	if err != nil {
-		return cli.Fail(std.stderr, cli.Mistaken("version", err))
-	}
-	pinned, err := catalog.Load()
-	if err != nil {
-		return cli.Fail(std.stderr, err)
-	}
-	line := fmt.Sprintf("costroid %s, catalog %s", version, pinned.Version())
-	if day, known := catalog.PricesRead(pinned.Version()); known {
-		line += ", prices read " + day
-	}
-	fmt.Fprintln(std.stdout, line)
-	return 0
 }
 
 // accountFlags are the two columns a caller states about who a run spends on.
@@ -227,7 +205,7 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
 	account := addAccountFlags(set)
 	shaping := addRowFlags(set)
-	if err := parseFlags(set, args, runHelp, stdout); err != nil {
+	if err := parseFlags(set, args, runHelp, stdout, stderr); err != nil {
 		return runFlags{}, err
 	}
 	if (*gatewayURL == "") != (*keyFile == "") {
@@ -259,7 +237,7 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	}
 	if *out == "" {
 		*out = defaultRowsFile
-		fmt.Fprintf(stderr, "costroid: no --out was given, so the rows go to %s in the working directory\n", defaultRowsFile)
+		cli.Say(stderr, "costroid: no --out was given, so the rows go to %s in the working directory\n", defaultRowsFile)
 	}
 	return runFlags{
 		agent: *agent, budget: amount, out: *out, account: account, shape: shape, argv: set.Args(), json: *asJSON,
@@ -327,7 +305,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	// Under --json stdout carries the result object alone.
 	agentOutput := stdout
 	if flags.json {
-		agentOutput = stderr
+		agentOutput = cli.Under(stderr)
 	}
 	ci := readCI(stderr)
 	record := runRecord{out: flags.out, budget: &flags.budget, head: ci.Head, json: flags.json, ciRun: ciRunFromEnvironment(os.Getenv)}
@@ -337,7 +315,13 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		recordRunResult(stdout, stderr, record)
 		return exitFailure
 	}
+	// Ctrl-C ends the context, and run.Run then stops the agent's process
+	// group: SIGTERM, and SIGKILL once the grace has passed. costroid waits
+	// for that, and for the rows of what the agent spent, before it exits.
+	forget := cli.OnInterrupt(cli.Interrupt{Wait: agentGrace + recordWait, Doing: "stopping " + filepath.Base(flags.argv[0])})
+	defer forget()
 	result, err := run.Run(ctx, run.Options{
+		Grace:          agentGrace,
 		Agent:          flags.agent,
 		Argv:           flags.argv,
 		Budget:         flags.budget,
@@ -347,7 +331,7 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		Rows:           focus.Shaped(rows, flags.shape),
 		Stdin:          stdin,
 		Stdout:         agentOutput,
-		Stderr:         stderr,
+		Stderr:         cli.Under(stderr),
 		Catalog:        pinned,
 		Gateway:        session,
 	})
@@ -367,6 +351,15 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 	}
 	return result.AgentExit
 }
+
+const (
+	// agentGrace is how long an agent that run stops has before SIGKILL, at
+	// the cap and at an interrupt.
+	agentGrace = 5 * time.Second
+	// recordWait is how long an interrupt waits, past the grace, for run to
+	// stop what the agent left and write the rows.
+	recordWait = 5 * time.Second
+)
 
 // runFailed explains what stopped run before the agent started. Every code
 // below exitBudgetStop is the agent's, so run's own mistakes, a wrong command
@@ -508,17 +501,17 @@ const runCurrency = "USD"
 // summarize prints what a run recorded: its rows, its cost, the cap
 // --budget-usd set and how far the cap held. An amount is drawn as the comment
 // draws it. The note stands without its grade's id, which the rows and the
-// result object keep.
+// result object keep. --quiet drops every line but the warnings.
 func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Result) {
 	report := result.Report
 	summarizeRows(w, flags.out, catalogVersion, result)
 	held := strings.TrimPrefix(result.Enforcement.Note, result.Enforcement.Grade+": ")
-	fmt.Fprintf(w, "costroid: cap %s (%s)\n", comment.Money(runCurrency, flags.budget.String()), held)
+	cli.Say(w, "costroid: cap %s (%s)\n", comment.Money(runCurrency, flags.budget.String()), held)
 	if result.Stopped {
-		fmt.Fprintln(w, "costroid: stopped the agent at the cap")
+		cli.Say(w, "costroid: stopped the agent at the cap\n")
 	}
 	if over := result.ListTotal.Sub(flags.budget); over.Sign() > 0 {
-		fmt.Fprintf(w, "costroid: over the cap by %s\n", comment.Money(runCurrency, over.String()))
+		cli.Say(w, "costroid: over the cap by %s\n", comment.Money(runCurrency, over.String()))
 	}
 	warnAccount(w, flags.account)
 	for _, warning := range report.Warnings {
@@ -531,14 +524,14 @@ func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 	// A run-grain entry is one model's total for the whole run, so the count is
 	// of models, never of runs.
 	if count := len(report.Requests); count > 0 && report.Requests[0].Grain == adapter.PerRun {
-		fmt.Fprintf(w, "costroid: %s, one run, %d %s\n", result.Agent, count, plural("model", count))
+		cli.Say(w, "costroid: %s, one run, %d %s\n", result.Agent, count, plural("model", count))
 	} else {
-		fmt.Fprintf(w, "costroid: %s, %d %s\n", result.Agent, count, noun(result, count))
+		cli.Say(w, "costroid: %s, %d %s\n", result.Agent, count, noun(result, count))
 	}
-	fmt.Fprintf(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
+	cli.Say(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
 	// A run with no rows measured nothing, so it states no cost.
 	if result.Rows > 0 {
-		fmt.Fprintf(w, "costroid: %s at list (%s)\n", comment.Money(runCurrency, result.ListTotal.String()), labels[report.CostBasis])
+		cli.Say(w, "costroid: %s at list (%s)\n", comment.Money(runCurrency, result.ListTotal.String()), labels[report.CostBasis])
 	}
 }
 
@@ -548,7 +541,7 @@ func warnAccount(w io.Writer, account accountFlags) {
 	switch {
 	case *account.billing != "":
 	case cicontext.Detect(os.Getenv) == cicontext.NoSystem:
-		fmt.Fprintf(w, "costroid: note: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
+		cli.Say(w, "costroid: note: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
 	default:
 		fmt.Fprintf(w, "costroid: warning: BillingAccountId reads unknown: pass --billing-account or set %s\n", billingAccountVariable)
 	}

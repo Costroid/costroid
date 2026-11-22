@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -93,7 +94,7 @@ func withoutContext(fn func(args []string, stdout, stderr io.Writer) int) runner
 // reconcileWithProvider reads the admin key from the environment and asks the
 // provider's API.
 func reconcileWithProvider(ctx context.Context, args []string, std stdio) int {
-	return reconcileCommand(ctx, args, os.Getenv, reconcile.NewClient(), time.Now, std.stdout, std.stderr)
+	return reconcileCommand(ctx, args, os.Getenv, asking(reconcile.NewClient(), std.stderr), time.Now, std.stdout, std.stderr)
 }
 
 func lookup(name string) (command, bool) {
@@ -168,13 +169,29 @@ func line(lines []string, i int) string {
 }
 
 // The line a command that succeeded ends on names the command a person runs
-// next. demo ends on the verdict sentence, so its line stands above that.
+// next, on standard error, where --quiet drops it. demo ends on the verdict
+// sentence, so its line stands above that. No command of costroid's opens a
+// merge request, so on GitLab doctor's line names the page.
 const (
-	nextAfterDemo     = "Next: costroid init github --agent claude writes the workflow that posts this."
-	nextAfterInit     = "Next: costroid doctor checks this repository before its first pull request."
-	nextAfterDoctor   = "Next: open a pull request, and its first run posts Costroid's comment."
-	nextAfterValidate = "Next: costroid policy --rows rows.jsonl gives the verdict this file gives a run."
+	nextAfterDemo           = "Next: costroid init github --agent claude writes the workflow that posts this."
+	nextAfterInit           = "Next: costroid doctor checks this repository before its first pull request."
+	nextAfterDoctor         = "Next: gh pr create --fill opens the pull request that Costroid comments on."
+	nextAfterDoctorOnGitLab = "Next: open a merge request, as " + cli.Documentation + "/recipes#gitlab-ci says."
+	nextAfterValidate       = "Next: costroid policy --rows rows.jsonl gives the verdict this file gives a run."
 )
+
+// printObject prints, under --json, one object on one line of stdout, which
+// then holds nothing else.
+func printObject(stdout io.Writer, object any) error {
+	encoded, err := json.Marshal(object)
+	if err == nil {
+		_, err = fmt.Fprintf(stdout, "%s\n", encoded)
+	}
+	if err != nil {
+		return fmt.Errorf("print the object: %w", err)
+	}
+	return nil
+}
 
 // standardInput is the path that names standard input where a command reads a
 // file.
@@ -214,9 +231,10 @@ func isHelpFlag(arg string) bool {
 
 // parseFlags parses args with set. Help asked for after other flags prints on
 // stdout, as costroid <name> -h does. A flag the set refuses comes back as the
-// lines that say so, and nothing is printed for it here.
-func parseFlags(set *flag.FlagSet, args []string, help string, stdout io.Writer) error {
-	err := cli.Parse(set, args)
+// lines that say so, and nothing is printed for it here. --quiet, which every
+// set takes, quiets stderr.
+func parseFlags(set *flag.FlagSet, args []string, help string, stdout, stderr io.Writer) error {
+	err := cli.Parse(set, args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(stdout, help)
 	}
@@ -415,6 +433,8 @@ reads and posts nothing on any host. Its verdict holds the rows to costroid.yml
 in the working directory, as costroid policy does. Standard output is the
 comment alone. The last line, on standard error, is the verdict sentence the
 comment opens with.`)}},
+		{Heading: "An argument", Body: []cli.Block{cli.Text(`report reads no argument, and ignores one it is given, so a job that passes
+one keeps running. Every other command but follow-up refuses one and exits 2.`)}},
 		{Heading: "A recorded run", Body: []cli.Block{cli.Text(`--recorded says the rows are a recorded run's, not the pull request's: CI run
 RUN_ID's, recorded on DATE, written YYYY-MM-DD. The check, the comment and the
 job summary say so in the line under their first, without the head commit, and
@@ -471,6 +491,9 @@ finished run's artifact, for a workflow with no report job of its own, such as
 gh-aw's. follow-up then posts for a branch of the repository as well, and reads
 the run's object beside the rows. A fork's check still concludes neutral at
 most.`)}},
+		{Heading: "An argument", Body: []cli.Block{cli.Text(`follow-up reads no argument, and ignores one it is given, so a job that
+passes one keeps running. Every other command but report refuses one and
+exits 2.`)}},
 	},
 	Environment: []cli.Block{cli.Rows{
 		{"GITHUB_TOKEN", "the base repository's token, which the check is posted with"},
@@ -614,8 +637,9 @@ var validateHelp = cli.Page{
 	Summary: `validate checks costroid.yml, or the file named, against the schema this
 release ships, costroid.schema.json: every key and every value must be one
 the schema allows.`,
-	Usage:    []string{"costroid validate [costroid.yml]"},
-	Examples: []string{"costroid validate", "costroid validate base.yml"},
+	Usage:    []string{"costroid validate [--json] [costroid.yml]"},
+	Examples: []string{"costroid validate", "costroid validate base.yml", "costroid validate --json"},
+	Flags:    []cli.Row{{"--json", "print what validate found as one JSON object"}},
 	Sections: []cli.Section{
 		{Heading: "What it checks and prints", Body: []cli.Block{cli.Text(`A policy amount is a plain decimal, quoted or not: 5, 5.0 and "2.50" are
 valid, and an amount written another way, such as 1e3, is a problem. An
@@ -624,7 +648,11 @@ too, because the check refuses it. validate
 prints one line per problem, or valid. With no file named and no costroid.yml
 here, it says the defaults apply.
 
-With - in place of a file, validate reads standard input.`)}},
+With - in place of a file, validate reads standard input.
+
+--json prints one object on stdout in place of the lines,
+costroid.validate/0.1: the file, whether it is valid, invalid or absent, and
+each problem's pointer and message. docs/output.md describes the object.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "the file is valid, or there is none and the defaults apply"},
@@ -647,7 +675,7 @@ expression inside a script.`,
 	Sections: []cli.Section{
 		{Heading: "What else it holds, and where it prints", Body: []cli.Block{cli.Text(`When the working directory holds a plugin
 marketplace, it holds the marketplace and its plugins to their rules too. Each
-rejected line goes to stderr. costroid lint judges your own workflows instead.`)}},
+rejected line goes to stdout. costroid lint judges your own workflows instead.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "every file passes"},
@@ -661,8 +689,21 @@ rejected line goes to stderr. costroid lint judges your own workflows instead.`)
 var versionHelp = cli.Page{
 	Command:  "version",
 	Summary:  "version prints this binary's release and the price catalog it carries.",
-	Usage:    []string{"costroid version", "costroid --version"},
-	Examples: []string{"costroid version"},
+	Usage:    []string{"costroid version [--verbose] [--json]", "costroid --version"},
+	Examples: []string{"costroid version", "costroid version --verbose", "costroid version --json"},
+	Flags: []cli.Row{
+		{"--verbose", "add what a bug report needs"},
+		{"--json", "print the same facts as one JSON object"},
+	},
+	Sections: []cli.Section{
+		{Heading: "For a bug report", Body: []cli.Block{cli.Text(`--verbose adds the build's commit, the operating system and architecture, the
+versions of the result object this release writes, and whether this directory
+holds costroid.yml. It prints no secret, no value of the environment, and no
+path but the name costroid.yml.
+
+--json prints the same facts as one object on stdout, costroid.version/0.1.
+docs/output.md describes the object.`)}},
+	},
 	Exits: []cli.Row{
 		{"0", "printed"},
 		cli.UsageExit,

@@ -23,6 +23,9 @@ const (
 	ExitCapped = 124
 	// ExitCouldNot: costroid could not do its work.
 	ExitCouldNot = 125
+	// ExitInterrupted: Ctrl-C ended the command. It is 128 and the number of
+	// SIGINT, which a shell reports for a process the signal ended.
+	ExitInterrupted = 130
 )
 
 // UsageExit is the row every command's help lists for ExitUsage. run's lists

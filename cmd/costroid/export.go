@@ -275,11 +275,11 @@ func exportCommand(ctx context.Context, args []string, std stdio) int {
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return export(ctx, args, client, os.Getenv, ingestPace, std.stdout, std.stderr)
+	return export(ctx, args, asking(client, std.stderr), os.Getenv, ingestPace, std.stdout, std.stderr)
 }
 
 func export(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, stdout, stderr io.Writer) int {
-	flags, err := parseExport(args, stdout)
+	flags, err := parseExport(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -313,7 +313,7 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	default:
 		return cli.Fail(stderr, err)
 	}
-	sent.print(flags.rows, stdout, stderr)
+	sent.print(flags.rows, stderr)
 	if sent.rows == 0 {
 		return 0
 	}
@@ -322,10 +322,10 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 		fmt.Fprintf(stderr, "costroid: warning: %v. The platform took batch %s, and states its verdict at GET /exports/%s\n", err, sent.batch, sent.batch)
 		return 0
 	}
-	return verdict.print(sent, flags.origin, stdout, stderr)
+	return verdict.print(sent, flags.origin, stderr)
 }
 
-func parseExport(args []string, stdout io.Writer) (exportFlags, error) {
+func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 	set := flag.NewFlagSet("export", flag.ContinueOnError)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
@@ -334,7 +334,7 @@ func parseExport(args []string, stdout io.Writer) (exportFlags, error) {
 	format := set.String("format", "", "the file format to write instead of sending")
 	out := set.String("out", "", "the file --format writes; standard output when absent")
 	rootDir := set.String("root-dir", "", "the bucket or container a cloudability manifest names")
-	if err := parseFlags(set, args, exportHelp, stdout); err != nil {
+	if err := parseFlags(set, args, exportHelp, stdout, stderr); err != nil {
 		return exportFlags{}, err
 	}
 	if set.NArg() > 0 {
@@ -400,7 +400,7 @@ func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
 	var refused *exportformat.RowsError
 	switch {
 	case errors.Is(err, exportformat.ErrNoRows):
-		fmt.Fprintf(stderr, "costroid: %s holds no rows, so nothing was written\n", flags.rows)
+		cli.Say(stderr, "costroid: %s holds no rows, so nothing was written\n", flags.rows)
 		return 0
 	case errors.As(err, &refused):
 		fmt.Fprintf(stderr, "costroid: %v. Nothing was written\n", err)
@@ -423,7 +423,7 @@ func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
 		if err := writeExportFile(paths[i], part.Body); err != nil {
 			return cli.Fail(stderr, err)
 		}
-		printWritten(stdout, flags.format, part, paths[i])
+		printWritten(stderr, flags.format, part, paths[i])
 	}
 	return 0
 }
@@ -449,14 +449,14 @@ func writeExportFile(path string, body []byte) error {
 
 // printWritten names a file the export wrote: the rows it holds and, where it
 // says, what they are, or what a file of no rows is.
-func printWritten(stdout io.Writer, format exportformat.Format, file exportformat.File, path string) {
+func printWritten(stderr io.Writer, format exportformat.Format, file exportformat.File, path string) {
 	switch {
 	case file.Rows == 0:
-		fmt.Fprintf(stdout, "costroid: wrote the %s to %s\n", file.Note, path)
+		cli.Say(stderr, "costroid: wrote the %s to %s\n", file.Note, path)
 	case file.Note != "":
-		fmt.Fprintf(stdout, "costroid: wrote %d rows as %s to %s, %s\n", file.Rows, format, path, file.Note)
+		cli.Say(stderr, "costroid: wrote %d rows as %s to %s, %s\n", file.Rows, format, path, file.Note)
 	default:
-		fmt.Fprintf(stdout, "costroid: wrote %d rows as %s to %s\n", file.Rows, format, path)
+		cli.Say(stderr, "costroid: wrote %d rows as %s to %s\n", file.Rows, format, path)
 	}
 }
 
@@ -558,18 +558,18 @@ type sentBatch struct {
 	answer batchAnswer
 }
 
-func (s sentBatch) print(path string, stdout, stderr io.Writer) {
+func (s sentBatch) print(path string, stderr io.Writer) {
 	if s.rows == 0 {
-		fmt.Fprintf(stdout, "costroid: %s holds no rows, so nothing was sent\n", path)
+		cli.Say(stderr, "costroid: %s holds no rows, so nothing was sent\n", path)
 		return
 	}
 	outcome := "accepted for ingest"
 	if s.status == http.StatusOK {
 		outcome = "already held, so nothing changed"
 	}
-	fmt.Fprintf(stdout, "costroid: batch %s, %d rows, sha256 %x: %s\n", s.batch, s.rows, s.digest, outcome)
+	cli.Say(stderr, "costroid: batch %s, %d rows, sha256 %x: %s\n", s.batch, s.rows, s.digest, outcome)
 	if s.claim.runID != "" {
-		fmt.Fprintf(stdout, "costroid: %d of %d rows name run %s of %s, so they went as token_verified and the rest as unverified\n", s.verified, s.rows, s.claim.runID, s.claim.repository)
+		cli.Say(stderr, "costroid: %d of %d rows name run %s of %s, so they went as token_verified and the rest as unverified\n", s.verified, s.rows, s.claim.runID, s.claim.repository)
 	}
 	if s.quota == "approaching" || s.quota == "exhausted" {
 		fmt.Fprintf(stderr, "costroid: warning: Costroid Platform's export quota is %s\n", s.quota)
@@ -692,7 +692,7 @@ func (p *platform) contractFor(ctx context.Context, getenv func(string) string, 
 	var refused *refusal
 	switch {
 	case err == nil:
-		fmt.Fprintf(stderr, "costroid: Costroid Platform states integration/v%s, so export sends the batch by it\n", stated.Version)
+		cli.Say(stderr, "costroid: Costroid Platform states integration/v%s, so export sends the batch by it\n", stated.Version)
 		return tenant, nil
 	case getenv("GITHUB_ACTIONS") != "true" && errors.As(err, &refused) && refused.unauthorized():
 		p.base = p.origin + contractV02.path()
@@ -1010,7 +1010,7 @@ func (p platform) batch(ctx context.Context, id string) (batchAnswer, error) {
 // print states the verdict and returns the exit code: 0 when the batch
 // ingested, 1 when it failed. A failure code outside the contract's pattern
 // is not printed, and the batch still failed.
-func (a batchAnswer) print(sent sentBatch, origin string, stdout, stderr io.Writer) int {
+func (a batchAnswer) print(sent sentBatch, origin string, stderr io.Writer) int {
 	if a.Status == "failed" {
 		code := "with no failure code"
 		if a.Failure != nil && refusalCodePattern.MatchString(a.Failure.Code) {
@@ -1023,12 +1023,12 @@ func (a batchAnswer) print(sent sentBatch, origin string, stdout, stderr io.Writ
 	if a.Rows != nil {
 		rows = *a.Rows
 	}
-	fmt.Fprintf(stdout, "costroid: batch %s ingested, %d rows\n", sent.batch, rows)
+	cli.Say(stderr, "costroid: batch %s ingested, %d rows\n", sent.batch, rows)
 	if a.DroppedTagKeys != nil && *a.DroppedTagKeys > 0 {
-		fmt.Fprintf(stdout, "costroid: Costroid Platform dropped %d Tags entries outside costroid/, and stored the rows without them\n", *a.DroppedTagKeys)
+		cli.Say(stderr, "costroid: Costroid Platform dropped %d Tags entries outside costroid/, and stored the rows without them\n", *a.DroppedTagKeys)
 	}
 	for _, pull := range sent.pulls {
-		fmt.Fprintf(stdout, "costroid: pull request %s of %s: %s\n", pull.number, pull.repository, pull.link(origin))
+		cli.Say(stderr, "costroid: pull request %s of %s: %s\n", pull.number, pull.repository, pull.link(origin))
 	}
 	return 0
 }

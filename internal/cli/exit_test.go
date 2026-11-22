@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -14,7 +15,7 @@ import (
 
 func TestFailExitsTwoOnAMistakeAnd125OnAnythingElse(t *testing.T) {
 	set := flag.NewFlagSet("tally", flag.ContinueOnError)
-	refused := Parse(set, []string{"--frob"})
+	refused := Parse(set, []string{"--frob"}, io.Discard)
 	for name, check := range map[string]struct {
 		err  error
 		code int

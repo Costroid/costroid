@@ -104,7 +104,7 @@ func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
 	exitOnVerdict := set.Bool("exit-on-verdict", false, "on GitLab CI, exit 1 on a failure verdict and 3 on a neutral one")
 	recorded := set.String("recorded", "", "RUN_ID,DATE: the rows are the recorded run RUN_ID's from DATE, not the pull request's")
-	if err := parseFlags(set, args, reportHelp, stdout); err != nil {
+	if err := parseFlags(set, args, reportHelp, stdout, stderr); err != nil {
 		return reportFlags{}, err
 	}
 	if *rows == "" {
@@ -314,7 +314,7 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	conclusion := input.Conclusion()
 	code := verdictExit(conclusion)
-	fmt.Fprintf(stderr, "costroid: the verdict is %s, so the report exits %d\n", conclusion, code)
+	cli.Say(stderr, "costroid: the verdict is %s, so the report exits %d\n", conclusion, code)
 	return code
 }
 
@@ -837,7 +837,7 @@ func postComment(ctx context.Context, host scm.Reporter, input comment.Input, li
 		fmt.Fprintf(stderr, "costroid: comment not posted: %s\n", cli.Plain(err))
 		return
 	}
-	fmt.Fprintf(stderr, "costroid: comment on %s %d\n", comment.RequestNoun(input.AccountHost), pullRequest)
+	cli.Say(stderr, "costroid: comment on %s %d\n", comment.RequestNoun(input.AccountHost), pullRequest)
 }
 
 // measuredReports counts the pull request's reports with a measured figure,

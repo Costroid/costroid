@@ -88,8 +88,8 @@ func TestInitAcceptsAReleaseModuleBuild(t *testing.T) {
 			asked = nil
 			root := t.TempDir()
 			code, stdout, stderr := runInit(t, root, build, costroid.Recipes, host, "--agent", "claude")
-			if code != 0 {
-				t.Fatalf("exit %d, stderr %q", code, stderr)
+			if code != 0 || stdout != "" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if !slices.Equal(asked, []string{"v" + goInstallRelease}) {
 				t.Errorf("init asked for the tags %q", asked)
@@ -100,8 +100,8 @@ func TestInitAcceptsAReleaseModuleBuild(t *testing.T) {
 					t.Errorf("%s holds no %q:\n%s", initOut[host], line, written)
 				}
 			}
-			if !strings.Contains(stdout, "costroid: wrote "+initOut[host]+" from recipes/") || !strings.Contains(stdout, pinned+"\n") {
-				t.Errorf("stdout does not say where the commit came from:\n%s", stdout)
+			if !strings.Contains(stderr, "costroid: wrote "+initOut[host]+" from recipes/") || !strings.Contains(stderr, pinned+"\n") {
+				t.Errorf("stderr does not say where the commit came from:\n%s", stderr)
 			}
 		})
 	}

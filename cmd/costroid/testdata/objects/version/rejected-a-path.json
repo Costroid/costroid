@@ -1,0 +1,1 @@
+{"schema": "costroid.version/0.1", "release": "dev", "commit": null, "os": "linux", "arch": "amd64", "catalog": {"version": "0.4.3", "prices_read": null}, "result_schemas": ["costroid.result/0.12"], "config": {"file": "/home/someone/repository/costroid.yml", "found": true}}

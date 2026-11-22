@@ -37,7 +37,8 @@ type Page struct {
 	Usage []string
 	// Examples are command lines to run as written, the commonest first.
 	Examples []string
-	// Flags gives each flag, with its value's name, and what it does.
+	// Flags gives each flag, with its value's name, and what it does. String
+	// adds --quiet, which every command takes.
 	Flags    []Row
 	Sections []Section
 	// Environment says what the command reads from the environment.
@@ -78,10 +79,8 @@ func (p Page) String() string {
 	Lines(p.Usage).write(&text)
 	heading(&text, "Examples")
 	Lines(p.Examples).write(&text)
-	if len(p.Flags) > 0 {
-		heading(&text, "Flags")
-		Rows(p.Flags).write(&text)
-	}
+	heading(&text, "Flags")
+	Rows(append(slices.Clone(p.Flags), QuietRow)).write(&text)
 	sections := p.Sections
 	if len(p.Environment) > 0 {
 		sections = append(slices.Clone(sections), Section{Heading: "Environment", Body: p.Environment})

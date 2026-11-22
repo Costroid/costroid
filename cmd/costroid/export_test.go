@@ -268,8 +268,8 @@ func TestExportSendsTheContractHeaders(t *testing.T) {
 		"costroid: 9 of 11 rows name run 16873409921 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n" +
 		"costroid: batch 903114-16873409921-1 ingested, 11 rows\n" +
 		"costroid: pull request 1423 of github.com/example/widgets: " + stub.server.URL + "/#/pulls?repo=github.com/example/widgets&pr=1423\n"
-	if stdout != wantOut {
-		t.Errorf("stdout %q, want %q", stdout, wantOut)
+	if stdout != "" || withoutVersionLine(stderr) != wantOut {
+		t.Errorf("stdout %q, stderr %q, want %q", stdout, stderr, wantOut)
 	}
 }
 
@@ -305,8 +305,8 @@ func TestExportSendsTheContractThePlatformStates(t *testing.T) {
 			if code != 0 || len(stub.exports) != 1 {
 				t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr.String())
 			}
-			if stderr.String() != versionLine(check.want) {
-				t.Errorf("stderr %q, want %q", stderr.String(), versionLine(check.want))
+			if !strings.HasPrefix(stderr.String(), versionLine(check.want)) || stdout.String() != "" {
+				t.Errorf("stdout %q, stderr %q, want it to open %q", stdout.String(), stderr.String(), versionLine(check.want))
 			}
 			batch := check.want.path() + "/exports/903114-16873409921-1"
 			if path := stub.exports[0].URL.Path; path != batch {
@@ -363,11 +363,8 @@ func TestExportFallsBackToV02WhenIdentityIsRefused(t *testing.T) {
 				t.Errorf("GET /identity was asked at %q, want %q", stub.identity, want)
 			}
 			want := "costroid: warning: Costroid Platform refused the identity request: " + name + ", so export could not read the platform's contract and sends the batch by integration/v0.2, as it did before. Give the token identity:read to send by the newest version\n"
-			if stderr.String() != want {
-				t.Errorf("stderr %q, want %q", stderr.String(), want)
-			}
-			if !strings.Contains(stdout.String(), "costroid: batch nightly-2026-11-07 ingested, 11 rows\n") {
-				t.Errorf("stdout %q", stdout.String())
+			if !strings.HasPrefix(stderr.String(), want) || !strings.Contains(stderr.String(), "costroid: batch nightly-2026-11-07 ingested, 11 rows\n") || stdout.String() != "" {
+				t.Errorf("stdout %q, stderr %q, want it to open %q", stdout.String(), stderr.String(), want)
 			}
 		})
 	}
@@ -417,8 +414,8 @@ func TestExportOutsideGitHubSendsNoRunToken(t *testing.T) {
 	if got := stub.exports[0].Header.Values("Costroid-Run-Token"); len(got) != 0 {
 		t.Errorf("a run token went: %q", got)
 	}
-	if !strings.Contains(stdout, ": already held, so nothing changed\n") {
-		t.Errorf("stdout %q", stdout)
+	if !strings.Contains(stderr, ": already held, so nothing changed\n") || stdout != "" {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
 	}
 }
 
@@ -530,7 +527,7 @@ func TestExportWithNoRowsSendsNothing(t *testing.T) {
 	env := stub.githubEnv()
 	args := []string{"--rows", empty, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
 	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
-	if code != 0 || len(stub.exports) != 0 || stdout.String() != "costroid: "+empty+" holds no rows, so nothing was sent\n" {
+	if code != 0 || len(stub.exports) != 0 || stdout.String() != "" || stderr.String() != "costroid: "+empty+" holds no rows, so nothing was sent\n" {
 		t.Fatalf("exit %d, %d exports: %s%s", code, len(stub.exports), stdout.String(), stderr.String())
 	}
 }
@@ -567,7 +564,7 @@ func TestExportRefusesBeforeSending(t *testing.T) {
 
 // The help names every flag and variable the command reads.
 func TestExportHelpNamesEveryFlag(t *testing.T) {
-	if _, err := parseExport([]string{"-h"}, new(bytes.Buffer)); err != flag.ErrHelp {
+	if _, err := parseExport([]string{"-h"}, new(bytes.Buffer), io.Discard); err != flag.ErrHelp {
 		t.Fatalf("-h: %v", err)
 	}
 	for _, name := range []string{"--rows", "--platform-url", "--installation-id", "--batch-id", "--format", "--out", "--root-dir", "focus-csv", "vantage", "datadog", "harness", "cloudability", "ternary", "focus-1.5-cr", platformTokenVariable} {
@@ -662,8 +659,8 @@ func TestExportStampsOnlyItsRun(t *testing.T) {
 	if got := sentIdentities(t, stub.bodies[0]); !slices.Equal(got, want) {
 		t.Errorf("sent %v, want %v", got, want)
 	}
-	if line := "costroid: 8 of 11 rows name run 16873409921 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n"; !strings.Contains(stdout, line) {
-		t.Errorf("stdout %q", stdout)
+	if line := "costroid: 8 of 11 rows name run 16873409921 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n"; !strings.Contains(stderr, line) || stdout != "" {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
 	}
 
 	// The same run's variables, outside GitHub Actions: no run token goes, so
@@ -704,8 +701,8 @@ func TestExportLeavesForkRowsUnverified(t *testing.T) {
 			t.Errorf("a fork's row went as %v", identity)
 		}
 	}
-	if line := "costroid: 0 of 11 rows name run 16873409999 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n"; !strings.Contains(stdout, line) {
-		t.Errorf("stdout %q", stdout)
+	if line := "costroid: 0 of 11 rows name run 16873409999 of github.com/example/widgets, so they went as token_verified and the rest as unverified\n"; !strings.Contains(stderr, line) || stdout != "" {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
 	}
 }
 
@@ -717,8 +714,10 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 		verdicts []turn
 		limit    time.Duration
 		code     int
-		stdout   []string
-		stderr   string
+		// said are lines export says about its work, and stderr is the
+		// warning or the error it ends on.
+		said   []string
+		stderr string
 	}{
 		"failed after two polls": {
 			verdicts: []turn{pending("accepted"), pending("ingesting"), failed("ROW_IDENTITY_MISMATCH")},
@@ -732,7 +731,7 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 		},
 		"ingested": {
 			verdicts: []turn{pending("ingesting"), ingested(11, 2)},
-			stdout: []string{
+			said: []string{
 				"costroid: batch 903114-16873409921-1 ingested, 11 rows\n",
 				"costroid: Costroid Platform dropped 2 Tags entries outside costroid/, and stored the rows without them\n",
 				"costroid: pull request 1423 of github.com/example/widgets: ",
@@ -749,7 +748,7 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 		},
 		"a server error is asked again": {
 			verdicts: []turn{{http.StatusBadGateway, ``}, ingested(11, 0)},
-			stdout:   []string{"costroid: batch 903114-16873409921-1 ingested, 11 rows\n"},
+			said:     []string{"costroid: batch 903114-16873409921-1 ingested, 11 rows\n"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -763,12 +762,15 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 			env := stub.githubEnv()
 			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
 			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, pace, &stdout, &stderr)
-			if code != check.code || withoutVersionLine(stderr.String()) != check.stderr {
-				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			if code != check.code || !strings.HasSuffix(stderr.String(), check.stderr) || stdout.String() != "" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 			}
-			for _, line := range check.stdout {
-				if !strings.Contains(stdout.String(), line) {
-					t.Errorf("stdout %q lacks %q", stdout.String(), line)
+			if check.stderr == "" && strings.Contains(stderr.String(), "warning") {
+				t.Errorf("stderr holds a warning: %q", stderr.String())
+			}
+			for _, line := range check.said {
+				if !strings.Contains(stderr.String(), line) {
+					t.Errorf("stderr %q lacks %q", stderr.String(), line)
 				}
 			}
 			if strings.Contains(stdout.String()+stderr.String(), "::error::forged") {
@@ -785,7 +787,7 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 func TestExportTakesTheVerdictInTheAnswer(t *testing.T) {
 	stub := newPlatformStub(t, http.StatusOK, ingested(11, 0).body)
 	code, stdout, stderr := stub.export(t, stub.githubEnv())
-	if asked := stub.timesAsked(); code != 0 || asked != 0 || !strings.Contains(stdout, "ingested, 11 rows\n") {
+	if asked := stub.timesAsked(); code != 0 || asked != 0 || stdout != "" || !strings.Contains(stderr, "ingested, 11 rows\n") {
 		t.Fatalf("exit %d, asked %d times: %s%s", code, asked, stdout, stderr)
 	}
 }
@@ -862,8 +864,8 @@ func TestExportSendsByV03ToAPlatformThatStatesV03(t *testing.T) {
 	env := stub.githubEnv()
 	args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
 	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
-	if code != 0 || stderr.String() != versionLine(contractV03) {
-		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	if code != 0 || !strings.HasPrefix(stderr.String(), versionLine(contractV03)) || stdout.String() != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 	batch := "/api/integration/v0.3/exports/903114-16873409921-1"
 	if len(stub.exports) != 1 || stub.exports[0].URL.Path != batch || !slices.Equal(stub.verdict, []string{batch}) {
@@ -885,7 +887,7 @@ func TestExportAcceptsLoopbackHTTP(t *testing.T) {
 		t.Fatalf("the stub listens at %s", stub.server.URL)
 	}
 	code, stdout, stderr := stub.export(t, map[string]string{platformTokenVariable: testIntegrationToken}, "--batch-id", "e2e-1")
-	if code != 0 || len(stub.exports) != 1 || !strings.Contains(stdout, "ingested, 11 rows") {
+	if code != 0 || len(stub.exports) != 1 || stdout != "" || !strings.Contains(stderr, "ingested, 11 rows") {
 		t.Fatalf("exit %d, %d exports: %s%s", code, len(stub.exports), stdout, stderr)
 	}
 	if origin, err := platformOrigin("http://[::1]:8787"); err != nil || origin != "http://[::1]:8787" {
@@ -916,7 +918,7 @@ func TestExportFormatWritesAFileAndSendsNothing(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "costs.csv")
 			code, stdout, stderr := runExport(t, "--rows", exampleRows, "--format", format, "--out", path)
-			if code != 0 || stdout != "costroid: wrote 11 rows as "+format+" to "+path+note+"\n" {
+			if code != 0 || stdout != "" || !strings.HasSuffix(stderr, "costroid: wrote 11 rows as "+format+" to "+path+note+"\n") {
 				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
 			}
 			file, err := os.ReadFile(path)
@@ -1001,7 +1003,7 @@ func TestExportDatadogRefusalWritesNothing(t *testing.T) {
 // the command names the tags it left out.
 func TestExportDatadogNamesTheTagsLeftOut(t *testing.T) {
 	code, _, stderr := runExport(t, "--rows", exampleRows, "--format", "datadog", "--out", filepath.Join(t.TempDir(), "costs.csv"))
-	if code != 0 || stderr != "costroid: warning: some rows lack the tags costroid/assumed_ttl, so the datadog file has no column for them\n" {
+	if code != 0 || !strings.HasPrefix(stderr, "costroid: warning: some rows lack the tags costroid/assumed_ttl, so the datadog file has no column for them\n") || strings.Count(stderr, "warning") != 1 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 }
@@ -1020,7 +1022,7 @@ func TestExportVantageNumbersItsFiles(t *testing.T) {
 	}
 	dir := t.TempDir()
 	code, stdout, stderr := runExport(t, "--rows", rows, "--format", "vantage", "--out", filepath.Join(dir, "costs.csv"))
-	if code != 0 || !strings.Contains(stdout, "costs-1.csv") || !strings.Contains(stdout, "costs-2.csv") {
+	if code != 0 || stdout != "" || !strings.Contains(stderr, "costs-1.csv") || !strings.Contains(stderr, "costs-2.csv") {
 		t.Fatalf("exit %d: %s%s", code, stdout, stderr)
 	}
 	written, err := filepath.Glob(filepath.Join(dir, "*"))
@@ -1088,7 +1090,7 @@ func TestExportDocsFormatExampleRuns(t *testing.T) {
 			args[i] = out
 		}
 	}
-	if code, stdout, stderr := runExport(t, args...); code != 0 || stdout != "costroid: wrote 11 rows as vantage to "+out+"\n" {
+	if code, stdout, stderr := runExport(t, args...); code != 0 || stdout != "" || stderr != "costroid: wrote 11 rows as vantage to "+out+"\n" {
 		t.Fatalf("%v: exit %d: %s%s", args, code, stdout, stderr)
 	}
 }
@@ -1110,11 +1112,11 @@ func TestExportLayoutFormatsWriteTheirFiles(t *testing.T) {
 				args = append(args, "--root-dir", "example-focus-drops")
 			}
 			code, stdout, stderr := runExport(t, args...)
-			if code != 0 || stderr != "" {
+			if code != 0 || stdout != "" {
 				t.Fatalf("exit %d: %s%s", code, stdout, stderr)
 			}
 			total := 0
-			for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+			for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
 				match := writtenLine.FindStringSubmatch(line)
 				if match == nil || !strings.HasPrefix(match[3], dir+string(filepath.Separator)) {
 					t.Fatalf("the line %q names no file under %s", line, dir)
@@ -1211,7 +1213,7 @@ func TestExportDocsExamplesAllRun(t *testing.T) {
 					args[i] = filepath.Join(dir, arg)
 				}
 			}
-			if code, stdout, stderr := runExport(t, args...); code != 0 || !strings.Contains(stdout, "costroid: wrote 11 rows as ") {
+			if code, stdout, stderr := runExport(t, args...); code != 0 || stdout != "" || !strings.Contains(stderr, "costroid: wrote 11 rows as ") {
 				t.Errorf("%s: exit %d: %s%s", line, code, stdout, stderr)
 			}
 			ran++

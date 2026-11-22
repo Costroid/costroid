@@ -60,7 +60,7 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 	stdout, stderr := std.stdout, std.stderr
 	set := flag.NewFlagSet("emit-otlp", flag.ContinueOnError)
 	rows := set.String("rows", "", "the rows file costroid run wrote")
-	if err := parseFlags(set, args, emitOTLPHelp, stdout); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, emitOTLPHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("emit-otlp", err))
@@ -89,12 +89,12 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 	case err != nil:
 		return cli.Fail(stderr, err)
 	case result.Rows == 0:
-		fmt.Fprintf(stderr, "costroid: %s holds no rows, so nothing was sent\n", *rows)
+		cli.Say(stderr, "costroid: %s holds no rows, so nothing was sent\n", *rows)
 		return 0
 	case result.Rejected > 0:
 		fmt.Fprintf(stderr, "costroid: %s refused %d of %d spans: %q\n", endpoint, result.Rejected, result.Spans, result.Message)
 		return exitRejected
 	}
-	fmt.Fprintf(stdout, "costroid: sent %d spans for %d rows to %s\n", result.Spans, result.Rows, endpoint)
+	cli.Say(stderr, "costroid: sent %d spans for %d rows to %s\n", result.Spans, result.Rows, endpoint)
 	return 0
 }

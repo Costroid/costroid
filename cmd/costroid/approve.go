@@ -99,7 +99,7 @@ type approvalHost interface {
 
 func approveCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("approve", flag.ContinueOnError)
-	if err := parseFlags(set, args, approveHelp, stdout); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, approveHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("approve", err))
@@ -189,7 +189,7 @@ func reconclude(ctx context.Context, host approvalHost, pull pullContext, number
 	case err != nil:
 		return err
 	}
-	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", done.CheckRun, done.Conclusion)
+	cli.Say(stderr, "costroid: check run %d, conclusion %s\n", done.CheckRun, done.Conclusion)
 	if done.Unnamed != nil {
 		fmt.Fprintf(stderr, "costroid: warning: check run %d does not name itself: %v\n", done.CheckRun, done.Unnamed)
 	}

@@ -77,7 +77,7 @@ func keysCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	case "create":
 		return createKey(ctx, args[1:], stdout, stderr)
 	case "revoke":
-		return revokeKey(ctx, args[1:])
+		return revokeKey(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, KeysUsage)
 		return flag.ErrHelp
@@ -88,10 +88,13 @@ func keysCommand(ctx context.Context, args []string, stdout, stderr io.Writer) e
 func createKey(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	set := flag.NewFlagSet("keys create", flag.ContinueOnError)
 	ownerFlag := set.String("owner", "", "an SCM owner of the tenant, host:owner")
-	if err := cli.Parse(set, args); err != nil {
+	if err := cli.Parse(set, args, stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, KeysUsage)
 		}
+		return err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return err
 	}
 	owner, err := parseBinding("--owner", *ownerFlag)
@@ -115,15 +118,23 @@ func createKey(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	fmt.Fprintln(stdout, key)
-	fmt.Fprintf(stderr, "id %s\nThis is the only time the key is shown.\n", id)
+	cli.Say(stderr, "id %s\nThis is the only time the key is shown.\n", id)
 	return nil
 }
 
 // revokeKey never repeats its argument, which may be a key pasted by mistake.
-func revokeKey(ctx context.Context, args []string) error {
-	if len(args) != 1 || !keyID.MatchString(args[0]) {
+func revokeKey(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	set := flag.NewFlagSet("keys revoke", flag.ContinueOnError)
+	if err := cli.Parse(set, args, stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stdout, KeysUsage)
+		}
+		return err
+	}
+	if set.NArg() != 1 || !keyID.MatchString(set.Arg(0)) {
 		return cli.Mistaken("keys", errors.New("keys revoke needs one id: the 64 hexadecimal characters create printed"))
 	}
+	args = set.Args()
 	ownerURL, err := required(envMigration)
 	if err != nil {
 		return err

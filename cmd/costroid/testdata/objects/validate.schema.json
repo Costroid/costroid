@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/validate.schema.json",
+  "title": "What costroid validate --json prints, version 0.1",
+  "description": "What costroid validate found in one configuration file: whether it is valid, invalid or absent, and each place it breaks the schema.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.validate/0.1"
+    },
+    "file": {
+      "description": "The file as it was named, costroid.yml when none was, or standard input.",
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "description": "valid: the file holds to the schema. invalid: it breaks it, and validate exits 1. absent: no file was named and the directory holds no costroid.yml, so the defaults apply.",
+      "enum": [
+        "valid",
+        "invalid",
+        "absent"
+      ]
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/problem"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "file",
+    "state",
+    "problems"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "invalid"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "problems": {
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "problems": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "problem": {
+      "type": "object",
+      "properties": {
+        "pointer": {
+          "description": "Where in the file, as a JSON pointer. Empty for the document.",
+          "type": "string",
+          "pattern": "^(/.*)?$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "pointer",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

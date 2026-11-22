@@ -172,8 +172,8 @@ func TestInitWritesLintCleanRecipe(t *testing.T) {
 		t.Setenv("PATH", bin)
 
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, host, "--agent", agent)
-		if code != 0 {
-			t.Fatalf("exit %d, stderr %q", code, stderr)
+		if code != 0 || stdout != "" {
+			t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 		written := readFile(t, filepath.Join(root, initOut[host]))
 		report := recipelint.LintBytes(initOut[host], []byte(written))
@@ -203,13 +203,13 @@ func TestInitWritesLintCleanRecipe(t *testing.T) {
 			t.Errorf("costroid.yml: %v %v", problems, err)
 		}
 
-		flat := strings.Join(strings.Fields(stdout), " ")
+		flat := strings.Join(strings.Fields(stderr), " ")
 		sentence := perPushSentence(shippedRecipe(t, recipe))
 		if needs := sdkPrograms[agent]; sentence == "" && needs != "" {
 			sentence = fmt.Sprintf(needs, recipeBudget.FindSubmatch(shippedRecipe(t, recipe))[1])
 		}
 		if sentence == "" || !strings.Contains(flat, sentence) {
-			t.Errorf("stdout lacks the per-push sentence %q:\n%s", sentence, stdout)
+			t.Errorf("stderr lacks the per-push sentence %q:\n%s", sentence, stderr)
 		}
 		wantKeys := secretNames([]byte(written))
 		if host == gitlabHost {
@@ -218,8 +218,8 @@ func TestInitWritesLintCleanRecipe(t *testing.T) {
 			t.Errorf("recipes/%s reads the secrets %v", recipe, wantKeys)
 		}
 		for _, key := range wantKeys {
-			if !strings.Contains(stdout, key) {
-				t.Errorf("stdout does not name the secret %s:\n%s", key, stdout)
+			if !strings.Contains(stderr, key) {
+				t.Errorf("stderr does not name the secret %s:\n%s", key, stderr)
 			}
 		}
 		if _, err := os.Stat(ran); err == nil {
@@ -326,8 +326,8 @@ func TestInitRefusesToOverwrite(t *testing.T) {
 	}
 
 	code, stdout, stderr = runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--force")
-	if code != 0 {
-		t.Fatalf("--force: exit %d, stderr %q", code, stderr)
+	if code != 0 || stdout != "" {
+		t.Fatalf("--force: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	if readFile(t, recipe) == "name: mine\n" {
 		t.Error("--force left the workflow as it was")
@@ -335,8 +335,8 @@ func TestInitRefusesToOverwrite(t *testing.T) {
 	if readFile(t, settings) != "policy:\n  run_budget_usd: 5\n" {
 		t.Error("init replaced costroid.yml")
 	}
-	if !strings.Contains(stdout, "costroid.yml exists, and init left it as it is") || strings.Contains(stdout, "git add "+initOut[githubHost]+" costroid.yml") {
-		t.Errorf("stdout:\n%s", stdout)
+	if !strings.Contains(stderr, "costroid.yml exists, and init left it as it is") || strings.Contains(stderr, "git add "+initOut[githubHost]+" costroid.yml") {
+		t.Errorf("stderr:\n%s", stderr)
 	}
 
 	custom := filepath.Join(root, "ci", "costroid.yml")
@@ -393,8 +393,8 @@ func TestInitRefusesDevWithoutRef(t *testing.T) {
 	t.Run("dev with a ref", func(t *testing.T) {
 		root := t.TempDir()
 		code, stdout, stderr := runInit(t, root, buildInfo{version: "dev"}, costroid.Recipes, "github", "--agent", "claude", "--action-ref", otherCommit)
-		if code != 0 {
-			t.Fatalf("exit %d, stderr %q", code, stderr)
+		if code != 0 || stdout != "" {
+			t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 		written := readFile(t, filepath.Join(root, initOut[githubHost]))
 		pins := actionPin.FindAllString(written, -1)
@@ -406,8 +406,8 @@ func TestInitRefusesDevWithoutRef(t *testing.T) {
 				t.Errorf("pin %q", got)
 			}
 		}
-		if !strings.Contains(stdout, "pinned to "+otherCommit+", which --action-ref named") {
-			t.Errorf("stdout:\n%s", stdout)
+		if !strings.Contains(stderr, "pinned to "+otherCommit+", which --action-ref named") {
+			t.Errorf("stderr:\n%s", stderr)
 		}
 	})
 }
@@ -418,11 +418,11 @@ func TestInitPinsTheBinarysOwnRelease(t *testing.T) {
 		everyTarget(t, func(t *testing.T, host, agent, recipe string) {
 			root := t.TempDir()
 			code, stdout, stderr := runInit(t, root, build, costroid.Recipes, host, "--agent", agent)
-			if code != 0 {
-				t.Fatalf("exit %d, stderr %q", code, stderr)
+			if code != 0 || stdout != "" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
-			if !strings.Contains(stdout, "pinned to v"+testRelease+" at "+testCommit) {
-				t.Errorf("stdout does not name the release:\n%s", stdout)
+			if !strings.Contains(stderr, "pinned to v"+testRelease+" at "+testCommit) {
+				t.Errorf("stderr does not name the release:\n%s", stderr)
 			}
 			written := readFile(t, filepath.Join(root, initOut[host]))
 			if host == gitlabHost {
@@ -904,16 +904,16 @@ func TestInitSaysWhenThePushHasNoRemote(t *testing.T) {
 	} {
 		t.Chdir(gitRepository(t))
 		var stdout, stderr bytes.Buffer
-		if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{host, "--agent", "claude"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), want) {
-			t.Errorf("%s: exit %d, stderr %q, and no line above the commands says the push has no remote:\n%s", host, code, stderr.String(), stdout.String())
+		if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{host, "--agent", "claude"}, &stderr, &stderr); code != 0 || !strings.Contains(stderr.String(), want) {
+			t.Errorf("%s: exit %d, stdout %q, and no line above the commands says the push has no remote:\n%s", host, code, stdout.String(), stderr.String())
 		}
 	}
 	root := gitRepository(t)
 	runGit(t, root, "remote", "add", "origin", "https://github.com/example/widgets.git")
 	t.Chdir(root)
 	var stdout, stderr bytes.Buffer
-	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"--agent", "claude"}, &stdout, &stderr); code != 0 || strings.Contains(stdout.String(), "has no remote") || !strings.Contains(stdout.String(), left) {
-		t.Errorf("a remote: exit %d, stderr %q, stdout:\n%s", code, stderr.String(), stdout.String())
+	if code := initRepository(locateRepository, releaseBuild, costroid.Recipes, testPR, []string{"--agent", "claude"}, &stderr, &stderr); code != 0 || strings.Contains(stderr.String(), "has no remote") || !strings.Contains(stderr.String(), left) {
+		t.Errorf("a remote: exit %d, stdout %q, stderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	troubleshootingLists(t, "This repository has no remote: create it on GitHub and add it as origin before the push.")
 }
@@ -1025,23 +1025,23 @@ func TestInitWritesAtTheRepositoryRoot(t *testing.T) {
 	}
 
 	code, stdout, stderr := start("--agent", "codex")
-	if code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
+	if code != 0 || stdout != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	want := []string{filepath.Join(root, ".github", "workflows", "costroid.yml"), filepath.Join(root, configFile)}
 	if got := slices.Sorted(maps.Keys(tree(t, root))); !slices.Equal(got, want) {
 		t.Fatalf("init wrote %v, want %v", got, want)
 	}
-	if !strings.Contains(stdout, "costroid: wrote .github/workflows/costroid.yml from recipes/github-codex.yml") || strings.Contains(stdout, root) {
-		t.Errorf("stdout does not name the workflow from the root:\n%s", stdout)
+	if !strings.Contains(stderr, "costroid: wrote .github/workflows/costroid.yml from recipes/github-codex.yml") || strings.Contains(stderr, root) {
+		t.Errorf("stderr does not name the workflow from the root:\n%s", stderr)
 	}
-	commands := printedCommands(t, stdout)
+	commands := printedCommands(t, stderr)
 	if commands[0] != "cd ../.." || !slices.Contains(commands, "git add .github/workflows/costroid.yml costroid.yml") {
 		t.Errorf("the commands do not run from the root: %q", commands)
 	}
 
 	code, stdout, stderr = start("--agent", "codex", "--out", "ci.yml")
-	if code != 0 || !strings.Contains(stdout, "costroid: wrote services/api/ci.yml from ") {
+	if code != 0 || stdout != "" || !strings.Contains(stderr, "costroid: wrote services/api/ci.yml from ") {
 		t.Errorf("--out beside the shell: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(sub, "ci.yml")); err != nil {
@@ -1118,16 +1118,16 @@ func TestInitReadsTheHostFromTheRemote(t *testing.T) {
 				if len(test.args) > 0 {
 					want = exitUsage
 				}
-				if code != want || !strings.Contains(stderr, test.want) {
-					t.Errorf("exit %d, stderr %q", code, stderr)
+				if code != want || stdout != "" || !strings.Contains(stderr, test.want) {
+					t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 				}
 				return
 			}
-			if code != 0 {
-				t.Fatalf("exit %d, stderr %q", code, stderr)
+			if code != 0 || stdout != "" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
-			if !strings.Contains(stdout, "costroid: wrote "+initOut[test.want]+" ") {
-				t.Errorf("init did not write for %s:\n%s", test.want, stdout)
+			if !strings.Contains(stderr, "costroid: wrote "+initOut[test.want]+" ") {
+				t.Errorf("init did not write for %s:\n%s", test.want, stderr)
 			}
 		})
 	}
@@ -1240,7 +1240,7 @@ func TestInitSwitchesToExistingForAnAgentWorkflow(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, filepath.Join(root, workflowDir, "claude.yml"), existingReview)
 		code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude")
-		if code != 0 || !strings.Contains(stdout, "costroid: wrote .github/workflows/costroid.yml") || strings.Contains(stderr, "already runs") {
+		if code != 0 || !strings.Contains(stderr, "costroid: wrote .github/workflows/costroid.yml") || strings.Contains(stderr, "already runs") {
 			t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 	})
@@ -1442,8 +1442,8 @@ func TestInitNamesTheBasisForASubscriptionWorkflow(t *testing.T) {
 func TestInitAuthSubscriptionWritesTheOAuthRecipe(t *testing.T) {
 	root := t.TempDir()
 	code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--auth", "subscription")
-	if code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
+	if code != 0 || stdout != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	written := readFile(t, filepath.Join(root, initOut[githubHost]))
 	if strings.Count(written, "claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n") != 1 || strings.Contains(written, "anthropic_api_key") || strings.Contains(written, "ANTHROPIC_API_KEY") {
@@ -1455,17 +1455,17 @@ func TestInitAuthSubscriptionWritesTheOAuthRecipe(t *testing.T) {
 	if got := lintRules(initOut[githubHost], written); len(got) > 0 {
 		t.Errorf("costroid lint finds %v in what init wrote", got)
 	}
-	commands := printedCommands(t, stdout)
+	commands := printedCommands(t, stderr)
 	if !slices.Contains(commands, "gh secret set CLAUDE_CODE_OAUTH_TOKEN") || slices.Contains(commands, "gh secret set ANTHROPIC_API_KEY") {
 		t.Errorf("the commands set the wrong secret: %q", commands)
 	}
-	if flat := strings.Join(strings.Fields(stdout), " "); !strings.Contains(flat, subscriptionBasis) {
-		t.Errorf("stdout does not name the basis:\n%s", stdout)
+	if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, subscriptionBasis) {
+		t.Errorf("stderr does not name the basis:\n%s", stderr)
 	}
 
 	apiKey := t.TempDir()
-	if code, stdout, _ := runInit(t, apiKey, releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--auth", "api-key"); code != 0 || strings.Contains(stdout, "List-equivalent") || !strings.Contains(readFile(t, filepath.Join(apiKey, initOut[githubHost])), "anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}") {
-		t.Errorf("--auth api-key: exit %d, stdout %q", code, stdout)
+	if code, _, stderr := runInit(t, apiKey, releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--auth", "api-key"); code != 0 || strings.Contains(stderr, "List-equivalent") || !strings.Contains(readFile(t, filepath.Join(apiKey, initOut[githubHost])), "anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}") {
+		t.Errorf("--auth api-key: exit %d, stderr %q", code, stderr)
 	}
 
 	for _, refusal := range []struct {
@@ -1531,24 +1531,24 @@ func TestGitLabInitWritesTheInclude(t *testing.T) {
 				writeFile(t, filepath.Join(root, gitlabCI), test.before)
 			}
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "gitlab", "--agent", "claude")
-			if code != 0 {
-				t.Fatalf("exit %d, stderr %q", code, stderr)
+			if code != 0 || stdout != "" {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if got := readFile(t, filepath.Join(root, gitlabCI)); got != test.after {
 				t.Errorf(".gitlab-ci.yml reads\n%s\nwant\n%s", got, test.after)
 			}
-			if !strings.Contains(stdout, test.said) {
-				t.Errorf("stdout does not say %q:\n%s", test.said, stdout)
+			if !strings.Contains(stderr, test.said) {
+				t.Errorf("stderr does not say %q:\n%s", test.said, stderr)
 			}
 			add := "git add .gitlab/costroid.yml costroid.yml .gitlab-ci.yml"
 			if test.label == "included" {
 				add = "git add .gitlab/costroid.yml costroid.yml"
 			}
-			if !slices.Contains(printedCommands(t, stdout), add) {
-				t.Errorf("the commands do not run %q:\n%s", add, stdout)
+			if !slices.Contains(printedCommands(t, stderr), add) {
+				t.Errorf("the commands do not run %q:\n%s", add, stderr)
 			}
-			if strings.Contains(stdout, "include:") {
-				t.Errorf("init asks for the include it wrote:\n%s", stdout)
+			if strings.Contains(stderr, "include:") {
+				t.Errorf("init asks for the include it wrote:\n%s", stderr)
 			}
 		})
 	}
@@ -1605,14 +1605,14 @@ func TestGitLabPrintedCommandsRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := runInitIn(t, repository{root: root, dir: sub}, releaseBuild, costroid.Recipes, "--agent", "claude")
-	if code != 0 {
-		t.Fatalf("exit %d, stderr %q", code, stderr)
+	if code != 0 || stdout != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
-	flat := strings.Join(strings.Fields(stdout), " ")
-	if !strings.Contains(flat, "with a budget of USD 5 for each run") || strings.Contains(stdout, "COSTROID_BUDGET_USD") {
-		t.Errorf("stdout does not state the budget as an amount:\n%s", stdout)
+	flat := strings.Join(strings.Fields(stderr), " ")
+	if !strings.Contains(flat, "with a budget of USD 5 for each run") || strings.Contains(stderr, "COSTROID_BUDGET_USD") {
+		t.Errorf("stderr does not state the budget as an amount:\n%s", stderr)
 	}
-	script := "set -e\n" + strings.Join(printedCommands(t, stdout), "\n") + "\n"
+	script := "set -e\n" + strings.Join(printedCommands(t, stderr), "\n") + "\n"
 	command := exec.Command("sh", "-c", script)
 	command.Dir = sub
 	if output, err := command.CombinedOutput(); err != nil {
@@ -1637,21 +1637,21 @@ func TestInitPrintsTheNoteAfterTheSteps(t *testing.T) {
 	}
 	recipes := fstest.MapFS{"recipes/github-claude-code.yml": {Data: audit}}
 	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, recipes, "github", "--agent", "claude")
-	if code != 0 {
+	if code != 0 || stdout != "" {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	note := strings.Index(stdout, "\nnote: .github/workflows/costroid.yml:")
-	last := strings.Index(stdout, "  gh pr create --fill\n")
-	label := strings.Index(stdout, "\nBefore a first contributor's pull request:\n  gh label create costroid-agent\n")
+	note := strings.Index(stderr, "\nnote: .github/workflows/costroid.yml:")
+	last := strings.Index(stderr, "  gh pr create --fill\n")
+	label := strings.Index(stderr, "\nBefore a first contributor's pull request:\n  gh label create costroid-agent\n")
 	if note < 0 || last < 0 || label < 0 || note < last || note < label {
-		t.Errorf("the note does not follow the steps:\n%s", stdout)
+		t.Errorf("the note does not follow the steps:\n%s", stderr)
 	}
-	for line := range strings.SplitSeq(stdout, "\n") {
+	for line := range strings.SplitSeq(stderr, "\n") {
 		if strings.Contains(line, recipelint.RuleEgressAudit) && !strings.HasPrefix(line, "note: ") {
 			t.Errorf("a note without its prefix: %q", line)
 		}
 	}
-	if commands := printedCommands(t, stdout); slices.Contains(commands, "gh label create costroid-agent") || commands[len(commands)-1] != "gh pr create --fill" {
+	if commands := printedCommands(t, stderr); slices.Contains(commands, "gh label create costroid-agent") || commands[len(commands)-1] != "gh pr create --fill" {
 		t.Errorf("the label is among the first pull request's steps: %q", commands)
 	}
 }
@@ -2301,7 +2301,7 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 		t.Run(agent, func(t *testing.T) {
 			root := t.TempDir()
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", agent, "--platform-url", "https://app.costroid.com/")
-			if code != 0 {
+			if code != 0 || stdout != "" {
 				t.Fatalf("exit %d, stderr %q", code, stderr)
 			}
 			ingest := writtenSteps(t, readFile(t, filepath.Join(root, workflowDir, "costroid.yml")))["ingest"]
@@ -2310,12 +2310,12 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 					t.Errorf("the ingest step's %s is %v, want %v", key, ingest[key], want)
 				}
 			}
-			commands := printedCommands(t, stdout)
+			commands := printedCommands(t, stderr)
 			if at := slices.Index(commands, command); at < 0 || at > slices.Index(commands, "git switch -c try-costroid") {
 				t.Errorf("the commands left do not set the variable before the branch: %v", commands)
 			}
-			if !strings.Contains(strings.Join(strings.Fields(stdout), " "), connectNeeds) {
-				t.Errorf("init does not say what else the platform needs:\n%s", stdout)
+			if !strings.Contains(strings.Join(strings.Fields(stderr), " "), connectNeeds) {
+				t.Errorf("init does not say what else the platform needs:\n%s", stderr)
 			}
 		})
 	}
@@ -2374,7 +2374,7 @@ func TestInitPlatformURLWritesTheConnectWorkflow(t *testing.T) {
 				root := t.TempDir()
 				args := append([]string{"github", "--agent", agent, "--platform-url", "https://app.costroid.com"}, test.args...)
 				code, stdout, stderr := runInit(t, root, test.build, costroid.Recipes, args...)
-				if code != 0 {
+				if code != 0 || stdout != "" {
 					t.Fatalf("exit %d, stderr %q", code, stderr)
 				}
 				written := readFile(t, filepath.Join(root, connect))
@@ -2401,11 +2401,11 @@ func TestInitPlatformURLWritesTheConnectWorkflow(t *testing.T) {
 					t.Errorf("costroid lint on the connect workflow: %v", rules)
 				}
 				said := "costroid: wrote " + connectWorkflow + " from recipes/" + connectRecipeName + ", "
-				if !strings.Contains(stdout, said) {
-					t.Errorf("init does not say it wrote the connect workflow:\n%s", stdout)
+				if !strings.Contains(stderr, said) {
+					t.Errorf("init does not say it wrote the connect workflow:\n%s", stderr)
 				}
-				if want := "git add .github/workflows/costroid.yml " + connectWorkflow + " costroid.yml"; !slices.Contains(printedCommands(t, stdout), want) {
-					t.Errorf("the commands left do not add the connect workflow: %v", printedCommands(t, stdout))
+				if want := "git add .github/workflows/costroid.yml " + connectWorkflow + " costroid.yml"; !slices.Contains(printedCommands(t, stderr), want) {
+					t.Errorf("the commands left do not add the connect workflow: %v", printedCommands(t, stderr))
 				}
 			})
 		}
@@ -2544,30 +2544,30 @@ func TestInitSkillsWritesBothSkillFiles(t *testing.T) {
 	skills := []string{".agents/skills/costroid/SKILL.md", ".claude/skills/costroid/SKILL.md"}
 	root := t.TempDir()
 	code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "codex", "--skills")
-	if code != 0 {
+	if code != 0 || stdout != "" {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	for _, name := range skills {
 		if got := readFile(t, filepath.Join(root, name)); got != costroidSkill {
 			t.Errorf("%s holds:\n%s", name, got)
 		}
-		if !strings.Contains(stdout, "costroid: wrote "+name+", the skill that reads what a run cost\n") {
-			t.Errorf("init does not say it wrote %s:\n%s", name, stdout)
+		if !strings.Contains(stderr, "costroid: wrote "+name+", the skill that reads what a run cost\n") {
+			t.Errorf("init does not say it wrote %s:\n%s", name, stderr)
 		}
 	}
 	want := "git add .github/workflows/costroid.yml costroid.yml " + strings.Join(skills, " ")
-	if !slices.Contains(printedCommands(t, stdout), want) {
-		t.Errorf("the commands left do not add the skills: %v", printedCommands(t, stdout))
+	if !slices.Contains(printedCommands(t, stderr), want) {
+		t.Errorf("the commands left do not add the skills: %v", printedCommands(t, stderr))
 	}
 
 	edited := filepath.Join(root, skills[1])
 	writeFile(t, edited, "a team's own skill\n")
 	code, stdout, stderr = runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "codex", "--skills", "--force")
-	if code != 0 {
+	if code != 0 || stdout != "" {
 		t.Fatalf("again: exit %d, stderr %q", code, stderr)
 	}
-	if got := readFile(t, edited); got != "a team's own skill\n" || !strings.Contains(stdout, "costroid: "+skills[1]+" exists, and init left it as it is\n") {
-		t.Errorf("init replaced a skill file that exists: %q\n%s", got, stdout)
+	if got := readFile(t, edited); got != "a team's own skill\n" || !strings.Contains(stderr, "costroid: "+skills[1]+" exists, and init left it as it is\n") {
+		t.Errorf("init replaced a skill file that exists: %q\n%s", got, stderr)
 	}
 
 	code, _, stderr = runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, "github", "--agent", "claude-code-action", "--existing", "review.yml", "--skills")
@@ -2885,7 +2885,7 @@ func TestInitWritesTheSDKRecipes(t *testing.T) {
 			}
 			root := t.TempDir()
 			code, stdout, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", agent)
-			if code != 0 {
+			if code != 0 || stdout != "" {
 				t.Fatalf("exit %d, stderr %q", code, stderr)
 			}
 			written := readFile(t, filepath.Join(root, initOut[githubHost]))
@@ -2902,7 +2902,7 @@ func TestInitWritesTheSDKRecipes(t *testing.T) {
 			if report := recipelint.LintCustomer(initOut[githubHost], []byte(written)); report.Agents != 1 || len(report.Findings) != 0 || len(report.Notes) != 0 {
 				t.Errorf("lint: %d agents, findings %v, notes %v", report.Agents, report.Findings, report.Notes)
 			}
-			flat := strings.Join(strings.Fields(stdout), " ")
+			flat := strings.Join(strings.Fields(stderr), " ")
 			for _, want := range []string{
 				"The recipe runs agent/review.mjs, with its package.json and package-lock.json in agent/. Change the path in the recipe to yours.",
 				fmt.Sprintf(sdkPrograms[agent], "5"),
@@ -2910,12 +2910,12 @@ func TestInitWritesTheSDKRecipes(t *testing.T) {
 				"Standard error reaches the job's log, which a public repository shows to anyone, so print nothing there that the agent read or wrote.",
 				"\n  gh secret set " + key + "\n",
 			} {
-				if !strings.Contains(flat, want) && !strings.Contains(stdout, want) {
-					t.Errorf("stdout does not say %q:\n%s", want, stdout)
+				if !strings.Contains(flat, want) && !strings.Contains(stderr, want) {
+					t.Errorf("stderr does not say %q:\n%s", want, stderr)
 				}
 			}
-			if at := strings.Index(stdout, "These commands are left"); at < strings.Index(stdout, "Change the path in the recipe to yours") {
-				t.Errorf("init lists the commands before it says where the program sits:\n%s", stdout)
+			if at := strings.Index(stderr, "These commands are left"); at < strings.Index(stderr, "Change the path in the recipe to yours") {
+				t.Errorf("init lists the commands before it says where the program sits:\n%s", stderr)
 			}
 		})
 	}

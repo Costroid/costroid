@@ -148,12 +148,10 @@ type mergedSend struct {
 	tip          string
 	// refProtected is the job's GITHUB_REF_PROTECTED. It names a cause of an
 	// unverified fact and decides nothing.
-	refProtected string
-	pace         verdictPace
-	json         bool
-	// say takes the lines about each fact: standard output, or standard
-	// error under --json.
-	say, stdout, stderr io.Writer
+	refProtected   string
+	pace           verdictPace
+	json           bool
+	stdout, stderr io.Writer
 }
 
 // mergedCommand sends with a client that follows no redirect, as export's does.
@@ -162,14 +160,14 @@ func mergedCommand(ctx context.Context, args []string, std stdio) int {
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return merged(ctx, args, client, os.Getenv, ingestPace, std.stdout, std.stderr)
+	return merged(ctx, args, asking(client, std.stderr), os.Getenv, ingestPace, std.stdout, std.stderr)
 }
 
 // merged reads the push and GitHub's answer before it reaches the platform,
 // so a push that closed nothing needs no token. The send is asked again at
 // export's verdict pace.
 func merged(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, stdout, stderr io.Writer) int {
-	flags, err := parseMerged(args, stdout)
+	flags, err := parseMerged(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -181,25 +179,21 @@ func merged(ctx context.Context, args []string, client *http.Client, getenv func
 	case err != nil:
 		return cli.Fail(stderr, err)
 	case skip != "":
-		fmt.Fprintf(stderr, "costroid: %s, so nothing was sent\n", skip)
+		cli.Say(stderr, "costroid: %s, so nothing was sent\n", skip)
 		return 0
 	}
 	facts, err := closedBy(ctx, push, client, getenv)
 	if err != nil {
 		return cli.Fail(stderr, err)
 	}
-	say := stdout
-	if flags.json {
-		say = stderr
-	}
 	if len(facts) == 0 {
-		fmt.Fprintf(say, "costroid: the push to %s closed no pull request, so no merge fact was sent\n", push.tip)
+		cli.Say(stderr, "costroid: the push to %s closed no pull request, so no merge fact was sent\n", push.tip)
 		return 0
 	}
 	if flags.dryRun {
 		return printFacts(facts, stdout, stderr)
 	}
-	send := mergedSend{installation: flags.installation, tip: push.tip, refProtected: getenv("GITHUB_REF_PROTECTED"), pace: pace, json: flags.json, say: say, stdout: stdout, stderr: stderr}
+	send := mergedSend{installation: flags.installation, tip: push.tip, refProtected: getenv("GITHUB_REF_PROTECTED"), pace: pace, json: flags.json, stdout: stdout, stderr: stderr}
 	send.target = platform{client: client, origin: flags.origin, token: getenv(platformTokenVariable)}
 	if code := send.open(ctx, getenv); code != 0 {
 		return code
@@ -207,13 +201,13 @@ func merged(ctx context.Context, args []string, client *http.Client, getenv func
 	return send.all(ctx, facts)
 }
 
-func parseMerged(args []string, stdout io.Writer) (mergedFlags, error) {
+func parseMerged(args []string, stdout, stderr io.Writer) (mergedFlags, error) {
 	set := flag.NewFlagSet("merged", flag.ContinueOnError)
 	address := set.String("platform-url", "", "Costroid Platform's https origin")
 	installation := set.String("installation-id", "", "the installation the facts come through")
 	asJSON := set.Bool("json", false, "print one object per fact sent")
 	dryRun := set.Bool("dry-run", false, "print the documents and send nothing")
-	if err := parseFlags(set, args, mergedHelp, stdout); err != nil {
+	if err := parseFlags(set, args, mergedHelp, stdout, stderr); err != nil {
 		return mergedFlags{}, err
 	}
 	if set.NArg() > 0 {
@@ -343,7 +337,7 @@ func printFacts(facts []mergeFact, stdout, stderr io.Writer) int {
 		}{fact.id, fact.document})
 		fmt.Fprintf(stdout, "%s\n", line)
 	}
-	fmt.Fprintf(stderr, "costroid: --dry-run printed %d merge facts and sent none\n", len(facts))
+	cli.Say(stderr, "costroid: --dry-run printed %d merge facts and sent none\n", len(facts))
 	return 0
 }
 
@@ -369,7 +363,7 @@ func (s *mergedSend) open(ctx context.Context, getenv func(string) string) int {
 		return cli.Fail(s.stderr, err)
 	}
 	s.version = stated
-	fmt.Fprintf(s.stderr, "costroid: Costroid Platform states integration/v%s, so merged sends the merge facts by it\n", stated.Version)
+	cli.Say(s.stderr, "costroid: Costroid Platform states integration/v%s, so merged sends the merge facts by it\n", stated.Version)
 	if getenv("ACTIONS_ID_TOKEN_REQUEST_URL") == "" || getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
 		return 0
 	}
@@ -468,13 +462,13 @@ func (s *mergedSend) printStored(fact mergeFact, status int, grade, branch strin
 		fmt.Fprintf(s.stderr, "costroid: warning: Costroid Platform stored %s, and its answer names no run_identity the integration contract defines\n", pull)
 		return
 	case status == http.StatusOK && branch != "":
-		fmt.Fprintf(s.say, "costroid: %s: already held as %s, from a push to the protected branch %s, so nothing changed\n", pull, grade, branch)
+		cli.Say(s.stderr, "costroid: %s: already held as %s, from a push to the protected branch %s, so nothing changed\n", pull, grade, branch)
 	case status == http.StatusOK:
-		fmt.Fprintf(s.say, "costroid: %s: already held as %s, so nothing changed\n", pull, grade)
+		cli.Say(s.stderr, "costroid: %s: already held as %s, so nothing changed\n", pull, grade)
 	case branch != "":
-		fmt.Fprintf(s.say, "costroid: %s: stored as %s, from a push to the protected branch %s\n", pull, grade, branch)
+		cli.Say(s.stderr, "costroid: %s: stored as %s, from a push to the protected branch %s\n", pull, grade, branch)
 	default:
-		fmt.Fprintf(s.say, "costroid: %s: stored as %s\n", pull, grade)
+		cli.Say(s.stderr, "costroid: %s: stored as %s\n", pull, grade)
 	}
 	if grade == unverified {
 		s.printCauses(fact)
@@ -487,13 +481,13 @@ func (s *mergedSend) printStored(fact mergeFact, status int, grade, branch strin
 func (s *mergedSend) printCauses(fact mergeFact) {
 	switch {
 	case s.runToken == "":
-		fmt.Fprintf(s.say, "costroid: merge %s reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit\n", fact.id)
+		cli.Say(s.stderr, "costroid: merge %s reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit\n", fact.id)
 		return
 	case fact.document.MergeCommitSHA != s.tip:
-		fmt.Fprintf(s.say, "costroid: merge %s reads unverified because its commit %s is not the tip of the push, %s, which the run token names, as in a merge queue's group\n", fact.id, fact.document.MergeCommitSHA, s.tip)
+		cli.Say(s.stderr, "costroid: merge %s reads unverified because its commit %s is not the tip of the push, %s, which the run token names, as in a merge queue's group\n", fact.id, fact.document.MergeCommitSHA, s.tip)
 	}
 	if s.version != contractV05 && s.refProtected == "false" {
-		fmt.Fprintf(s.say, "costroid: merge %s reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch\n", fact.id)
+		cli.Say(s.stderr, "costroid: merge %s reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch\n", fact.id)
 	}
 }
 

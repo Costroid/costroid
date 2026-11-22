@@ -330,7 +330,13 @@ func (r repository) file(relative string) string {
 type locate func() (repository, error)
 
 func initCommand(args []string, stdout, stderr io.Writer) int {
-	return initRepository(locateRepository, buildInfo{version: version, commit: commit, tagCommit: remoteTagCommit}, costroid.Recipes, prDefaults, args, stdout, stderr)
+	// A build that records no commit reads it from the tag on github.com, and
+	// says so before it waits there.
+	tagCommit := func(tag string) (string, error) {
+		cli.Say(stderr, "costroid: asking github.com for the commit of %s\n", tag)
+		return remoteTagCommit(tag)
+	}
+	return initRepository(locateRepository, buildInfo{version: version, commit: commit, tagCommit: tagCommit}, costroid.Recipes, prDefaults, args, stdout, stderr)
 }
 
 // locateRepository asks git for the root of the working tree the current
@@ -367,7 +373,7 @@ func locateRepository() (repository, error) {
 // recipes holds under recipes/, and with pr for what --pr reads beyond the
 // arguments.
 func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, args []string, stdout, stderr io.Writer) int {
-	flags, err := parseInit(args, stdout)
+	flags, err := parseInit(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -387,7 +393,7 @@ func initRepository(find locate, build buildInfo, recipes fs.FS, pr prSettings, 
 		return cli.Fail(stderr, err)
 	}
 	if switched {
-		fmt.Fprintf(stderr, "costroid: %s already runs %s, so init prints the patch that reports from it, as --existing %s does\n", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses, filepath.ToSlash(flags.existing))
+		cli.Say(stderr, "costroid: %s already runs %s, so init prints the patch that reports from it, as --existing %s does\n", filepath.ToSlash(flags.existing), actionFor(flags.agent).uses, filepath.ToSlash(flags.existing))
 	}
 	if flags.existing != "" {
 		return printExistingPatch(repo, flags, release, recipes, stdout, stderr)
@@ -401,7 +407,7 @@ type initFlags struct {
 	force, postReview, skills, pr, keepOrg      bool
 }
 
-func parseInit(args []string, stdout io.Writer) (initFlags, error) {
+func parseInit(args []string, stdout, stderr io.Writer) (initFlags, error) {
 	set := flag.NewFlagSet("init", flag.ContinueOnError)
 	var flags initFlags
 	var host string
@@ -422,7 +428,7 @@ func parseInit(args []string, stdout io.Writer) (initFlags, error) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		flags.host, args = args[0], args[1:]
 	}
-	if err := parseFlags(set, args, initHelp, stdout); err != nil {
+	if err := parseFlags(set, args, initHelp, stdout, stderr); err != nil {
 		return flags, err
 	}
 	rest := set.Args()
@@ -829,6 +835,9 @@ type written struct {
 }
 
 func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, pr prSettings, stdout, stderr io.Writer) int {
+	// What init says about what it wrote and what is left goes to standard
+	// error, as its patch's notes do, and --quiet drops it.
+	said := cli.Notes(stderr)
 	name := initRecipes[flags.host][flags.agent]
 	source, err := fs.ReadFile(recipes, path.Join("recipes", name))
 	if err != nil {
@@ -887,13 +896,13 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	case err != nil:
 		return cli.Fail(stderr, err)
 	}
-	fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", shown, name, release)
+	fmt.Fprintf(said, "costroid: wrote %s from recipes/%s, %s\n", shown, name, release)
 	changed := []string{shown}
 	if connect != nil {
 		if err := createFile(repo.file(filepath.FromSlash(connectWorkflow)), connect, flags.force); err != nil {
 			return cli.Fail(stderr, err)
 		}
-		fmt.Fprintf(stdout, "costroid: wrote %s from recipes/%s, %s\n", connectWorkflow, connectRecipeName, release)
+		fmt.Fprintf(said, "costroid: wrote %s from recipes/%s, %s\n", connectWorkflow, connectRecipeName, release)
 		changed = append(changed, connectWorkflow)
 	}
 	settings, err := commentedConfig(release)
@@ -903,14 +912,14 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	switch err := createFile(repo.file(configFile), settings, false); {
 	case err == nil:
 		changed = append(changed, configFile)
-		fmt.Fprintf(stdout, "costroid: wrote %s, with every key commented out\n", configFile)
+		fmt.Fprintf(said, "costroid: wrote %s, with every key commented out\n", configFile)
 	case errors.Is(err, fs.ErrExist):
-		fmt.Fprintf(stdout, "costroid: %s exists, and init left it as it is\n", configFile)
+		fmt.Fprintf(said, "costroid: %s exists, and init left it as it is\n", configFile)
 	default:
 		return cli.Fail(stderr, err)
 	}
 	if flags.skills {
-		wrote, err := writeSkills(repo, stdout)
+		wrote, err := writeSkills(repo, said)
 		changed = append(changed, wrote...)
 		if err != nil {
 			return cli.Fail(stderr, err)
@@ -923,24 +932,24 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 			}
 			changed = append(changed, gitlabCI)
 		}
-		fmt.Fprintln(stdout, include.line)
+		fmt.Fprintln(said, include.line)
 	}
 	if flow == nil {
-		printNextSteps(stdout, repo, flags, changed, recipe)
+		printNextSteps(said, repo, flags, changed, recipe)
 	} else {
-		printSpend(stdout, flags, recipe)
-		printProgram(stdout, flags, recipe)
+		printSpend(said, flags, recipe)
+		printProgram(said, flags, recipe)
 		flow.files = changed
 		if err := flow.run(); err != nil {
 			return cli.Fail(stderr, err)
 		}
-		printAfterSteps(stdout, flags, recipe)
+		printAfterSteps(said, flags, recipe)
 	}
 	for _, note := range report.Notes {
-		fmt.Fprintf(stdout, "\nnote: %s\n", note)
+		fmt.Fprintf(said, "\nnote: %s\n", note)
 	}
 	if flow == nil {
-		fmt.Fprintf(stdout, "\n%s\n", nextAfterInit)
+		fmt.Fprintf(said, "\n%s\n", nextAfterInit)
 	}
 	return 0
 }
@@ -1241,9 +1250,9 @@ func perPushSentence(recipe []byte) string {
 	return sentence
 }
 
-func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed []string, recipe []byte) {
-	printSpend(stdout, flags, recipe)
-	printProgram(stdout, flags, recipe)
+func printNextSteps(said io.Writer, repo repository, flags initFlags, changed []string, recipe []byte) {
+	printSpend(said, flags, recipe)
+	printProgram(said, flags, recipe)
 	var commands []string
 	if repo.dir != repo.root {
 		if up, err := filepath.Rel(repo.dir, repo.root); err == nil {
@@ -1251,7 +1260,7 @@ func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed 
 		}
 	}
 	if flags.host == gitlabHost {
-		fmt.Fprint(stdout, "\n"+wrap(fmt.Sprintf("Set %s as a CI/CD variable scoped to the environment costroid-agent, and COSTROID_GITLAB_TOKEN scoped to costroid-report. docs/recipes.md#give-the-report-a-token says which token. Every merge request needs the label %s.", gitlabKeys[flags.agent], agentLabel), usageWidth))
+		fmt.Fprint(said, "\n"+wrap(fmt.Sprintf("Set %s as a CI/CD variable scoped to the environment costroid-agent, and COSTROID_GITLAB_TOKEN scoped to costroid-report. docs/recipes.md#give-the-report-a-token says which token. Every merge request needs the label %s.", gitlabKeys[flags.agent], agentLabel), usageWidth))
 	} else {
 		for _, name := range secretNames(recipe) {
 			commands = append(commands, "gh secret set "+name)
@@ -1265,29 +1274,29 @@ func printNextSteps(stdout io.Writer, repo repository, flags initFlags, changed 
 		commands = append(commands, "gh pr create --fill")
 	}
 	if repo.noRemote {
-		fmt.Fprint(stdout, "\n"+wrap(fmt.Sprintf("This repository has no remote: create it on %s and add it as origin before the push.", hostNames[flags.host]), usageWidth))
+		fmt.Fprint(said, "\n"+wrap(fmt.Sprintf("This repository has no remote: create it on %s and add it as origin before the push.", hostNames[flags.host]), usageWidth))
 	}
-	fmt.Fprint(stdout, "\nThese commands are left, and init ran none of them:\n")
+	fmt.Fprint(said, "\nThese commands are left, and init ran none of them:\n")
 	for _, command := range commands {
-		fmt.Fprintf(stdout, "  %s\n", command)
+		fmt.Fprintf(said, "  %s\n", command)
 	}
-	printAfterSteps(stdout, flags, recipe)
+	printAfterSteps(said, flags, recipe)
 }
 
 // printSpend says what each push can spend, and on a subscription what the
 // figures read.
-func printSpend(stdout io.Writer, flags initFlags, recipe []byte) {
+func printSpend(said io.Writer, flags initFlags, recipe []byte) {
 	if sentence := perPushSentence(recipe); sentence != "" {
-		fmt.Fprint(stdout, "\n"+wrap(sentence, usageWidth))
+		fmt.Fprint(said, "\n"+wrap(sentence, usageWidth))
 	}
 	if flags.auth == subscriptionAuth {
-		fmt.Fprint(stdout, "\n"+wrap(subscriptionBasis, usageWidth))
+		fmt.Fprint(said, "\n"+wrap(subscriptionBasis, usageWidth))
 	}
 }
 
 // printProgram says, for a recipe that runs a program on an agent's SDK,
 // where the program sits, what it must do and what it must print.
-func printProgram(stdout io.Writer, flags initFlags, recipe []byte) {
+func printProgram(said io.Writer, flags initFlags, recipe []byte) {
 	needs := sdkPrograms[flags.agent]
 	if needs == "" {
 		return
@@ -1298,19 +1307,19 @@ func printProgram(stdout io.Writer, flags initFlags, recipe []byte) {
 	}
 	where := fmt.Sprintf("The recipe runs %s, with its package.json and package-lock.json in %s/. Change the path in the recipe to yours.", sdkProgram, path.Dir(sdkProgram))
 	for _, paragraph := range []string{where, fmt.Sprintf(needs, budget[1]), sdkOutput} {
-		fmt.Fprint(stdout, "\n"+wrap(paragraph, usageWidth))
+		fmt.Fprint(said, "\n"+wrap(paragraph, usageWidth))
 	}
 }
 
 // printAfterSteps says what the platform needs beyond its variable, and when
 // the agent's label is needed.
-func printAfterSteps(stdout io.Writer, flags initFlags, recipe []byte) {
+func printAfterSteps(said io.Writer, flags initFlags, recipe []byte) {
 	if flags.platformURL != "" {
-		fmt.Fprint(stdout, "\n"+wrap(connectNeeds, usageWidth))
+		fmt.Fprint(said, "\n"+wrap(connectNeeds, usageWidth))
 	}
 	if flags.host == githubHost && bytes.Contains(recipe, []byte(agentLabel)) {
-		fmt.Fprintf(stdout, "\nBefore a first contributor's pull request:\n  gh label create %s\n", agentLabel)
-		fmt.Fprint(stdout, wrap(fmt.Sprintf("The label %s lets a maintainer start the agent on a first contributor's pull request.", agentLabel), usageWidth))
+		fmt.Fprintf(said, "\nBefore a first contributor's pull request:\n  gh label create %s\n", agentLabel)
+		fmt.Fprint(said, wrap(fmt.Sprintf("The label %s lets a maintainer start the agent on a first contributor's pull request.", agentLabel), usageWidth))
 	}
 }
 
@@ -1478,7 +1487,7 @@ func printExistingPatch(repo repository, flags initFlags, release pin, recipes f
 		return cli.Fail(stderr, err)
 	}
 	if bytes.Contains(source, []byte(costroidActionPath+"@")) {
-		fmt.Fprintf(stderr, "costroid: %s already calls %s, so init has nothing to add\n", shown, costroidActionPath)
+		cli.Say(stderr, "costroid: %s already calls %s, so init has nothing to add\n", shown, costroidActionPath)
 		return 0
 	}
 	lines, endsWithNewline := splitLines(source)
@@ -1496,29 +1505,30 @@ func printExistingPatch(repo repository, flags initFlags, release pin, recipes f
 	fmt.Fprint(stdout, unifiedDiff(shown, lines, endsWithNewline, patch.edits))
 	if connect != nil {
 		fmt.Fprint(stdout, newFileDiff(connectWorkflow, connect))
-		fmt.Fprintf(stderr, "costroid: printed a patch for %s and %s, and wrote nothing\n", shown, connectWorkflow)
+		cli.Say(stderr, "costroid: printed a patch for %s and %s, and wrote nothing\n", shown, connectWorkflow)
 	} else {
-		fmt.Fprintf(stderr, "costroid: printed a patch for %s, and wrote nothing\n", shown)
+		cli.Say(stderr, "costroid: printed a patch for %s, and wrote nothing\n", shown)
 	}
 	if connectLeft {
-		fmt.Fprintf(stderr, "costroid: %s exists, and init left it as it is\n", connectWorkflow)
+		cli.Say(stderr, "costroid: %s exists, and init left it as it is\n", connectWorkflow)
 	}
+	said := cli.Notes(stderr)
 	text := "Apply it from the repository's root with git apply. Your job keeps the permissions it has, and the read step asks for nothing more. The report job holds checks: write and pull-requests: write, runs on pull requests alone, and runs nothing the pull request wrote. docs/existing-workflow.md says more."
 	if patch.note != "" {
 		text += " " + patch.note
 	}
-	fmt.Fprint(stderr, wrap(text, usageWidth))
+	fmt.Fprint(said, wrap(text, usageWidth))
 	if bytes.Contains(source, []byte("claude_code_oauth_token")) {
-		fmt.Fprint(stderr, wrap(subscriptionBasis, usageWidth))
+		fmt.Fprint(said, wrap(subscriptionBasis, usageWidth))
 	}
 	if flags.platformURL != "" {
-		fmt.Fprint(stderr, "\n"+wrap("The ingest job holds id-token: write and reads the platform's address from a repository variable. Set it with:", usageWidth))
-		fmt.Fprintf(stderr, "  %s\n", variableCommand(flags.platformURL))
+		fmt.Fprint(said, "\n"+wrap("The ingest job holds id-token: write and reads the platform's address from a repository variable. Set it with:", usageWidth))
+		fmt.Fprintf(said, "  %s\n", variableCommand(flags.platformURL))
 		needs := platformNeeds
 		if connect != nil {
 			needs = connectNeeds
 		}
-		fmt.Fprint(stderr, wrap(needs, usageWidth))
+		fmt.Fprint(said, wrap(needs, usageWidth))
 	}
 	return 0
 }

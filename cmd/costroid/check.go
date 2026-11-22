@@ -36,7 +36,7 @@ func postCheck(ctx context.Context, host scm.Reporter, head, conclusion string, 
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(stderr, "costroid: check run %d, conclusion %s\n", id, conclusion)
+	cli.Say(stderr, "costroid: check run %d, conclusion %s\n", id, conclusion)
 	return &id, nil
 }
 

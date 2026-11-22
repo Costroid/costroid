@@ -19,7 +19,7 @@ func executeWith(t *testing.T, stdin string, args ...string) (int, string, strin
 func TestValidateReadsStandardInputForADash(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, stdout, stderr := executeWith(t, "policy:\n  run_budget_usd: \"5\"\n", "validate", "-")
-	if code != 0 || stdout != "standard input: valid\n"+nextAfterValidate+"\n" || stderr != "" {
+	if code != 0 || stdout != "standard input: valid\n" || stderr != nextAfterValidate+"\n" {
 		t.Errorf("a valid file: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	code, stdout, stderr = executeWith(t, "policy:\n  no_such_key: 1\n", "validate", "-")

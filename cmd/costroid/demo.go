@@ -73,7 +73,7 @@ func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	set := flag.NewFlagSet("demo", flag.ContinueOnError)
 	markdown := set.Bool("markdown", false, "print the comment as the Markdown report posts")
 	state := set.String("state", demoNeutral, "the comment to show: "+strings.Join(demoStates, ", "))
-	err := parseFlags(set, args, demoHelp, stdout)
+	err := parseFlags(set, args, demoHelp, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -86,13 +86,15 @@ func demoCommand(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("demo", err))
 	}
-	if err := printDemo(ctx, *state, *markdown, stdout); err != nil {
+	if err := printDemo(ctx, *state, *markdown, stdout, stderr); err != nil {
 		return cli.Fail(stderr, err)
 	}
 	return 0
 }
 
-func printDemo(ctx context.Context, state string, markdown bool, stdout io.Writer) error {
+// printDemo prints the comment on stdout. For a terminal it then names the
+// next command on stderr, and ends on the verdict sentence on stdout.
+func printDemo(ctx context.Context, state string, markdown bool, stdout, stderr io.Writer) error {
 	input, err := demoStateInput(ctx, state)
 	var body string
 	if err == nil {
@@ -101,10 +103,18 @@ func printDemo(ctx context.Context, state string, markdown bool, stdout io.Write
 	if err != nil {
 		return fmt.Errorf("build the example comment: %w", err)
 	}
-	if !markdown {
-		body = forTerminal(body) + "\n" + nextAfterDemo + "\n\n" + paragraph(comment.VerdictSentence(input)) + "\n"
+	if markdown {
+		return printComment(stdout, body)
 	}
-	if _, err := io.WriteString(stdout, body); err != nil {
+	if err := printComment(stdout, forTerminal(body)); err != nil {
+		return err
+	}
+	cli.Say(stderr, "\n%s\n", nextAfterDemo)
+	return printComment(stdout, "\n"+paragraph(comment.VerdictSentence(input))+"\n")
+}
+
+func printComment(stdout io.Writer, text string) error {
+	if _, err := io.WriteString(stdout, text); err != nil {
 		return fmt.Errorf("print the comment: %w", err)
 	}
 	return nil

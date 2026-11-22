@@ -140,10 +140,13 @@ func parseServe(args []string, stderr io.Writer) (serveOptions, error) {
 	set.Var(&gitlab, "gitlab-host", "a GitLab host whose CI tokens are trusted")
 	set.Var(&binds, "bind", "an SCM owner for this instance's tenant, host:owner")
 	set.Var(&allow, "egress-allow", "an exact host the service may call")
-	if err := cli.Parse(set, args); err != nil {
+	if err := cli.Parse(set, args, stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stderr, ServeUsage)
 		}
+		return serveOptions{}, err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return serveOptions{}, err
 	}
 	options.gitlabHosts = gitlab
@@ -170,13 +173,17 @@ func parseBinding(flagName, text string) (store.Binding, error) {
 	return store.Binding{Host: host, Owner: owner}, nil
 }
 
-// Main runs costroid serve until ctx ends and returns an exit code.
+// Main runs costroid serve until ctx ends and returns an exit code. An
+// interrupt stops the service as SIGTERM does: it drains its requests, and
+// exits with its own code.
 func Main(ctx context.Context, args []string, stderr io.Writer) int {
 	options, err := parseServe(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if err == nil {
+		forget := cli.OnInterrupt(cli.Interrupt{Own: true})
+		defer forget()
 		err = run(ctx, options, stderr)
 	}
 	if err != nil {
@@ -275,7 +282,12 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	if err := bindOwners(ctx, ledger, ownerURL, options.bindings); err != nil {
 		return err
 	}
-	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	// Under --quiet the log keeps its warnings and errors.
+	level := slog.LevelInfo
+	if cli.Quiet(stderr) {
+		level = slog.LevelWarn
+	}
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
 	counters := egress.NewCounters(ledger, time.Now, logger)
 	gate := egress.New(options.egressAllow, counters)
 	issuers := issuersOf(options)

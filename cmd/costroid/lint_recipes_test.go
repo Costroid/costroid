@@ -35,12 +35,12 @@ func TestLintRecipesExitsOneAndNamesTheRule(t *testing.T) {
 	if err := os.WriteFile(path, []byte(rejectedWorkflow), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := execute(t, "lint-recipes", path)
+	code, stdout, stderr := execute(t, "lint-recipes", path)
 	if code != exitRejected {
 		t.Fatalf("exit %d", code)
 	}
-	if !strings.Contains(stderr, "bad.yml:1: pull-request-target:") {
-		t.Fatalf("stderr: %s", stderr)
+	if !strings.Contains(stdout, "bad.yml:1: pull-request-target:") || stderr != "" {
+		t.Fatalf("stdout: %s\nstderr: %s", stdout, stderr)
 	}
 }
 
@@ -74,12 +74,12 @@ func TestLintRecipesRefusesTheAdminKeyOnTheAgentsJob(t *testing.T) {
 	if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := execute(t, "lint-recipes", path)
+	code, stdout, stderr := execute(t, "lint-recipes", path)
 	if code != exitRejected {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(stderr, "agent-admin-key: the agent's job can read secrets.LITELLM_MASTER_KEY") {
-		t.Fatalf("stderr: %s", stderr)
+	if !strings.Contains(stdout, "agent-admin-key: the agent's job can read secrets.LITELLM_MASTER_KEY") || stderr != "" {
+		t.Fatalf("stdout: %s\nstderr: %s", stdout, stderr)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestLintRecipesChecksTheMarketplace(t *testing.T) {
 			test.seed(t, root)
 			t.Chdir(root)
 			code, stdout, stderr := execute(t, "lint-recipes", "recipes")
-			if code != exitRejected || !strings.Contains(stderr, test.want) || !strings.Contains(stdout, fmt.Sprintf("costroid: 2 files, %d rejected lines", test.rejected)) {
+			if code != exitRejected || !strings.Contains(stdout, test.want) || stderr != "" || !strings.Contains(stdout, fmt.Sprintf("costroid: 2 files, %d rejected lines", test.rejected)) {
 				t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, test.want)
 			}
 		})

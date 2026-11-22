@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/doctor.schema.json",
+  "title": "What costroid doctor --json prints, version 0.1",
+  "description": "The checks costroid doctor made of a repository and this machine: one entry per line it prints without --json, in the same order, and how many ended each way. It holds no secret's value, prefix or length.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.doctor/0.1"
+    },
+    "checks": {
+      "description": "One entry per check, in the order doctor prints them.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "count": {
+      "description": "How many checks ended in each status. doctor exits 1 when fail is above 0.",
+      "type": "object",
+      "properties": {
+        "fail": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warn": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "fail",
+        "warn",
+        "ok"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "checks",
+    "count"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "check": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "description": "How the check ended.",
+          "enum": [
+            "ok",
+            "warn",
+            "fail"
+          ]
+        },
+        "line": {
+          "description": "The line doctor prints for the check: the status, the fact and, after warn or fail, the fix.",
+          "type": "string",
+          "pattern": "^(ok|warn|fail): "
+        }
+      },
+      "required": [
+        "status",
+        "line"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

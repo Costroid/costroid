@@ -583,12 +583,12 @@ func TestReadmeTryItBlockIsWhatInitPrints(t *testing.T) {
 		t.Fatalf("the block opens with %q, not costroid init", lines[0])
 	}
 	code, stdout, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, args[2:]...)
-	if code != 0 {
-		t.Fatalf("%s exited %d: %s", lines[0], code, stderr)
+	if code != 0 || stdout != "" {
+		t.Fatalf("%s exited %d, stdout %q: %s", lines[0], code, stdout, stderr)
 	}
-	_, printed, found := strings.Cut(stdout, "These commands are left, and init ran none of them:\n")
+	_, printed, found := strings.Cut(stderr, "These commands are left, and init ran none of them:\n")
 	if !found {
-		t.Fatalf("init printed no commands:\n%s", stdout)
+		t.Fatalf("init printed no commands:\n%s", stderr)
 	}
 	printed, _, _ = strings.Cut(printed, "\n\n")
 	var want []string

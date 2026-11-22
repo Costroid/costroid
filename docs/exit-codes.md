@@ -12,6 +12,10 @@ Every `costroid` command ends in one of the ways below, and each way has one exi
 
 A command that exits 2 or 125 says why on standard error. The first line opens with `costroid:` and says what is wrong. Where a line follows it, the last one says what to do next: it names a command, a file or a page of this documentation. [`troubleshooting.md`](troubleshooting.md) lists the lines.
 
+## Ctrl-C is exit 130
+
+A command that Ctrl-C ends exits 130, whatever it was doing, as a shell reports a process that SIGINT ended. `costroid run` stops the agent first and writes the rows of what it spent, and `costroid serve` finishes its requests and exits 0. [`output.md`](output.md#ctrl-c) says more.
+
 ## `costroid run` exits with the agent's own code
 
 `costroid run` passes the agent's exit code through, so under `run` every code below 124 is the agent's: 0 when the agent finished, and whatever the agent chose when it stopped itself. Costroid's own codes there are 124 and 125. A wrong command line of `run` itself exits 125, where every other command exits 2, so that a caller never takes an agent's 2 for Costroid's.

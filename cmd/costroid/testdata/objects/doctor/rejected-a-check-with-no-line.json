@@ -1,0 +1,1 @@
+{"schema": "costroid.doctor/0.1", "checks": [{"status": "ok"}], "count": {"fail": 0, "warn": 0, "ok": 1}}

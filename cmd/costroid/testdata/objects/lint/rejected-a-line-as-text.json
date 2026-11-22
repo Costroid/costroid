@@ -1,0 +1,1 @@
+{"schema": "costroid.lint/0.1", "files": 1, "agents": 1, "findings": [{"rule": "agent-id-token", "severity": "high", "file": "review.yml", "line": "11", "message": "x"}], "count": {"high": 1, "medium": 0, "note": 0}}

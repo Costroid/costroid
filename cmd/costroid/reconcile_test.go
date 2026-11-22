@@ -451,7 +451,7 @@ func TestReconcileExportSendsTheRowsOutWrites(t *testing.T) {
 	stub := newReconcilePlatform(t)
 	doer := &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}
 	code, stdout, stderr, stored := stub.reconcileAndSend(t, doer, stub.env(stub.githubJob()), "--installation-id", testInstallation)
-	if code != 0 || stderr != reconcileVersionLine {
+	if code != 0 || stderr != reconcileVersionLine+"costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n" {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	puts, seen := stub.sent()
@@ -485,8 +485,8 @@ func TestReconcileExportSendsTheRowsOutWrites(t *testing.T) {
 	if !strings.Contains(oidc.header.Get("Authorization"), testRequestToken) {
 		t.Errorf("the run token was asked for without the request token: %v", oidc.header)
 	}
-	if want := "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n"; !strings.HasSuffix(stdout, want) {
-		t.Errorf("stdout ends %q, want %q", stdout[max(0, len(stdout)-200):], want)
+	if strings.Contains(stdout, "costroid:") {
+		t.Errorf("stdout holds more than the comparison:\n%s", stdout)
 	}
 
 	scheduled := newReconcilePlatform(t)
@@ -538,8 +538,8 @@ func TestReconcileExportSendsAgainOnAServerError(t *testing.T) {
 			t.Errorf("send %d differs from --out's rows:\n%s", i+1, body)
 		}
 	}
-	if !strings.Contains(stdout, "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n") {
-		t.Errorf("stdout %q", stdout)
+	if !strings.Contains(stderr, "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n") || strings.Contains(stdout, "costroid:") {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
 	}
 
 	down := newReconcilePlatform(t)
@@ -739,7 +739,7 @@ func TestReconcileExportSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 	stub := newReconcilePlatform(t)
 	stub.states[contractV06.path()] = contractV06
 	code, _, stderr, stored := stub.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, stub.env(stub.githubJob()), "--installation-id", testInstallation)
-	if want := "costroid: Costroid Platform states integration/v0.6, so reconcile sends the rows by it\n"; code != 0 || stderr != want {
+	if want := "costroid: Costroid Platform states integration/v0.6, so reconcile sends the rows by it\n" + "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n"; code != 0 || stderr != want {
 		t.Fatalf("exit %d, stderr %q, want %q", code, stderr, want)
 	}
 	puts, seen := stub.sent()

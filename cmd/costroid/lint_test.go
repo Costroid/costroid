@@ -32,11 +32,12 @@ func TestLintExitsOneOnAHighFinding(t *testing.T) {
 	if code != exitRejected {
 		t.Fatalf("exit %d", code)
 	}
-	if !strings.Contains(stderr, "mention.yml:17: high: agent-id-token: ") {
+	if stderr != "" {
 		t.Fatalf("stderr: %s", stderr)
 	}
-	if !strings.Contains(stdout, ": note: subscription-token: ") || !strings.Contains(stdout, "2 high, 2 medium, 2 notes\n") {
-		t.Fatalf("stdout: %s", stdout)
+	high, note := strings.Index(stdout, "mention.yml:17: high: agent-id-token: "), strings.Index(stdout, ": note: subscription-token: ")
+	if high < 0 || note < high || !strings.HasSuffix(stdout, "2 high, 2 medium, 2 notes\n") {
+		t.Fatalf("stdout does not hold the high finding, then the note, then the count: %s", stdout)
 	}
 }
 
@@ -45,12 +46,12 @@ func TestLintFailsOnAMediumFindingOnlyWhenStrict(t *testing.T) {
 	if code, _, stderr := runLint(t, medium); code != 0 {
 		t.Fatalf("exit %d without --strict: %s", code, stderr)
 	}
-	code, _, stderr := runLint(t, "--strict", medium)
+	code, stdout, stderr := runLint(t, "--strict", medium)
 	if code != exitRejected {
 		t.Fatalf("exit %d with --strict", code)
 	}
-	if !strings.Contains(stderr, ": medium: unpinned-action: openai/codex-action@v1 ") {
-		t.Fatalf("stderr: %s", stderr)
+	if !strings.Contains(stdout, ": medium: unpinned-action: openai/codex-action@v1 ") || stderr != "" {
+		t.Fatalf("stdout: %s\nstderr: %s", stdout, stderr)
 	}
 }
 
@@ -68,12 +69,12 @@ func TestLintReadsGitHubsWorkflowsByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	code, _, stderr := runLint(t)
+	code, stdout, stderr := runLint(t)
 	if code != exitRejected {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(stderr, filepath.Join(".github", "workflows", "review.yml")+":11: high: agent-id-token: ") {
-		t.Fatalf("stderr: %s", stderr)
+	if !strings.Contains(stdout, filepath.Join(".github", "workflows", "review.yml")+":11: high: agent-id-token: ") || stderr != "" {
+		t.Fatalf("stdout: %s\nstderr: %s", stdout, stderr)
 	}
 }
 

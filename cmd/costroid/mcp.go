@@ -76,7 +76,7 @@ func mcpCommand(ctx context.Context, args []string, std stdio) int {
 	set := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	repository := set.String("repo", os.Getenv("GITHUB_REPOSITORY"), "the repository as owner/name")
 	ledgerURL := set.String("ledger", "", "the URL of a costroid serve")
-	if err := parseFlags(set, args, mcpHelp, std.stdout); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, mcpHelp, std.stdout, std.stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return cli.Fail(std.stderr, cli.Mistaken("mcp", err))

@@ -63,3 +63,4 @@ One page per task, in the order a team meets them.
 
 - [`troubleshooting.md`](troubleshooting.md): each line Costroid prints, what it means and what to do.
 - [`exit-codes.md`](exit-codes.md): what each command exits with, for a script or a job.
+- [`output.md`](output.md): what each command prints on standard output and on standard error, `--quiet`, and the objects `--json` prints.

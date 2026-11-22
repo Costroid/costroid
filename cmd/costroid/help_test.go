@@ -23,8 +23,9 @@ import (
 // table.
 var flagSources = []string{".", filepath.Join("..", "..", "internal", "server")}
 
-// flagless are the commands that define no flag.
-var flagless = []string{"approve", "validate", "lint-recipes", "version"}
+// flagless are the commands that define no flag of their own. Each takes
+// --quiet, which internal/cli gives every command.
+var flagless = []string{"approve", "lint-recipes"}
 
 // computedFlags gives the names of flags a command defines from a table of its
 // own, rather than as a literal.
@@ -68,6 +69,8 @@ var helpAfterFlags = map[string][][]string{
 		{"gateway", "close", "--url", "https://gateway.example"},
 	},
 	"result":    {{"result", "--pr", "1"}},
+	"validate":  {{"validate", "--json"}},
+	"version":   {{"version", "--verbose"}},
 	"mcp":       {{"mcp", "--repo", "owner/name"}},
 	"emit-otlp": {{"emit-otlp", "--rows", "rows.jsonl"}},
 	"app":       {{"app", "manifest", "--name", "Costroid"}, {"app", "create", "--name", "Costroid"}},
@@ -181,6 +184,10 @@ func part(page, heading string) string {
 	return ""
 }
 
+// quietLast finds each flag's row under Flags, so that the last can be held
+// to --quiet, which every command takes.
+var quietLast = regexp.MustCompile(`(?m)^  -.*$`)
+
 // TestEveryHelpPageHasItsPartsInOrder holds each page to one sentence of what
 // the command does, its usage, at least one example, a line for each flag,
 // then what the environment gives it, its exit codes and the address of its
@@ -210,9 +217,9 @@ func TestEveryHelpPageHasItsPartsInOrder(t *testing.T) {
 					t.Errorf("%q is not one blank line above the next heading", headings[i])
 				}
 			}
-			want := []string{"Usage", "Examples"}
-			if len(flags[entry.name]) > 0 {
-				want = append(want, "Flags")
+			want := []string{"Usage", "Examples", "Flags"}
+			if rows := quietLast.FindAllString(part(entry.help, "Flags"), -1); len(rows) == 0 || !strings.HasPrefix(rows[len(rows)-1], "  "+cli.QuietRow[0]+"  ") {
+				t.Errorf("the page's flags do not end on %s:\n%s", cli.QuietRow[0], part(entry.help, "Flags"))
 			}
 			if len(headings) < len(want) || !slices.Equal(headings[:len(want)], want) {
 				t.Fatalf("the page opens with the headings %q, want %q", headings, want)
@@ -765,18 +772,20 @@ func sentences(prose string) []string {
 // command line exited 125 and init outside a repository exited 2: each page
 // now gives the command line a row of its own.
 var withdrawn = map[string][]string{
-	"validate":   {"A policy amount or approval.expires_days that YAML reads as a float, such as 5.0, is a problem too, because the check refuses it."},
-	"approve":    {"125 GitHub Actions was not detected, or an argument was given"},
-	"demo":       {"125 an argument or an unknown --state was given, or costroid could not build the comment"},
-	"egress":     {"125 costroid could not read the command line or the database"},
-	"follow-up":  {"125 GitHub Actions was not detected, or the flags could not be read"},
-	"ingest-run": {"125 costroid could not read the flags or the source, or write the rows"},
-	"init":       {"2 the directory is in no git repository", "125 costroid could not read or write a file, refused to, or a command --pr runs failed"},
-	"keys":       {"125 costroid could not read the command line, reach the database or find the tenant or the key"},
-	"mcp":        {"125 costroid could not read the flags or --ledger, or the session failed"},
-	"merged":     {"125 costroid could not read the flags, the run or GitHub's answer, or reach Costroid Platform, or the platform does not serve integration/v0.5 or later"},
-	"report":     {"125 the flags could not be read, neither GitHub Actions nor GitLab CI was detected, or --preview could not build the comment"},
-	"review":     {"125 costroid could not read the flags or write --out, or --post found neither GitHub Actions nor GitLab CI"},
+	"validate":     {"A policy amount or approval.expires_days that YAML reads as a float, such as 5.0, is a problem too, because the check refuses it.", "costroid validate [costroid.yml]"},
+	"approve":      {"125 GitHub Actions was not detected, or an argument was given"},
+	"demo":         {"125 an argument or an unknown --state was given, or costroid could not build the comment"},
+	"egress":       {"125 costroid could not read the command line or the database"},
+	"follow-up":    {"125 GitHub Actions was not detected, or the flags could not be read"},
+	"ingest-run":   {"125 costroid could not read the flags or the source, or write the rows"},
+	"init":         {"2 the directory is in no git repository", "125 costroid could not read or write a file, refused to, or a command --pr runs failed"},
+	"keys":         {"125 costroid could not read the command line, reach the database or find the tenant or the key"},
+	"lint-recipes": {"Each rejected line goes to stderr."},
+	"lint":         {"costroid lint [--strict] [paths]"},
+	"mcp":          {"125 costroid could not read the flags or --ledger, or the session failed"},
+	"merged":       {"125 costroid could not read the flags, the run or GitHub's answer, or reach Costroid Platform, or the platform does not serve integration/v0.5 or later"},
+	"report":       {"125 the flags could not be read, neither GitHub Actions nor GitLab CI was detected, or --preview could not build the comment"},
+	"review":       {"125 costroid could not read the flags or write --out, or --post found neither GitHub Actions nor GitLab CI"},
 }
 
 // TestNothingAHelpPageSaidIsDropped holds every sentence and every table row
@@ -1118,12 +1127,16 @@ var twoMeanings = map[string]map[string]string{
 		"connect":   "github-owner:<id> or gitlab-namespace:<id>",
 	},
 	"--json": {
-		"run":    "print the result object on stdout",
-		"report": "print the result object on stdout",
-		"result": "print the result object whole",
-		"policy": "print the verdict as the machine block carries it",
-		"merged": "print one object per fact sent",
-		"egress": "print the counters as one JSON object",
+		"run":      "print the result object on stdout",
+		"report":   "print the result object on stdout",
+		"result":   "print the result object whole",
+		"policy":   "print the verdict as the machine block carries it",
+		"merged":   "print one object per fact sent",
+		"egress":   "print the counters as one JSON object",
+		"doctor":   "print the checks as one JSON object",
+		"lint":     "print the findings as one JSON object",
+		"validate": "print what validate found as one JSON object",
+		"version":  "print the same facts as one JSON object",
 	},
 }
 

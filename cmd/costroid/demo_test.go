@@ -41,7 +41,7 @@ func demoComment(t *testing.T, state string) string {
 // in plain text with aligned columns, and no machine block.
 func TestDemoRendersForATerminal(t *testing.T) {
 	code, stdout, stderr := execute(t, "demo")
-	if code != 0 || stderr != "" {
+	if code != 0 || stderr != "\n"+nextAfterDemo+"\n" {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	for _, markup := range []string{"|", "**", "`", "<", "#", "](", comment.Marker, "costroid.result", "{"} {

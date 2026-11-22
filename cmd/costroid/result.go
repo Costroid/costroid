@@ -137,7 +137,7 @@ func (r resultTarget) host() (pullHost, error) {
 		}
 		repository = found
 		if r.said != nil {
-			fmt.Fprintf(r.said, "costroid: result reads %s, the repository the remote %s names\n", repository, remote)
+			cli.Say(r.said, "costroid: result reads %s, the repository the remote %s names\n", repository, remote)
 		}
 	}
 	return scm.NewGitHub(scm.GitHubOptions{
@@ -153,7 +153,7 @@ func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	number := set.Int("pr", 0, "the pull request's number")
 	repository := set.String("repo", os.Getenv("GITHUB_REPOSITORY"), "the repository as owner/name")
 	asJSON := set.Bool("json", false, "print the result object whole")
-	if err := parseFlags(set, args, resultHelp, stdout); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, resultHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("result", err))

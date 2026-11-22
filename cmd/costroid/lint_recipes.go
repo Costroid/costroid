@@ -20,7 +20,7 @@ import (
 
 func lintRecipes(args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("lint-recipes", flag.ContinueOnError)
-	if err := parseFlags(set, args, lintRecipesHelp, stdout); errors.Is(err, flag.ErrHelp) {
+	if err := parseFlags(set, args, lintRecipesHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("lint-recipes", err))
@@ -39,11 +39,11 @@ func lintRecipes(args []string, stdout, stderr io.Writer) int {
 	}
 	report.Files += plugins.Files
 	report.Findings = append(report.Findings, plugins.Findings...)
+	for _, finding := range report.Findings {
+		fmt.Fprintln(stdout, finding)
+	}
 	for _, note := range report.Notes {
 		fmt.Fprintln(stdout, note)
-	}
-	for _, finding := range report.Findings {
-		fmt.Fprintln(stderr, finding)
 	}
 	fmt.Fprintf(stdout, "costroid: %d files, %d rejected lines\n", report.Files, len(report.Findings))
 	if len(report.Findings) > 0 {

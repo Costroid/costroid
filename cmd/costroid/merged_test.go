@@ -364,12 +364,12 @@ func TestMergedSendsOneFactPerMergedPullRequest(t *testing.T) {
 		"costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n",
 		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified\n",
 	} {
-		if !strings.Contains(stdout, line) {
-			t.Errorf("stdout lacks %q:\n%s", line, stdout)
+		if !strings.Contains(stderr, line) {
+			t.Errorf("stderr lacks %q:\n%s", line, stderr)
 		}
 	}
-	if stderr != mergedVersionLine(contractV05) {
-		t.Errorf("stderr %q", stderr)
+	if !strings.HasPrefix(stderr, mergedVersionLine(contractV05)) || stdout != "" {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
 	}
 
 	stub = newMergeStub(t)
@@ -398,7 +398,7 @@ func TestMergedSendsNothingForACommitThatClosedNone(t *testing.T) {
 	stub, host := newMergeStub(t), scmtest.New(t)
 	host.Pulls = []scmtest.Pull{{Number: 1490, State: "open", MergeCommitSHA: tipCommit, Commits: []string{tipCommit}}}
 	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, host, tipCommit))
-	if want := "costroid: the push to " + tipCommit + " closed no pull request, so no merge fact was sent\n"; code != 0 || stdout != want || stderr != "" {
+	if want := "costroid: the push to " + tipCommit + " closed no pull request, so no merge fact was sent\n"; code != 0 || stderr != want || stdout != "" {
 		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
 	if len(stub.requests) != 0 {
@@ -422,23 +422,23 @@ func TestMergedSendsNothingForACommitThatClosedNone(t *testing.T) {
 // run token. A token_verified fact gets no such line.
 func TestMergedSaysWhyAFactIsUnverified(t *testing.T) {
 	stub, host := newMergeStub(t), mergeHost(t)
-	code, stdout, _ := stub.merged(t, stub.pushEnv(t, host, groupCommit, tipCommit))
+	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, host, groupCommit, tipCommit))
 	notTip := "costroid: merge 903114-1481 reads unverified because its commit " + groupCommit + " is not the tip of the push, " + tipCommit + ", which the run token names, as in a merge queue's group\n"
-	if code != 0 || !strings.Contains(stdout, notTip) {
-		t.Errorf("exit %d, stdout lacks %q:\n%s", code, notTip, stdout)
+	if code != 0 || stdout != "" || !strings.Contains(stderr, notTip) {
+		t.Errorf("exit %d, stdout %q, stderr lacks %q:\n%s", code, stdout, notTip, stderr)
 	}
-	if strings.Contains(stdout, "merge 903114-1482 reads unverified") {
-		t.Errorf("the token_verified fact is said to be unverified:\n%s", stdout)
+	if strings.Contains(stderr, "merge 903114-1482 reads unverified") {
+		t.Errorf("the token_verified fact is said to be unverified:\n%s", stderr)
 	}
 
 	stub = newMergeStub(t)
 	env := stub.pushEnv(t, host, tipCommit)
 	delete(env, "ACTIONS_ID_TOKEN_REQUEST_URL")
 	delete(env, "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-	code, stdout, stderr := stub.merged(t, env)
+	code, stdout, stderr = stub.merged(t, env)
 	want := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n" +
 		"costroid: merge 903114-1482 reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit\n"
-	if code != 0 || stdout != want || stderr != mergedVersionLine(contractV05) {
+	if code != 0 || stdout != "" || stderr != mergedVersionLine(contractV05)+want {
 		t.Errorf("without id-token: exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
 	if len(stub.puts) != 1 || stub.puts[0].Header.Get("Costroid-Run-Token") != "" || len(stub.audience) != 0 {
@@ -453,9 +453,9 @@ func TestMergedDoesNotSendAConflictAgain(t *testing.T) {
 	stub, host := newMergeStub(t), mergeHost(t)
 	stub.held["903114-1482"] = mergeDocumentOf(1482, tipMerged.Add(-time.Hour), tipCommit)
 	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, host, groupCommit, tipCommit))
-	want := mergedVersionLine(contractV05) + "costroid: Costroid Platform refused merge 903114-1482: 409 MERGE_FACT_CONFLICT. Pull request 1482 of github.com/example/widgets already holds a different fact, and a pull request merges once, so merged does not send it again\n"
-	if code != exitRejected || stderr != want {
-		t.Errorf("exit %d, stderr %q, want %q", code, stderr, want)
+	want := "costroid: Costroid Platform refused merge 903114-1482: 409 MERGE_FACT_CONFLICT. Pull request 1482 of github.com/example/widgets already holds a different fact, and a pull request merges once, so merged does not send it again\n"
+	if code != exitRejected || stdout != "" || !strings.HasPrefix(stderr, mergedVersionLine(contractV05)) || !strings.HasSuffix(stderr, want) {
+		t.Errorf("exit %d, stdout %q, stderr %q, want it to end %q", code, stdout, stderr, want)
 	}
 	var paths []string
 	for _, request := range stub.puts {
@@ -464,8 +464,8 @@ func TestMergedDoesNotSendAConflictAgain(t *testing.T) {
 	if !slices.Equal(paths, []string{mergesPath + "903114-1481", mergesPath + "903114-1482"}) {
 		t.Errorf("sent %q", paths)
 	}
-	if !strings.Contains(stdout, "merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n") {
-		t.Errorf("the other fact was not stored:\n%s", stdout)
+	if !strings.Contains(stderr, "merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n") {
+		t.Errorf("the other fact was not stored:\n%s", stderr)
 	}
 }
 
@@ -568,7 +568,7 @@ func TestMergedSendsAgainOnAServerError(t *testing.T) {
 	stub := newMergeStub(t)
 	stub.answers["903114-1482"] = []turn{{http.StatusServiceUnavailable, ""}, {0, ""}, {http.StatusBadGateway, ""}}
 	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit))
-	if code != 0 || len(stub.puts) != 4 || !strings.Contains(stdout, "stored as token_verified") {
+	if code != 0 || len(stub.puts) != 4 || !strings.Contains(stderr, "stored as token_verified") {
 		t.Fatalf("exit %d, %d sends: %s%s", code, len(stub.puts), stdout, stderr)
 	}
 	for _, body := range stub.bodies[1:] {
@@ -693,7 +693,7 @@ func TestMergedDocsMatchTheCommand(t *testing.T) {
 	}
 	filled := strings.NewReplacer(`"`, "", "$COSTROID_PLATFORM_URL", "https://app.costroid.com", "$GITHUB_REPOSITORY_OWNER_ID", "7204411")
 	for _, line := range lines {
-		if _, err := parseMerged(strings.Fields(filled.Replace(line[1])), io.Discard); err != nil {
+		if _, err := parseMerged(strings.Fields(filled.Replace(line[1])), io.Discard, io.Discard); err != nil {
 			t.Errorf("docs/export.md runs %q, which merged refuses: %v", line[0], err)
 		}
 	}
@@ -721,7 +721,7 @@ func TestMergedSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 	schema := contractSchema(t, contractV06, "MergeDocument")
 	stub := newV06MergeStub(t)
 	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit))
-	if code != 0 || stderr != mergedVersionLine(contractV06) {
+	if code != 0 || stdout != "" || !strings.HasPrefix(stderr, mergedVersionLine(contractV06)) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	want := []string{
@@ -739,8 +739,8 @@ func TestMergedSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 		"costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n",
 		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified, from a push to the protected branch main\n",
 	} {
-		if !strings.Contains(stdout, line) {
-			t.Errorf("stdout lacks %q:\n%s", line, stdout)
+		if !strings.Contains(stderr, line) {
+			t.Errorf("stderr lacks %q:\n%s", line, stderr)
 		}
 	}
 }
@@ -755,7 +755,7 @@ func TestMergedSendsByV05ToAPlatformThatStatesV05(t *testing.T) {
 	env := stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit)
 	env["GITHUB_REF_PROTECTED"] = "false"
 	code, stdout, stderr := stub.merged(t, env)
-	if code != 0 || stderr != mergedVersionLine(contractV05) {
+	if code != 0 || stdout != "" || !strings.HasPrefix(stderr, mergedVersionLine(contractV05)) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	want := []string{
@@ -770,11 +770,11 @@ func TestMergedSendsByV05ToAPlatformThatStatesV05(t *testing.T) {
 	for _, body := range stub.bodies {
 		validMergeDocument(t, schema, body)
 	}
-	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified\n"; !strings.Contains(stdout, line) {
-		t.Errorf("stdout lacks %q:\n%s", line, stdout)
+	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified\n"; !strings.Contains(stderr, line) {
+		t.Errorf("stderr lacks %q:\n%s", line, stderr)
 	}
-	if strings.Contains(stdout, "protected") {
-		t.Errorf("a v0.5 answer is read for a branch:\n%s", stdout)
+	if strings.Contains(stderr, "protected") {
+		t.Errorf("a v0.5 answer is read for a branch:\n%s", stderr)
 	}
 
 	stub = newMergeStub(t)
@@ -816,16 +816,17 @@ func TestMergedNamesTheBranchOfACheckedFact(t *testing.T) {
 	stub := newV06MergeStub(t)
 	stub.ref = "refs/heads/release/2026.11"
 	env := stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit)
-	code, stdout, _ := stub.merged(t, env)
-	want := "costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n" +
+	code, stdout, stderr := stub.merged(t, env)
+	want := mergedVersionLine(contractV06) +
+		"costroid: merge 903114-1481, pull request 1481 of github.com/example/widgets: stored as unverified\n" +
 		"costroid: merge 903114-1481 reads unverified because its commit " + groupCommit + " is not the tip of the push, " + tipCommit + ", which the run token names, as in a merge queue's group\n" +
 		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified, from a push to the protected branch release/2026.11\n"
-	if code != 0 || stdout != want {
-		t.Errorf("exit %d, stdout %q, want %q", code, stdout, want)
+	if code != 0 || stdout != "" || stderr != want {
+		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
-	code, stdout, _ = stub.merged(t, env)
-	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: already held as token_verified, from a push to the protected branch release/2026.11, so nothing changed\n"; code != 0 || !strings.Contains(stdout, line) {
-		t.Errorf("sent again: exit %d, stdout lacks %q:\n%s", code, line, stdout)
+	code, _, stderr = stub.merged(t, env)
+	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: already held as token_verified, from a push to the protected branch release/2026.11, so nothing changed\n"; code != 0 || !strings.Contains(stderr, line) {
+		t.Errorf("sent again: exit %d, stderr lacks %q:\n%s", code, line, stderr)
 	}
 
 	stub = newV06MergeStub(t)
@@ -865,7 +866,7 @@ func TestMergedSaysAnUnprotectedBranchIsWhyAFactIsUnchecked(t *testing.T) {
 		unprotected("903114-1481") +
 		"costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n" +
 		unprotected("903114-1482")
-	if code != 0 || stdout != want || stderr != mergedVersionLine(contractV06) {
+	if code != 0 || stdout != "" || stderr != mergedVersionLine(contractV06)+want {
 		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
 	for i, request := range stub.puts {
@@ -878,9 +879,9 @@ func TestMergedSaysAnUnprotectedBranchIsWhyAFactIsUnchecked(t *testing.T) {
 	stub.unprotected = true
 	env := stub.pushEnv(t, mergeHost(t), tipCommit)
 	delete(env, "GITHUB_REF_PROTECTED")
-	code, stdout, _ = stub.merged(t, env)
-	if want := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n"; code != 0 || stdout != want {
-		t.Errorf("without GITHUB_REF_PROTECTED: exit %d, stdout %q, want %q", code, stdout, want)
+	code, stdout, stderr = stub.merged(t, env)
+	if want := mergedVersionLine(contractV06) + "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as unverified\n"; code != 0 || stdout != "" || stderr != want {
+		t.Errorf("without GITHUB_REF_PROTECTED: exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
 	if len(stub.puts) != 1 || stub.puts[0].Header.Get("Costroid-Run-Token") != testRunToken {
 		t.Errorf("without GITHUB_REF_PROTECTED: %d facts, the run token decided by it", len(stub.puts))

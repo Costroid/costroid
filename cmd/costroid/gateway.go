@@ -161,11 +161,11 @@ func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	var err error
 	switch args[0] {
 	case "keygen":
-		err = gatewayKeygen(args[1:], stdout)
+		err = gatewayKeygen(args[1:], stdout, stderr)
 	case "public-key":
-		err = gatewayPublicKey(stdout)
+		err = gatewayPublicKey(args[1:], stdout, stderr)
 	case "request":
-		err = gatewayRequest(args[1:], stdout)
+		err = gatewayRequest(args[1:], stdout, stderr)
 	case "mint":
 		err = gatewayMint(ctx, args[1:], stdout, stderr)
 	case "close":
@@ -203,10 +203,13 @@ func sealingKey() (string, error) {
 	return key, nil
 }
 
-func gatewayKeygen(args []string, stdout io.Writer) error {
+func gatewayKeygen(args []string, stdout, stderr io.Writer) error {
 	set := flag.NewFlagSet("gateway keygen", flag.ContinueOnError)
 	out := set.String("out", "", "the file the private half goes to; it must not exist")
-	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+		return err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return err
 	}
 	if *out == "" {
@@ -231,7 +234,14 @@ func gatewayKeygen(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func gatewayPublicKey(stdout io.Writer) error {
+func gatewayPublicKey(args []string, stdout, stderr io.Writer) error {
+	set := flag.NewFlagSet("gateway public-key", flag.ContinueOnError)
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+		return err
+	}
+	if err := cli.NoArgument(set); err != nil {
+		return err
+	}
 	private, err := sealingKey()
 	if err != nil {
 		return err
@@ -244,10 +254,13 @@ func gatewayPublicKey(stdout io.Writer) error {
 	return nil
 }
 
-func gatewayRequest(args []string, stdout io.Writer) error {
+func gatewayRequest(args []string, stdout, stderr io.Writer) error {
 	set := flag.NewFlagSet("gateway request", flag.ContinueOnError)
 	out := set.String("out", "", "the directory the key and the sealed request go to")
-	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+		return err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return err
 	}
 	public := os.Getenv(publicKeyVariable)
@@ -292,7 +305,7 @@ type mintFlags struct {
 	caps          gateway.DailyCaps
 }
 
-func parseMint(args []string, stdout io.Writer) (mintFlags, error) {
+func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
 	set := flag.NewFlagSet("gateway mint", flag.ContinueOnError)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	budget := set.String("budget-usd", "", "the run's budget in USD, the key's max_budget")
@@ -302,7 +315,10 @@ func parseMint(args []string, stdout io.Writer) (mintFlags, error) {
 	repository := set.String("repository-daily-cap-usd", "", "the repository's budget per day, as a team's")
 	author := set.String("author-daily-cap-usd", "", "the author's budget per day, as a user's")
 	request := set.String("request", "", "a sealed request file, in place of this run's artifact")
-	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+		return mintFlags{}, err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return mintFlags{}, err
 	}
 	if *address == "" || *budget == "" || *minutes <= 0 || *tokens <= 0 {
@@ -341,7 +357,7 @@ func dailyCap(name, text string) (*decimal.Decimal, error) {
 }
 
 func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	flags, err := parseMint(args, stdout)
+	flags, err := parseMint(args, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -357,7 +373,7 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	request, err := readMintRequest(ctx, flags.request, binding)
+	request, err := readMintRequest(ctx, flags.request, binding, stderr)
 	if err != nil {
 		return err
 	}
@@ -372,7 +388,7 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	fmt.Fprintln(stdout, id)
-	return attestKey(ctx, &http.Client{Timeout: 30 * time.Second}, id, binding, stderr)
+	return attestKey(ctx, asking(&http.Client{Timeout: 30 * time.Second}, stderr), id, binding, stderr)
 }
 
 // attestKey tells the ledger the key was minted for this run. Without a
@@ -394,11 +410,11 @@ func attestKey(ctx context.Context, client *http.Client, id string, binding gate
 	if err := gateway.Attest(ctx, client, target, token, gateway.AttestationFor(id, binding)); err != nil {
 		return fmt.Errorf("the key is registered and not attested, so the run's rows cannot read exact: %w", err)
 	}
-	fmt.Fprintln(stderr, "attested to the ledger")
+	cli.Say(stderr, "attested to the ledger\n")
 	return nil
 }
 
-func readMintRequest(ctx context.Context, path string, binding gateway.Binding) (gateway.Request, error) {
+func readMintRequest(ctx context.Context, path string, binding gateway.Binding, stderr io.Writer) (gateway.Request, error) {
 	if path != "" {
 		file, err := os.Open(path)
 		if err != nil {
@@ -416,7 +432,7 @@ func readMintRequest(ctx context.Context, path string, binding gateway.Binding) 
 		Repository: os.Getenv("GITHUB_REPOSITORY"),
 		Run:        binding.Run,
 		Token:      token,
-		HTTP:       &http.Client{Timeout: 30 * time.Second},
+		HTTP:       asking(&http.Client{Timeout: 30 * time.Second}, stderr),
 		Every:      artifactEvery,
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, artifactWait)
@@ -461,7 +477,10 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	set := flag.NewFlagSet("gateway close", flag.ContinueOnError)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	retry := set.Duration("retry-after", 0, "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none")
-	if err := parseFlags(set, args, gatewayUsage, stdout); err != nil {
+	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
+		return err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return err
 	}
 	if *address == "" {
@@ -482,7 +501,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Client: gateway.NewClient(*address), AdminKey: admin, Run: binding,
 		Poll: gatewayPoll, Stable: gatewaySpendStable, Settle: gatewaySpendSettle,
 	}
-	return closeKey(ctx, counter, *retry, &http.Client{Timeout: 30 * time.Second}, stdout, stderr)
+	return closeKey(ctx, counter, *retry, asking(&http.Client{Timeout: 30 * time.Second}, stderr), stdout, stderr)
 }
 
 // closeKey deletes the run's key, and when a ledger is named, reads the key's
@@ -492,7 +511,7 @@ func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration,
 	count, unread := readCount(ctx, counter, counted, stderr)
 	deleted, err := gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
 	if err == nil && !deleted {
-		fmt.Fprintf(stderr, "no key yet: waiting %s for a late mint, then deleting once more\n", retry)
+		cli.Say(stderr, "no key yet: waiting %s for a late mint, then deleting once more\n", retry)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -553,6 +572,6 @@ func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, 
 	if err := gateway.AttestSpend(ctx, client, target, token, attestation); err != nil {
 		return fmt.Errorf("the key is deleted and the gateway's count is not attested, so no budget on the run's rows can pass on it: %w", err)
 	}
-	fmt.Fprintf(stderr, "attested the gateway's count of USD %s to the ledger\n", attestation.Spend)
+	cli.Say(stderr, "attested the gateway's count of USD %s to the ledger\n", attestation.Spend)
 	return nil
 }

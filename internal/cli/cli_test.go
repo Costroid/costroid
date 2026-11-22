@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"flag"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -36,6 +37,8 @@ Examples:
 Flags:
   --rows FILE       the rows file
   --json            print one object
+  -q, --quiet       keep warnings and errors on standard error, and drop every
+                    other line
 
 Currencies:
   Each currency is added up alone.
@@ -122,7 +125,7 @@ func TestParseSaysWhichFlagWasRefusedAndWhy(t *testing.T) {
 		{[]string{"--tag", "team"}, []string{"--tag: takes KEY=VALUE", help}},
 	} {
 		var mistake *Mistake
-		if err := Parse(newSet(), c.args); !errors.As(err, &mistake) || err.Error() != strings.Join(c.want, "\n") {
+		if err := Parse(newSet(), c.args, io.Discard); !errors.As(err, &mistake) || err.Error() != strings.Join(c.want, "\n") {
 			t.Errorf("%v: %v, want %q", c.args, err, c.want)
 		}
 	}
@@ -130,14 +133,14 @@ func TestParseSaysWhichFlagWasRefusedAndWhy(t *testing.T) {
 
 func TestParseTakesWhatTheSetTakesAndPassesHelpOn(t *testing.T) {
 	set := newSet()
-	if err := Parse(set, []string{"--rows", "r.jsonl", "--json", "--wait", "2s", "--tag", "team=a", "--", "--rest"}); err != nil {
+	if err := Parse(set, []string{"--rows", "r.jsonl", "--json", "--wait", "2s", "--tag", "team=a", "--", "--rest"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if rows, wait := set.Lookup("rows").Value.String(), set.Lookup("wait").Value.String(); rows != "r.jsonl" || wait != (2*time.Second).String() || !slices.Equal(set.Args(), []string{"--rest"}) {
 		t.Errorf("rows %q, wait %q, the rest %q", rows, wait, set.Args())
 	}
 	for _, ask := range []string{"-h", "-help", "--help"} {
-		if err := Parse(newSet(), []string{"--json", ask}); !errors.Is(err, flag.ErrHelp) {
+		if err := Parse(newSet(), []string{"--json", ask}, io.Discard); !errors.Is(err, flag.ErrHelp) {
 			t.Errorf("%s: %v, want the request for help", ask, err)
 		}
 	}

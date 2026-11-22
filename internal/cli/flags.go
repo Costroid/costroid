@@ -22,15 +22,31 @@ func (m *Mistake) Error() string { return strings.Join(m.lines, "\n") }
 // Parse parses args with set and prints nothing. It answers flag.ErrHelp when
 // help was asked for and a *Mistake when a flag was refused; the caller prints
 // either. The set's name is the command's, with its subcommand when it has
-// one.
-func Parse(set *flag.FlagSet, args []string) error {
+// one. Parse gives every set --quiet, and under it stderr drops the lines
+// that are neither a warning nor an error.
+func Parse(set *flag.FlagSet, args []string, stderr io.Writer) error {
 	set.SetOutput(io.Discard)
 	set.Usage = func() {}
+	quiet := false
+	set.BoolVar(&quiet, quietName, false, QuietRow[1])
+	set.BoolVar(&quiet, quietShort, false, QuietRow[1])
 	err := set.Parse(args)
+	if messages, ok := stderr.(*Messages); ok && err == nil {
+		messages.quiet = quiet
+	}
 	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return err
 	}
 	return mistake(set, args, err)
+}
+
+// NoArgument is the mistake of an argument where set's command takes none.
+// It answers nil when the command line gave none.
+func NoArgument(set *flag.FlagSet) error {
+	if set.NArg() == 0 {
+		return nil
+	}
+	return Mistaken(set.Name(), fmt.Errorf("%s takes no argument", set.Name()))
 }
 
 // mistake walks args as the flag package does, to the flag the parse stopped
@@ -115,8 +131,14 @@ func isBool(defined *flag.Flag) bool {
 	return ok && boolean.IsBoolFlag()
 }
 
+// flagNames lists the flags a mistyped one is compared with. --quiet stands
+// under its long name alone: one letter is near every other letter.
 func flagNames(set *flag.FlagSet) []string {
 	var names []string
-	set.VisitAll(func(defined *flag.Flag) { names = append(names, defined.Name) })
+	set.VisitAll(func(defined *flag.Flag) {
+		if defined.Name != quietShort {
+			names = append(names, defined.Name)
+		}
+	})
 	return names
 }

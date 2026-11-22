@@ -66,7 +66,7 @@ func upstreamFlag(into map[string]string) func(string) error {
 	}
 }
 
-func parseReconcile(args []string, stdout io.Writer) (reconcileFlags, error) {
+func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, error) {
 	set := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	rows := set.String("rows", "", "the FOCUS rows, as JSON lines")
 	from := set.String("from", "", "the first UTC day, YYYY-MM-DD")
@@ -79,7 +79,7 @@ func parseReconcile(args []string, stdout io.Writer) (reconcileFlags, error) {
 	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
 	send := set.Bool("export", false, "send the rows --out keeps to Costroid Platform, by integration/v0.6 or v0.5")
 	installation := set.String("installation-id", "", "with --export, the installation the job runs under")
-	if err := parseFlags(set, args, reconcileHelp, stdout); err != nil {
+	if err := parseFlags(set, args, reconcileHelp, stdout, stderr); err != nil {
 		return reconcileFlags{}, err
 	}
 	if *rows == "" || *from == "" || *to == "" || set.NArg() != 0 {
@@ -130,7 +130,7 @@ func reconcileCommand(ctx context.Context, args []string, getenv func(string) st
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return reconcileThrough(ctx, args, reconcileWorld{getenv: getenv, client: client, now: now, platform: platformClient, pace: ingestPace}, stdout, stderr)
+	return reconcileThrough(ctx, args, reconcileWorld{getenv: getenv, client: client, now: now, platform: asking(platformClient, stderr), pace: ingestPace}, stdout, stderr)
 }
 
 // reconcileWorld is what a reconciliation reads and reaches: the environment,
@@ -145,7 +145,7 @@ type reconcileWorld struct {
 }
 
 func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, stdout, stderr io.Writer) int {
-	flags, err := parseReconcile(args, stdout)
+	flags, err := parseReconcile(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -173,7 +173,7 @@ func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, 
 		fmt.Fprintf(stderr, "costroid: %v\n", refused)
 		code = exitFailure
 	}
-	if sender != nil && !sender.send(ctx, result.Rows, stdout, stderr) {
+	if sender != nil && !sender.send(ctx, result.Rows, stderr) {
 		code = exitFailure
 	}
 	return code
@@ -396,7 +396,7 @@ func (s sentRows) add(body reconcile.Body, answer receipt) sentRows {
 	return s
 }
 
-func (s sentRows) print(of int, stdout io.Writer) {
+func (s sentRows) print(of int, stderr io.Writer) {
 	if s.bodies == 0 {
 		return
 	}
@@ -407,15 +407,15 @@ func (s sentRows) print(of int, stdout io.Writer) {
 	case s.bodies == of:
 		bodies = fmt.Sprintf("%d bodies", of)
 	}
-	fmt.Fprintf(stdout, "costroid: Costroid Platform took %d %s in %s: %d stored, %d unchanged, %d ignored\n", s.rows, plural("row", s.rows), bodies, s.stored, s.unchanged, s.ignored)
+	cli.Say(stderr, "costroid: Costroid Platform took %d %s in %s: %d stored, %d unchanged, %d ignored\n", s.rows, plural("row", s.rows), bodies, s.stored, s.unchanged, s.ignored)
 }
 
 // send sends the rows in the bodies GET /quotas allows, and reports whether
 // nothing failed. An answer that keeps the rows to send later warns and is no
 // failure, as on export.
-func (s *reconcileSender) send(ctx context.Context, rows []reconcile.Row, stdout, stderr io.Writer) bool {
+func (s *reconcileSender) send(ctx context.Context, rows []reconcile.Row, stderr io.Writer) bool {
 	if len(rows) == 0 {
-		fmt.Fprintln(stdout, "costroid: reconcile wrote no rows, so nothing was sent to Costroid Platform")
+		cli.Say(stderr, "costroid: reconcile wrote no rows, so nothing was sent to Costroid Platform\n")
 		return true
 	}
 	bodies, runToken, err := s.prepare(ctx, rows, stderr)
@@ -427,12 +427,12 @@ func (s *reconcileSender) send(ctx context.Context, rows []reconcile.Row, stdout
 	for i, body := range bodies {
 		answer, err := s.put(ctx, body, runToken, fmt.Sprintf("body %d of %d", i+1, len(bodies)))
 		if err != nil {
-			sent.print(len(bodies), stdout)
+			sent.print(len(bodies), stderr)
 			return s.refused(err, body, stderr)
 		}
 		sent = sent.add(body, answer)
 	}
-	sent.print(len(bodies), stdout)
+	sent.print(len(bodies), stderr)
 	return true
 }
 
@@ -464,7 +464,7 @@ func (s *reconcileSender) prepare(ctx context.Context, rows []reconcile.Row, std
 func (s *reconcileSender) contract(ctx context.Context, stderr io.Writer) (string, error) {
 	stated, tenant, err := s.target.statedOf(ctx, statementContracts)
 	if err == nil {
-		fmt.Fprintf(stderr, "costroid: Costroid Platform states integration/v%s, so reconcile sends the rows by it\n", stated.Version)
+		cli.Say(stderr, "costroid: Costroid Platform states integration/v%s, so reconcile sends the rows by it\n", stated.Version)
 		return tenant, nil
 	}
 	var refused *refusal

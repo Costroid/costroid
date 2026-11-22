@@ -57,15 +57,15 @@ It never estimates what a change, a prompt or a run will cost before it runs. It
 
 // writeSkills writes the skill where each agent reads it, and leaves a file
 // that exists as it is. It returns the files it wrote, by path from the root.
-func writeSkills(repo repository, stdout io.Writer) ([]string, error) {
+func writeSkills(repo repository, said io.Writer) ([]string, error) {
 	var wrote []string
 	for _, name := range skillPaths {
 		switch err := createFile(repo.file(filepath.FromSlash(name)), []byte(costroidSkill), false); {
 		case err == nil:
 			wrote = append(wrote, name)
-			fmt.Fprintf(stdout, "costroid: wrote %s, the skill that reads what a run cost\n", name)
+			fmt.Fprintf(said, "costroid: wrote %s, the skill that reads what a run cost\n", name)
 		case errors.Is(err, fs.ErrExist):
-			fmt.Fprintf(stdout, "costroid: %s exists, and init left it as it is\n", name)
+			fmt.Fprintf(said, "costroid: %s exists, and init left it as it is\n", name)
 		default:
 			return wrote, err
 		}

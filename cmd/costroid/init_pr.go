@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"go.yaml.in/yaml/v3"
 )
@@ -65,6 +66,7 @@ func newPRFlow(repo repository, flags initFlags, settings prSettings, workflow s
 		workflow:    workflowName(recipe, workflow),
 		stdout:      stdout,
 		stderr:      stderr,
+		said:        cli.Notes(stderr),
 		getenv:      settings.getenv,
 		readKey:     terminal{path: settings.terminal, stderr: stderr}.readKey,
 		polls:       settings.polls,
@@ -94,9 +96,13 @@ type prFlow struct {
 	// workflow is the name the written workflow's runs carry.
 	workflow string
 	files    []string
-	stdout   io.Writer
-	stderr   io.Writer
-	getenv   func(string) string
+	// stdout and stderr are what a command init runs prints on each of its
+	// own. said takes init's own lines, which go to stderr and which --quiet
+	// drops.
+	stdout io.Writer
+	stderr io.Writer
+	said   io.Writer
+	getenv func(string) string
 	// readKey asks for the key without echoing it.
 	readKey func(prompt string) (string, error)
 	polls   int
@@ -151,7 +157,7 @@ func (f *prFlow) steps() []prStep {
 // first that fails. It then lists the steps left, the failed one first.
 func (f *prFlow) run() error {
 	if f.keepOrg {
-		fmt.Fprintf(f.stdout, "costroid: init sets no repository secret %s, so the run reads the organization's\n", f.secret)
+		fmt.Fprintf(f.said, "costroid: init sets no repository secret %s, so the run reads the organization's\n", f.secret)
 	}
 	steps := f.steps()
 	for at, step := range steps {
@@ -159,21 +165,21 @@ func (f *prFlow) run() error {
 			continue
 		}
 		args := step.args()
-		fmt.Fprintf(f.stdout, "$ %s\n", shellJoin(args))
+		fmt.Fprintf(f.said, "$ %s\n", shellJoin(args))
 		if err := step.run(args); err != nil {
 			f.printLeft(steps[at:])
 			return fmt.Errorf("%s failed: %w", shellJoin(args), err)
 		}
 	}
-	fmt.Fprintf(f.stdout, "costroid: the run posted its comment at %s\n", f.comment)
+	fmt.Fprintf(f.said, "costroid: the run posted its comment at %s\n", f.comment)
 	return nil
 }
 
 func (f *prFlow) printLeft(steps []prStep) {
-	fmt.Fprint(f.stdout, "\ninit stopped at the first command that failed. These commands are left, that one first:\n")
+	fmt.Fprint(f.said, "\ninit stopped at the first command that failed. These commands are left, that one first:\n")
 	for _, step := range steps {
 		if step.skip == nil || !step.skip() {
-			fmt.Fprintf(f.stdout, "  %s\n", shellJoin(step.args()))
+			fmt.Fprintf(f.said, "  %s\n", shellJoin(step.args()))
 		}
 	}
 }
@@ -187,7 +193,7 @@ func (f *prFlow) command(args []string, stdin io.Reader, capture bool) (string, 
 	command.Dir = f.root
 	command.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1")
 	command.Stdin = stdin
-	command.Stderr = f.stderr
+	command.Stderr = cli.Under(f.stderr)
 	var output bytes.Buffer
 	command.Stdout = f.stdout
 	if capture {
@@ -218,7 +224,7 @@ func (f *prFlow) listSecrets(args []string) error {
 	}
 	f.secretExists = slices.Contains(secrets, listedSecret{Name: f.secret})
 	if f.secretExists {
-		fmt.Fprintf(f.stdout, "costroid: the repository has the secret %s already, so init leaves it as it is\n", f.secret)
+		fmt.Fprintf(f.said, "costroid: the repository has the secret %s already, so init leaves it as it is\n", f.secret)
 	}
 	return nil
 }
@@ -226,7 +232,7 @@ func (f *prFlow) listSecrets(args []string) error {
 // setSecret sends the key to gh on standard input, so it is in no argument.
 // It says first that the secret it sets outranks an organization's.
 func (f *prFlow) setSecret(args []string) error {
-	fmt.Fprintf(f.stdout, "costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the %s set here. Pass --keep-org-secret to keep the organization's\n", f.secret)
+	fmt.Fprintf(f.said, "costroid: a repository secret takes precedence over an organization secret of the same name, so the run reads the %s set here. Pass --keep-org-secret to keep the organization's\n", f.secret)
 	key, err := f.key()
 	if err != nil {
 		return err
@@ -360,6 +366,10 @@ func (t terminal) readKey(prompt string) (key string, err error) {
 	if err := stty(tty, "-echo"); err != nil {
 		return "", fmt.Errorf("turn off the terminal's echo: %w", err)
 	}
+	// Ctrl-C at the prompt ends costroid before the read returns, so the echo
+	// is turned back on from there too.
+	forget := cli.OnInterrupt(cli.Interrupt{Restore: func() { _ = stty(tty, "echo") }})
+	defer forget()
 	defer func() {
 		if restore := stty(tty, "echo"); restore != nil && err == nil {
 			err = fmt.Errorf("turn the terminal's echo back on: %w", restore)

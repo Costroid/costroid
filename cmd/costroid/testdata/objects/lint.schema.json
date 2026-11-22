@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/lint.schema.json",
+  "title": "What costroid lint --json prints, version 0.1",
+  "description": "The findings of costroid lint on a repository's own GitHub workflows: one entry per line it prints without --json, the high and medium findings first and the notes last, and the counts its last line states.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.lint/0.1"
+    },
+    "files": {
+      "description": "The files lint read.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "agents": {
+      "description": "The files among them that start a coding agent, which are the ones lint judges.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "count": {
+      "description": "How many findings have each severity. lint exits 1 when high is above 0, and under --strict when medium is.",
+      "type": "object",
+      "properties": {
+        "high": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "medium": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "note": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "high",
+        "medium",
+        "note"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "files",
+    "agents",
+    "findings",
+    "count"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "description": "The rule's name, as docs/lint.md lists it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "high",
+            "medium",
+            "note"
+          ]
+        },
+        "file": {
+          "description": "The file, as it was named or found.",
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "description": "The line of the file the finding is on.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "rule",
+        "severity",
+        "file",
+        "line",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

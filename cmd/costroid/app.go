@@ -134,7 +134,7 @@ func appCommand(ctx context.Context, args []string, std stdio) int {
 		Timeout:       appCallTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	world := appWorld{web: githubWeb, api: scm.DefaultAPI, client: client, getenv: os.Getenv, listen: "127.0.0.1:0"}
+	world := appWorld{web: githubWeb, api: scm.DefaultAPI, client: asking(client, std.stderr), getenv: os.Getenv, listen: "127.0.0.1:0"}
 	return appMain(ctx, args, world, std.stdout, std.stderr)
 }
 
@@ -169,7 +169,7 @@ type appFlags struct {
 	name, webhook, kmsKey, org string
 }
 
-func parseApp(command string, args []string, stdout io.Writer) (appFlags, error) {
+func parseApp(command string, args []string, stdout, stderr io.Writer) (appFlags, error) {
 	set := flag.NewFlagSet("app "+command, flag.ContinueOnError)
 	var flags appFlags
 	set.StringVar(&flags.name, "name", "", "the App's name")
@@ -178,7 +178,7 @@ func parseApp(command string, args []string, stdout io.Writer) (appFlags, error)
 		set.StringVar(&flags.kmsKey, "kms-key", "", "the KMS key to import the App's private key into")
 		set.StringVar(&flags.org, "org", "", "the organization that owns the App")
 	}
-	if err := parseFlags(set, args, appHelp, stdout); err != nil {
+	if err := parseFlags(set, args, appHelp, stdout, stderr); err != nil {
 		return appFlags{}, err
 	}
 	if set.NArg() > 0 {
@@ -223,7 +223,7 @@ func appManifestJSON(flags appFlags, redirect string) ([]byte, error) {
 }
 
 func appManifest(args []string, stdout, stderr io.Writer) error {
-	flags, err := parseApp("manifest", args, stdout)
+	flags, err := parseApp("manifest", args, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func (a createdApp) settings(web string) string {
 }
 
 func appCreate(ctx context.Context, args []string, world appWorld, stdout, stderr io.Writer) error {
-	flags, err := parseApp("create", args, stdout)
+	flags, err := parseApp("create", args, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -268,7 +268,7 @@ func appCreate(ctx context.Context, args []string, world appWorld, stdout, stder
 	if err != nil {
 		return fmt.Errorf("the KMS key cannot take the App's key, and no App was created: %w", err)
 	}
-	code, err := manifestCode(ctx, flags, world, stdout)
+	code, err := manifestCode(ctx, flags, world, stderr)
 	if err != nil {
 		return err
 	}
@@ -279,10 +279,10 @@ func appCreate(ctx context.Context, args []string, world appWorld, stdout, stder
 	if err := importPEM(ctx, prepared, app.PEM); err != nil {
 		return fmt.Errorf("GitHub created the App %s, and its private key was not imported: %w. No copy of the key was kept: delete the App at %s and run app create again", app.Slug, err, app.settings(world.web))
 	}
-	fmt.Fprintf(stdout, "costroid: created the GitHub App %s, App id %d\n", app.Slug, app.ID)
-	fmt.Fprintf(stdout, "costroid: imported its private key into the KMS key %s, and wrote no copy of it\n", flags.kmsKey)
-	fmt.Fprintf(stdout, "costroid: GitHub set a webhook secret this command does not show. Set a new one of at least 32 bytes at %s, and give costroid serve the same value as COSTROID_GITHUB_WEBHOOK_SECRET\n", app.settings(world.web))
-	fmt.Fprintf(stdout, "costroid: give costroid serve COSTROID_GITHUB_APP_ID=%d and COSTROID_GITHUB_APP_KMS_KEY=%s\n", app.ID, flags.kmsKey)
+	cli.Say(stderr, "costroid: created the GitHub App %s, App id %d\n", app.Slug, app.ID)
+	cli.Say(stderr, "costroid: imported its private key into the KMS key %s, and wrote no copy of it\n", flags.kmsKey)
+	cli.Say(stderr, "costroid: GitHub set a webhook secret this command does not show. Set a new one of at least 32 bytes at %s, and give costroid serve the same value as COSTROID_GITHUB_WEBHOOK_SECRET\n", app.settings(world.web))
+	cli.Say(stderr, "costroid: give costroid serve COSTROID_GITHUB_APP_ID=%d and COSTROID_GITHUB_APP_KMS_KEY=%s\n", app.ID, flags.kmsKey)
 	return nil
 }
 
@@ -312,8 +312,10 @@ var startPage = template.Must(template.New("start").Parse(`<!doctype html>
 `))
 
 // manifestCode serves the start page on a loopback address until GitHub
-// sends the browser back with the code for this run's state.
-func manifestCode(ctx context.Context, flags appFlags, world appWorld, stdout io.Writer) (string, error) {
+// sends the browser back with the code for this run's state. The line that
+// names the address stays under --quiet: the command waits on the person it
+// is for.
+func manifestCode(ctx context.Context, flags appFlags, world appWorld, stderr io.Writer) (string, error) {
 	state, err := randomState()
 	if err != nil {
 		return "", err
@@ -337,7 +339,7 @@ func manifestCode(ctx context.Context, flags appFlags, world appWorld, stdout io
 	server := &http.Server{Handler: flow, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = server.Serve(listener) }()
 	defer closeAfterAnswer(server)
-	fmt.Fprintf(stdout, "costroid: open %s/ in a browser signed in to GitHub, and create the App there\n", origin)
+	fmt.Fprintf(stderr, "costroid: open %s/ in a browser signed in to GitHub, and create the App there\n", origin)
 	wait, cancel := context.WithTimeout(ctx, manifestFlowLimit)
 	defer cancel()
 	select {

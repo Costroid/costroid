@@ -52,7 +52,7 @@ func EgressMain(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		fmt.Fprint(stdout, egressGroup)
 		return cli.ExitUsage
 	}
-	err := egressCommand(ctx, args, stdout)
+	err := egressCommand(ctx, args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -62,10 +62,10 @@ func EgressMain(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	return 0
 }
 
-func egressCommand(ctx context.Context, args []string, stdout io.Writer) error {
+func egressCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "report":
-		return egressReport(ctx, args[1:], stdout)
+		return egressReport(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, EgressUsage)
 		return flag.ErrHelp
@@ -73,13 +73,16 @@ func egressCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	return egressGroup.Unknown(args[0])
 }
 
-func egressReport(ctx context.Context, args []string, stdout io.Writer) error {
+func egressReport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	set := flag.NewFlagSet("egress report", flag.ContinueOnError)
 	asJSON := set.Bool("json", false, "print JSON")
-	if err := cli.Parse(set, args); err != nil {
+	if err := cli.Parse(set, args, stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, EgressUsage)
 		}
+		return err
+	}
+	if err := cli.NoArgument(set); err != nil {
 		return err
 	}
 	databaseURL, err := required(envDatabase)

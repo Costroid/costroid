@@ -1,0 +1,1 @@
+{"schema": "costroid.validate/0.1", "file": "base.yml", "state": "invalid", "problems": [{"pointer": "/policy", "message": "additional properties 'no_such_key' not allowed"}, {"pointer": "", "message": "not YAML: yaml: line 2: mapping values are not allowed in this context"}]}

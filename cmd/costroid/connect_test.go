@@ -200,8 +200,8 @@ func TestConnectSendsOneProof(t *testing.T) {
 				t.Errorf("the OIDC token was asked for audiences %q, want %q", stub.audiences, tc.audiences)
 			}
 			want := "costroid: " + tc.installation + " is bound to tenant " + testTenant + ", proven at 2026-11-08T08:59:30Z\n"
-			if stdout != want || stderr != "" {
-				t.Errorf("stdout %q, stderr %q, want stdout %q", stdout, stderr, want)
+			if stderr != want || stdout != "" {
+				t.Errorf("stdout %q, stderr %q, want stderr %q", stdout, stderr, want)
 			}
 		})
 	}
@@ -232,15 +232,15 @@ func TestConnectSkipsWhenBound(t *testing.T) {
 			stub := newConnectStub(t)
 			stub.installations = activeInstallation(tc.installation, provenAt)
 			code, stdout, stderr := stub.connect(t, tc.env(stub), tc.args...)
-			if code != 0 || stderr != "" {
-				t.Fatalf("exit %d: %s", code, stderr)
+			if code != 0 || stdout != "" {
+				t.Fatalf("exit %d, stdout %q: %s", code, stdout, stderr)
 			}
 			if len(stub.proofs) != 0 || len(stub.audiences) != 0 || stub.identity != 1 {
 				t.Errorf("%d proofs, %d OIDC requests and %d identity requests, want 0, 0 and 1", len(stub.proofs), len(stub.audiences), stub.identity)
 			}
 			want := "costroid: " + tc.installation + " is bound to tenant " + testTenant + ", proven at " + provenAt.Format(time.RFC3339) + ", so no proof was sent\n"
-			if stdout != want {
-				t.Errorf("stdout %q, want %q", stdout, want)
+			if stderr != want {
+				t.Errorf("stderr %q, want %q", stderr, want)
 			}
 		})
 	}
@@ -431,7 +431,10 @@ func checkKeysRetry(t *testing.T, tc keysRetry) {
 	}
 	if tc.code == exitRejected {
 		want += "costroid: Costroid Platform refused the proof for " + installation + ": 503 " + keysUnavailableCode + ". The platform could not read the CI system's keys, so run the job again.\n"
-	} else if stdout != "costroid: "+installation+" is bound to tenant "+testTenant+", proven at 2026-11-08T08:59:30Z\n" {
+	} else {
+		want += "costroid: " + installation + " is bound to tenant " + testTenant + ", proven at 2026-11-08T08:59:30Z\n"
+	}
+	if stdout != "" {
 		t.Errorf("stdout %q", stdout)
 	}
 	if stderr != want {
@@ -524,8 +527,8 @@ func TestConnectProvesTheOwnerBesideAnAppBinding(t *testing.T) {
 			stub := newConnectStub(t)
 			stub.installations = tc.installations
 			code, stdout, stderr := stub.connect(t, stub.githubEnv())
-			if code != 0 || stderr != "" {
-				t.Fatalf("exit %d: %s", code, stderr)
+			if code != 0 || stdout != "" {
+				t.Fatalf("exit %d, stdout %q: %s", code, stdout, stderr)
 			}
 			if len(stub.proofs) != tc.proofs {
 				t.Fatalf("%d proofs, want %d", len(stub.proofs), tc.proofs)
@@ -536,8 +539,8 @@ func TestConnectProvesTheOwnerBesideAnAppBinding(t *testing.T) {
 			} else if stub.proofs[0].path != owner {
 				t.Errorf("the proof went to /installations/%s, want %s", stub.proofs[0].path, owner)
 			}
-			if stdout != want {
-				t.Errorf("stdout %q, want %q", stdout, want)
+			if stderr != want {
+				t.Errorf("stderr %q, want %q", stderr, want)
 			}
 		})
 	}
@@ -654,7 +657,7 @@ func TestConnectDocsMatchTheCommand(t *testing.T) {
 		t.Fatal("docs/connect.md runs no costroid connect")
 	}
 	for _, command := range commands {
-		if _, err := parseConnect(strings.Fields(command[1]), io.Discard); err != nil {
+		if _, err := parseConnect(strings.Fields(command[1]), io.Discard, io.Discard); err != nil {
 			t.Errorf("docs/connect.md runs %q, which connect refuses: %v", strings.TrimSpace(command[0]), err)
 		}
 	}

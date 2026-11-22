@@ -117,7 +117,7 @@ type reviewFlags struct {
 	out, file  string
 }
 
-func parseReview(args []string, stdout io.Writer) (reviewFlags, error) {
+func parseReview(args []string, stdout, stderr io.Writer) (reviewFlags, error) {
 	set := flag.NewFlagSet("review", flag.ContinueOnError)
 	keep := set.Bool("keep", false, "read the run's answer and write it to --out")
 	post := set.Bool("post", false, "post the answer in --file as the review comment")
@@ -125,7 +125,7 @@ func parseReview(args []string, stdout io.Writer) (reviewFlags, error) {
 	since := set.String("since", "", "when the job started, in RFC 3339")
 	out := set.String("out", "", "the file the answer goes to")
 	file := set.String("file", "", "the file the agent's job kept the answer in")
-	if err := parseFlags(set, args, reviewHelp, stdout); err != nil {
+	if err := parseFlags(set, args, reviewHelp, stdout, stderr); err != nil {
 		return reviewFlags{}, err
 	}
 	flags := reviewFlags{keep: *keep, post: *post, out: *out, file: *file}
@@ -173,7 +173,7 @@ func answerKinds() string {
 // reviewCommand keeps the agent's answer in the agent's job, or posts it in
 // the report's job.
 func reviewCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	flags, err := parseReview(args, stdout)
+	flags, err := parseReview(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
@@ -208,7 +208,7 @@ func keepAnswer(flags reviewFlags, stderr io.Writer) int {
 	if err := os.WriteFile(flags.out, []byte(text), 0o600); err != nil {
 		return cli.Fail(stderr, err)
 	}
-	fmt.Fprintf(stderr, "costroid: kept the agent's answer, %d bytes, for the review comment\n", len(text))
+	cli.Say(stderr, "costroid: kept the agent's answer, %d bytes, for the review comment\n", len(text))
 	return 0
 }
 
@@ -241,7 +241,7 @@ func postAnswer(ctx context.Context, path string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "costroid: warning: the agent's answer was not posted: %v\n", err)
 		return 0
 	}
-	fmt.Fprintln(stderr, "costroid: posted the agent's answer in a comment of its own")
+	cli.Say(stderr, "costroid: posted the agent's answer in a comment of its own\n")
 	return 0
 }
 
@@ -251,12 +251,12 @@ func postAnswer(ctx context.Context, path string, stderr io.Writer) int {
 func replaceEarlierAnswer(ctx context.Context, target reportTarget, answer reviewcomment.Answer, stderr io.Writer) int {
 	finder, ok := target.host.(scm.CommentFinder)
 	if !ok {
-		fmt.Fprintln(stderr, "costroid: no answer to post, and this host cannot look for an earlier one")
+		cli.Say(stderr, "costroid: no answer to post, and this host cannot look for an earlier one\n")
 		return 0
 	}
 	found, err := finder.HasComment(ctx, target.pull.pullRequest, reviewcomment.Marker)
 	if err == nil && !found {
-		fmt.Fprintln(stderr, "costroid: no answer to post, and the pull request holds no earlier answer")
+		cli.Say(stderr, "costroid: no answer to post, and the pull request holds no earlier answer\n")
 		return 0
 	}
 	if err == nil {
@@ -266,7 +266,7 @@ func replaceEarlierAnswer(ctx context.Context, target reportTarget, answer revie
 		fmt.Fprintf(stderr, "costroid: warning: the earlier answer was not replaced: %v\n", err)
 		return 0
 	}
-	fmt.Fprintln(stderr, "costroid: the earlier answer now says this run kept none")
+	cli.Say(stderr, "costroid: the earlier answer now says this run kept none\n")
 	return 0
 }
 
@@ -274,7 +274,7 @@ func replaceEarlierAnswer(ctx context.Context, target reportTarget, answer revie
 func readKeptAnswer(path string, stderr io.Writer) string {
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintln(stderr, "costroid: the agent's job kept no answer")
+		cli.Say(stderr, "costroid: the agent's job kept no answer\n")
 		return ""
 	}
 	if err == nil && !info.Mode().IsRegular() {

@@ -39,7 +39,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	added := set.String("workflow-added", "", "when the workflow reached the base branch, as RFC 3339")
 	at := set.String("at", "", "the time of the check, as RFC 3339; now when empty")
 	asJSON := set.Bool("json", false, "print the verdict as the machine block carries it")
-	if err := parseFlags(set, args, policyHelp, stdout); err != nil {
+	if err := parseFlags(set, args, policyHelp, stdout, stderr); err != nil {
 		return policyFlags{}, err
 	}
 	if *rows == "" || set.NArg() > 0 {
