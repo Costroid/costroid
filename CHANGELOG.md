@@ -2,6 +2,72 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.28 (2026-11-22)
+
+### Breaking changes
+
+Exit codes. [`docs/exit-codes.md`](docs/exit-codes.md) states what every command exits with.
+
+- A wrong command line exits 2 on every command but `costroid run`: an unknown command or subcommand, a flag the command does not have, a flag without its value, a value of the wrong form, a required flag or argument left out, an argument too many. It exited 125. A script that tested for 125 to catch a mistyped flag tests for 2. `costroid run` keeps 125 for its own command line, because it passes the agent's exit code through and every code below 124 is the agent's.
+- `costroid init` outside a git repository exits 125. It exited 2.
+- `costroid version` and `costroid --version` refuse a flag or an argument they do not read and exit 2. They printed the version and exited 0.
+- `costroid gateway`, `costroid app`, `costroid keys` and `costroid egress` with no subcommand print a short page on standard output and exit 2. They printed the whole help page on standard error and exited 125. `costroid keys revoke` with no id, or with one that is not 64 hexadecimal characters, exits 2 and prints two lines.
+- Unchanged: 0, 1 and 124 wherever they stood; 3 under `costroid report --exit-on-verdict`; the agent's own code under `costroid run`; 1 where Costroid Platform or an endpoint refuses what `export`, `merged`, `connect` or `emit-otlp` sent.
+
+Help and errors, for anything that matched their text.
+
+- `costroid` alone and `costroid help` print a new screen of 22 lines that lists every command once, in four groups. The lines `Usage:`, `costroid run --budget-usd N -- <agent command>`, `Other commands:` and `Ledger commands:` are gone.
+- Every `costroid help <command>` page opens with a sentence, then `Usage:`, examples, a line for each flag, what the command reads from the environment and its exit codes, and ends on `Documentation:` and an address.
+- A flag a command refuses prints `costroid: <flag> is not a flag of costroid <command>`, `costroid: <flag> needs a value` or `costroid: <flag> takes <form>, not <value>`, then at most two more lines. `flag provided but not defined: -name`, `flag needs an argument: -name`, `invalid value "v" for flag -name` and the help page after them are no longer printed.
+- `costroid: unknown command "x"` is followed by `The nearest command is <name>.` or `No command is near it.` Nothing is run by guess.
+- An error that ends a command can have more than one line. The first is `costroid: ` and what is wrong. Under a finding about the command line stands `Run costroid help <command> to see its usage.` Under an error that names no next step stands `See https://docs.costroid.com/troubleshooting.` A script that read the last line of standard error finds the error on the first.
+- `costroid init`, `costroid doctor`, `costroid demo`, `costroid run`, `costroid policy` and `costroid report --preview` no longer put the command's name and a colon before an error, and `costroid result` no longer prints `scm:` inside one.
+- A file or a program the system could not find is named in words: `<path> does not exist`, `<path> is a directory`, `<program> is not on PATH`. `open <path>: no such file or directory` and its kin are no longer printed by the commands of a first run.
+- `costroid validate` and `costroid lint-recipes` read a word that opens with a dash as a flag and refuse it. Put `--` before a path that opens with a dash.
+- `costroid demo` prints, above its last paragraph, `Next: costroid init github --agent claude writes the workflow that posts this.` `costroid init`, `costroid validate` on a valid file, and `costroid doctor` with no fail and no warn end on a line that opens `Next:`. A script that read the last line of `doctor` or `validate` finds its line by its prefix (`costroid: doctor:`, `<file>: valid`).
+- `costroid init` with a host and no `--agent` prints `costroid: name the agent with --agent`, then each agent of the host once with what its recipe does, and an example that runs as printed. With neither a host nor an agent, in a repository whose remote names no host, it asks for both in one refusal.
+- `costroid doctor` counts an agent that is not installed on this machine as `ok` where a workflow or a GitLab template of the repository installs it. It prints one line for a `gh` that is not signed in, where it printed up to three, and one line for a repository with no remote.
+- `costroid run` ends on `costroid: cap USD 5.00 (client-side estimate, can pass the cap)`, where it read `costroid: budget USD 5, agent-flag: client-side estimate, can pass the cap`, and on `costroid: over the cap by USD …`, where it read `costroid: over budget by USD …`. `costroid run` and `costroid ingest-run` state the cost as `costroid: USD 0.001619725 at list (List-equivalent, not billed)`.
+
+The check and the comment.
+
+- The check `costroid follow-up` posts for a fork's pull request whose rows break a rule is titled `Over budget, on a fork's own rows: … A fork's rows are the fork's own claim, so the check is neutral.`, in the warn-only period and after it. It no longer says the check will fail when the period ends.
+- On a repository whose comment shows amounts, the check `costroid approve` posts names the amount in its title and no longer ends "Amounts are withheld here."
+- On GitLab the note says "merge request" where it said "pull request", and the rule's line opens "Merge request budget:". Keys, rule ids, tags and outputs keep `pr` and `pull_request`.
+- `policy_pack` is no longer a reserved key. `costroid validate` and the report refuse a value that is not a path from the repository's root ending `.rego`, and a `costroid.yml` with such a value runs no rule.
+
+The install script.
+
+- The script no longer stops on a machine without cosign. With no cosign 3 or later on `PATH`, it downloads cosign v3.0.6 into its temporary directory, runs it only when its SHA-256 is the one the script holds for that machine, and removes it. It exits 0 where it exited 1. `costroid: cosign is not on PATH, and nothing is installed without its check: …` is no longer printed.
+- The script never runs a cosign on `PATH` that states a version older than 3, or none: it names it and downloads the pinned one. A cosign older than 3 refused a genuine release.
+- `costroid: <directory> is not on your PATH: add it, or run <directory>/costroid` is now `costroid: <directory> is not on your PATH. To add it in this shell, run:`, followed by an `export PATH=…` line. The script's last line is `Next: … demo prints the comment a pull request gets.`
+- The by-hand block in `docs/install.md` checks with `sha256sum -c` and installs into `~/.local/bin` without `sudo`.
+
+### What you can now do
+
+- Hold a run to a multiple of what nearly every earlier run cost: `policy.max_p95_factor: 2` fails a run that costs more than twice the P95 of the same agent's latest 20 runs on the pull requests merged into the base branch. The factor is a plain decimal of at least 1 and below 10000. With fewer than 20 runs the rule does not run and never passes: it concludes `unproven` with reason `no_baseline`. The rule is `run_p95`; its result states `p95_usd`, `limit_factor` and `baseline_runs`.
+- Add rules of your own: `policy_pack: .costroid/policy.rego` names one Rego file in the repository. The report, a fork's follow-up, `costroid policy` and `costroid serve` read it at the commit they read `costroid.yml` at, which on a pull request is the base branch's, run it in a child process, and add its warnings and failures to the check. A pack never makes a check pass. [`docs/policy.md`](docs/policy.md) holds a complete example, what a pack may call and see, and what each fault concludes.
+- Try a pack before a pull request does: `costroid policy --rows rows.jsonl --config base.yml --pack base-policy.rego`.
+- Run a pack on a ledger of your own: `costroid serve` runs one when the verdict request names the GitHub App's `installation` and the service read `costroid.yml` and the pack itself. It runs at most 4 at once and answers `503 PACK_BUSY` past that.
+- Read the new results by their version: a verdict that holds a `run_p95` result is written as `costroid.result/0.11`, and one that holds a pack as `costroid.result/0.12`. Every other report writes 0.9 or 0.10 as before. A reader that accepts a fixed list of versions adds these two when the repository sets either key.
+- Read on the comment when a pull request changes its pack or `policy_pack`: the change applies after the merge, because the verdict reads the base branch's file.
+- Read what every command exits with on one page, [`docs/exit-codes.md`](docs/exit-codes.md), and on each command's help page.
+- Read an example on every help page. A mistyped command, subcommand or flag names the nearest one.
+- Pipe to two more commands: `costroid validate -` and `costroid emit-otlp --rows -` read standard input.
+- Install on a machine that has no cosign, with the release's signature still checked on every install.
+- See the example comment with nothing installed: `docker run --rm ghcr.io/costroid/costroid:<release> demo`.
+- Follow the README from its first line: it installs before its first command, and every command on its first screen runs with no key.
+- Check the install path yourself: `make install-walk` follows the README and the install page in fresh `ubuntu:24.04`, `debian:12` and `alpine:3.20` containers and fails on a command that does not run as written.
+
+A branch that pins an older release: a pull request's workflow file is the branch's own, so a branch can pin a release that does not read `policy_pack`. That release warns that the key is reserved, runs Costroid's rules, and runs no pack.
+
+### Fixed
+
+- `costroid help validate` said a policy amount written as a float, such as `5.0`, is a problem. `validate` and the check both take it. The page now says what they do.
+- GitHub's contents API is asked for a nested path segment by segment.
+- `docs/troubleshooting.md` told a reader whose cosign refused a signature to report a forged release. A cosign older than 3 refuses a genuine one; the row names that cause first.
+- Two tests no longer take each other's port.
+
 ## 1.0.0-alpha.27 (2026-11-21)
 
 ### Breaking changes
