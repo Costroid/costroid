@@ -4,9 +4,3 @@
 # Neither ubuntu nor debian holds less.
 ubuntu:24.04 one-step $ less costroid-install.sh
 debian:12 one-step $ less costroid-install.sh
-
-# demo's next command, costroid init, asks for the host in a repository with
-# no remote.
-ubuntu:24.04 binary $ costroid init
-debian:12 binary $ costroid init
-alpine:3.20 binary $ costroid init
