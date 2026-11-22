@@ -332,7 +332,7 @@ jobs:
 
           \`\`\`sh
           curl -fsSLO https://github.com/$GH_REPO/releases/download/$TAG/costroid-install.sh
-          less costroid-install.sh
+          cat costroid-install.sh
           sh costroid-install.sh
           \`\`\`
 

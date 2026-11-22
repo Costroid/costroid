@@ -1,6 +1,2 @@
 # The commands e2e/install-walk.sh expects to fail, one a line: the image, the
 # phase, and the command as typed, with the pinned release as <version>.
-
-# Neither ubuntu nor debian holds less.
-ubuntu:24.04 one-step $ less costroid-install.sh
-debian:12 one-step $ less costroid-install.sh

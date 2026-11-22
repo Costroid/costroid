@@ -16,7 +16,7 @@ On Linux or macOS, with `curl`:
 
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-install.sh
-less costroid-install.sh
+cat costroid-install.sh
 sh costroid-install.sh
 ```
 
@@ -34,7 +34,7 @@ costroid demo --markdown       # the same comment as the Markdown the report pos
 
 ## Try it on a pull request
 
-`init` prints the commands left, and `--pr` runs them:
+You need a repository on GitHub, the GitHub CLI signed in, and an Anthropic API key. `init` prints the commands left, and `--pr` runs them:
 
 ```sh
 costroid init github --agent claude

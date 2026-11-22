@@ -8,7 +8,7 @@ The release carries `costroid-install.sh`. It checks the release's signature wit
 
 ```sh
 curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.27/costroid-install.sh
-less costroid-install.sh
+cat costroid-install.sh
 sh costroid-install.sh
 ```
 

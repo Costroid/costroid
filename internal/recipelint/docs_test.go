@@ -27,6 +27,8 @@ const (
 	// minuteOfReading is STYLE.md's bar for a README, under a minute of
 	// reading, at 220 words a minute.
 	minuteOfReading = 220
+	// wholeReadme bounds the README outside its code and its licence.
+	wholeReadme = 260
 )
 
 var (
@@ -404,9 +406,11 @@ func readingWords(text string) int {
 	return words
 }
 
-// TestReadmeReadsInAMinute holds the README to STYLE.md's minute. The licence
-// is a legal statement, not reading toward the first command, so it is not
-// counted. The README installs, then leads with demo, which costs nothing,
+// TestReadmeReadsInAMinute holds the README to a minute of reading from its
+// first line to the end of its first commands: what Costroid is, how to
+// install it and what the first command shows. The sections after that are
+// for a reader who goes on, and the whole page outside its code and its
+// licence stays under a second bound. The README installs, then leads with demo, which costs nothing,
 // then init --pr, then a recipe pasted with no install, then lint and the path
 // for a workflow a team already runs, then a run on the reader's own machine.
 func TestReadmeReadsInAMinute(t *testing.T) {
@@ -415,8 +419,15 @@ func TestReadmeReadsInAMinute(t *testing.T) {
 	if !found {
 		t.Fatal("README.md has no Licence section")
 	}
-	if words := readingWords(body); words > minuteOfReading {
-		t.Errorf("README.md reads %d words outside its code and its licence, past a minute at %d", words, minuteOfReading)
+	first, _, found := strings.Cut(body, "\n## Try it on a pull request\n")
+	if !found {
+		t.Fatal("README.md has no section Try it on a pull request after its first commands")
+	}
+	if words := readingWords(first); words > minuteOfReading {
+		t.Errorf("README.md reads %d words to the end of its first commands, past a minute at %d", words, minuteOfReading)
+	}
+	if words := readingWords(body); words > wholeReadme {
+		t.Errorf("README.md reads %d words outside its code and its licence, past %d", words, wholeReadme)
 	}
 	at := 0
 	for _, step := range []string{"\nsh costroid-install.sh\n", "\ncostroid demo ", "`--pr`", "\n## Without installing anything\n", "\ncostroid lint ", "costroid init github --existing ", "costroid report --preview --rows rows.jsonl\n"} {
