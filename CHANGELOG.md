@@ -147,7 +147,7 @@ A branch that pins an older release: a pull request's workflow file is the branc
 - The catalog's [diff report](https://github.com/Costroid/costroid-catalog/blob/v0.4.3/reports/0.4.3-diff.md) lists every row that 0.4.3 adds, removes or changes.
 - `costroid export` sends by integration contract v0.4 to a platform that states it, and by v0.3 or v0.2 otherwise, saying which.
 - On 409 `EXPORT_BATCH_RUN_BOUND`, `costroid export` says the batch is bound to the run that sent it and that only that run restates it, keeps the rows file, and exits 1. It never says to send again.
-- Read Costroid's figures beside the provider's reports in [`docs/accuracy.md`](docs/accuracy.md): sixteen days of the test key, the last eight of which pass, with every token class and every dollar figure equal to the provider's.
+- Read Costroid's figures beside the provider's reports in [`docs/accuracy.md`](docs/accuracy.md): sixteen days of the test key, the last eight of which pass, with every token class equal to the provider's count, and every dollar figure equal to the provider's to the digits its report states.
 
 ## 1.0.0-alpha.25 (2026-11-14)
 
