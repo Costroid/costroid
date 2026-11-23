@@ -2,6 +2,42 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.31 (2026-11-23)
+
+### Read this if you run `costroid serve` with the gateway
+
+Release 1.0.0-alpha.30 said that on a private repository on GitHub Free, Pro or Team, a pull request's own run can reach the environment that holds the gateway's keys, so an attested key and an attested count were the word of whoever can push a branch. This release closes that. A ledger now takes an attestation and a count only from a run that a pull request cannot edit: one that `workflow_run` started from a protected branch.
+
+Until you move to the new recipe, your rows read `windowed` where they read `exact`, and a budget no longer passes on the gateway's count. Nothing stops running: `costroid gateway mint` and `close` warn and go on, and the gateway still holds each run to its budget. To earn the grade again:
+
+1. Copy [`recipes/github-gateway.yml`](recipes/github-gateway.yml) to `.github/workflows/costroid-gateway.yml` on the default branch.
+2. Remove the `gateway-mint` and `gateway-close` jobs from the agent's workflow.
+3. Let the `costroid-gateway` environment admit the default branch alone.
+4. Protect the default branch with a ruleset.
+
+On a private repository on GitHub Free no branch can be protected. There the recipe runs, warns that the default branch is not protected, and its rows read `windowed`. That is the true reading for such a repository. [`docs/gateway.md`](docs/gateway.md) states the rule and its limit.
+
+### Breaking changes
+
+- `costroid serve` takes a key's attestation and a gateway's count only under a token that states `event_name` `workflow_run`, a `ref` under `refs/heads/`, and `ref_protected` as the JSON string `"true"`, from a job in the gateway's environment, for another run than the one that sends it. Any other token is refused with 403 `CREDENTIAL_RUN_UNPROTECTED`, and nothing is stored.
+- A key attested from a job of the pull request's own run, the setup `recipes/github-claude-code-litellm.yml` shipped until now, reads `windowed` where it read `exact`, and its count no longer lets a budget rule pass.
+- A row reads `exact` only when the head it states is the head the protected run attested, which GitHub's `workflow_run` event named for its run.
+- A ledger keeps one gateway figure per key, written once. The same string sent again is answered 204. Another figure is refused with 409 `CREDENTIAL_SPEND_HELD`. The larger of two figures is no longer kept. `costroid gateway close` no longer sends a figure that has not settled: it warns and sends none.
+- A ledger keeps one attestation per attesting run. A second key from the same run is refused with 409.
+- `costroid gateway mint` refuses a key the gateway already holds. It calls LiteLLM's `/key/list` on every mint, so an admin key limited to named routes needs that route.
+- `costroid lint` and `costroid lint-recipes` gain the rule `gateway-trigger`: the gateway's admin or sealing key in a workflow that any event but `workflow_run` starts is a finding.
+- Migration `0010_protected_attestation.sql` adds the tables `credential_attestations` and `credential_spend`, and the service's role loses every grant on `minted_credentials` and `gateway_spend`. `costroid serve` applies it when it starts. A row stored `exact` before this release keeps that grade: it was graded under the environment's rules alone, and no count kept before this release reaches a verdict.
+
+### What you can now do
+
+- Mint and close a run's gateway key from a workflow that a pull request cannot edit: `costroid gateway mint --for-triggering-run` and `costroid gateway close --for-triggering-run`. The run, its attempt and its head come from GitHub's `workflow_run` event. A fork's run, and a run that another event than `pull_request` started, are refused. The key's budget is `policy.run_budget_usd` in `costroid.yml` at the pull request's base, where that file sets one.
+- Read from a warning why a run's rows read `windowed`, and what to do: move to the new recipe, or protect the default branch.
+- Keep a ledger's own record of failing verdicts and approvals: migration `0009_override_record.sql` adds an append-only record. Nothing writes to it or reads a rule's demotion from it in this release.
+
+### Fixed
+
+- `docs/gateway.md` and `docs/serve.md` describe the rule a ledger applies, in place of the paragraph of 1.0.0-alpha.30 that described the weakness.
+
 ## 1.0.0-alpha.30 (2026-11-23)
 
 ### Read this if you run `costroid serve` with the gateway on a private repository
