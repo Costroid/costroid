@@ -328,7 +328,7 @@ func offline(t *testing.T) world {
 func writeAndCheck(t *testing.T, inputs string, days int) (string, result) {
 	t.Helper()
 	page := filepath.Join(t.TempDir(), "accuracy.md")
-	if got := runAccuracy(t, offline(t), "-write", page, "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile); got.code != 0 {
+	if got := runAccuracy(t, offline(t), "-write", page, "-record", recordBeside(page), "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile); got.code != 0 {
 		t.Fatalf("-write exited %d: %s", got.code, got.stderr)
 	}
 	return page, runAccuracy(t, offline(t), "-check", page, "-days", fmt.Sprint(days), "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
@@ -627,7 +627,8 @@ func TestStrayEntryInTheInputsIsRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(inputs, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := runAccuracy(t, offline(t), "-write", filepath.Join(t.TempDir(), "accuracy.md"), "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
+	page := filepath.Join(t.TempDir(), "accuracy.md")
+	got := runAccuracy(t, offline(t), "-write", page, "-record", recordBeside(page), "-inputs", inputs, "-costroid", costroid, "-changelog", changelogFile)
 	if got.code != exitFailure || !strings.Contains(got.stderr, "is not a kept day") {
 		t.Errorf("-write exited %d over a stray file: %s", got.code, got.stderr)
 	}

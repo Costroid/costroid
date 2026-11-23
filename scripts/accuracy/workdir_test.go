@@ -52,7 +52,7 @@ func TestWriteLeavesTheWorkingDirectoryClean(t *testing.T) {
 	before := listing(t, work)
 	t.Chdir(work)
 	page := filepath.Join(t.TempDir(), "accuracy.md")
-	if got := runAccuracy(t, offline(t), "-write", page, "-inputs", "inputs", "-costroid", stub, "-changelog", changelogFile); got.code != 0 {
+	if got := runAccuracy(t, offline(t), "-write", page, "-record", recordBeside(page), "-inputs", "inputs", "-costroid", stub, "-changelog", changelogFile); got.code != 0 {
 		t.Fatalf("-write exited %d: %s", got.code, got.stderr)
 	}
 	if got := runAccuracy(t, offline(t), "-check", page, "-days", "2", "-inputs", "inputs", "-costroid", stub, "-changelog", changelogFile); got.code != 0 {

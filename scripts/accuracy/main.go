@@ -20,7 +20,8 @@ import (
 const usage = `Usage:
   go run ./scripts/accuracy -save DIR -day YYYY-MM-DD -rows FILE [-credential ID]
       [-writer RELEASE] [-shared FILE]
-  go run ./scripts/accuracy -write FILE [-inputs DIR] [-costroid BINARY] [-changelog FILE]
+  go run ./scripts/accuracy -write FILE -record FILE [-inputs DIR] [-costroid BINARY]
+      [-changelog FILE]
   go run ./scripts/accuracy -check FILE [-days N] [-inputs DIR] [-costroid BINARY] [-changelog FILE]
 
 -save keeps one UTC day's inputs in DIR: the rows, the provider's usage and
@@ -40,9 +41,11 @@ one fails, because the provider's figures hold requests no row covers.
 
 -write re-runs costroid reconcile on each day kept under -inputs, one
 directory per day, and writes the page. Each day is reconciled in a temporary
-directory, so the working directory is left as it was. -check recomputes the
-page the same way, refuses it when one line differs, and passes only when the
-last -days days on it are consecutive UTC days that each passed.
+directory, so the working directory is left as it was. From the same lines it
+writes -record, internal/accuracy/record.go, the Go file that compiles the
+page's last 14 days into a release for the comment to quote. -check recomputes
+the page the same way, refuses it when one line differs, and passes only when
+the last -days days on it are consecutive UTC days that each passed.
 
 -costroid names the binary that reconciles. Without it, the command builds
 cmd/costroid from this module.
@@ -69,7 +72,7 @@ var errRefused = errors.New("refused")
 type options struct {
 	save, day, rows, credential string
 	writer, shared              string
-	write, check                string
+	write, record, check        string
 	inputs, costroid, changelog string
 	days                        int
 }
@@ -128,6 +131,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	set.StringVar(&opts.writer, "writer", "", "the Costroid release the day's agent ran under")
 	set.StringVar(&opts.shared, "shared", "", "a JSON array of the runs that spent on the key outside Costroid that day")
 	set.StringVar(&opts.write, "write", "", "the page to write")
+	set.StringVar(&opts.record, "record", "", "the record to write beside the page, internal/accuracy/record.go")
 	set.StringVar(&opts.check, "check", "", "the page to check")
 	set.StringVar(&opts.inputs, "inputs", defaultInputs, "the directory of kept days, one directory per day")
 	set.StringVar(&opts.costroid, "costroid", "", "the costroid binary that reconciles")
@@ -150,6 +154,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return options{}, errors.New("give one of -save, -write and -check")
 	case opts.save != "" && (opts.day == "" || opts.rows == ""):
 		return options{}, errors.New("-save needs -day and -rows")
+	case (opts.write != "") != (opts.record != ""):
+		return options{}, errors.New("-write and -record go together: the page and the record are written from the same lines")
 	case opts.check != "" && opts.days < 1:
 		return options{}, errors.New("-days must be 1 or more")
 	}
