@@ -120,6 +120,8 @@ Two runs of the e2e journey `TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfter
 
 The environment is what makes an attestation worth trusting. Any job that references `costroid-gateway` can attest, and on a pull request from a branch of this repository the workflow file is the pull request's own. The protection rules you set on the environment decide which runs reach it. With required reviewers, a person you named approves each run before it can mint or attest. Without a rule, anyone who can push a branch can attest a key for their own run.
 
+Required reviewers are not available everywhere. On GitHub Free, Pro and Team they exist only for public repositories ([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments), read 2026-11-23). On a private repository on one of those plans, no rule holds a pull request's own run back from the environment once its branch rule admits `refs/pull/*/merge`. And where a reviewer exists, the reviewer approves a job whose steps come from the pull request's own workflow file. So on such a repository an attested key and an attested count are the statement of whoever can push a branch, the same trust as the agent's own rows: the `exact` grade and a budget that passes on the gateway's count are that person's word, not a check on it.
+
 ## What the rows say
 
 | Column or tag                    | Value                                                                                                                         |
