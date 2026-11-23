@@ -41,6 +41,8 @@ No policy ran on this change.
 
 Agents: `codex`. Models: `gpt-5.5`. 23 rows, catalog `0.1.0`, prices read 2026-11-01.
 
+Costroid's own test runs `claude-code` and `opencode` on Anthropic, not this run's agent and provider, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report.
+
 </details>
 
 <details>

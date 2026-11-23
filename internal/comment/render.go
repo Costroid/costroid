@@ -18,6 +18,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Costroid/costroid/internal/accuracy"
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/adapter/ghaw"
 	"github.com/Costroid/costroid/internal/catalog"
@@ -287,6 +288,10 @@ type Input struct {
 	// and receipts in the result object, and nothing else reads it.
 	ReceiptsAsked bool
 	Receipt       *Receipt
+	// Accuracy is the record of Costroid's own accuracy test the release
+	// carries, nil for none. On a report with figures, the folded details end
+	// on one line about it. No sentence, conclusion, output or block reads it.
+	Accuracy *accuracy.Record
 	// forkRows says a fork's own workflow run wrote the rows, as OnForkRows
 	// sets it.
 	forkRows bool
@@ -581,7 +586,11 @@ type view struct {
 	EstimateUnavailable string
 	// Receipt is the receipt's one line, empty where the workflow did not
 	// ask for receipts.
-	Receipt    string
+	Receipt string
+	// Accuracy is the accuracy line, empty without a record or a figure. It
+	// is the last of the Details, and on a job summary that folds none, the
+	// summary's last line.
+	Accuracy   string
 	AccountURL string
 	ExportURL  string
 	CheckRunID *int64
@@ -622,6 +631,9 @@ func (i Input) view() view {
 		result.PastCap = i.capLine()
 	}
 	result.Details, result.DetailsSummary = i.details(shown, result.PastCap == "")
+	if result.Accuracy = i.accuracyLine(); result.Accuracy != "" {
+		result.Details = append(result.Details, result.Accuracy)
+	}
 	result.Reconciliations = reconciliationLines(i.Reconciliations)
 	for index, figure := range i.Ledger.Figures {
 		line := figureLine{

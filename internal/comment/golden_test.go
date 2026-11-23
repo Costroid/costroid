@@ -519,6 +519,15 @@ func goldenStates(t *testing.T) map[string]Input {
 		preview.Preview = true
 		states[name] = preview
 	}
+	maps.Copy(states, accuracyStates(t, neutral))
+	// A report carries the record of its release on every surface, so each
+	// state does, and a state with figures ends its fold on the line.
+	for name, input := range states {
+		if input.Accuracy == nil {
+			input.Accuracy = goldenRecord()
+			states[name] = input
+		}
+	}
 	return states
 }
 

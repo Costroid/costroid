@@ -17,4 +17,6 @@ No cap held this run. Cap: USD 0.05, which nothing enforced. Cost: USD 0.10, Mea
 
 Agents: `codex`. Models: `gpt-5.5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
 
+Costroid's own test runs `claude-code` and `opencode` on Anthropic, not this run's agent and provider, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report.
+
 </details>
