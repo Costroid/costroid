@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -301,6 +302,8 @@ type gatewayJob struct {
 	// checkout is the directory the agent runs in, the pull request's
 	// checkout, when the job has one.
 	checkout string
+	// github is GitHub's API as the minting run reads it.
+	github string
 }
 
 // fakeAgent is a stand-in for an agent: the name costroid run knows it by,
@@ -337,7 +340,7 @@ func newGatewayJob(t *testing.T, stack *gatewayStack, agent fakeAgent) *gatewayJ
 	event := filepath.Join(w.directory, "event.json")
 	w.write(event, fmt.Sprintf(`{"pull_request":{"number":%s,"head":{"sha":%q},"base":{"sha":%q},"user":{"login":%q}}}`, pull, head, base, author), 0o644)
 	job := &gatewayJob{workspace: w, stack: stack, request: filepath.Join(w.directory, "gateway"), report: filepath.Join(w.directory, "agent.json"),
-		command: agent.command, provider: agent.provider}
+		command: agent.command, provider: agent.provider, github: gitHubAPI(t)}
 	job.ci = append(os.Environ(),
 		"GITHUB_ACTIONS=true", "GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY=acme/widgets",
 		"GITHUB_RUN_ID="+runID, "GITHUB_JOB=agent", "GITHUB_SHA="+merge, "GITHUB_EVENT_NAME=pull_request",
@@ -364,9 +367,49 @@ func (j *gatewayJob) attempt(n int) []string {
 	return append(j.ci, "GITHUB_RUN_ATTEMPT="+strconv.Itoa(n))
 }
 
-// open is the agent's job drawing its key and the minting job registering it,
-// with the minting job's extra variables. It returns the key's id.
-func (j *gatewayJob) open(attempt int, minting ...string) string {
+// gitHubToken is the minting run's GITHUB_TOKEN, which gitHubAPI takes.
+const gitHubToken = "e2e-github-token"
+
+// gitHubAPI is GitHub's API for acme/widgets as the minting run reads it: the
+// pull request's author, and no costroid.yml at the base, so the key's budget
+// is --budget-usd.
+func gitHubAPI(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("Authorization") != "Bearer "+gitHubToken:
+			w.WriteHeader(http.StatusUnauthorized)
+		case r.URL.Path == "/repos/acme/widgets/pulls/"+pull:
+			fmt.Fprintf(w, `{"head":{"sha":%q},"user":{"login":%q}}`, head, author)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+// Each job of the gateway recipe runs in a run of its own, which
+// workflow_run starts after the agent's run.
+const (
+	mintingRunID = "16873410388"
+	closingRunID = "16873410555"
+)
+
+// triggered is the environment of a job of the run that workflow_run started,
+// numbered run, after the given attempt of the agent's run: the event names
+// that attempt, its head and its one pull request.
+func (j *gatewayJob) triggered(run string, attempt int) []string {
+	j.t.Helper()
+	event := filepath.Join(j.directory, "workflow-run-"+run+"-"+strconv.Itoa(attempt)+".json")
+	j.write(event, fmt.Sprintf(`{"workflow_run":{"id":%s,"run_attempt":%d,"event":"pull_request","head_sha":%q,"head_repository":{"full_name":"acme/widgets"},"pull_requests":[{"number":%s,"base":{"sha":%q}}]}}`,
+		runID, attempt, head, pull, base), 0o644)
+	return append(slices.Clone(j.ci), "GITHUB_RUN_ID="+run, "GITHUB_RUN_ATTEMPT=1", "GITHUB_EVENT_NAME=workflow_run", "GITHUB_EVENT_PATH="+event,
+		"GITHUB_TOKEN="+gitHubToken, "GITHUB_API_URL="+j.github)
+}
+
+// draw is the agent's job drawing its key and sealing it. It returns the key.
+func (j *gatewayJob) draw(attempt int) string {
 	j.t.Helper()
 	agentEnv := append(j.attempt(attempt), "COSTROID_GATEWAY_PUBLIC_KEY="+j.public)
 	code, stdout, stderr := j.costroid(agentEnv, "gateway", "request", "--out", j.request)
@@ -377,19 +420,36 @@ func (j *gatewayJob) open(attempt int, minting ...string) string {
 	if strings.Contains(stdout+stderr, key) {
 		j.t.Fatal("gateway request printed the key")
 	}
-	mintEnv := append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter, "COSTROID_GATEWAY_SEALING_KEY="+j.sealing)
-	mintEnv = append(mintEnv, minting...)
-	code, stdout, stderr = j.costroid(mintEnv, "gateway", "mint", "--url", j.stack.url, "--budget-usd", gatewayBudget,
+	return key
+}
+
+// mint runs costroid gateway mint in the environment given, with the minting
+// job's secrets and flags given, and returns its exit code, stdout and stderr.
+func (j *gatewayJob) mint(env []string, flags ...string) (int, string, string) {
+	j.t.Helper()
+	env = append(env, "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter, "COSTROID_GATEWAY_SEALING_KEY="+j.sealing)
+	args := append([]string{"gateway", "mint", "--url", j.stack.url, "--budget-usd", gatewayBudget,
 		"--lifetime-minutes", "10", "--max-request-tokens", gatewayRequestTokens,
 		"--repository-daily-cap-usd", repositoryCap, "--author-daily-cap-usd", "5",
-		"--request", filepath.Join(j.request, "costroid-gateway-request.json"))
-	if code != 0 {
-		j.t.Fatalf("gateway mint exit %d: %s", code, stderr)
-	}
-	for _, secret := range []string{key, j.stack.minter, j.sealing} {
+		"--request", filepath.Join(j.request, "costroid-gateway-request.json")}, flags...)
+	code, stdout, stderr := j.costroid(env, args...)
+	for _, secret := range []string{j.key(), j.stack.minter, j.sealing} {
 		if strings.Contains(stdout+stderr, secret) {
 			j.t.Fatal("gateway mint printed a key")
 		}
+	}
+	return code, stdout, stderr
+}
+
+// open is the agent's job drawing its key and the gateway recipe's mint job
+// registering it, in the run workflow_run started after the attempt, with the
+// minting job's extra variables. It returns the key's id.
+func (j *gatewayJob) open(attempt int, minting ...string) string {
+	j.t.Helper()
+	key := j.draw(attempt)
+	code, stdout, stderr := j.mint(append(j.triggered(mintingRunID, attempt), minting...), "--for-triggering-run")
+	if code != 0 {
+		j.t.Fatalf("gateway mint exit %d: %s", code, stderr)
 	}
 	id := keyID(key)
 	if !strings.Contains(stdout, id) {
@@ -448,19 +508,28 @@ func checkoutRoutingAround(t *testing.T) (string, *decoy) {
 	return checkout, d
 }
 
-// close is the closing job, with its extra variables. It returns what close
-// wrote to stderr.
+// close is the gateway recipe's close job, in the run workflow_run started
+// once the attempt had completed, with its extra variables. It returns what
+// close wrote to stderr.
 func (j *gatewayJob) close(attempt int, closing ...string) string {
 	j.t.Helper()
-	env := append(j.attempt(attempt), "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter)
-	code, stdout, stderr := j.costroid(append(env, closing...), "gateway", "close", "--url", j.stack.url)
+	code, stdout, stderr := j.closeIn(append(j.triggered(closingRunID, attempt), closing...), "--for-triggering-run")
 	if code != 0 || stdout != "deleted\n" {
 		j.t.Fatalf("gateway close exit %d: %s%s", code, stdout, stderr)
 	}
+	return stderr
+}
+
+// closeIn runs costroid gateway close in the environment given, with the
+// closing job's secret and flags given.
+func (j *gatewayJob) closeIn(env []string, flags ...string) (int, string, string) {
+	j.t.Helper()
+	env = append(env, "COSTROID_GATEWAY_ADMIN_KEY="+j.stack.minter)
+	code, stdout, stderr := j.costroid(env, append([]string{"gateway", "close", "--url", j.stack.url}, flags...)...)
 	if strings.Contains(stdout+stderr, j.stack.minter) {
 		j.t.Fatal("gateway close printed the admin key")
 	}
-	return stderr
+	return code, stdout, stderr
 }
 
 type agentOutcome struct {
@@ -520,12 +589,16 @@ func keyID(key string) string {
 
 // TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob runs each agent
 // that takes a gateway through one LiteLLM and one mock upstream: Claude Code
-// on the Messages API, Codex on the Responses API.
+// on the Messages API, Codex on the Responses API. The key is minted and
+// closed as the gateway recipe does, in runs that workflow_run starts. A last
+// journey mints and closes in the agent's own workflow, as the LiteLLM recipe
+// once did, and earns no more than windowed.
 func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	mock := startMock(t)
 	stack := composeGateway(t, mock)
 	t.Run("claude-code", func(t *testing.T) { holdClaudeCode(t, stack.on(t), mock) })
 	t.Run("codex", func(t *testing.T) { holdCodex(t, stack.on(t), mock) })
+	t.Run("jobs in the agent's own workflow", func(t *testing.T) { holdTheInWorkflowJobsToWindowed(t, stack.on(t), mock) })
 }
 
 // on is the stack as a subtest calls it.
@@ -544,11 +617,12 @@ func holdClaudeCode(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
 	job.checkout = checkout
 	ledger := startLedger(t)
 
-	id := job.open(1, ledger.jobEnv(1)...)
+	id := job.open(1, ledger.jobEnv(mintJob, 1)...)
 	key := job.key()
 	if budget, window := stack.teamBudget(); decimal.MustParse(budget).Cmp(decimal.MustParse(repositoryCap)) != 0 || window != "1d" {
 		t.Errorf("the repository's team holds USD %v per %q, want %s per 1d", budget, window, repositoryCap)
 	}
+	holdAKeyToOneMint(t, stack, job, key)
 	total := runToTheRefusal(t, job, mock, 1, id, gatewayBound)
 	holdTheSettingsFile(t, job)
 	if sent := elsewhere.requests.Load(); sent != 0 {
@@ -808,32 +882,51 @@ func startLedger(t *testing.T) *gatewayLedger {
 			return
 		}
 		attempt, _ := strconv.Atoi(query.Get("attempt"))
-		_ = json.NewEncoder(w).Encode(map[string]string{"value": l.token(attempt, gatewayEnvironment)})
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": l.token(attempt, query.Get("job"))})
 	}))
 	t.Cleanup(l.tokens.Close)
 	return l
 }
 
-// token is the CI token of one job of the run's attempt. An environment names
-// the job that holds the gateway's admin key.
-func (l *gatewayLedger) token(attempt int, environment string) string {
+// The jobs a ledger's token is asked for: the gateway recipe's mint and close
+// jobs, each in a run that workflow_run started on the protected default
+// branch, and a job of the agent's own run in the gateway's environment, as
+// the LiteLLM recipe's mint and close jobs ran before they moved. Any other
+// job is the agent's run's, in no environment.
+const (
+	mintJob       = "mint"
+	closeJob      = "close"
+	inWorkflowJob = "in-workflow"
+	agentJob      = "agent"
+)
+
+// token is the CI token of one job, for the agent run's attempt. The claims
+// of a protected run's job are the ones recorded GitHub Actions runs
+// 45109326900 and 45109345722 state: workflow_run, refs/heads/main, and
+// ref_protected as the string "true".
+func (l *gatewayLedger) token(attempt int, job string) string {
 	claims := map[string]any{
 		"iss": l.issuer.URL(), "aud": ledgerAudience, "exp": time.Now().Add(5 * time.Minute).Unix(),
 		"repository": "acme/widgets", "repository_owner": "acme", "run_id": runID, "run_attempt": strconv.Itoa(attempt),
 		"sha": merge, "actor": author, "event_name": "pull_request", "ref": "refs/pull/" + pull + "/merge",
 	}
-	if environment != "" {
-		claims["environment"] = environment
+	switch job {
+	case mintJob, closeJob:
+		claims["run_id"], claims["run_attempt"] = map[string]string{mintJob: mintingRunID, closeJob: closingRunID}[job], "1"
+		claims["event_name"], claims["ref"], claims["ref_protected"], claims["sha"] = "workflow_run", "refs/heads/main", "true", base
+		claims["environment"] = gatewayEnvironment
+	case inWorkflowJob:
+		claims["environment"] = gatewayEnvironment
 	}
 	return l.issuer.Token(claims)
 }
 
-// jobEnv names the ledger to a job of the gateway's environment, as the
-// recipe's variables and id-token: write do.
-func (l *gatewayLedger) jobEnv(attempt int) []string {
+// jobEnv names the ledger to a job, as the recipe's variables and id-token:
+// write do, for the agent run's attempt.
+func (l *gatewayLedger) jobEnv(job string, attempt int) []string {
 	return []string{
 		"COSTROID_INGEST_URL=" + l.server.URL + "/v1/rows", "COSTROID_INGEST_AUDIENCE=" + ledgerAudience,
-		"ACTIONS_ID_TOKEN_REQUEST_URL=" + l.tokens.URL + "/token?api-version=2.0&attempt=" + strconv.Itoa(attempt),
+		"ACTIONS_ID_TOKEN_REQUEST_URL=" + l.tokens.URL + "/token?api-version=2.0&attempt=" + strconv.Itoa(attempt) + "&job=" + job,
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN=" + ledgerRequestToken, "SSL_CERT_FILE=" + l.certFile,
 	}
 }
@@ -842,11 +935,17 @@ func (l *gatewayLedger) jobEnv(attempt int) []string {
 // no environment.
 func (l *gatewayLedger) call(path string, attempt int, body []byte) []byte {
 	l.t.Helper()
-	request, err := http.NewRequest(http.MethodPost, l.server.URL+path, bytes.NewReader(body))
+	return l.send(http.MethodPost, path, attempt, body)
+}
+
+// send asks the ledger under the agent's job's token of the attempt.
+func (l *gatewayLedger) send(method, path string, attempt int, body []byte) []byte {
+	l.t.Helper()
+	request, err := http.NewRequest(method, l.server.URL+path, bytes.NewReader(body))
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+l.token(attempt, ""))
+	request.Header.Set("Authorization", "Bearer "+l.token(attempt, agentJob))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := l.server.Client().Do(request)
 	if err != nil {
@@ -855,9 +954,31 @@ func (l *gatewayLedger) call(path string, attempt int, body []byte) []byte {
 	defer response.Body.Close()
 	data, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK {
-		l.t.Fatalf("POST %s: %d %s", path, response.StatusCode, data)
+		l.t.Fatalf("%s %s: %d %s", method, path, response.StatusCode, data)
 	}
 	return data
+}
+
+// grades reads the attribution grade of each line of the pull request.
+func (l *gatewayLedger) grades() []string {
+	l.t.Helper()
+	var view struct {
+		Lines []struct {
+			Grade string `json:"attribution_grade"`
+		} `json:"lines"`
+	}
+	data := l.send(http.MethodGet, "/v1/pulls/"+pull+"?repo="+repository, 1, nil)
+	if err := json.Unmarshal(data, &view); err != nil {
+		l.t.Fatal(err)
+	}
+	var grades []string
+	for _, line := range view.Lines {
+		grades = append(grades, line.Grade)
+	}
+	if len(grades) == 0 {
+		l.t.Fatalf("the pull request holds no line: %s", data)
+	}
+	return grades
 }
 
 type ledgerVerdict struct {
@@ -879,9 +1000,10 @@ type ledgerVerdict struct {
 	} `json:"policy"`
 }
 
-// verdict asks the ledger for the pull request's verdict under the gateway
-// policy, with the warn-only period over.
-func (l *gatewayLedger) verdict() (ledgerVerdict, string) {
+// verdict asks the ledger, under the token of the attempt's agent job, for
+// the pull request's verdict under the gateway policy, with the warn-only
+// period over.
+func (l *gatewayLedger) verdict(attempt int) (ledgerVerdict, string) {
 	l.t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"config":         base64.StdEncoding.EncodeToString([]byte(gatewayPolicy)),
@@ -891,7 +1013,7 @@ func (l *gatewayLedger) verdict() (ledgerVerdict, string) {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	data := l.call("/v1/pulls/"+pull+"/verdict?repo="+repository, 1, body)
+	data := l.call("/v1/pulls/"+pull+"/verdict?repo="+repository, attempt, body)
 	var answer ledgerVerdict
 	if err := json.Unmarshal(data, &answer); err != nil {
 		l.t.Fatal(err)
@@ -919,14 +1041,14 @@ func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job
 		t.Fatal(err)
 	}
 	ledger.call("/v1/rows", 1, rows)
-	before, data := ledger.verdict()
+	before, data := ledger.verdict(1)
 	want := map[string]string{"pr_budget": "unproven unmeasured_spend", "model_allowlist": "unproven unmeasured_spend"}
 	if before.Policy.Conclusion != "neutral" || before.Policy.Trust != "token_verified" || before.Policy.Evidence != "agent_counts" ||
 		before.Budget.Basis != "agent_counts" || before.Budget.Evidence || !equalOutcomes(before.outcomes(), want) {
 		t.Fatalf("the verdict on the agent's own counts: %s", data)
 	}
 
-	stderr := job.close(1, ledger.jobEnv(1)...)
+	stderr := job.close(1, ledger.jobEnv(closeJob, 1)...)
 	attested, found := strings.CutPrefix(strings.TrimSpace(stderr), "attested the gateway's count of USD ")
 	attested, ended := strings.CutSuffix(attested, " to the ledger")
 	if !found || !ended {
@@ -936,13 +1058,80 @@ func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job
 		t.Fatalf("close attested USD %s, and the rows come to USD %s", attested, total)
 	}
 
-	after, data := ledger.verdict()
+	after, data := ledger.verdict(1)
 	want = map[string]string{"pr_budget": "pass within_limit", "model_allowlist": "pass models_on_allowlist"}
 	if after.Policy.Conclusion != "success" || after.Policy.Evidence != "gateway_measured" || after.Budget.Basis != "gateway_measured" ||
 		!after.Budget.Evidence || after.Budget.GatewayUSD != attested || !equalOutcomes(after.outcomes(), want) {
 		t.Fatalf("the verdict on the gateway's count of USD %s: %s", attested, data)
 	}
 	t.Logf("close attested USD %s: %s", attested, data)
+	for _, grade := range ledger.grades() {
+		if grade != "exact" {
+			t.Errorf("a row of the key the protected run attested reads %s", grade)
+		}
+	}
+}
+
+// holdAKeyToOneMint mints the key the run drew a second time, as a minting
+// run started again would. Mint refuses it before it asks the gateway to
+// register it. The journey also logs what LiteLLM itself answers when it is
+// asked to register a key it holds.
+func holdAKeyToOneMint(t *testing.T, stack *gatewayStack, job *gatewayJob, key string) {
+	t.Helper()
+	code, _, stderr := job.mint(job.triggered(mintingRunID, 1), "--for-triggering-run")
+	if code == 0 || !strings.Contains(stderr, "holds the request's key already") {
+		t.Errorf("a second mint of the run's key: exit %d, %s", code, stderr)
+	}
+	status, answer := stack.call(stack.admin, http.MethodPost, "/key/generate", map[string]any{"key": key})
+	t.Logf("LiteLLM answers %d to /key/generate with a key it holds: %.200s", status, strings.ReplaceAll(answer, key, "<key>"))
+}
+
+// holdTheInWorkflowJobsToWindowed mints and closes the run's key from jobs of
+// the agent's own run, in the gateway's environment, as the LiteLLM recipe
+// did before its mint and close jobs moved to the gateway recipe. The ledger
+// refuses both attestations and stores neither. Mint and close warn and exit
+// 0, so the run completes: the key still holds the run to its budget, its
+// rows read gateway-precheck, they read windowed in the ledger, and the
+// budget rests on the agent's own counts.
+// The warnings mint and close print when the ledger refuses a job of the
+// agent's own run.
+const (
+	unprotectedWarning      = "costroid: warning: the ledger takes an attestation only from a run of a protected default branch, so this run's rows read windowed: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
+	unprotectedCountWarning = "costroid: warning: the ledger takes a gateway count only from a run of a protected default branch, so no budget on this run's rows passes on it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
+)
+
+func holdTheInWorkflowJobsToWindowed(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
+	const attempt = 4
+	job := newGatewayJob(t, stack, claudeCode)
+	ledger := startLedger(t)
+	key := job.draw(attempt)
+	code, stdout, stderr := job.mint(append(job.attempt(attempt), ledger.jobEnv(inWorkflowJob, attempt)...))
+	id := keyID(key)
+	if code != 0 || !strings.Contains(stdout, id) || !strings.Contains(stderr, unprotectedWarning) {
+		t.Fatalf("a mint in the agent's own run: exit %d, %s%s", code, stdout, stderr)
+	}
+	t.Logf("mint said: %s", strings.TrimSpace(stderr))
+	total := runToTheRefusal(t, job, mock, attempt, id, gatewayBound)
+	rows, err := os.ReadFile(job.rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.call("/v1/rows", attempt, rows)
+
+	code, stdout, stderr = job.closeIn(append(job.attempt(attempt), ledger.jobEnv(inWorkflowJob, attempt)...))
+	if code != 0 || stdout != "deleted\n" || !strings.Contains(stderr, unprotectedCountWarning) {
+		t.Fatalf("a close in the agent's own run: exit %d, %s%s", code, stdout, stderr)
+	}
+	t.Logf("close said: %s", strings.TrimSpace(stderr))
+	for _, grade := range ledger.grades() {
+		if grade != "windowed" {
+			t.Errorf("a row of a key attested from the agent's own run reads %s", grade)
+		}
+	}
+	verdict, data := ledger.verdict(attempt)
+	if verdict.Budget.Basis != "agent_counts" || verdict.Budget.Evidence || verdict.Policy.Evidence != "agent_counts" || verdict.Policy.Conclusion != "neutral" {
+		t.Fatalf("the verdict on rows of USD %s whose count a job of the agent's own run attested: %s", total, data)
+	}
 }
 
 func equalOutcomes(got, want map[string]string) bool {

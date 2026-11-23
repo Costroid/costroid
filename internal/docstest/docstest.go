@@ -94,3 +94,14 @@ func Fills(shown, printed string) bool {
 	}
 	return regexp.MustCompile("^" + strings.Join(parts, "(.+)") + "$").MatchString(printed)
 }
+
+// Page answers the text of one page, named from the repository's root at
+// root, for a test that holds the page's prose to the code.
+func Page(t testing.TB, root, page string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}

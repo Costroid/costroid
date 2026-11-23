@@ -171,8 +171,10 @@ func TestTheKeyIDIsTheSHA256LiteLLMStores(t *testing.T) {
 }
 
 // liteLLM is a stand-in for the routes the package calls, holding one key.
+// held lists the ids of the keys it already holds.
 type liteLLM struct {
 	generated map[string]any
+	held      []string
 	budgets   map[string]map[string]any
 	info      string
 	store     atomic.Value
@@ -188,6 +190,14 @@ func (l *liteLLM) serve(t *testing.T) *httptest.Server {
 			w.Write([]byte(`{}`))
 		case "/key/info":
 			w.Write([]byte(l.info))
+		case "/key/list":
+			keys := []map[string]string{}
+			for _, id := range l.held {
+				if id == r.URL.Query().Get("key_hash") && r.URL.Query().Get("return_full_object") == "true" {
+					keys = append(keys, map[string]string{"token": id})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
 		case "/key/delete":
 			if l.deletes.Add(1) > 1 {
 				w.WriteHeader(http.StatusBadRequest)
@@ -239,6 +249,23 @@ func TestMintRegistersTheKeyWithTheRunsBudgetExpiryAndMetadata(t *testing.T) {
 	}
 	if _, ok := got["team_id"]; ok {
 		t.Error("a key with no cap was put in a team")
+	}
+}
+
+// TestMintRefusesAKeyTheGatewayHolds seals a key the gateway already holds,
+// such as one every run shares. Mint registers nothing.
+func TestMintRefusesAKeyTheGatewayHolds(t *testing.T) {
+	request, key := newRequest(t)
+	fake := &liteLLM{held: []string{KeyID(key)}}
+	mint := Mint{
+		Client: NewClient(fake.serve(t).URL), AdminKey: admin, SealingKey: sealing, Run: run, Request: request,
+		Budget: decimal.MustParse("0.01"), Lifetime: time.Hour, MaxParallel: 1, MaxRequestTokens: 1,
+	}
+	if _, err := mint.Register(context.Background()); err == nil || !strings.Contains(err.Error(), "holds the request's key already") {
+		t.Fatalf("a held key: %v", err)
+	}
+	if fake.generated != nil {
+		t.Fatalf("a held key was registered again: %v", fake.generated)
 	}
 }
 
@@ -325,13 +352,19 @@ func TestTheAgentGetsTheGatewayInPlaceOfAnyProviderCredential(t *testing.T) {
 	}
 }
 
-func TestMintWaitsForTheRequestArtifact(t *testing.T) {
-	request, _ := newRequest(t)
+// requestArchive is the zip of an artifact that holds the request.
+func requestArchive(request Request) []byte {
 	var archive bytes.Buffer
 	writer := zip.NewWriter(&archive)
 	file, _ := writer.Create(RequestFile)
 	_ = json.NewEncoder(file).Encode(request)
 	_ = writer.Close()
+	return archive.Bytes()
+}
+
+func TestMintWaitsForTheRequestArtifact(t *testing.T) {
+	request, _ := newRequest(t)
+	archive := requestArchive(request)
 	var calls atomic.Int64
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -346,8 +379,10 @@ func TestMintWaitsForTheRequestArtifact(t *testing.T) {
 				return
 			}
 			w.Write([]byte(`{"artifacts":[{"archive_download_url":"` + server.URL + `/zip","expired":false}]}`))
+		case "/repos/acme/widgets/actions/runs/42":
+			w.Write([]byte(`{"status":"in_progress"}`))
 		case "/zip":
-			w.Write(archive.Bytes())
+			w.Write(archive)
 		}
 	}))
 	defer server.Close()
@@ -355,6 +390,44 @@ func TestMintWaitsForTheRequestArtifact(t *testing.T) {
 	got, err := artifacts.Wait(context.Background(), "costroid-gateway-request-1")
 	if err != nil || got != request {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// TestARunThatEndedWithNoRequestEndsTheWait reads a run that completed with
+// no request artifact, as one whose agent's job was skipped. The wait ends
+// with ErrNoRequest at once. An artifact that arrives between the list and
+// the run's status is still taken.
+func TestARunThatEndedWithNoRequestEndsTheWait(t *testing.T) {
+	request, _ := newRequest(t)
+	archive := requestArchive(request)
+	for name, late := range map[string]bool{"no artifact": false, "an artifact uploaded as the run ended": true} {
+		t.Run(name, func(t *testing.T) {
+			var lists atomic.Int64
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/acme/widgets/actions/runs/42/artifacts":
+					if lists.Add(1) == 1 || !late {
+						w.Write([]byte(`{"artifacts":[]}`))
+						return
+					}
+					w.Write([]byte(`{"artifacts":[{"archive_download_url":"` + server.URL + `/zip","expired":false}]}`))
+				case "/repos/acme/widgets/actions/runs/42":
+					w.Write([]byte(`{"status":"completed"}`))
+				case "/zip":
+					w.Write(archive)
+				}
+			}))
+			defer server.Close()
+			artifacts := Artifacts{API: server.URL, Repository: "acme/widgets", Run: "42", Token: "gh-token", HTTP: server.Client(), Every: time.Hour}
+			got, err := artifacts.Wait(context.Background(), "costroid-gateway-request-1")
+			if late && (err != nil || got != request) {
+				t.Fatalf("the late artifact: %+v, %v", got, err)
+			}
+			if !late && !errors.Is(err, ErrNoRequest) {
+				t.Fatalf("a run that ended with no request: %+v, %v", got, err)
+			}
+		})
 	}
 }
 

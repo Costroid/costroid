@@ -179,21 +179,29 @@ func (l *LiteLLM) info(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, string(body))
 }
 
-// list answers the keys with the alias the query names, exactly, as full
-// objects: the key's id in token, its alias and its spend.
+// list answers the keys with the alias or the id the query names, exactly,
+// as full objects: the key's id in token, its alias and its spend. Only a
+// list by alias, the one close reads the spend through, counts as a call to
+// BeforeList.
 func (l *LiteLLM) list(w http.ResponseWriter, r *http.Request) {
-	l.mu.Lock()
-	l.lists++
-	call := l.lists
-	l.mu.Unlock()
-	if l.BeforeList != nil {
-		l.BeforeList(call)
+	query := r.URL.Query()
+	hash := query.Get("key_hash")
+	if hash == "" {
+		l.mu.Lock()
+		l.lists++
+		call := l.lists
+		l.mu.Unlock()
+		if l.BeforeList != nil {
+			l.BeforeList(call)
+		}
 	}
-	alias := r.URL.Query().Get("key_alias")
 	keys := []map[string]any{}
 	l.mu.Lock()
-	if key, ok := l.keys[alias]; ok && r.URL.Query().Get("return_full_object") == "true" {
-		keys = append(keys, map[string]any{"token": keyID(key.Key), "key_alias": key.Alias, "spend": l.spendOf(alias)})
+	for alias, key := range l.keys {
+		named := hash == "" && alias == query.Get("key_alias") || hash != "" && keyID(key.Key) == hash
+		if named && query.Get("return_full_object") == "true" {
+			keys = append(keys, map[string]any{"token": keyID(key.Key), "key_alias": key.Alias, "spend": l.spendOf(alias)})
+		}
 	}
 	l.mu.Unlock()
 	body, _ := json.Marshal(map[string]any{"keys": keys, "total_count": len(keys), "current_page": 1, "total_pages": 1})

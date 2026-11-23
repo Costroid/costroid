@@ -73,13 +73,13 @@ The pull request comes from the token's ref, `refs/pull/<n>/merge`, on GitHub. A
 
 A stated head that differs from the token's `sha` on a `pull_request` run is expected, and the row keeps it as a claim. On a `push`, a stated head that differs rejects the request. A stated head that is not a commit rejects it on every event. Nothing writes a token's merge commit into `commit_sha`.
 
-`head_basis = 'stated'` is the seam for an SCM check. No token names a pull request's head, so the join cannot disprove a stated one. A later check reads those rows and reports a head the pull request never had as its own issue. A row with `head_basis = 'stated'` and `commit_sha` equal to `token_commit_sha` on a `pull_request` run names the merge commit, which is a wrapper stating `GITHUB_SHA`. A wrapper states `github.event.pull_request.head.sha`.
+`head_basis = 'stated'` is the seam for an SCM check. No token names a pull request's head, so the join cannot disprove a stated one. A later check reads those rows and reports a head the pull request never had as its own issue. An `exact` row's head is more than the sender's word: it is the head the attesting run read from GitHub's event, as [the next section](#which-credential-earns-exact) says. A row with `head_basis = 'stated'` and `commit_sha` equal to `token_commit_sha` on a `pull_request` run names the merge commit, which is a wrapper stating `GITHUB_SHA`. A wrapper states `github.event.pull_request.head.sha`.
 
 | Credential                                                                                                 | `run_identity`   | `attribution_grade` | Counts toward a budget |
 | ---------------------------------------------------------------------------------------------------------- | ---------------- | ------------------- | ---------------------- |
-| CI token that names a pull request, on a row with a head and a `SubAccountId` attested for the token's run | `token_verified` | `exact`             | Yes                    |
-| CI token, otherwise                                                                                        | `token_verified` | `windowed`          | Yes                    |
-| Ingest key                                                                                                 | `unverified`     | `unattributed`      | Never                  |
+| CI token that names a pull request, on a row whose `SubAccountId` a protected run attested for the token's run and whose head is the head that attestation names | `token_verified` | `exact`             | Yes                    |
+| CI token, otherwise                                                                                                                                              | `token_verified` | `windowed`          | Yes                    |
+| Ingest key                                                                                                                                                       | `unverified`     | `unattributed`      | Never                  |
 
 A sender may lower an `exact` row to `windowed`. It cannot raise a row. Postgres holds the last line as well: a `CHECK` refuses an unverified row with any other grade, and `budget_eligible` is a generated column.
 
@@ -102,33 +102,35 @@ A CI token proves which run sent a row. It does not prove the row's token counts
 
 ## Which credential earns `exact`
 
-`costroid gateway mint` registers one key per run on a LiteLLM gateway, and the rows name the key's id in `SubAccountId`. Once it has registered the key, the minting job attests it: it posts to `POST /v1/credentials` under its own OIDC token. [`docs/gateway.md`](gateway.md) describes the jobs.
+A ledger grades a row `exact` only when a run of a protected default branch attested its key: a run that `workflow_run` started, whose ID token states `ref_protected` as `"true"`. On a private repository on GitHub Free no branch can be protected, so the token states `"false"`, and no row reads `exact` there; the rows read `windowed`. That is the true reading: anyone who can push to such a default branch can change the workflow that attests. A private repository on GitHub Pro or Team, where a branch can be protected, earns the grade.
+
+`costroid gateway mint` registers one key per run on a LiteLLM gateway, and the rows name the key's id in `SubAccountId`. The pull request's own run draws the key and seals it. A run of the gateway recipe, which `workflow_run` starts from the default branch's workflow file, mints the key and attests it: it posts to `POST /v1/credentials` under its own OIDC token. [`docs/gateway.md`](gateway.md) describes the two workflows.
 
 ```json
-{"key_id": "<64 hexadecimal characters>", "repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1"}
+{"key_id": "<64 hexadecimal characters>", "repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1", "head_sha": "<the run's head commit>"}
 ```
 
-The service stores an attestation only when all of these hold:
+`run_id` and `run_attempt` name the run the key was minted for, the pull request's own, and `head_sha` is that run's head commit as GitHub's `workflow_run` event names it. The service stores an attestation only when all of these hold:
 
 - the bearer is a CI token, not an ingest key;
-- the token's `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`, `costroid-gateway` by default;
-- the token's repository, run and attempt equal the attestation's.
+- the token's `event_name` is `workflow_run`, its `ref` names a branch, `refs/heads/...`, its `ref_protected` claim is the JSON string `"true"`, compared as the claim's text, so a boolean, another case or any other value is not it, and it names a run attempt;
+- the token's `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`, `costroid-gateway` by default. This check is the service's own, beside the rule a second ledger applies: the gateway recipe's jobs reach that environment anyway, because it holds the admin key and the sealing key;
+- the body is an attestation with a 64-character key id, a run, an attempt and a head commit;
+- the token's repository is the attestation's, and the token's run is another than the one the attestation names.
 
-A refusal answers `403` with `ATTESTATION_FORBIDDEN` for the first two, and `JOIN_KEY_MISMATCH` for the third. A key already attested for another run answers `409` with `JOIN_KEY_MISMATCH`, and the first attestation stands. The same attestation again answers `204` and changes nothing.
+A refusal answers `403` with `ATTESTATION_FORBIDDEN` when there is no CI token or the job ran outside the environment, `403` with `CREDENTIAL_RUN_UNPROTECTED` for the second, `400` with `BODY_MALFORMED` for the fourth, and `403` with `JOIN_KEY_MISMATCH` for the fifth. A job of the pull request's own run is refused whatever environment it reached, because that run executes the pull request's own workflow file.
 
-A row reads `exact` only when its `SubAccountId` is an attested key and the row's own CI token names the attestation's repository, run and attempt, besides naming a pull request and a head. A key attested for another run, another attempt or another repository reads `windowed`, and so does a key never attested.
+One attesting run and attempt attests one key, and a key is attested once. A unique index holds each rule. The same attestation again, every field the same, answers `204` and changes nothing, so a retry is safe. Any other from the same attesting run and attempt answers `409` with `CREDENTIAL_ATTESTING_RUN_USED`. Any other for a key already attested answers `409` with `CREDENTIAL_ATTESTED_ELSEWHERE`, and the first attestation stands. Where both apply, the attesting run's refusal comes first. Once a run has attested, its token, which lives 300 seconds (recorded GitHub Actions run 45109004242), can only repeat that attestation.
 
-The environment's protection rules are what make an attestation trustworthy. The repository's owner sets them in GitHub, and the service only reads the claim GitHub puts in the token. A job admitted to the environment can attest a key for its own run, and no other. With required reviewers on the environment, a person approves each run before its job can attest. Without them, anyone who can push a branch of the repository can run a job in that environment, and attest a key that is not a run key.
+A row reads `exact` only when its `SubAccountId` is an attested key, the row's own CI token names a pull request and the attestation's repository, run and attempt, and the head the row states is the head the attestation names. A key attested for another run, another attempt or another repository reads `windowed`, and so does a key never attested. A row that states another head, or none, reads `windowed` on the attested key.
 
-Required reviewers are not available everywhere. On GitHub Free, Pro and Team they exist only for public repositories ([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments), read 2026-11-23). On a private repository on one of those plans, no rule holds a pull request's own run back from the environment once its branch rule admits `refs/pull/*/merge`. And where a reviewer exists, the reviewer approves a job whose steps come from the pull request's own workflow file. So on such a repository an attested key and an attested count are the statement of whoever can push a branch, the same trust as the agent's own rows: the `exact` grade and a budget that passes on the gateway's count are that person's word, not a check on it.
+The token's `ref_protected` claim is a JSON string. Recorded GitHub Actions runs 45109326900, started by hand, and 45109345722, which `workflow_run` started after it, both on a default branch that a ruleset protects, state `ref` `refs/heads/main` and `ref_protected` `"true"` of JSON type string. GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc) lists the `environment` claim. No real token from a job that names an environment has been read, so the claim's presence on that job is unverified.
 
-GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc) lists the `environment` claim. It was not re-read on 2026-11-07, and no real token from an environment job has been read, so the claim's presence on that job is unverified.
-
-`credential_basis` records the outcome on each row: `minted` for an attested key, `stated` otherwise, and empty when the row names no credential. Postgres refuses an `exact` row whose basis is not `minted`. Rows stored before this rule keep their grade.
+An attestation kept before this rule, which a job in the gateway's environment sent, reads nowhere: the service's role holds no grant on the table that kept it. `credential_basis` records the outcome on each row: `minted` for an attested key, `stated` otherwise, and empty when the row names no credential. Postgres refuses an `exact` row whose basis is not `minted`. A ledger does not rewrite its records, so a row stored `exact` before this rule keeps that grade: it was graded under the environment's rules alone. Nothing rests on it. No count kept before this rule reaches a verdict, and such a row, holding no count a protected run attested, keeps a budget rule on its pull request from passing.
 
 ## The gateway's count
 
-`costroid gateway close` holds the gateway's admin key in the gateway's environment. When `COSTROID_INGEST_URL` names this service, close reads what the gateway counted on the run's key before it deletes the key, and then attests the figure under its own OIDC token, for `COSTROID_INGEST_AUDIENCE`:
+The gateway recipe's close job runs once the pull request's run has completed, in a run that `workflow_run` started from the default branch. When `COSTROID_INGEST_URL` names this service, `costroid gateway close --for-triggering-run` reads what the gateway counted on the run's key before it deletes the key, and then attests the figure under its own OIDC token, for `COSTROID_INGEST_AUDIENCE`:
 
 ```json
 {"repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1", "currency": "USD", "spend": "0.412"}
@@ -136,18 +138,20 @@ GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/
 
 It posts the body to `POST /v1/credentials/{key}/spend`, where `{key}` is the key's 64-character id. The service stores the figure only when all of these hold:
 
-- the bearer is a CI token whose `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`;
-- the token's repository, run and attempt equal the body's;
+- the token is one an attestation is taken under, as the previous section lists;
+- the token's repository is the body's, and the token's run is another than the one the body names;
 - the key is attested as minted for that repository, run and attempt;
-- `currency` is `USD`, the only currency the service takes for the count, and `spend` is a decimal of zero or more with at most 12 fractional digits and at most 64 characters.
+- `currency` is `USD`, the only currency the service takes for the count, and `spend` is a decimal of zero or more with at most 26 digits before the point and 12 after.
 
-A refusal answers `403` with `ATTESTATION_FORBIDDEN` for the first, `403` with `JOIN_KEY_MISMATCH` for the second, `409` with `JOIN_KEY_MISMATCH` for the third, and `400` with `BODY_MALFORMED` for the fourth. A key's spend is the largest figure attested for it, because a gateway's count only grows. A smaller figure later answers `204` and changes nothing.
+A refusal answers as an attestation's does for the first two, `409` with `CREDENTIAL_NOT_ATTESTED` for the third, and `400` with `BODY_MALFORMED` for the fourth.
 
-`gateway_spend` keeps one figure per key, and Postgres refuses a figure for a key that `minted_credentials` does not hold. The service keeps it only after the checks above, so the figure's key was minted for the run the closing job's token names.
+A key holds one figure, and one attesting run and attempt writes one, each held by a unique index. The same figure again from the same attesting run and attempt, the same string, answers `204` and changes nothing. Any other write answers `409` with `CREDENTIAL_SPEND_HELD`: from the same run, "Run <run>, attempt <attempt>, has written a spend already.", and from another, "The key holds a spend already." The same number written otherwise, `0.50` for `0.5`, is another string. A figure is never added to and never replaced, so the larger of two is never kept, and close therefore sends a figure only once it has settled.
 
-LiteLLM writes spend in binary floating point, so its figure can carry more than 12 fractional digits: `0.018000000000000002` for three requests of `0.006`. Close rounds such a figure up to 12 digits, `0.018000000001`, so the figure the service keeps is never below the gateway's. Close waits up to 30 seconds for the figure to stop moving before it reads it, because LiteLLM writes spend to its store in batches.
+`credential_spend` keeps the figures, and Postgres refuses a figure for a key that `credential_attestations` does not hold. The service keeps it only after the checks above, so the figure's key was minted for the run the body names, and a run of a protected branch sent it.
 
-A row's spend reads `gateway_measured` when it is budget-eligible, its `credential_basis` is `minted`, its `SubAccountId` is a key attested for the row's own repository, run and attempt, and a closing job attested that key's spend. The pull request's figure adds up the attested spend of those keys, each key once.
+LiteLLM writes spend in binary floating point, so its figure can carry more than 12 fractional digits: `0.018000000000000002` for three requests of `0.006`. Close rounds such a figure up to 12 digits, `0.018000000001`, so the figure the service keeps is never below the gateway's. Close waits up to 30 seconds for the figure to stop moving before it reads it, because LiteLLM writes spend to its store in batches. A figure still moving when the wait ends is not sent.
+
+A row's spend reads `gateway_measured` when it is budget-eligible, its `credential_basis` is `minted`, its `SubAccountId` is a key attested for the row's own repository, run and attempt, and a protected run attested that key's spend. The pull request's figure adds up the attested spend of those keys, each key once. A count that a job in the gateway's environment attested before this rule lets no rule pass.
 
 The gateway counts what passed through it, at its own prices. Spend on a credential that bypassed it is not in the count. In the LiteLLM recipe, the agent's job holds no provider key, only the run's key.
 
@@ -295,7 +299,7 @@ Telemetry does not say how a run is billed, so an OTLP row is `list_equivalent` 
 
 ## Tenants
 
-Every table carries row level security with `FORCE`. The service names a tenant with `SET LOCAL` in each transaction, and no statement carries a tenant predicate of its own. The application role can insert rows and read them. It cannot update or delete them. In `gateway_spend` it can also update a key's figure and the time it was attested, and nothing else, so a key's larger figure replaces its smaller one.
+Every table carries row level security with `FORCE`. The service names a tenant with `SET LOCAL` in each transaction, and no statement carries a tenant predicate of its own. The application role can insert rows and read them. It cannot update or delete them, so a key's attestation and its figure, once kept, are never replaced.
 
 `egress_counters` is the deployment's own table and has no tenant column. Its policy admits every role, and the application role reads, inserts and updates it. It cannot delete from it.
 

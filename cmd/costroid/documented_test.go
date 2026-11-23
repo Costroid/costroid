@@ -461,7 +461,7 @@ func unsettledCountIsPrinted(t *testing.T, shown string) {
 		Poll: 5 * time.Millisecond, Stable: 100 * time.Millisecond, Settle: time.Second,
 	}
 	var stdout, stderr bytes.Buffer
-	if err := closeKey(context.Background(), counter, 0, w.ledger.Client(), &stdout, &stderr); err != nil {
+	if err := closeKey(context.Background(), counter, 0, w.ledger.Client(), false, &stdout, &stderr); err != nil {
 		t.Fatalf("%v: %s", err, stderr.String())
 	}
 	waits := " in the last " + gatewaySpendStable.String() + " of a " + gatewaySpendSettle.String() + " wait,"

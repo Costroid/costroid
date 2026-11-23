@@ -86,18 +86,23 @@ func newMemoryLedger() *memoryLedger {
 	}
 }
 
+// Attest holds the store's two rules: one attestation per attesting run and
+// attempt, checked first, and one per key.
 func (m *memoryLedger) Attest(_ context.Context, tenant store.TenantID, minted store.MintedCredential) error {
 	if m.minted[tenant] == nil {
 		m.minted[tenant] = map[string]store.MintedCredential{}
 	}
-	stored, seen := m.minted[tenant][minted.KeySHA256]
-	if !seen {
-		m.minted[tenant][minted.KeySHA256] = minted
-		return nil
+	for _, stored := range m.minted[tenant] {
+		spoke := stored.Repository == minted.Repository && stored.AttestingRunID == minted.AttestingRunID &&
+			stored.AttestingRunAttempt == minted.AttestingRunAttempt
+		if spoke && stored != minted {
+			return store.ErrAttestingRunUsed
+		}
 	}
-	if !stored.SameRun(minted) {
+	if stored, seen := m.minted[tenant][minted.KeySHA256]; seen && stored != minted {
 		return store.ErrAttestedElsewhere
 	}
+	m.minted[tenant][minted.KeySHA256] = minted
 	return nil
 }
 

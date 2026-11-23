@@ -32,8 +32,6 @@ func TestTwoDifferentCapsAreFlagged(t *testing.T) {
 		{"the read step is told another cap", "github-claude-code-action.yml", "budget-usd: ${{ env.COSTROID_BUDGET_USD }}\n", "budget-usd: \"2\"\n", true},
 		{"claude_args hold another cap", "github-claude-code-action.yml", "claude_args: --max-turns 10 --max-budget-usd ${{ env.COSTROID_BUDGET_USD }}", "claude_args: --max-turns 10 --max-budget-usd 3", true},
 		{"the read step's claude-args hold another cap", "github-claude-code-action.yml", "claude-args: --max-turns 10 --max-budget-usd ${{ env.COSTROID_BUDGET_USD }}", "claude-args: --max-turns 10 --max-budget-usd=3", true},
-		{"the gateway key holds another cap", "github-claude-code-litellm.yml", "gateway mint --budget-usd 5", "gateway mint --budget-usd 9", true},
-		{"the run holds another cap", "github-claude-code-litellm.yml", "costroid run --budget-usd 5", "costroid run --budget-usd=2", true},
 		{"GitLab's agent holds another cap", "gitlab-ci.yml", `costroid run --budget-usd "$COSTROID_BUDGET_USD"`, "costroid run --budget-usd 2", true},
 		{"GitLab's report restates another cap", "gitlab-ci.yml", "costroid report --rows costroid-rows.jsonl", "costroid report --rows costroid-rows.jsonl --budget-usd 9", true},
 		{"the same cap written another way", "github-claude-code.yml", report, report + "          budget-usd: \"5.00\"\n", false},
@@ -145,7 +143,11 @@ func TestReportStepNeedsNoBudget(t *testing.T) {
 		}
 		records, stated := false, 0
 		for _, job := range entries(field(root, "jobs")) {
-			stated += len(jobCaps(root, job))
+			// The gateway recipe's mint states the key's budget, which the
+			// agent's recipe records on its own run.
+			if !slices.ContainsFunc(sequence(field(job.value, "steps")), attestsKeys) {
+				stated += len(jobCaps(root, job))
+			}
 			for _, step := range sequence(field(job.value, "steps")) {
 				budget := field(field(step, "with"), "budget-usd")
 				switch stage := costroidStage(step); {

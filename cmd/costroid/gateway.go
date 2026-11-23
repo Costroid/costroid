@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/gateway"
+	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/scm"
 )
 
 // gatewayGroup is what costroid gateway prints with no subcommand.
@@ -45,7 +48,9 @@ var gatewayUsage = cli.Page{
 		"                      --max-request-tokens N [--max-parallel-requests N]",
 		"                      [--repository-daily-cap-usd N]",
 		"                      [--author-daily-cap-usd N] [--request FILE]",
+		"                      [--for-triggering-run]",
 		"costroid gateway close --url URL [--retry-after DURATION]",
+		"                       [--for-triggering-run]",
 	},
 	Examples: []string{
 		"costroid gateway keygen --out sealing-key",
@@ -53,7 +58,9 @@ var gatewayUsage = cli.Page{
 		"costroid gateway request --out gateway",
 		"costroid gateway mint --url https://gateway.example --budget-usd 5 \\",
 		"    --lifetime-minutes 30 --max-request-tokens 200000",
-		"costroid gateway close --url https://gateway.example",
+		"costroid gateway mint --for-triggering-run --url https://gateway.example \\",
+		"    --budget-usd 5 --lifetime-minutes 30 --max-request-tokens 200000",
+		"costroid gateway close --for-triggering-run --url https://gateway.example",
 	},
 	Flags: []cli.Row{
 		{"--out FILE", "with keygen, the file the private half goes to; it must not exist"},
@@ -67,6 +74,7 @@ var gatewayUsage = cli.Page{
 		{"--author-daily-cap-usd N", "the author's budget per day, as a user's"},
 		{"--request FILE", "a sealed request file, in place of this run's artifact"},
 		{"--retry-after DURATION", "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none"},
+		{"--for-triggering-run", "mint or close the key of the run a workflow_run event follows, in place of this run's"},
 	},
 	Sections: []cli.Section{
 		{Heading: "keygen and public-key", Body: []cli.Block{cli.Text(`keygen draws a sealing key pair at random. It writes the private half to FILE,
@@ -90,13 +98,29 @@ parallel-request limit, and the repository, pull request, head commit, run and
 largest request in its metadata. It prints the key's id. When
 COSTROID_INGEST_URL is set, it then attests the key to that ledger under the
 job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
-Only an attested key lets the run's rows read exact.
+Only an attested key lets the run's rows read exact. A ledger that takes an attestation only from a run of a protected default branch refuses mint's own run: mint then warns, and the key still holds the run to its budget.
 --repository-daily-cap-usd puts the key in a team for the repository with that
 budget per day, and --author-daily-cap-usd in a user for the pull request's
 author with that budget per day. The pull request, its head commit and its
 author come from the event file GITHUB_EVENT_PATH names. When mint cannot read
 it, it warns and names the file: the key then names none of the three, and no
-author's budget applies.`)}},
+author's budget applies. mint refuses a key the gateway already holds.`)}},
+		{Heading: "mint and close for the triggering run", Body: []cli.Block{cli.Text(`With --for-triggering-run, mint and close run in a workflow that workflow_run
+starts, which runs the default branch's workflow file, so a pull request
+cannot edit them. Only a key such a run attests, from a protected branch, lets
+the rows read exact. The key is the one the run the event follows sealed: the
+run, its attempt and its head commit come from the event file, never from
+GITHUB_RUN_ID. mint refuses a run that pull_request did not start and a run
+on a fork's head, reads the request from that run's artifact, and ends with no
+key when the run ends without one. With GITHUB_TOKEN it reads the pull
+request's author, and policy.run_budget_usd from costroid.yml at the pull
+request's base, which then sets the key's budget in place of --budget-usd. An
+event that names more than one pull request names none: mint warns, and the
+key carries the repository's cap alone. close runs once that run has
+completed, and attests the gateway's count only once it has settled. On a
+default branch that GitHub's token states is not protected, the ledger
+refuses both attestations: mint and close warn and go on, and the rows read
+windowed.`)}},
 		{Heading: "close", Body: []cli.Block{cli.Text(`close deletes the run's key by its alias, and prints deleted, or absent when no
 key was left. Run it when the job ends, also on failure. When it finds no key,
 mint may still be waiting for the request, so close waits --retry-after, no
@@ -105,7 +129,9 @@ it waits none. When COSTROID_INGEST_URL is set,
 close first reads what the gateway counted on the key, waiting up to 30 seconds
 for the figure to settle, and after the delete attests it to that ledger under
 the job's OIDC token, for COSTROID_INGEST_AUDIENCE, which needs id-token: write.
-Only an attested count lets a budget on the run's rows pass.`)}},
+Only an attested count lets a budget on the run's rows pass. A ledger that takes a count only from a run of a protected default branch refuses close's own run, and close warns. A figure that has
+not settled by then is not attested, and close warns: the ledger keeps the
+first figure it takes for a key.`)}},
 		{Heading: "The gateway's URL", Body: []cli.Block{cli.Text("The gateway's URL must be https, except on localhost and 127.0.0.1.")}},
 	},
 	Environment: []cli.Block{cli.Rows{
@@ -117,6 +143,7 @@ Only an attested count lets a budget on the run's rows pass.`)}},
 		{ingestAudienceVariable, "the audience of the OIDC token they attest under"},
 		{"GITHUB_TOKEN", "the token mint reads this run's artifact with"},
 		{"GITHUB_EVENT_PATH", "the event file mint reads the pull request from"},
+		{"GITHUB_EVENT_NAME", "workflow_run, with --for-triggering-run"},
 		{"GITHUB_*", "what GitHub Actions sets about the run"},
 	}},
 	Exits: []cli.Row{
@@ -303,6 +330,7 @@ type mintFlags struct {
 	parallel      int
 	requestTokens int64
 	caps          gateway.DailyCaps
+	triggering    bool
 }
 
 func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
@@ -315,6 +343,7 @@ func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
 	repository := set.String("repository-daily-cap-usd", "", "the repository's budget per day, as a team's")
 	author := set.String("author-daily-cap-usd", "", "the author's budget per day, as a user's")
 	request := set.String("request", "", "a sealed request file, in place of this run's artifact")
+	triggering := set.Bool("for-triggering-run", false, "mint the key of the run a workflow_run event follows")
 	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
 		return mintFlags{}, err
 	}
@@ -333,7 +362,7 @@ func parseMint(args []string, stdout, stderr io.Writer) (mintFlags, error) {
 	}
 	flags := mintFlags{
 		url: *address, request: *request, budget: amount,
-		lifetime: time.Duration(*minutes) * time.Minute, parallel: *parallel, requestTokens: *tokens,
+		lifetime: time.Duration(*minutes) * time.Minute, parallel: *parallel, requestTokens: *tokens, triggering: *triggering,
 	}
 	if flags.caps.Repository, err = dailyCap("repository-daily-cap-usd", *repository); err != nil {
 		return mintFlags{}, cli.Mistaken("gateway", err)
@@ -369,32 +398,161 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	binding, err := gateway.ReadBinding(os.Getenv)
+	target, err := readMintTarget(ctx, flags, stderr)
+	if errors.Is(err, gateway.ErrNoRequest) {
+		cli.Say(stderr, "run %s ended with no sealed request, so no key is minted\n", target.run.Run)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	request, err := readMintRequest(ctx, flags.request, binding, stderr)
-	if err != nil {
-		return err
-	}
-	ci, author := mintEvent(os.Getenv, stderr)
 	mint := gateway.Mint{
-		Client: gateway.NewClient(flags.url), AdminKey: admin, SealingKey: strings.TrimSpace(sealing), Run: binding, Request: request,
-		Budget: flags.budget, Lifetime: flags.lifetime, MaxParallel: flags.parallel, MaxRequestTokens: flags.requestTokens,
-		PullRequest: ci.PullRequest, Head: ci.Head, Author: author, Caps: flags.caps,
+		Client: gateway.NewClient(flags.url), AdminKey: admin, SealingKey: strings.TrimSpace(sealing), Run: target.run, Request: target.request,
+		Budget: target.budget, Lifetime: flags.lifetime, MaxParallel: flags.parallel, MaxRequestTokens: flags.requestTokens,
+		PullRequest: target.pullRequest, Head: target.head, Author: target.author, Caps: flags.caps,
 	}
 	id, err := mint.Register(ctx)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, id)
-	return attestKey(ctx, asking(&http.Client{Timeout: 30 * time.Second}, stderr), id, binding, stderr)
+	return attestKey(ctx, asking(&http.Client{Timeout: 30 * time.Second}, stderr), gateway.AttestationFor(id, target.run, target.head), flags.triggering, stderr)
 }
 
-// attestKey tells the ledger the key was minted for this run. Without a
-// ledger there is nothing to tell. A failure fails the step, and the key
-// stays registered for the agent.
-func attestKey(ctx context.Context, client *http.Client, id string, binding gateway.Binding, stderr io.Writer) error {
+// mintTarget is the run a key is minted for, its sealed request, and what the
+// key's budget and metadata read from it.
+type mintTarget struct {
+	run                       gateway.Binding
+	request                   gateway.Request
+	head, pullRequest, author string
+	budget                    decimal.Decimal
+}
+
+// readMintTarget reads the run a key is for: this run, or with
+// --for-triggering-run the run a workflow_run event follows.
+func readMintTarget(ctx context.Context, flags mintFlags, stderr io.Writer) (mintTarget, error) {
+	if flags.triggering {
+		return readTriggeringTarget(ctx, flags, stderr)
+	}
+	binding, err := gateway.ReadBinding(os.Getenv)
+	if err != nil {
+		return mintTarget{}, err
+	}
+	request, err := readMintRequest(ctx, flags.request, binding, stderr)
+	if err != nil {
+		return mintTarget{run: binding}, err
+	}
+	ci, author := mintEvent(os.Getenv, stderr)
+	return mintTarget{run: binding, request: request, head: ci.Head, pullRequest: ci.PullRequest, author: author, budget: flags.budget}, nil
+}
+
+// readTriggeringTarget reads the run a workflow_run event follows. The run,
+// its attempt and its head come from the event; the request from that run's
+// artifact. With one pull request and GITHUB_TOKEN, the author is the pull
+// request's, and the budget is policy.run_budget_usd at its base when
+// costroid.yml sets one there. Anything it cannot read leaves the author
+// out, or the budget at --budget-usd, with a warning.
+func readTriggeringTarget(ctx context.Context, flags mintFlags, stderr io.Writer) (mintTarget, error) {
+	run, err := gateway.ReadTriggeringRun(os.Getenv)
+	if err != nil {
+		return mintTarget{}, err
+	}
+	target := mintTarget{run: run.Binding, head: run.Head, pullRequest: run.PullRequest, budget: flags.budget}
+	target.request, err = readMintRequest(ctx, flags.request, run.Binding, stderr)
+	if err != nil {
+		return target, err
+	}
+	if run.PullRequest == "" {
+		fmt.Fprintf(stderr, "costroid: warning: the event names %d pull requests, so the key names none, no author's budget applies, and the key's budget is --budget-usd\n", run.PullRequests)
+		return target, nil
+	}
+	host, err := triggeringHost()
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: %v, so no author's budget applies and the key's budget is --budget-usd\n", err)
+		return target, nil
+	}
+	number, _ := strconv.Atoi(run.PullRequest)
+	if pull, err := host.PullRequest(ctx, number); err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: pull request %s could not be read, so no author's budget applies: %v\n", run.PullRequest, err)
+	} else {
+		target.author = pull.Author
+	}
+	target.budget = baseBudget(ctx, host, run.Base, flags.budget, stderr)
+	return target, nil
+}
+
+// triggeringHost reads the repository through GITHUB_TOKEN, outside any
+// service's egress allowlist, so its client is a plain one.
+func triggeringHost() (*scm.GitHub, error) {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return nil, errors.New("GITHUB_TOKEN is not set")
+	}
+	return scm.NewGitHub(scm.GitHubOptions{
+		API:        os.Getenv("GITHUB_API_URL"),
+		Repository: os.Getenv("GITHUB_REPOSITORY"),
+		Tokens:     scm.StaticToken(token),
+		Client:     &http.Client{Timeout: 30 * time.Second},
+	})
+}
+
+// runBudgetKey is the policy key whose amount a run is held to.
+const runBudgetKey = "run_budget_usd"
+
+// baseBudget is policy.run_budget_usd in costroid.yml at the pull request's
+// base, the file a pull request cannot change, or fallback when the base sets
+// none or cannot be read.
+func baseBudget(ctx context.Context, host *scm.GitHub, base string, fallback decimal.Decimal, stderr io.Writer) decimal.Decimal {
+	config := policy.ReadConfig(ctx, host, policy.Commits{Base: base, PullRequest: true})
+	if config.Unread != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the key's budget is --budget-usd, because costroid.yml at the base could not be read: %v\n", config.Unread)
+		return fallback
+	}
+	if !config.Found {
+		return fallback
+	}
+	settings, err := policy.ParseSettings(config.Data)
+	if err != nil {
+		fmt.Fprintf(stderr, "costroid: warning: the key's budget is --budget-usd, because costroid.yml at the base does not parse: %v\n", err)
+		return fallback
+	}
+	if budget, set := settings.Amounts[runBudgetKey]; set {
+		return budget
+	}
+	return fallback
+}
+
+// unprotectedKey and unprotectedCount say what a ledger's refusal of a job
+// that is not a protected run's means, and what to do, for a job of the
+// agent's own workflow. unprotectedBranchKey and unprotectedBranchCount say
+// it for a run of the gateway recipe on a default branch that GitHub's token
+// states is not protected, as on a private repository on GitHub Free. The key
+// is registered, holds the run to its budget and is deleted either way.
+const (
+	unprotectedKey         = "costroid: warning: the ledger takes an attestation only from a run of a protected default branch, so this run's rows read windowed: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
+	unprotectedCount       = "costroid: warning: the ledger takes a gateway count only from a run of a protected default branch, so no budget on this run's rows passes on it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
+	unprotectedBranchKey   = "costroid: warning: this run is on the default branch and GitHub's token says the branch is not protected, so the rows of the run it serves read windowed: protect the default branch, which a private repository can on GitHub Pro or Team and not on GitHub Free, as docs/gateway.md says\n"
+	unprotectedBranchCount = "costroid: warning: this run is on the default branch and GitHub's token says the branch is not protected, so no budget on the rows of the run it serves passes on the gateway's count: protect the default branch, which a private repository can on GitHub Pro or Team and not on GitHub Free, as docs/gateway.md says\n"
+)
+
+// warnUnprotected prints the warning for a ledger's refusal of a run no
+// protected branch holds, the one for a run of the gateway recipe or the one
+// for a job of the agent's own workflow.
+func warnUnprotected(stderr io.Writer, triggering bool, branch, own string) {
+	if triggering {
+		fmt.Fprint(stderr, branch)
+		return
+	}
+	fmt.Fprint(stderr, own)
+}
+
+// attestKey tells the ledger the key was minted for a run. Without a ledger
+// there is nothing to tell. A failure fails the step, and the key stays
+// registered for the agent. A ledger that takes only a protected run's word
+// refuses a job of the agent's own workflow, and a run of a default branch no
+// rule protects: that refusal alone warns and goes on, so the run completes
+// at the windowed grade, the true reading.
+func attestKey(ctx context.Context, client *http.Client, attestation gateway.Attestation, triggering bool, stderr io.Writer) error {
 	ingest := os.Getenv(ingestURLVariable)
 	if ingest == "" {
 		return nil
@@ -407,7 +565,12 @@ func attestKey(ctx context.Context, client *http.Client, id string, binding gate
 	if err != nil {
 		return err
 	}
-	if err := gateway.Attest(ctx, client, target, token, gateway.AttestationFor(id, binding)); err != nil {
+	err = gateway.Attest(ctx, client, target, token, attestation)
+	if gateway.Unprotected(err) {
+		warnUnprotected(stderr, triggering, unprotectedBranchKey, unprotectedKey)
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("the key is registered and not attested, so the run's rows cannot read exact: %w", err)
 	}
 	cli.Say(stderr, "attested to the ledger\n")
@@ -477,6 +640,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	set := flag.NewFlagSet("gateway close", flag.ContinueOnError)
 	address := set.String("url", os.Getenv(gatewayURLVar), "the gateway's URL")
 	retry := set.Duration("retry-after", 0, "when no key is found, how long to wait for a mint that may still be running before deleting once more; the recipe runs close after mint, so it needs none")
+	triggering := set.Bool("for-triggering-run", false, "close the key of the run a workflow_run event follows")
 	if err := parseFlags(set, args, gatewayUsage, stdout, stderr); err != nil {
 		return err
 	}
@@ -493,7 +657,7 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
-	binding, err := gateway.ReadBinding(os.Getenv)
+	binding, err := closingRun(*triggering)
 	if err != nil {
 		return err
 	}
@@ -501,12 +665,23 @@ func gatewayClose(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Client: gateway.NewClient(*address), AdminKey: admin, Run: binding,
 		Poll: gatewayPoll, Stable: gatewaySpendStable, Settle: gatewaySpendSettle,
 	}
-	return closeKey(ctx, counter, *retry, &http.Client{Timeout: 30 * time.Second}, stdout, stderr)
+	return closeKey(ctx, counter, *retry, &http.Client{Timeout: 30 * time.Second}, *triggering, stdout, stderr)
+}
+
+// closingRun is the run whose key close deletes: this run, or the run a
+// workflow_run event follows.
+func closingRun(triggering bool) (gateway.Binding, error) {
+	if !triggering {
+		return gateway.ReadBinding(os.Getenv)
+	}
+	run, err := gateway.ReadTriggeringRun(os.Getenv)
+	return run.Binding, err
 }
 
 // closeKey deletes the run's key, and when a ledger is named, reads the key's
-// spend before the delete and attests it after, through ledger.
-func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration, ledger *http.Client, stdout, stderr io.Writer) error {
+// spend before the delete and attests it after, through ledger. triggering
+// says the key is the run's a workflow_run event follows.
+func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration, ledger *http.Client, triggering bool, stdout, stderr io.Writer) error {
 	counted := os.Getenv(ingestURLVariable) != ""
 	count, unread := readCount(ctx, counter, counted, stderr)
 	deleted, err := gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
@@ -534,22 +709,22 @@ func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration,
 	if count == nil {
 		return nil
 	}
-	return attestSpend(ctx, ledger, *count, counter.Run, stderr)
+	return attestSpend(ctx, ledger, *count, counter.Run, triggering, stderr)
 }
 
 // readCount reads what the gateway counted on the run's key, when a ledger is
 // named to attest it to. It answers nil when no ledger is named or no key is
-// there. A figure that may not have settled is still the gateway's last count,
-// and the ledger's attestation has no field to say so, so it is attested with
-// a warning.
+// there. A ledger keeps the first figure it takes for a key and never a later
+// one, so a figure that may not have settled is not attested: close warns and
+// sends none.
 func readCount(ctx context.Context, counter gateway.Counter, counted bool, stderr io.Writer) (*gateway.Count, error) {
 	if !counted {
 		return nil, nil
 	}
 	count, found, err := counter.Settled(ctx)
 	if errors.Is(err, gateway.ErrUnsettled) {
-		fmt.Fprintf(stderr, "costroid: warning: %v. The ledger's spend attestation has no field to say so, and the ledger takes this figure as the gateway's count\n", err)
-		err = nil
+		fmt.Fprintf(stderr, "costroid: warning: %v. A ledger keeps the first figure it takes for a key, so close attests none, and no budget on the run's rows can pass on the gateway's count\n", err)
+		return nil, nil
 	}
 	if err != nil || !found {
 		return nil, err
@@ -558,8 +733,9 @@ func readCount(ctx context.Context, counter gateway.Counter, counted bool, stder
 }
 
 // attestSpend tells the ledger what the gateway counted on the run's key. A
-// failure fails the step. The key is deleted by then.
-func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, binding gateway.Binding, stderr io.Writer) error {
+// failure fails the step. The key is deleted by then. A refusal of a run no
+// protected branch holds warns and goes on, as attestKey's does.
+func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, binding gateway.Binding, triggering bool, stderr io.Writer) error {
 	target, err := gateway.SpendURL(os.Getenv(ingestURLVariable), count.KeyID)
 	if err != nil {
 		return err
@@ -569,7 +745,12 @@ func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, 
 		return err
 	}
 	attestation := gateway.SpendFor(count, binding)
-	if err := gateway.AttestSpend(ctx, client, target, token, attestation); err != nil {
+	err = gateway.AttestSpend(ctx, client, target, token, attestation)
+	if gateway.Unprotected(err) {
+		warnUnprotected(stderr, triggering, unprotectedBranchCount, unprotectedCount)
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("the key is deleted and the gateway's count is not attested, so no budget on the run's rows can pass on it: %w", err)
 	}
 	cli.Say(stderr, "attested the gateway's count of USD %s to the ledger\n", attestation.Spend)

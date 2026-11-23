@@ -62,6 +62,7 @@ func TestVerifyReadsAGitHubRunFromTheToken(t *testing.T) {
 	want := Identity{
 		Host: "github.com", Owner: "acme", Repository: "github.com/acme/widgets", RunID: "16873409921",
 		RunAttempt: "2", CommitSHA: testSHA, Actor: "octo-dev", Event: "pull_request", PullRequest: "1423",
+		Ref: "refs/pull/1423/merge",
 	}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
@@ -347,4 +348,23 @@ func FuzzReadIdentity(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestRefProtectedIsKeptAsTheClaimsJSONText reads ref_protected in each form a
+// token could hold it. The identity keeps the claim's JSON text, so a reader
+// compares the exact form, and no form refuses the token itself.
+func TestRefProtectedIsKeptAsTheClaimsJSONText(t *testing.T) {
+	s := newStubIssuer(t)
+	for value, want := range map[any]string{"true": `"true"`, true: "true", "True": `"True"`, "false": `"false"`, 1: "1"} {
+		claims := s.claims()
+		claims["ref_protected"] = value
+		got, err := s.verifier(GitHubActions).Verify(context.Background(), s.Token(claims))
+		if err != nil || got.RefProtected != want {
+			t.Errorf("ref_protected %#v: read %q, %v; want %q", value, got.RefProtected, err, want)
+		}
+	}
+	got, err := s.verifier(GitHubActions).Verify(context.Background(), s.Token(s.claims()))
+	if err != nil || got.RefProtected != "" {
+		t.Errorf("no ref_protected: read %q, %v", got.RefProtected, err)
+	}
 }

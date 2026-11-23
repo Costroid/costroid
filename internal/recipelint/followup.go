@@ -82,17 +82,19 @@ func (l *linter) followUp(root *yaml.Node) {
 // followUpPermissions holds a follow-up job to one write, checks, because it
 // runs with the base repository's token after a workflow a fork can edit. A
 // job whose one step is the action's ingest stage may also write id-token,
-// which proves the run to the ledger. The job that posts reads the head
-// commit's pull requests, so it needs pull-requests: read, without which
-// costroid follow-up posts nothing.
+// which proves the run to the ledger, and so may a job in an environment that
+// mints or closes gateway keys, whose token attests them. The job that posts
+// reads the head commit's pull requests, so it needs pull-requests: read,
+// without which costroid follow-up posts nothing.
 func (l *linter) followUpPermissions(root *yaml.Node, job entry, steps []*yaml.Node) {
 	permissions := field(job.value, "permissions")
 	if permissions == nil {
 		permissions = field(root, "permissions")
 	}
 	granted := grants(permissions)
+	attests := namesEnvironment(job.value) && slices.ContainsFunc(steps, attestsKeys)
 	for _, scope := range slices.Sorted(maps.Keys(granted)) {
-		if granted[scope] != "write" || scope == "checks" || scope == "id-token" && sendsRowsAlone(steps) {
+		if granted[scope] != "write" || scope == "checks" || scope == "id-token" && (sendsRowsAlone(steps) || attests) {
 			continue
 		}
 		held := scope + ": write"

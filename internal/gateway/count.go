@@ -66,6 +66,28 @@ func (c *Client) Count(ctx context.Context, adminKey, alias string) (Count, bool
 	return Count{}, false, fmt.Errorf("gateway: the gateway lists %d keys with the run's alias", len(found))
 }
 
+// Holds reports whether the gateway holds a key with the id given, as the
+// gateway's admin. LiteLLM v1.108.1 filters /key/list by key_hash, the id, and
+// lists a live key whatever its status when no status is asked for. A key is
+// held only when the list names its id.
+func (c *Client) Holds(ctx context.Context, adminKey, keyID string) (bool, error) {
+	var answer struct {
+		Keys []struct {
+			Token string `json:"token"`
+		} `json:"keys"`
+	}
+	route := "/key/list?return_full_object=true&key_hash=" + url.QueryEscape(keyID)
+	if err := c.call(ctx, http.MethodGet, route, adminKey, nil, &answer); err != nil {
+		return false, err
+	}
+	for _, key := range answer.Keys {
+		if key.Token == keyID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // spendOf reads a key's spend field exactly, as the number LiteLLM wrote.
 func spendOf(field json.Number) (decimal.Decimal, error) {
 	spend, err := decimal.ParseNumber(field.String())

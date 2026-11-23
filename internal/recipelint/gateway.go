@@ -15,6 +15,9 @@ const (
 	// RuleGatewayEnvironment is a job that holds a gateway's admin key or
 	// sealing key and names no environment.
 	RuleGatewayEnvironment = "gateway-environment"
+	// RuleGatewayTrigger is a gateway's admin key or sealing key in a workflow
+	// that an event other than workflow_run starts.
+	RuleGatewayTrigger = "gateway-trigger"
 )
 
 // adminKeyVariable and sealingKeyVariable are where costroid gateway mint and
@@ -76,8 +79,7 @@ func walkEntries(node *yaml.Node, visit func(entry)) {
 
 // agentAdminKey refuses an agent's job that can read the gateway's admin key
 // or its sealing key: through its own text, through the workflow's env, which
-// every job inherits, or through every secret at once. It then holds every
-// job of the workflow to gatewayEnvironments.
+// every job inherits, or through every secret at once.
 func (l *linter) agentAdminKey(root *yaml.Node, job entry) {
 	admin := adminSecrets(root)
 	reach := text(job.value) + "\n" + text(field(root, "env"))
@@ -94,7 +96,35 @@ func (l *linter) agentAdminKey(root *yaml.Node, job entry) {
 	if wholeSecrets.MatchString(reach) {
 		l.add(job.key, RuleAgentAdminKey, "the agent's job reads every secret at once, the gateway's admin key among them")
 	}
+}
+
+// gatewayKeys holds the workflow's jobs that set the gateway's admin key or
+// its sealing key to the two rules on where those keys may sit.
+func (l *linter) gatewayKeys(root *yaml.Node) {
+	l.gatewayTrigger(root)
 	l.gatewayEnvironments(root)
+}
+
+// gatewayTrigger refuses the gateway's admin key or its sealing key in a
+// workflow that any event but workflow_run starts. On pull_request, GitHub
+// runs the workflow file of the pull request's branch, so a job there that
+// mints keys, and what it attests, is that branch's to rewrite, whatever
+// environment it names. workflow_run runs the default branch's file.
+func (l *linter) gatewayTrigger(root *yaml.Node) {
+	events := eventNames(field(root, "on"))
+	others := slices.DeleteFunc(slices.Clone(events), func(name string) bool { return name == followUpEvent })
+	if len(events) > 0 && len(others) == 0 {
+		return
+	}
+	where := "a workflow that " + strings.Join(others, " and ") + " starts"
+	if len(events) == 0 {
+		where = "a workflow whose events cannot be read"
+	}
+	walkEntries(root, func(item entry) {
+		if slices.Contains(gatewaySecretVariables, item.key.Value) {
+			l.add(item.key, RuleGatewayTrigger, "%s is set in %s: mint and close keys in a workflow that workflow_run alone starts, which runs the default branch's file whatever a pull request's branch holds, as recipes/github-gateway.yml does", item.key.Value, where)
+		}
+	})
 }
 
 // gatewayEnvironments refuses a job that sets the gateway's admin key or its
@@ -104,7 +134,7 @@ func (l *linter) agentAdminKey(root *yaml.Node, job entry) {
 func (l *linter) gatewayEnvironments(root *yaml.Node) {
 	for _, item := range entries(field(root, "env")) {
 		if slices.Contains(gatewaySecretVariables, item.key.Value) {
-			l.addOnce(item.key, RuleGatewayEnvironment, "the workflow's env sets %s, which every job inherits: set it on the jobs that mint and close keys, each naming an environment", item.key.Value)
+			l.add(item.key, RuleGatewayEnvironment, "the workflow's env sets %s, which every job inherits: set it on the jobs that mint and close keys, each naming an environment", item.key.Value)
 		}
 	}
 	for _, job := range entries(field(root, "jobs")) {
@@ -113,7 +143,7 @@ func (l *linter) gatewayEnvironments(root *yaml.Node) {
 		}
 		walkEntries(job.value, func(item entry) {
 			if slices.Contains(gatewaySecretVariables, item.key.Value) {
-				l.addOnce(item.key, RuleGatewayEnvironment, "the job %s sets %s and names no environment: name the environment that holds it, so its protection rules decide which runs reach it", job.key.Value, item.key.Value)
+				l.add(item.key, RuleGatewayEnvironment, "the job %s sets %s and names no environment: name the environment that holds it, so its protection rules decide which runs reach it", job.key.Value, item.key.Value)
 			}
 		})
 	}
@@ -130,13 +160,4 @@ func namesEnvironment(job *yaml.Node) bool {
 		return strings.TrimSpace(environment.Value) != ""
 	}
 	return strings.TrimSpace(scalarField(environment, "name")) != ""
-}
-
-// addOnce adds a finding unless the same one is already there: a workflow
-// with two agent jobs checks its environments twice.
-func (l *linter) addOnce(node *yaml.Node, rule, format string, args ...any) {
-	finding := l.finding(node, rule, format, args...)
-	if !slices.Contains(l.report.Findings, finding) {
-		l.report.Findings = append(l.report.Findings, finding)
-	}
 }

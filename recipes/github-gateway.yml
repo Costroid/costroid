@@ -1,0 +1,88 @@
+# Mints the key each run of the costroid workflow draws, and deletes it once that
+# run has completed. workflow_run runs this file from the default branch, so a
+# pull request cannot edit what it runs, and only its attestation lets the rows
+# read exact. Copy to .github/workflows/costroid-gateway.yml on the default branch,
+# beside recipes/github-claude-code-litellm.yml. docs/gateway.md lists what it needs.
+name: costroid-gateway
+
+on:
+  workflow_run:
+    # The name every agent recipe gives its workflow.
+    workflows: [costroid]
+    types: [requested, completed]
+
+permissions: {}
+
+# One run's close waits for its mint, so a key minted late is still deleted.
+concurrency:
+  group: costroid-gateway-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  mint:
+    # A branch of this repository only. A fork's run gets no key, because this
+    # workflow holds the repository's secrets.
+    if: >-
+      github.event.action == 'requested'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The admin key and the sealing key are secrets of this environment.
+    # docs/gateway.md says why it admits the default branch alone.
+    environment: costroid-gateway
+    permissions:
+      # Downloads the sealed request from the run's artifacts.
+      actions: read
+      # Reads costroid.yml at the pull request's base, for the run's budget.
+      contents: read
+      # Reads the pull request's author, for the author's daily cap.
+      pull-requests: read
+      # Attests the key to the ledger, when one is named. The token states a
+      # run of the protected default branch.
+      id-token: write
+    steps:
+      - name: Install costroid
+        uses: Costroid/costroid/action@c0f685af887173ba9acb9e89832c3889423d3703 # v1.0.0-alpha.30
+        with:
+          stage: install
+      - name: Register the run's key with its budget
+        env:
+          COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.COSTROID_GATEWAY_SEALING_KEY }}
+          COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
+          COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
+          COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        # The key lives as long as the agent's job may. The largest request is
+        # the recorded context window, 1000000 tokens, plus the recorded largest
+        # output, 128000 tokens, of claude-haiku-5-5 on Claude Code 2.1.316.
+        run: |
+          costroid gateway mint --for-triggering-run --budget-usd 5 --lifetime-minutes 30 \
+            --max-request-tokens 1128000 --max-parallel-requests 1
+
+  close:
+    # Deletes the key whatever became of the run, also when it failed.
+    if: >-
+      github.event.action == 'completed'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: costroid-gateway
+    permissions:
+      # Attests what the gateway counted on the key to the ledger, when one is
+      # named. The token states a run of the protected default branch.
+      id-token: write
+    steps:
+      - name: Install costroid
+        uses: Costroid/costroid/action@c0f685af887173ba9acb9e89832c3889423d3703 # v1.0.0-alpha.30
+        with:
+          stage: install
+      - name: Delete the run's key
+        env:
+          COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
+          COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
+          COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
+        run: costroid gateway close --for-triggering-run

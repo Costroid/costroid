@@ -20,17 +20,19 @@ const (
 )
 
 // Attestation tells the ledger that a key was minted for one run. KeyID is
-// the value the run's rows carry in SubAccountId. It holds no secret.
+// the value the run's rows carry in SubAccountId, and HeadSHA the run's head
+// commit as GitHub's event names it. It holds no secret.
 type Attestation struct {
 	KeyID      string `json:"key_id"`
 	Repository string `json:"repository"`
 	RunID      string `json:"run_id"`
 	RunAttempt string `json:"run_attempt"`
+	HeadSHA    string `json:"head_sha"`
 }
 
-// AttestationFor names the run a binding is for.
-func AttestationFor(keyID string, run Binding) Attestation {
-	return Attestation{KeyID: keyID, Repository: run.Repository, RunID: run.Run, RunAttempt: run.Attempt}
+// AttestationFor names the run a binding is for and its head commit.
+func AttestationFor(keyID string, run Binding, head string) Attestation {
+	return Attestation{KeyID: keyID, Repository: run.Repository, RunID: run.Run, RunAttempt: run.Attempt, HeadSHA: head}
 }
 
 // CredentialsURL is where the ledger behind an ingest URL takes attestations.
@@ -115,7 +117,7 @@ func send(client *http.Client, request *http.Request, what string, answer any) e
 		return fmt.Errorf("gateway: read %s: %w", what, err)
 	}
 	if response.StatusCode/100 != 2 {
-		return fmt.Errorf("gateway: %s answered %d: %s", what, response.StatusCode, refusalCode(data))
+		return &Refusal{What: what, Status: response.StatusCode, Code: refusalCode(data)}
 	}
 	if answer == nil {
 		return nil
@@ -124,6 +126,30 @@ func send(client *http.Client, request *http.Request, what string, answer any) e
 		return fmt.Errorf("gateway: parse %s: %w", what, err)
 	}
 	return nil
+}
+
+// CodeRunUnprotected is a ledger's refusal of a token that is not a run of a
+// protected branch that workflow_run started.
+const CodeRunUnprotected = "CREDENTIAL_RUN_UNPROTECTED"
+
+// Refusal is a status other than 2xx in answer to what was asked, with the
+// ledger's typed code, or "no code".
+type Refusal struct {
+	What   string
+	Status int
+	Code   string
+}
+
+func (r *Refusal) Error() string {
+	return fmt.Sprintf("gateway: %s answered %d: %s", r.What, r.Status, r.Code)
+}
+
+// Unprotected reports whether err is a ledger's refusal of an attestation or a
+// count because the token is not a protected workflow_run run's, and nothing
+// else: the ledger was reached, checked the token, and stored nothing.
+func Unprotected(err error) bool {
+	var refused *Refusal
+	return errors.As(err, &refused) && refused.Status == http.StatusForbidden && refused.Code == CodeRunUnprotected
 }
 
 // refusalCode reads the ledger's typed refusal code, and nothing else of the

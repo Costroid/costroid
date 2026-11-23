@@ -133,8 +133,11 @@ func joinKeyRefusal(key string) *refusal {
 // confirm is discarded, which leaves the row windowed. A row with no head to
 // name stays windowed too, because the tag contract's exact row names one, and
 // so does a row whose credential no attestation names as minted for this run,
-// because a stated credential may be a key every run shares.
-func (s *Server) join(c *charge, who caller, proven map[string]bool) (joinResult, error) {
+// because a stated credential may be a key every run shares. A row reads exact
+// only when the head it states is the head the attesting run read from
+// GitHub's event, so an exact row's head is that run's reading and not the
+// sender's word.
+func (s *Server) join(c *charge, who caller, proven map[string]store.MintedCredential) (joinResult, error) {
 	if who.identity == nil {
 		result, err := s.joinUnverified(c, who)
 		result.credentialBasis = basisOf(c, proven)
@@ -163,7 +166,7 @@ func (s *Server) join(c *charge, who caller, proven map[string]bool) (joinResult
 		attempt: id.RunAttempt, actor: id.Actor, event: id.Event,
 		credentialBasis: basisOf(c, proven),
 	}
-	if id.PullRequest != "" && head != "" && result.credentialBasis == store.CredentialMinted && !c.weakJoin {
+	if id.PullRequest != "" && head != "" && result.credentialBasis == store.CredentialMinted && head == proven[c.credential].HeadSHA && !c.weakJoin {
 		result.grade = gradeExact
 	}
 	return result, nil
@@ -171,11 +174,11 @@ func (s *Server) join(c *charge, who caller, proven map[string]bool) (joinResult
 
 // basisOf says whether the row's credential was attested as minted for the
 // run, or only stated. A session id stated as the credential is never minted.
-func basisOf(c *charge, proven map[string]bool) string {
-	switch {
-	case c.credential == "":
+func basisOf(c *charge, proven map[string]store.MintedCredential) string {
+	if c.credential == "" {
 		return ""
-	case c.namesCredential() && proven[c.credential]:
+	}
+	if _, minted := proven[c.credential]; minted && c.namesCredential() {
 		return store.CredentialMinted
 	}
 	return store.CredentialStated

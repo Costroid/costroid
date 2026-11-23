@@ -39,15 +39,17 @@ type Ledger interface {
 // count of a minted key's spend, in USD. The count is the gateway's, so it
 // stands as a budget's evidence where the token counts on the rows cannot.
 type SpendLedger interface {
-	// AttestSpend records a key's USD spend. The key must be attested as
-	// minted for the run named: store.ErrAttestedElsewhere and
-	// store.ErrNotMinted say it is not. A key's spend is the largest figure
-	// attested for it, because a gateway's count only grows.
-	AttestSpend(ctx context.Context, tenant store.TenantID, key store.MintedCredential, usd decimal.Decimal) error
+	// AttestSpend records a key's USD spend once. The key must be attested as
+	// minted for the run named, or store.ErrNotMinted says it is not. A key
+	// holds one figure and an attesting run writes one: the same string again
+	// from the same run changes nothing, and any other write answers
+	// store.ErrAttestingRunUsed or store.ErrSpendHeld. A figure is never
+	// replaced, so the larger of two is never kept.
+	AttestSpend(ctx context.Context, tenant store.TenantID, attested store.AttestedSpend) error
 	// GatewaySpend reads the pull request's measured spend. Rows counts its
 	// budget-eligible rows whose credential is a key minted for the row's own
-	// run, with credential_basis minted, and whose spend a close job attested.
-	// USD adds up the attested spend of those keys, each key once.
+	// run, with credential_basis minted, and whose spend a protected run
+	// attested. USD adds up the attested spend of those keys, each key once.
 	GatewaySpend(ctx context.Context, tenant store.TenantID, repo, pr string) (rows int64, usd decimal.Decimal, err error)
 }
 
@@ -64,7 +66,8 @@ type Config struct {
 	// PseudonymKey is the master key the per-tenant HMAC keys derive from.
 	PseudonymKey []byte
 	// GatewayEnvironment is the GitHub environment whose jobs may attest a
-	// minted credential. Empty trusts none, and then no row reads exact.
+	// minted credential, when a run of a protected branch that workflow_run
+	// started runs them. Empty trusts none, and then no row reads exact.
 	GatewayEnvironment string
 	// Spend keeps the gateway's attested spend. Nil, the service refuses a
 	// spend attestation and treats every token-verified spend as agent counts.

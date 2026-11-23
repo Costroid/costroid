@@ -109,6 +109,14 @@ type Identity struct {
 	Actor        string
 	Event        string
 	PullRequest  string
+	// Ref is the ref the run is for, as GitHub's token states it, and empty
+	// on GitLab.
+	Ref string
+	// RefProtected is the JSON text of GitHub's ref_protected claim, as the
+	// token holds it, and empty when the token holds none. It is kept as
+	// text, so a reader compares the claim's exact form and never a value
+	// read loosely from it.
+	RefProtected string
 	// Environment is the GitHub deployment environment the job referenced,
 	// empty when it referenced none. Its protection rules are the
 	// repository's, so only a job they admitted carries it.
@@ -291,6 +299,8 @@ type githubClaims struct {
 	Actor      string `json:"actor"`
 	EventName  string `json:"event_name"`
 	Ref        string `json:"ref"`
+	// RefProtected is read as it came: GitHub states it as a JSON string.
+	RefProtected json.RawMessage `json:"ref_protected"`
 	// Environment is present only on a job that references an environment.
 	Environment string `json:"environment"`
 }
@@ -315,7 +325,7 @@ func readIdentity(issuer Issuer, payload string) (Identity, error) {
 		path = c.Repository
 		identity.RunID, identity.RunAttempt = c.RunID, c.RunAttempt
 		identity.CommitSHA, identity.Actor, identity.Event = c.SHA, c.Actor, c.EventName
-		identity.Environment = c.Environment
+		identity.Environment, identity.Ref, identity.RefProtected = c.Environment, c.Ref, string(c.RefProtected)
 		if match := githubPull.FindStringSubmatch(c.Ref); match != nil {
 			identity.PullRequest = match[1]
 		}

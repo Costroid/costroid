@@ -139,7 +139,7 @@ It needs one secret, `OPENAI_API_KEY`, the one `codex-action` already takes. The
 
 ## A LiteLLM gateway
 
-[`recipes/github-claude-code-litellm.yml`](../recipes/github-claude-code-litellm.yml) runs Claude Code through a LiteLLM proxy you run, on a key made for the run alone, with the run's budget as the key's budget. [`docs/gateway.md`](gateway.md) has the setup.
+[`recipes/github-claude-code-litellm.yml`](../recipes/github-claude-code-litellm.yml) runs Claude Code through a LiteLLM proxy you run, on a key made for the run alone, with the run's budget as the key's budget. [`recipes/github-gateway.yml`](../recipes/github-gateway.yml), on the default branch beside it, mints and deletes that key. [`docs/gateway.md`](gateway.md) has the setup.
 
 ## Costroid Platform
 

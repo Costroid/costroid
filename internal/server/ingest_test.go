@@ -37,7 +37,8 @@ func memoryWorld(t *testing.T) (*world, *memoryLedger) {
 	ledger.keys[store.KeyDigest(acmeKey)] = a
 	ledger.keys[store.KeyDigest(betaKey)] = b
 	ledger.minted[a] = map[string]store.MintedCredential{gateway.KeyID(fixturesKey): {
-		KeySHA256: gateway.KeyID(fixturesKey), Repository: acmeRepo, RunID: acmeRun, RunAttempt: "1", Environment: gatewayEnvironment,
+		KeySHA256: gateway.KeyID(fixturesKey), Repository: acmeRepo, RunID: acmeRun, RunAttempt: "1", HeadSHA: acmeHead,
+		AttestingRunID: fixturesMintRun, AttestingRunAttempt: "1", AttestingRef: "refs/heads/main",
 	}}
 	return newWorld(t, ledger), ledger
 }

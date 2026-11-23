@@ -1,8 +1,9 @@
 # Runs Claude Code on a pull request through your LiteLLM gateway, on a key made
-# for this run alone, then reports what it cost. Copy to .github/workflows/costroid.yml.
-# docs/gateway.md lists what it needs and how the key reaches the agent.
-# Each push to the pull request runs the agent again, on a new key with a
-# budget of USD 5.
+# for this run alone, then reports what it cost. Copy to .github/workflows/costroid.yml,
+# and recipes/github-gateway.yml, which mints and deletes the key, to
+# .github/workflows/costroid-gateway.yml on the default branch. docs/gateway.md
+# lists what both need and how the key reaches the agent. Each push to the pull
+# request runs the agent again, on a new key with a budget of USD 5.
 name: costroid
 
 on:
@@ -67,7 +68,7 @@ jobs:
           # The public half costroid gateway keygen printed.
           COSTROID_GATEWAY_PUBLIC_KEY: ${{ vars.COSTROID_GATEWAY_PUBLIC_KEY }}
         run: costroid gateway request --out "$RUNNER_TEMP/costroid-gateway"
-      - name: Hand the sealed request to the minting job
+      - name: Hand the sealed request to the minting run
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: costroid-gateway-request-${{ github.run_attempt }}
@@ -113,71 +114,6 @@ jobs:
         run: |
           status=${COSTROID_STATUS_FILE:-$RUNNER_TEMP/costroid-status.json}
           if [ -f "$status" ]; then cat "$status"; else echo "costroid: the run wrote no status file at $status"; fi
-
-  gateway-mint:
-    # Mints only when the agent runs, so a skipped agent leaves no key behind.
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
-      && (github.event.action != 'labeled' || github.event.label.name == 'costroid-agent')
-      && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)
-      || contains(github.event.pull_request.labels.*.name, 'costroid-agent'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    # The admin key and the sealing key are secrets of this environment, behind
-    # protection rules you set. docs/gateway.md says why.
-    environment: costroid-gateway
-    permissions:
-      # Downloads the sealed request from this run's artifacts.
-      actions: read
-      # Attests the key to the ledger, when one is named, so the run's rows
-      # can read exact. The token names this environment.
-      id-token: write
-    steps:
-      - name: Install costroid
-        uses: Costroid/costroid/action@c0f685af887173ba9acb9e89832c3889423d3703 # v1.0.0-alpha.30
-        with:
-          stage: install
-      - name: Register the run's key with its budget
-        env:
-          COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
-          COSTROID_GATEWAY_SEALING_KEY: ${{ secrets.COSTROID_GATEWAY_SEALING_KEY }}
-          COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
-          COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
-          COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
-          GITHUB_TOKEN: ${{ github.token }}
-        # The key lives as long as the agent's job may. The largest request is
-        # the recorded context window, 1000000 tokens, plus the recorded largest
-        # output, 128000 tokens, of claude-haiku-5-5 on Claude Code 2.1.316.
-        run: |
-          costroid gateway mint --budget-usd 5 --lifetime-minutes 30 \
-            --max-request-tokens 1128000 --max-parallel-requests 1
-
-  gateway-close:
-    # After mint as well as the agent, so a key mint registers late is still
-    # deleted, with no wait.
-    needs: [agent, gateway-mint]
-    # Deletes the key whatever became of the agent, also when it failed. When
-    # it finds no key, it waits 13 minutes for a late mint and deletes once more.
-    if: always() && needs.agent.result != 'skipped'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: costroid-gateway
-    permissions:
-      # Attests what the gateway counted on the key to the ledger, when one is
-      # named. The token names this environment.
-      id-token: write
-    steps:
-      - name: Install costroid
-        uses: Costroid/costroid/action@c0f685af887173ba9acb9e89832c3889423d3703 # v1.0.0-alpha.30
-        with:
-          stage: install
-      - name: Delete the run's key
-        env:
-          COSTROID_GATEWAY_ADMIN_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
-          COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
-          COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
-          COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
-        run: costroid gateway close
 
   ingest:
     needs: agent

@@ -14,7 +14,7 @@ The `costroid` check concludes `success`, `neutral` or `failure` from a policy. 
 | `pr_budget`            | `policy.pr_budget_usd`        | The pull request's total at list, in USD, over every basis, this run included, against the budget |
 | `monthly_budget`       | `policy.monthly_budget_usd`   | The repository's month to date, in USD, against the budget. It reads a ledger only |
 | `model_allowlist`      | `policy.models`               | Each row's `costroid/model` tag against the list |
-| `attribution`          | none                          | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `windowed`, or `exact` when the credential is a gateway key attested for their run |
+| `attribution`          | none                          | Rows that are `unattributed`, yet name a credential, a pull request and a head commit. A ledger that checked them against the job's OIDC token would grade them `windowed`, or `exact` when the credential is a gateway key a run of the protected default branch attested for their run and their head |
 
 A rule without its setting does not run. With no `costroid.yml`, only `attribution` runs. `attribution` warns, or says nothing. It never fails and never passes.
 
@@ -199,7 +199,7 @@ On the Action path no rule can pass, so the check concludes `neutral` or `failur
 
 The report stage reads a rows file that the agent's own job wrote. An agent that a prompt took over could write a smaller cost, or another model's name, into that file. A figure from it can show that a run went over its budget or used a model off the list. It can never show that a run stayed under, or kept to the list.
 
-`costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts or the model names on it, which the agent's job wrote. So on the second column a budget or the model allowlist needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests, or a provider's report. Either can still fail on the agent's own counts.
+`costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts or the model names on it, which the agent's job wrote. So on the second column a budget or the model allowlist needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests from a run of the protected default branch, or a provider's report. Either can still fail on the agent's own counts.
 
 `serve` answers the second column at `POST /v1/pulls/{pr}/verdict`, over a pull request's rows in its ledger. Its answer covers the pull request, so the run rules conclude `unproven` there. [`docs/serve.md`](serve.md#the-verdict) gives the request and the answer. `costroid report` and `costroid policy` read a rows file, and do not ask `serve`.
 

@@ -6,11 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -18,22 +22,41 @@ import (
 	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/store"
+	"github.com/Costroid/costroid/internal/store/storetest"
+	"github.com/Costroid/costroid/migrations"
 )
 
 // spendLedger is a memory ledger that keeps the gateway's attested spend and
 // answers the per-PR lines from its rows, one line per row.
 type spendLedger struct {
 	*memoryLedger
-	spend map[store.TenantID]map[string]decimal.Decimal
+	spend map[store.TenantID]map[string]store.AttestedSpend
 }
 
-func (m *spendLedger) AttestSpend(_ context.Context, tenant store.TenantID, key store.MintedCredential, usd decimal.Decimal) error {
+// AttestSpend holds the store's rules: a key attested for the run named, one
+// figure per attesting run and attempt, checked first, and one per key.
+func (m *spendLedger) AttestSpend(_ context.Context, tenant store.TenantID, attested store.AttestedSpend) error {
+	key := attested.Key.KeySHA256
+	if minted, found := m.minted[tenant][key]; !found || !minted.SameRun(attested.Key) {
+		return store.ErrNotMinted
+	}
 	if m.spend[tenant] == nil {
-		m.spend[tenant] = map[string]decimal.Decimal{}
+		m.spend[tenant] = map[string]store.AttestedSpend{}
 	}
-	if stored, seen := m.spend[tenant][key.KeySHA256]; !seen || usd.Cmp(stored) > 0 {
-		m.spend[tenant][key.KeySHA256] = usd
+	for _, stored := range m.spend[tenant] {
+		spoke := stored.Key.Repository == attested.Key.Repository && stored.AttestingRunID == attested.AttestingRunID &&
+			stored.AttestingRunAttempt == attested.AttestingRunAttempt
+		if spoke && (stored.Key.KeySHA256 != key || stored.Spend != attested.Spend) {
+			return store.ErrAttestingRunUsed
+		}
+		if spoke {
+			return nil
+		}
 	}
+	if _, held := m.spend[tenant][key]; held {
+		return store.ErrSpendHeld
+	}
+	m.spend[tenant][key] = attested
 	return nil
 }
 
@@ -73,14 +96,14 @@ func (m *spendLedger) GatewaySpend(_ context.Context, tenant store.TenantID, rep
 		if !eligible(row) || record.CredentialBasis != store.CredentialMinted || row.SubAccountID == nil {
 			continue
 		}
-		spend, attested := m.spend[tenant][*row.SubAccountID]
-		if !attested {
+		attested, found := m.spend[tenant][*row.SubAccountID]
+		if !found {
 			continue
 		}
 		rows++
 		if !counted[*row.SubAccountID] {
 			counted[*row.SubAccountID] = true
-			usd = usd.Add(spend)
+			usd = usd.Add(decimal.MustParse(attested.Spend))
 		}
 	}
 	return rows, usd, nil
@@ -91,7 +114,7 @@ func (m *spendLedger) GatewaySpend(_ context.Context, tenant store.TenantID, rep
 func spendWorld(t *testing.T, keeps bool) *world {
 	t.Helper()
 	w, memory := memoryWorld(t)
-	ledger := &spendLedger{memoryLedger: memory, spend: map[store.TenantID]map[string]decimal.Decimal{}}
+	ledger := &spendLedger{memoryLedger: memory, spend: map[store.TenantID]map[string]store.AttestedSpend{}}
 	config := w.server.Config
 	config.Ledger = ledger
 	if keeps {
@@ -103,10 +126,11 @@ func spendWorld(t *testing.T, keeps bool) *world {
 	return w
 }
 
-// closeToken is the closing job's token: the fixtures' run, in the gateway's
-// environment.
+// closeToken is the token of the run that closed the fixtures' key once the
+// fixtures' run had completed: a run that workflow_run started on the
+// protected default branch, in the gateway's environment.
 func (w *world) closeToken() string {
-	return w.mintToken(gatewayEnvironment, nil)
+	return w.protectedToken(closeRun, nil)
 }
 
 func (w *world) attestSpend(bearer, keyID string, body map[string]string) answer {
@@ -176,8 +200,7 @@ func postgresSpendWorld(t *testing.T) *world {
 	w.server = New(config)
 	w.http = httptest.NewServer(w.server.Handler())
 	t.Cleanup(w.http.Close)
-	binding := gateway.Binding{Repository: acmeRepo, Run: acmeRun, Attempt: "1"}
-	if err := w.attest(w.closeToken(), gateway.AttestationFor(gateway.KeyID(fixturesKey), binding)); err != nil {
+	if err := w.attest(w.protectedToken(fixturesMintRun, nil), fixturesRun(gateway.KeyID(fixturesKey))); err != nil {
 		t.Fatal(err)
 	}
 	return w
@@ -225,16 +248,13 @@ func serveSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T, open func(*testing.T)
 	}
 
 	// The gateway's count binds where the rows understate it.
-	w.attestSpend(w.closeToken(), keyID, fixturesSpend("6")).want(t, http.StatusNoContent)
-	over := w.verdict(t, w.token(), body)
-	if got := ruleOf(t, over.Policy, policy.RulePullRequestBudget); over.Policy.Conclusion != policy.Failure ||
+	over := open(t)
+	over.rows(over.token(), lines(t, credentialed(row("req-1", focus.Output, 1000)))).want(t, http.StatusOK)
+	over.attestSpend(over.closeToken(), keyID, fixturesSpend("6")).want(t, http.StatusNoContent)
+	failed := over.verdict(t, over.token(), body)
+	if got := ruleOf(t, failed.Policy, policy.RulePullRequestBudget); failed.Policy.Conclusion != policy.Failure ||
 		got.Outcome != policy.Fail || got.Reason != policy.ReasonOverLimit || got.CostUSD != "6" {
-		t.Fatalf("rows under the budget, gateway over it: %+v", over.Policy)
-	}
-	// A smaller count later does not lower the figure.
-	w.attestSpend(w.closeToken(), keyID, fixturesSpend("0.5")).want(t, http.StatusNoContent)
-	if again := w.verdict(t, w.token(), body); again.Policy.Conclusion != policy.Failure {
-		t.Fatalf("a smaller count lowered the spend: %+v", again.Policy)
+		t.Fatalf("rows under the budget, gateway over it: %+v", failed.Policy)
 	}
 
 	// One row the gateway did not count leaves the rest agent counts.
@@ -381,7 +401,11 @@ func TestASpendAttestationIsTheClosingJobsOwn(t *testing.T) {
 	w := spendWorld(t, true)
 	keyID := gateway.KeyID(fixturesKey)
 	other := gateway.KeyID("sk-another-run-key")
-	secondAttempt := w.mintToken(gatewayEnvironment, func(claims map[string]any) { claims["run_attempt"] = "2" })
+	spend := func(change func(map[string]string)) map[string]string {
+		body := fixturesSpend("1")
+		change(body)
+		return body
+	}
 	cases := []struct {
 		name   string
 		bearer string
@@ -391,14 +415,20 @@ func TestASpendAttestationIsTheClosingJobsOwn(t *testing.T) {
 		code   string
 	}{
 		{"an ingest key", acmeKey, keyID, fixturesSpend("1"), http.StatusForbidden, codeAttestation},
-		{"a job outside the environment", w.token(), keyID, fixturesSpend("1"), http.StatusForbidden, codeAttestation},
-		{"another run", w.closeToken(), keyID, map[string]string{"repository": acmeRepo, "run_id": "1", "run_attempt": "1", "currency": "USD", "spend": "1"}, http.StatusForbidden, codeJoinKey},
-		{"a key never minted", w.closeToken(), other, fixturesSpend("1"), http.StatusConflict, codeJoinKey},
-		{"a key minted for another attempt", secondAttempt, keyID, map[string]string{"repository": acmeRepo, "run_id": acmeRun, "run_attempt": "2", "currency": "USD", "spend": "1"}, http.StatusConflict, codeJoinKey},
+		{"the pull request's own close job", w.pullRequestToken(nil), keyID, fixturesSpend("1"), http.StatusForbidden, codeRunUnprotected},
+		{"a protected run outside the environment", w.protectedToken(closeRun, func(claims map[string]any) { delete(claims, "environment") }), keyID, fixturesSpend("1"), http.StatusForbidden, codeAttestation},
+		{"another repository", w.closeToken(), keyID, spend(func(body map[string]string) { body["repository"] = "github.com/acme/gadgets" }), http.StatusForbidden, codeJoinKey},
+		{"the attesting run itself", w.closeToken(), keyID, spend(func(body map[string]string) { body["run_id"] = closeRun }), http.StatusForbidden, codeJoinKey},
+		{"a key never minted", w.closeToken(), other, fixturesSpend("1"), http.StatusConflict, codeNotAttested},
+		{"a key minted for another run", w.closeToken(), keyID, spend(func(body map[string]string) { body["run_id"] = "16873409999" }), http.StatusConflict, codeNotAttested},
+		{"a key minted for another attempt", w.closeToken(), keyID, spend(func(body map[string]string) { body["run_attempt"] = "2" }), http.StatusConflict, codeNotAttested},
 		{"a key that is not an id", w.closeToken(), "sk-raw", fixturesSpend("1"), http.StatusBadRequest, codeBadQuery},
-		{"euros", w.closeToken(), keyID, map[string]string{"repository": acmeRepo, "run_id": acmeRun, "run_attempt": "1", "currency": "EUR", "spend": "1"}, http.StatusBadRequest, codeMalformed},
+		{"euros", w.closeToken(), keyID, spend(func(body map[string]string) { body["currency"] = "EUR" }), http.StatusBadRequest, codeMalformed},
+		{"no attempt", w.closeToken(), keyID, spend(func(body map[string]string) { body["run_attempt"] = "" }), http.StatusBadRequest, codeMalformed},
 		{"a negative spend", w.closeToken(), keyID, fixturesSpend("-1"), http.StatusBadRequest, codeMalformed},
 		{"thirteen digits", w.closeToken(), keyID, fixturesSpend("0.0000000000001"), http.StatusBadRequest, codeMalformed},
+		{"thirteen digits, the last a zero", w.closeToken(), keyID, fixturesSpend("0.1000000000000"), http.StatusBadRequest, codeMalformed},
+		{"an exponent", w.closeToken(), keyID, fixturesSpend("1e-05"), http.StatusBadRequest, codeMalformed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -409,8 +439,84 @@ func TestASpendAttestationIsTheClosingJobsOwn(t *testing.T) {
 		})
 	}
 	ledger, _ := w.server.Spend.(*spendLedger)
-	if len(ledger.spend) != 0 {
+	if len(ledger.spend[tenantID(t, tenantA)]) != 0 {
 		t.Fatalf("a refused attestation was kept: %v", ledger.spend)
+	}
+}
+
+// TestASecondSpendForAKeyIsRefusedAndNeverTheLarger holds a key to one
+// figure, written once by one attesting run and attempt. The same string
+// again from that run is answered as the first was; another string from it,
+// even the same number written otherwise, and any figure from another run,
+// are refused, and the verdict reads the first figure. It runs on the memory
+// ledger and on Postgres, whose unique indexes hold the rule.
+func TestASecondSpendForAKeyIsRefusedAndNeverTheLarger(t *testing.T) {
+	t.Run("in memory", func(t *testing.T) {
+		secondSpendForAKeyIsRefusedAndNeverTheLarger(t, spendWorld(t, true))
+	})
+	t.Run("on Postgres", func(t *testing.T) {
+		secondSpendForAKeyIsRefusedAndNeverTheLarger(t, postgresSpendWorld(t))
+	})
+}
+
+func secondSpendForAKeyIsRefusedAndNeverTheLarger(t *testing.T, w *world) {
+	keyID := gateway.KeyID(fixturesKey)
+	w.rows(w.token(), lines(t, credentialed(row("req-1", focus.Output, 1000)))).want(t, http.StatusOK)
+	w.attestSpend(w.closeToken(), keyID, fixturesSpend("0.5")).want(t, http.StatusNoContent)
+	w.attestSpend(w.closeToken(), keyID, fixturesSpend("0.5")).want(t, http.StatusNoContent)
+
+	another := w.mintFor(t, acmeRun, "1")
+	laterAttempt := w.protectedToken(closeRun, func(claims map[string]any) { claims["run_attempt"] = "2" })
+	for _, tc := range []struct {
+		name, bearer, key, spend, message string
+	}{
+		{"the same number written otherwise", w.closeToken(), keyID, "0.50", "Run " + closeRun + ", attempt 1, has written a spend already."},
+		{"a larger figure from the same run", w.closeToken(), keyID, "6", "Run " + closeRun + ", attempt 1, has written a spend already."},
+		{"another key's figure from the same run", w.closeToken(), another, "0.1", "Run " + closeRun + ", attempt 1, has written a spend already."},
+		{"a larger figure from a later attempt", laterAttempt, keyID, "6", "The key holds a spend already."},
+		{"the same figure from another run", w.protectedToken(otherPullRequestRun, nil), keyID, "0.5", "The key holds a spend already."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := w.attestSpend(tc.bearer, tc.key, fixturesSpend(tc.spend))
+			if got.status != http.StatusConflict || got.code(t) != codeSpendHeld || !strings.Contains(string(got.body), tc.message) {
+				t.Fatalf("%d %s", got.status, got.body)
+			}
+		})
+	}
+
+	verdict := w.verdict(t, w.token(), verdictBody(t, prBudget, nil))
+	if got := ruleOf(t, verdict.Policy, policy.RulePullRequestBudget); verdict.Budget.GatewayUSD != "0.5" || got.CostUSD != "0.5" || got.Outcome != policy.Pass {
+		t.Fatalf("the verdict reads the gateway's count as USD %s, and the first figure was USD 0.5: %+v", verdict.Budget.GatewayUSD, got)
+	}
+}
+
+// TestAnEnvironmentOnlyCountLetsNoRulePass sends the gateway's count from
+// each job a pull request can edit, with the job in the gateway's
+// environment, for a key a protected run attested. Each is refused, and the
+// budget stays on the agent's own counts, which let no rule pass.
+func TestAnEnvironmentOnlyCountLetsNoRulePass(t *testing.T) {
+	for name, bearer := range map[string]func(w *world) string{
+		"the pull request's own close job": func(w *world) string { return w.pullRequestToken(nil) },
+		"another run the pull request started": func(w *world) string {
+			return w.pullRequestToken(func(claims map[string]any) { claims["run_id"] = otherPullRequestRun })
+		},
+		"a workflow_run run of a default branch no rule protects": func(w *world) string {
+			return w.protectedToken(closeRun, func(claims map[string]any) { claims["ref_protected"] = "false" })
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := spendWorld(t, true)
+			w.rows(w.token(), lines(t, credentialed(row("req-1", focus.Output, 1000)))).want(t, http.StatusOK)
+			got := w.attestSpend(bearer(w), gateway.KeyID(fixturesKey), fixturesSpend("0.001"))
+			if got.status != http.StatusForbidden || got.code(t) != codeRunUnprotected {
+				t.Fatalf("%d %s", got.status, got.body)
+			}
+			answer := w.verdict(t, w.token(), verdictBody(t, prBudget, nil))
+			if answer.Budget.Evidence || answer.Budget.Basis != budgetBasisAgent || answer.Policy.Conclusion != policy.Neutral ||
+				ruleOf(t, answer.Policy, policy.RulePullRequestBudget).Outcome != policy.Unproven {
+				t.Fatalf("a count from a job a pull request can edit: %+v %+v", answer.Budget, answer.Policy)
+			}
+		})
 	}
 }
 
@@ -428,7 +534,7 @@ func TestSpendAttestationRefusesALongAmountBeforeParsing(t *testing.T) {
 	if len(ledger.spend) != 0 {
 		t.Fatalf("a refused attestation was kept: %v", ledger.spend)
 	}
-	w.attestSpend(w.closeToken(), keyID, fixturesSpend("2."+strings.Repeat("0", decimal.MaxLength-2))).want(t, http.StatusNoContent)
+	w.attestSpend(w.closeToken(), keyID, fixturesSpend(strings.Repeat("9", 26)+"."+strings.Repeat("0", 12))).want(t, http.StatusNoContent)
 }
 
 func TestAVerdictReadsItsOwnRepositoryAndAWellFormedRequest(t *testing.T) {
@@ -463,4 +569,127 @@ func TestAVerdictReadsItsOwnRepositoryAndAWellFormedRequest(t *testing.T) {
 	if got := ruleOf(t, verdict, policy.RulePullRequestBudget); got.Outcome != policy.Unproven || got.Reason != policy.ReasonUnverifiedRows {
 		t.Fatalf("pr_budget on an ingest key's rows: %+v", got)
 	}
+}
+
+// protectedMigration is the migration from which a ledger takes an
+// attestation only from a protected run.
+const protectedMigration = "0010_protected_attestation.sql"
+
+// migrationsBefore is the schema as it stood before the migration named.
+func migrationsBefore(t *testing.T, first string) fstest.MapFS {
+	t.Helper()
+	names, err := fs.Glob(migrations.Files, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{}
+	for _, name := range names {
+		if name >= first {
+			continue
+		}
+		data, err := fs.ReadFile(migrations.Files, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[name] = &fstest.MapFile{Data: data}
+	}
+	return files
+}
+
+// environmentEraRow is a row of the fixtures' run on key as the service
+// stored it when a job in the gateway's environment had attested key: exact,
+// on a minted credential.
+func environmentEraRow(key string) store.Record {
+	cost, version := decimal.MustParse("0.01"), "0.1.0"
+	return store.Record{
+		Row: focus.Row{
+			RowID: strings.Repeat("e", 64), BillingCurrency: "USD", ServiceCategory: "AI and Machine Learning",
+			SkuMeter: focus.Output, ConsumedUnit: "Tokens", ConsumedQuantity: decimal.FromInt(100),
+			ListCost: cost, EffectiveCost: cost, ContractedCost: cost, CatalogVersion: &version, SubAccountID: &key,
+			ChargePeriodStart: "2026-11-01T10:00:00Z", ChargePeriodEnd: "2026-11-01T10:00:01Z",
+			Tags: map[string]string{
+				focus.TagAgent: "claude-code", focus.TagModel: "claude-haiku-5-5", focus.TagCostSource: "agent_stream",
+				focus.TagCostBasis: "measured", focus.TagAttributionGrade: gradeExact, focus.TagEnforcementGrade: "none",
+				focus.TagRunIdentity: identityToken, store.TagRepo: acmeRepo, store.TagPR: acmePull,
+				store.TagWorkflowRunID: acmeRun, store.TagCommitSHA: acmeHead,
+			},
+		},
+		RunAttempt: "1", Actor: "octo-dev", CredentialBasis: store.CredentialMinted, HeadBasis: store.HeadStated,
+	}
+}
+
+// TestAGradeStoredBeforeTheNewRuleLetsNothingPass stores a row graded exact,
+// its key's attestation and the gateway's count of USD 0.01 as the service
+// kept them when a job in the gateway's environment attested them, then
+// migrates. The row keeps its grade, because a ledger does not rewrite its
+// records. Nothing rests on it: the verdict reads the agent's own counts, so
+// no rule passes, and once a protected run has attested a key and a count of
+// a later run, the earlier row still keeps the budget from passing.
+func TestAGradeStoredBeforeTheNewRuleLetsNothingPass(t *testing.T) {
+	ctx := context.Background()
+	db := storetest.Empty(t)
+	if err := store.MigrateFrom(ctx, db.OwnerURL, migrationsBefore(t, protectedMigration)); err != nil {
+		t.Fatal(err)
+	}
+	a := db.Tenant(t, "acme", []store.Binding{{Host: "github.com", Owner: "acme"}}, store.KeyDigest(acmeKey))
+	before := gateway.KeyID("sk-a-key-an-environment-attested")
+	ledger, err := store.Open(ctx, db.AppURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ledger.Close)
+	if _, err := ledger.Ingest(ctx, a, store.Batch{Records: []store.Record{environmentEraRow(before)}, Day: testNow}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := pgx.Connect(ctx, db.OwnerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = owner.Close(ctx) }()
+	for _, statement := range []struct {
+		sql       string
+		arguments []any
+	}{
+		{`SELECT set_config('costroid.tenant_id', $1, false)`, []any{a.String()}},
+		{`INSERT INTO minted_credentials (tenant_id, key_sha256, repo, workflow_run_id, run_attempt, environment)
+			VALUES (costroid_tenant(), $1, $2, $3, '1', 'costroid-gateway')`, []any{before, acmeRepo, acmeRun}},
+		{`INSERT INTO gateway_spend (tenant_id, key_sha256, usd) VALUES (costroid_tenant(), $1, 0.01)`, []any{before}},
+	} {
+		if _, err := owner.Exec(ctx, statement.sql, statement.arguments...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Migrate(ctx, db.OwnerURL); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newWorld(t, ledger)
+	config := w.server.Config
+	config.Spend = ledger
+	w.server = New(config)
+	w.http = httptest.NewServer(w.server.Handler())
+	t.Cleanup(w.http.Close)
+	lw := &ledgerWorld{world: w, db: db, a: a}
+	if view := lw.view(t, w.token(), acmeRepo, acmePull); len(view.Lines) != 1 || view.Lines[0].AttributionGrade != gradeExact {
+		t.Fatalf("the row stored before the rule: %+v", view.Lines)
+	}
+	body := verdictBody(t, prBudget, nil)
+	held := func(when string) {
+		t.Helper()
+		answer := w.verdict(t, w.token(), body)
+		if answer.Budget.Evidence || answer.Budget.Basis != budgetBasisAgent || answer.Budget.GatewayUSD != "" || answer.Policy.Conclusion != policy.Neutral ||
+			ruleOf(t, answer.Policy, policy.RulePullRequestBudget).Outcome != policy.Unproven {
+			t.Fatalf("%s: %+v %+v", when, answer.Budget, answer.Policy)
+		}
+	}
+	held("on the count an environment's job attested")
+
+	// A later attempt of the run, whose key a protected run attested and
+	// counted. The earlier row has no count a protected run attested, so the
+	// pull request's budget still rests on the agent's own counts.
+	later := w.mintFor(t, acmeRun, "2")
+	laterToken := w.issuer.Token(func() map[string]any { claims := w.claims(); claims["run_attempt"] = "2"; return claims }())
+	w.rows(laterToken, lines(t, stating(later))).want(t, http.StatusOK)
+	w.attestSpend(w.protectedToken(closeRun, nil), later, map[string]string{"repository": acmeRepo, "run_id": acmeRun, "run_attempt": "2", "currency": "USD", "spend": "0.001"}).want(t, http.StatusNoContent)
+	held("with a protected count for a later attempt beside it")
 }

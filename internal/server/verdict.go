@@ -8,13 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/decimal"
-	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
 	"github.com/Costroid/costroid/internal/store"
 	"github.com/Costroid/costroid/internal/vcs"
@@ -59,91 +59,80 @@ type spendAttestation struct {
 	Spend      string `json:"spend"`
 }
 
-// handleSpend stores the gateway's count for a minted key. The token must come
-// from a job in the gateway's environment, name the run the attestation names,
-// and that run must be the one the key was attested as minted for. A sender
-// cannot state spend for a key it did not mint.
+// spendFigure is a spend as the ledger keeps it: a plain decimal of zero or
+// more, with at most 26 integer and 12 fractional digits. The figure is kept
+// as the string sent, so a repeat is the same string, not the same number.
+var spendFigure = regexp.MustCompile(`^(0|[1-9][0-9]{0,25})(\.[0-9]{1,12})?$`)
+
+// handleSpend stores the gateway's count for a minted key, once. The token
+// must be a protected branch's run that workflow_run started, and the key
+// must be attested as minted for the run the body names. A sender cannot
+// state spend from a run a pull request can edit, and a figure, once kept, is
+// never replaced.
 func (s *Server) handleSpend(w http.ResponseWriter, r *http.Request) {
 	who, err := s.authenticate(r)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	key, err := s.readSpend(w, r, who)
+	attested, err := s.readSpend(w, r, who)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	minted, err := s.Ledger.MintedCredentials(r.Context(), who.tenant, []string{key.credential.KeySHA256})
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	stored, found := minted[key.credential.KeySHA256]
-	if !found || !stored.SameRun(key.credential) {
-		s.fail(w, r, refuse(http.StatusConflict, codeJoinKey, "The key is not attested as minted for this run."))
-		return
-	}
-	err = s.Spend.AttestSpend(r.Context(), who.tenant, stored, key.usd)
-	if errors.Is(err, store.ErrAttestedElsewhere) || errors.Is(err, store.ErrNotMinted) {
-		s.fail(w, r, refuse(http.StatusConflict, codeJoinKey, "The key is not attested as minted for this run."))
-		return
-	}
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-type statedSpend struct {
-	credential store.MintedCredential
-	usd        decimal.Decimal
-}
-
-func (s *Server) readSpend(w http.ResponseWriter, r *http.Request, who caller) (statedSpend, error) {
-	id := who.identity
+	err = s.Spend.AttestSpend(r.Context(), who.tenant, attested)
 	switch {
-	case id == nil:
-		return statedSpend{}, attestationRefused("An attestation needs a CI token.")
-	case s.GatewayEnvironment == "" || id.Environment != s.GatewayEnvironment:
-		return statedSpend{}, attestationRefused("The token's job did not run in the gateway's environment.")
-	case s.Spend == nil:
-		return statedSpend{}, refuse(http.StatusNotImplemented, codeNoSpend, "This ledger does not keep the gateway's spend.")
+	case errors.Is(err, store.ErrNotMinted):
+		s.fail(w, r, refuse(http.StatusConflict, codeNotAttested,
+			fmt.Sprintf("The key is not attested for run %s, attempt %s.", attested.Key.RunID, attested.Key.RunAttempt)))
+	case errors.Is(err, store.ErrAttestingRunUsed):
+		s.fail(w, r, refuse(http.StatusConflict, codeSpendHeld,
+			fmt.Sprintf("Run %s, attempt %s, has written a spend already.", attested.AttestingRunID, attested.AttestingRunAttempt)))
+	case errors.Is(err, store.ErrSpendHeld):
+		s.fail(w, r, refuse(http.StatusConflict, codeSpendHeld, "The key holds a spend already."))
+	case err != nil:
+		s.fail(w, r, err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *Server) readSpend(w http.ResponseWriter, r *http.Request, who caller) (store.AttestedSpend, error) {
+	id := who.identity
+	if err := s.attestingRun(id); err != nil {
+		return store.AttestedSpend{}, err
+	}
+	if s.Spend == nil {
+		return store.AttestedSpend{}, refuse(http.StatusNotImplemented, codeNoSpend, "This ledger does not keep the gateway's spend.")
 	}
 	keyID := r.PathValue("key")
 	if !gatewayKeyID.MatchString(keyID) {
-		return statedSpend{}, refuse(http.StatusBadRequest, codeBadQuery, "The key id is not 64 hexadecimal characters.")
+		return store.AttestedSpend{}, refuse(http.StatusBadRequest, codeBadQuery, "The key id is not 64 hexadecimal characters.")
 	}
 	body, err := readBody(w, r)
 	if err != nil {
-		return statedSpend{}, err
+		return store.AttestedSpend{}, err
 	}
 	var stated spendAttestation
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&stated); err != nil || stated.Currency != "USD" {
-		return statedSpend{}, refuse(http.StatusBadRequest, codeMalformed, "The body is not a spend attestation in USD.")
+	if err := decoder.Decode(&stated); err != nil || stated.Currency != "USD" || !runTag.MatchString(stated.RunID) || !runAttempt.MatchString(stated.RunAttempt) {
+		return store.AttestedSpend{}, refuse(http.StatusBadRequest, codeMalformed, "The body is not a spend attestation in USD for a run_id and a run_attempt.")
 	}
 	if len(stated.Spend) > maxSpendLength {
-		return statedSpend{}, refuse(http.StatusBadRequest, codeMalformed, fmt.Sprintf("spend is longer than %d characters.", maxSpendLength))
+		return store.AttestedSpend{}, refuse(http.StatusBadRequest, codeMalformed, fmt.Sprintf("spend is longer than %d characters.", maxSpendLength))
 	}
-	usd, err := decimal.Parse(stated.Spend)
-	if err != nil || usd.Sign() < 0 || usd.Scale() > focus.MaxScale {
-		return statedSpend{}, refuse(http.StatusBadRequest, codeMalformed, "spend is not a decimal of at most 12 fractional digits, zero or more.")
+	if !spendFigure.MatchString(stated.Spend) {
+		return store.AttestedSpend{}, refuse(http.StatusBadRequest, codeMalformed, "spend is not a decimal of at most 12 fractional digits, zero or more.")
 	}
-	for _, pair := range []struct{ key, stated, token string }{
-		{"repository", strings.ToLower(stated.Repository), id.Repository},
-		{"run", stated.RunID, id.RunID},
-		{"attempt", stated.RunAttempt, id.RunAttempt},
-	} {
-		if pair.token == "" || pair.stated != pair.token {
-			return statedSpend{}, refuse(http.StatusForbidden, codeJoinKey, "The attestation's "+pair.key+" disagrees with the CI token.")
-		}
+	named := attestation{Repository: stated.Repository, RunID: stated.RunID}
+	if err := namedRun(named, id); err != nil {
+		return store.AttestedSpend{}, err
 	}
-	return statedSpend{
-		credential: store.MintedCredential{KeySHA256: keyID, Repository: id.Repository, RunID: id.RunID, RunAttempt: id.RunAttempt},
-		usd:        usd,
+	return store.AttestedSpend{
+		Key:            store.MintedCredential{KeySHA256: keyID, Repository: id.Repository, RunID: stated.RunID, RunAttempt: stated.RunAttempt},
+		Spend:          stated.Spend,
+		AttestingRunID: id.RunID, AttestingRunAttempt: id.RunAttempt,
 	}, nil
 }
 

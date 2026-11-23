@@ -47,7 +47,9 @@ type Mint struct {
 
 // Register opens the request and registers its key with the run's budget,
 // expiry and metadata. It returns the key's id. A request sealed to the public
-// key earlier versions derived from the admin key is refused.
+// key earlier versions derived from the admin key is refused, and so is a key
+// the gateway already holds: the job that seals a request chooses its key, and
+// a key minted once, such as one every run shares, is never a run's own.
 func (m Mint) Register(ctx context.Context) (string, error) {
 	switch {
 	case m.Budget.Sign() <= 0:
@@ -65,6 +67,13 @@ func (m Mint) Register(ctx context.Context) (string, error) {
 	key, err := m.Request.Open(m.SealingKey, m.Run)
 	if err != nil {
 		return "", err
+	}
+	held, err := m.Client.Holds(ctx, m.AdminKey, KeyID(key))
+	if err != nil {
+		return "", err
+	}
+	if held {
+		return "", errors.New("gateway: the gateway holds the request's key already, and a run's key is one the gateway has never held")
 	}
 	spec := KeySpec{
 		Key:         key,
