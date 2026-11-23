@@ -2,6 +2,35 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.30 (2026-11-23)
+
+### Read this if you run `costroid serve` with the gateway on a private repository
+
+`docs/gateway.md` and `docs/serve.md` rest an attested key, and a budget that passes on the gateway's count, on the protection rules of the environment that holds the gateway's keys, and they named required reviewers. On GitHub Free, Pro and Team that rule exists only for public repositories. On a private repository on one of those plans, a pull request's own run reaches the environment once its branch rule admits `refs/pull/*/merge`, so an attested key and an attested count are the word of whoever can push a branch. The pages now say so. No behaviour changes in this release: treat the `exact` grade and a pass on the gateway's count as that person's statement on such a repository. A later release moves the two attesting jobs to a workflow that a pull request cannot edit.
+
+### Breaking changes
+
+For anything that matched a line's text or read a stream.
+
+- `costroid run` writes one more line on standard error, first, just before it starts the agent: `costroid: running <agent> under a cap of USD <amount>`, such as `costroid: running claude-code under a cap of USD 5.00`. `--quiet` drops it. A run that starts no agent does not print it. A script that read the first line of `run`'s standard error as the summary's reads the run's result object instead, from `--json` or from the file beside the rows.
+- `costroid validate` on a valid file ends, on standard error, on `Next: costroid policy --rows FILE holds a run's rows to this file.`
+- `costroid serve` prints its help page on standard output when `--help` or `-h` follows other flags. It printed it on standard error there.
+- On a fork's pull request whose rows are within a budget, the comment's fold, the check's summary and the job summary read `Over budget, the check would stay neutral, because a fork's rows are the fork's own claim.` They read `Over budget, the rule would fail.` The title, the conclusion, the machine block and the outputs are unchanged.
+- The folded details of a comment with figures, and the check's and the job's summaries, gain one closing paragraph, described below. No title, conclusion, output or machine block reads it.
+
+### What you can now do
+
+- Read Costroid's own accuracy record where you read its figures. The fold of a comment with figures ends on one line about the test Costroid runs on its own repository, as this release carries it: how many of the last 14 days on [`docs/accuracy.md`](docs/accuracy.md) passed, failed days included, and how close the token counts came on the days that passed. A day counts only when the agent ran alone on its key, because a provider reports a key's day and never an agent's. The line speaks only for a measured run of the agent and provider the test ran; a subscription run, a run of several agents or providers, another agent or a fallback price is told that no day speaks for its figures. Every form closes: "Nothing has compared this run with a provider's report."
+- See that `costroid run` has started the agent, and under what cap, before the agent prints anything.
+- Read the amount and the budget in the title of the check the approve button of `costroid serve` posts, on a repository whose comment shows amounts, as in the one `costroid approve` posts.
+- Trust the examples: every example of what a command prints, in the README and in `docs/`, is held by a test to a run of the command or to a recorded state.
+
+### Fixed
+
+- Six documented examples no longer matched their command and now do: the `doctor` and `lint` objects of `docs/output.md`, the pull request's total in `docs/agents.md`, the verdict's times in `docs/policy.md`, the receipt's line in `docs/receipt.md`, and a refusal in `docs/gateway.md`.
+- The entry for 1.0.0-alpha.27 said every dollar figure on the accuracy page equals the provider's. They are equal to the digits the provider's report states: the page shows 0.001932885 beside 0.00193288 on 2026-11-12.
+- `costroid serve` logs a warning about `costroid.yml` as a line of its JSON log, where a plain line could enter it.
+
 ## 1.0.0-alpha.29 (2026-11-22)
 
 ### Breaking changes
