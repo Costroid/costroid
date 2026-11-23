@@ -1,4 +1,4 @@
-**Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
+**No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.**
 
 Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
@@ -6,19 +6,17 @@ Unchecked: the agent's own job wrote these figures, and nothing outside it check
 
 | Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| USD 0.001619725 | List-equivalent, not billed | `0.4.3` | client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |
+| USD 0.10 | Measured | `0.1.0` | the wrapper stops the process at the cap | 0 | 0 | 0 | 1000000 |
 
 <details>
-<summary>Cap, budget, policy, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
 
-Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+No policy ran on this change.
 
-Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+Agents: `claude-code`. Models: `claude-sonnet-5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
-
-Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 of the 14 days it ran, 2026-11-06 to 2026-11-19 (UTC), and on each day that passed every token class matched Anthropic's usage report count for count. [The accuracy page](https://docs.costroid.com/accuracy) lists every day. Nothing has compared this run with a provider's report.
+Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 7 of the 13 days it ran, 2026-11-06 to 2026-11-19 (UTC), and on each day that passed every token class matched Anthropic's usage report count for count. [The accuracy page](https://docs.costroid.com/accuracy) lists every day. Nothing has compared this run with a provider's report.
 
 </details>

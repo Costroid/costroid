@@ -3,8 +3,10 @@ package comment
 import (
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/Costroid/costroid/internal/accuracy"
+	"github.com/Costroid/costroid/internal/focus"
 )
 
 // accuracyURL is the page that lists every day the accuracy line counts.
@@ -24,32 +26,54 @@ func (i Input) accuracyLine() string {
 		return ""
 	}
 	record := *i.Accuracy
-	agents, sources := record.Tested()
-	if len(agents) == 0 {
+	tested := record.Tested()
+	if len(tested) == 0 {
 		return "Costroid's own test, not this run: this build of Costroid holds no day of it. [The accuracy page](" + accuracyURL + ") lists the days. " + notCompared
 	}
 	if ran, one := i.Ledger.ranOne(); one && record.Covers(ran.agent, ran.provider) {
 		return coveredLine(record.Count(ran.agent, ran.provider))
 	}
-	named := make([]string, len(agents))
-	for index, agent := range agents {
-		named[index] = Clean(agent).Code()
-	}
-	providers := make([]string, len(sources))
-	for index, source := range sources {
-		providers[index], _ = accuracy.ProviderName(source)
-	}
-	return fmt.Sprintf("Costroid's own test runs %s on %s, not this run's agent and provider, so no day on [the accuracy page](%s) speaks for these figures. %s",
-		listed(named, 0), listed(providers, 0), accuracyURL, notCompared)
+	return notCoveredLine(tested)
 }
 
 // ranOne is the one agent and provider the run's agent rows name, false when
-// they name none, more than one, or a row names no agent or no provider.
+// they name none or more than one, a row names no agent or no provider, or a
+// row is not on the measured basis. The test spends on an API key, and the
+// usage report it compares with holds no subscription's use.
 func (l Ledger) ranOne() (agentProvider, bool) {
-	if len(l.ran) != 1 || l.ran[0].agent == "" || l.ran[0].provider == "" {
+	if len(l.ran) != 1 || l.ran[0].agent == "" || l.ran[0].provider == "" || l.ran[0].basis != string(focus.Measured) {
 		return agentProvider{}, false
 	}
 	return l.ran[0], true
+}
+
+// notCoveredLine says what the test runs, each agent alone on its
+// provider's API key, so that it reads true of every run it does not cover:
+// another agent or provider, a fallback price, a subscription, or several
+// agents or providers at once.
+func notCoveredLine(tested []accuracy.Tested) string {
+	runs := make([]string, len(tested))
+	for index, pair := range tested {
+		provider, _ := accuracy.ProviderName(pair.Source)
+		runs[index] = Clean(pair.Agent).Code() + " alone on " + article(provider) + " " + provider + " API key"
+	}
+	other := "not that"
+	switch {
+	case len(tested) == 2:
+		other = "neither"
+	case len(tested) > 2:
+		other = "none of them"
+	}
+	return fmt.Sprintf("Costroid's own test, not this run: it runs %s, and this run is %s, so no day on [the accuracy page](%s) speaks for these figures. %s",
+		listed(runs, 0), other, accuracyURL, notCompared)
+}
+
+// article is the indefinite article a name takes, by its first letter.
+func article(name string) string {
+	if strings.ContainsAny(name[:1], "AEIOU") {
+		return "an"
+	}
+	return "a"
 }
 
 // coveredLine counts the days of the record's window the run's agent ran on

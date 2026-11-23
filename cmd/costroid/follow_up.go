@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Costroid/costroid/internal/accuracy"
 	"github.com/Costroid/costroid/internal/cicontext"
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
@@ -114,10 +115,10 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	return 0
 }
 
-// followUpInput is what the rows say. A fork's missing rows file is a fork's
-// run that left none. Rows ingest-run wrote in this job come with the run's
-// object, as report reads it: the reason, the agent's error and the agent's
-// own figure.
+// followUpInput is what the rows say, beside the accuracy record this build
+// carries. A fork's missing rows file is a fork's run that left none. Rows
+// ingest-run wrote in this job come with the run's object, as report reads
+// it: the reason, the agent's error and the agent's own figure.
 func followUpInput(flags followUpFlags, fork bool, stderr io.Writer) comment.Input {
 	rows, err := readFollowUpRows(flags.rows)
 	if err != nil {
@@ -132,6 +133,7 @@ func followUpInput(flags followUpFlags, fork bool, stderr io.Writer) comment.Inp
 		Reason:     rows.reason,
 		ReasonLine: rows.line,
 		OriginRow:  rows.origin,
+		Accuracy:   &accuracy.Built,
 	}
 	if flags.ingested {
 		stated := readRunReason(flags.rows, stderr)

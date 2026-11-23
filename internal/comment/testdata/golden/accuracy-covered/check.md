@@ -1,10 +1,10 @@
 # Title
 
-Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
 
 # Summary
 
-**Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
+**No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.**
 
 Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
@@ -12,35 +12,27 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Cost | Basis | Enforcement |
 | --- | --- | --- |
-| USD 0.001619725 | List-equivalent, not billed | client-side estimate, can pass the cap |
+| USD 0.10 | Measured | the wrapper stops the process at the cap |
 
 <details>
-<summary>Cap, budget, policy, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
 
-Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
+No policy ran on this change.
 
-Over budget, the rule would warn until the warn-only period ends, then fail. [The policy page](https://docs.costroid.com/policy) says what lets a budget pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
+Agents: `claude-code`. Models: `claude-sonnet-5`. 1 row, catalog `0.1.0`, prices read 2026-11-01.
 
-Agents: `claude-code`. Models: `claude-haiku-5-5`. 19 rows, catalog `0.4.3`, prices read 2026-11-21.
-
-Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 of the 14 days it ran, 2026-11-06 to 2026-11-19 (UTC), and on each day that passed every token class matched Anthropic's usage report count for count. [The accuracy page](https://docs.costroid.com/accuracy) lists every day. Nothing has compared this run with a provider's report.
+Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 7 of the 13 days it ran, 2026-11-06 to 2026-11-19 (UTC), and on each day that passed every token class matched Anthropic's usage report count for count. [The accuracy page](https://docs.costroid.com/accuracy) lists every day. Nothing has compared this run with a provider's report.
 
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.10 was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
-| `0.4.3` | `input_uncached` | `anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached` | USD 0.10 per million tokens | 8 | USD 0.0000008 |
-| `0.4.3` | `cache_read` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read` | USD 0.01 per million tokens | 15605 | USD 0.00015605 |
-| `0.4.3` | `cache_write_5m` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m` | USD 0.125 per million tokens | 3495 | USD 0.000436875 |
-| `0.4.3` | `cache_write_1h` | `anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h` | USD 0.20 per million tokens | 4450 | USD 0.00089 |
-| `0.4.3` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.50 per million tokens | 272 | USD 0.000136 |
-| `0.4.3` | `reasoning_output` | `anthropic:informational:reasoning_output` | informational, not priced | 121 | No amount: not priced |
-| `0.4.3` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | No amount: not priced |
+| `0.1.0` | `output` | `anthropic:claude-sonnet-5:global:standard:all:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
 
@@ -58,25 +50,19 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 o
   "rows_sha256": null,
   "rows_file_sha256": null,
   "amounts": "shown",
-  "rows": 19,
+  "rows": 1,
   "run_identity": "unverified",
   "figures": [
     {
       "currency": "USD",
-      "list_cost": "0.001619725",
-      "cost_basis": "list_equivalent",
+      "list_cost": "0.1",
+      "cost_basis": "measured",
       "attribution_grade": "unattributed",
-      "enforcement_grade": "agent-flag",
-      "rows": 19,
+      "enforcement_grade": "wrapper-watchdog",
+      "rows": 1,
       "fallback_rows": 0,
       "tokens": {
-        "cache_read": "15605",
-        "cache_write_1h": "4450",
-        "cache_write_5m": "3495",
-        "cached_input_reported": "15605",
-        "input_uncached": "8",
-        "output": "272",
-        "reasoning_output": "121"
+        "output": "1000000"
       }
     }
   ],
@@ -84,10 +70,10 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 o
   "cap": {
     "currency": "USD",
     "amount": "5",
-    "enforcement_grade": "agent-flag",
-    "cost": "0.001619725",
-    "cost_basis": "list_equivalent",
-    "remainder": "4.998380275",
+    "enforcement_grade": "wrapper-watchdog",
+    "cost": "0.1",
+    "cost_basis": "measured",
+    "remainder": "4.9",
     "overshoot": "0",
     "overshoot_tokens": "0"
   },
@@ -96,11 +82,11 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 o
       "claude-code"
     ],
     "models": [
-      "claude-haiku-5-5"
+      "claude-sonnet-5"
     ],
     "models_omitted": 0,
     "catalog_versions": [
-      "0.4.3"
+      "0.1.0"
     ],
     "fallback_models": [],
     "fallback_models_omitted": 0,
@@ -109,32 +95,6 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 o
   },
   "lifetime": null,
   "agent_stated": null,
-  "recorded": null,
-  "policy": {
-    "conclusion": "neutral",
-    "trust": "unverified",
-    "pack_sha256": "3bf380556f54cfd4284e2c843f43cfac4cf4fdfca7e8a5ea148fe54bd1e0d3d6",
-    "config_sha256": "d3cbc6bf0befd44c89f0089e36ad6998cc03013cd13de8e31bf49846be83d364",
-    "config_ref": "1111111111111111111111111111111111111111",
-    "config": "found",
-    "config_from_base": true,
-    "evaluated_at": "2026-11-06T09:00:00Z",
-    "warn_only": {
-      "active": true,
-      "reason": "in_period",
-      "started": "2026-11-02T09:00:00Z",
-      "ends": "2026-11-09T09:00:00Z"
-    },
-    "results": [
-      {
-        "rule": "run_budget",
-        "outcome": "unproven",
-        "reason": "unverified_rows",
-        "limit_usd": "5",
-        "cost_usd": "0.001619725"
-      }
-    ],
-    "joinable_rows": 0
-  }
+  "recorded": null
 }
 ```

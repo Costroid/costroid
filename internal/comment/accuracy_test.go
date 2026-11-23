@@ -13,8 +13,8 @@ import (
 
 // The accuracy line's three states, as the golden record gives them.
 const (
-	accuracyCovered    = "Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 8 of the 14 days it ran, 2026-11-06 to 2026-11-19 (UTC), and on each day that passed every token class matched Anthropic's usage report count for count. [The accuracy page](https://docs.costroid.com/accuracy) lists every day. Nothing has compared this run with a provider's report."
-	accuracyNotCovered = "Costroid's own test runs `claude-code` and `opencode` on Anthropic, not this run's agent and provider, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report."
+	accuracyCovered    = "Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 7 of the 13 days it ran, 2026-11-06 to 2026-11-19 (UTC), and on each day that passed every token class matched Anthropic's usage report count for count. [The accuracy page](https://docs.costroid.com/accuracy) lists every day. Nothing has compared this run with a provider's report."
+	accuracyNotCovered = "Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic API key, and this run is not that, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report."
 	accuracyNoDay      = "Costroid's own test, not this run: this build of Costroid holds no day of it. [The accuracy page](https://docs.costroid.com/accuracy) lists the days. Nothing has compared this run with a provider's report."
 )
 
@@ -23,8 +23,8 @@ var claudeCode = accuracy.Agent{Name: "claude-code", Version: "2.1.316"}
 
 // goldenRecord is the record as the accuracy page stood on 2026-11-23: 14
 // days on Anthropic, 2026-11-06 to 2026-11-19, the first six failed, and
-// OpenCode beside Claude Code on 2026-11-12. The goldens read it, so a new
-// page moves no golden.
+// OpenCode beside Claude Code on 2026-11-12, a day that speaks for neither.
+// The goldens read it, so a new page moves no golden.
 func goldenRecord() *accuracy.Record {
 	var record accuracy.Record
 	for day := 6; day <= 19; day++ {
@@ -40,25 +40,27 @@ func goldenRecord() *accuracy.Record {
 	return &record
 }
 
-// accuracyStates are the line's golden states beside the neutral report on
-// Claude Code's rows: covered, shown and withheld, a run of Codex on OpenAI,
-// and a build whose record holds no day.
+// accuracyStates are the line's golden states: a measured run of Claude Code
+// on Anthropic, covered, shown and withheld; a run of Codex on OpenAI; and the
+// neutral report under a build whose record holds no day.
 func accuracyStates(t *testing.T, neutral Input) map[string]Input {
 	t.Helper()
+	covered := realInput(t)
+	covered.Ledger = ledgerOf(t, claudeCodeFields())
 	notCovered := realInput(t)
 	notCovered.Ledger = ledgerOf(t, sampleFields())
 	noDay := neutral
 	noDay.Accuracy = &accuracy.Record{}
 	return map[string]Input{
-		"accuracy-covered":          neutral,
-		"accuracy-covered-withheld": withheld(neutral),
+		"accuracy-covered":          covered,
+		"accuracy-covered-withheld": withheld(covered),
 		"accuracy-not-covered":      notCovered,
 		"accuracy-no-day":           noDay,
 	}
 }
 
 // claudeCodeFields is a Claude Code row of one million output tokens at
-// Anthropic's price.
+// Anthropic's price, on the measured basis an API key's run states.
 func claudeCodeFields() rowFields {
 	fields := sampleFields()
 	fields.agent, fields.model = "claude-code", "claude-sonnet-5"
@@ -134,16 +136,16 @@ func TestTheAccuracyLineCountsEveryDayItRan(t *testing.T) {
 }
 
 // TestARunOfAnotherAgentOrProviderIsNotCovered reads the not-covered line
-// for Codex on OpenAI, Claude Code on a fallback price, which names no
-// provider, and a run of two agents on two providers, and the covered line for Claude Code on
-// Anthropic.
+// for Codex on OpenAI and for Claude Code on a fallback price, which names no
+// provider, and the covered line for Claude Code on Anthropic. Under a record
+// that covers two agents, or three, the not-covered line names each with its
+// provider's key.
 func TestARunOfAnotherAgentOrProviderIsNotCovered(t *testing.T) {
 	fallback := claudeCodeFields()
 	fallback.model, fallback.priceID, fallback.description = "claude-next", "anthropic:fallback:output", "claude-next output tokens; "+focus.NoteFallback
 	for name, rows := range map[string][]rowFields{
 		"codex on openai":           {sampleFields()},
 		"claude-code on a fallback": {fallback},
-		"claude-code beside codex":  {claudeCodeFields(), sampleFields()},
 	} {
 		if got := accuracyOf(t, goldenRecord(), rows...); got != accuracyNotCovered {
 			t.Errorf("%s: the line reads\n%s", name, got)
@@ -152,9 +154,94 @@ func TestARunOfAnotherAgentOrProviderIsNotCovered(t *testing.T) {
 	if got := accuracyOf(t, goldenRecord(), claudeCodeFields(), claudeCodeFields()); got != accuracyCovered {
 		t.Errorf("claude-code on anthropic: the line reads\n%s", got)
 	}
-	if !goldenRecord().Covers("opencode", "anthropic") || goldenRecord().Covers("codex", "openai") || goldenRecord().Covers("claude-code", "") {
+	if goldenRecord().Covers("codex", "openai") || goldenRecord().Covers("claude-code", "") {
 		t.Error("the record covers another agent or provider than its days name")
 	}
+
+	two := goldenRecord()
+	two.Lines = append(two.Lines, accuracy.Line{Day: "2026-11-19", Sources: []string{"openai"}, Agents: []accuracy.Agent{{Name: "codex", Version: "0.164.0"}}, Verdict: accuracy.VerdictPass, TokenError: "0"})
+	gemini := claudeCodeFields()
+	gemini.agent, gemini.priceID = "gemini-cli", "google:gemini-3:global:standard:all:output"
+	want := "Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic API key and `codex` alone on an OpenAI API key, and this run is neither, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report."
+	if got := accuracyOf(t, two, gemini); got != want {
+		t.Errorf("under two covered agents the line reads\n%s\nwant\n%s", got, want)
+	}
+	if got := accuracyOf(t, two, sampleFields()); !strings.HasPrefix(got, "Costroid's own test, not this run: `codex` 0.164.0 on OpenAI passed 1 of the 1 day it ran, 2026-11-06 to 2026-11-19 (UTC), ") {
+		t.Errorf("codex on openai, under a record that covers it, reads\n%s", got)
+	}
+	three := *two
+	three.Lines = append(slices.Clone(two.Lines), accuracy.Line{Day: "2026-11-19", Sources: []string{"anthropic"}, Agents: []accuracy.Agent{{Name: "opencode", Version: "1.19.4"}}, Verdict: "token miss", TokenError: "2"})
+	want = "it runs `claude-code` alone on an Anthropic API key, `codex` alone on an OpenAI API key and `opencode` alone on an Anthropic API key, and this run is none of them, so no day"
+	if got := accuracyOf(t, &three, gemini); !strings.Contains(got, want) {
+		t.Errorf("under three covered agents the line reads\n%s", got)
+	}
+}
+
+// TestASharedDayCountsForNoAgent counts, for each agent, only the days it ran
+// alone on the key: the provider reports a key's day, so a day two agents
+// shared speaks for neither. OpenCode, whose one day was shared, is not
+// covered, and a record of shared days alone holds no day of the test.
+func TestASharedDayCountsForNoAgent(t *testing.T) {
+	opencode := claudeCodeFields()
+	opencode.agent = "opencode"
+	if got := accuracyOf(t, goldenRecord(), opencode); got != accuracyNotCovered {
+		t.Errorf("opencode, which ran only on a shared day, reads\n%s", got)
+	}
+	if got := goldenRecord().Count("claude-code", "anthropic"); got.Ran != 13 || got.Passed != 7 {
+		t.Errorf("claude-code counts %d days and %d passed, want the 13 it ran alone and 7", got.Ran, got.Passed)
+	}
+	shared := goldenRecord()
+	for index := range shared.Lines {
+		shared.Lines[index].Agents = []accuracy.Agent{claudeCode, {Name: "opencode", Version: "1.19.4"}}
+	}
+	if got := accuracyOf(t, shared, claudeCodeFields()); got != accuracyNoDay {
+		t.Errorf("a record of shared days reads\n%s", got)
+	}
+}
+
+// TestASubscriptionRunIsNotCovered reads the not-covered line for Claude Code
+// on Anthropic on the list-equivalent basis of a subscription, which the
+// usage report the test compares with does not hold, and for a run of the
+// two bases at once.
+func TestASubscriptionRunIsNotCovered(t *testing.T) {
+	subscription := claudeCodeFields()
+	subscription.basis, subscription.description = string(focus.ListEquivalent), "claude-sonnet-5 output tokens; "+focus.NoteSubscription
+	for name, rows := range map[string][]rowFields{
+		"a subscription":         {subscription},
+		"a subscription and key": {claudeCodeFields(), subscription},
+	} {
+		if got := accuracyOf(t, goldenRecord(), rows...); got != accuracyNotCovered {
+			t.Errorf("%s: the line reads\n%s", name, got)
+		}
+	}
+	if got := goldenStates(t)["subscription"].accuracyLine(); got != accuracyNotCovered {
+		t.Errorf("the recorded subscription run reads\n%s", got)
+	}
+}
+
+// TestARunOfTwoAgentsIsNotCovered reads the not-covered line for a run that
+// names two agents, each covered or not, or one agent on two providers.
+func TestARunOfTwoAgentsIsNotCovered(t *testing.T) {
+	opencode := claudeCodeFields()
+	opencode.agent = "opencode"
+	onOpenAI := claudeCodeFields()
+	onOpenAI.priceID = "openai:gpt-5.5:global:standard:output"
+	for name, rows := range map[string][]rowFields{
+		"claude-code beside opencode":          {claudeCodeFields(), opencode},
+		"claude-code beside codex":             {claudeCodeFields(), sampleFields()},
+		"claude-code on two providers":         {claudeCodeFields(), onOpenAI},
+		"claude-code beside a row of no agent": {claudeCodeFields(), withoutAgent(claudeCodeFields())},
+	} {
+		if got := accuracyOf(t, goldenRecord(), rows...); got != accuracyNotCovered {
+			t.Errorf("%s: the line reads\n%s", name, got)
+		}
+	}
+}
+
+// withoutAgent is the row with an empty agent tag, which names no agent.
+func withoutAgent(fields rowFields) rowFields {
+	fields.agent = ""
+	return fields
 }
 
 func TestTheLargestTokenErrorIsRoundedUp(t *testing.T) {

@@ -9,6 +9,7 @@
 package accuracy
 
 import (
+	"cmp"
 	"math/big"
 	"slices"
 )
@@ -61,9 +62,11 @@ func (l Line) Passed() bool {
 	return l.Verdict == VerdictPass || l.Verdict == VerdictPassExplained
 }
 
-// names reports whether the line names the agent and the source.
-func (l Line) names(agent, source string) bool {
-	return slices.Contains(l.Sources, source) && slices.ContainsFunc(l.Agents, func(a Agent) bool { return a.Name == agent })
+// alone reports whether the line names the source and the agent as the only
+// agent on the key that day. The provider reports a key's day, never an
+// agent's, so a day two agents shared speaks for neither.
+func (l Line) alone(agent, source string) bool {
+	return slices.Contains(l.Sources, source) && len(l.Agents) == 1 && l.Agents[0].Name == agent
 }
 
 // providerNames is the closed list of sources the line can name, with the
@@ -111,15 +114,16 @@ func (r Record) Window() (first, last string) {
 	return first, last
 }
 
-// Count counts the days of the window on which the agent ran on the source.
-// Every day counts, the days that failed included.
+// Count counts the days of the window on which the agent ran alone on the
+// source's key. Every such day counts, the days that failed included. A day
+// the agent shared with another agent counts for neither.
 func (r Record) Count(agent, source string) Count {
 	count := Count{Agent: agent, Source: source}
 	count.First, count.Last = r.Window()
 	passed := map[string]bool{}
 	var days []string
 	for _, line := range r.Lines {
-		if !line.names(agent, source) {
+		if !line.alone(agent, source) {
 			continue
 		}
 		if _, seen := passed[line.Day]; !seen {
@@ -127,10 +131,8 @@ func (r Record) Count(agent, source string) Count {
 			passed[line.Day] = true
 		}
 		passed[line.Day] = passed[line.Day] && line.Passed()
-		for _, named := range line.Agents {
-			if named.Name == agent && named.Version != "" && !slices.Contains(count.Versions, named.Version) {
-				count.Versions = append(count.Versions, named.Version)
-			}
+		if version := line.Agents[0].Version; version != "" && !slices.Contains(count.Versions, version) {
+			count.Versions = append(count.Versions, version)
 		}
 	}
 	slices.Sort(count.Versions)
@@ -141,7 +143,7 @@ func (r Record) Count(agent, source string) Count {
 		}
 	}
 	for _, line := range r.Lines {
-		if !line.names(agent, source) || !passed[line.Day] {
+		if !line.alone(agent, source) || !passed[line.Day] {
 			continue
 		}
 		size, ok := new(big.Rat).SetString(line.TokenError)
@@ -153,7 +155,8 @@ func (r Record) Count(agent, source string) Count {
 }
 
 // Covers reports whether a day of the record speaks for a run of one agent on
-// one source: the line names both, and the source is one the line can name.
+// one source: the agent ran alone on the source's key that day, and the
+// source is one the line can name.
 func (r Record) Covers(agent, source string) bool {
 	if _, known := ProviderName(source); !known || agent == "" {
 		return false
@@ -161,32 +164,30 @@ func (r Record) Covers(agent, source string) bool {
 	return r.Count(agent, source).Ran > 0
 }
 
-// Tested are the agents and the sources the record's lines name, each once
-// and in order, counting only lines whose sources include one the line can
-// name. Both are empty for a record that holds no day of the test.
-func (r Record) Tested() (agents, sources []string) {
+// Tested is an agent the record holds a day of on one source, alone on the
+// key.
+type Tested struct {
+	Agent, Source string
+}
+
+// Tested lists, each once and in order, every agent and source the record
+// holds a day of with the agent alone on the key, for a source the line can
+// name. It is empty for a record that holds no such day.
+func (r Record) Tested() []Tested {
+	var tested []Tested
 	for _, line := range r.Lines {
-		var named []string
-		for _, source := range line.Sources {
-			if _, known := ProviderName(source); known {
-				named = append(named, source)
-			}
-		}
-		if len(named) == 0 || len(line.Agents) == 0 {
+		if len(line.Agents) != 1 {
 			continue
 		}
-		for _, source := range named {
-			if !slices.Contains(sources, source) {
-				sources = append(sources, source)
-			}
-		}
-		for _, agent := range line.Agents {
-			if !slices.Contains(agents, agent.Name) {
-				agents = append(agents, agent.Name)
+		for _, source := range line.Sources {
+			pair := Tested{Agent: line.Agents[0].Name, Source: source}
+			if _, known := ProviderName(source); known && !slices.Contains(tested, pair) {
+				tested = append(tested, pair)
 			}
 		}
 	}
-	slices.Sort(agents)
-	slices.Sort(sources)
-	return agents, sources
+	slices.SortFunc(tested, func(a, b Tested) int {
+		return cmp.Or(cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.Source, b.Source))
+	})
+	return tested
 }

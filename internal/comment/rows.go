@@ -111,19 +111,21 @@ type Ledger struct {
 	Infrastructure Infrastructure
 	// requests holds each currency and basis's requests, for the overshoot.
 	requests map[spendKey]*requestLog
-	// ran are the agent and the provider the agent rows name, up to two.
+	// ran are the agent, the provider and the basis the agent rows name, up
+	// to two.
 	ran []agentProvider
 }
 
-// agentProvider is the agent a row's tag names and the provider its price id
-// names. Either is empty when the row names none: a row without an agent tag,
-// or one priced at a fallback, which no provider's price is.
+// agentProvider is the agent a row's tag names, the provider its price id
+// names and the cost basis it states. The agent or the provider is empty when
+// the row names none: a row without an agent tag, or one priced at a
+// fallback, which no provider's price is.
 type agentProvider struct {
-	agent, provider string
+	agent, provider, basis string
 }
 
-// maxRan is how many agent and provider pairs a ledger keeps: enough to know
-// whether its rows name one.
+// maxRan is how many agents and providers, with their bases, a ledger keeps:
+// enough to know whether its rows name one.
 const maxRan = 2
 
 // RowError names the first line of a rows file that is not a valid row.
@@ -338,16 +340,17 @@ func (t *tally) add(line []byte) error {
 // states, as in anthropic:fallback:output.
 const fallbackPriceID = "fallback"
 
-// agentProvider names the row's agent and the provider of its price: the
-// first part of its price id. A row priced at a fallback names no provider,
-// whatever its price id begins with.
+// agentProvider names the row's agent, the provider of its price, the first
+// part of its price id, and its basis. A row priced at a fallback names no
+// provider, whatever its price id begins with.
 func (r row) agentProvider() agentProvider {
 	agent, _ := r.Tags.Text(focus.TagAgent)
+	basis, _ := r.Tags.Text(focus.TagCostBasis)
 	parts := strings.Split(r.SkuPriceID, ":")
 	if r.fallback() || len(parts) < 2 || parts[1] == fallbackPriceID {
-		return agentProvider{agent: agent}
+		return agentProvider{agent: agent, basis: basis}
 	}
-	return agentProvider{agent: agent, provider: parts[0]}
+	return agentProvider{agent: agent, provider: parts[0], basis: basis}
 }
 
 func (f *figureTally) add(priced Trace) {
