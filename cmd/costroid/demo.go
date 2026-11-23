@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Costroid/costroid/internal/accuracy"
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/decimal"
@@ -161,6 +162,7 @@ func demoStateInput(ctx context.Context, state string) (comment.Input, error) {
 		Amounts:      comment.AmountsShown,
 		RunURL:       demoRunURL,
 		Verdict:      &verdict,
+		Accuracy:     &accuracy.Built,
 	}
 	switch state {
 	case demoCapped:

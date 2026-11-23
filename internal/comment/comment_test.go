@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Costroid/costroid/internal/accuracy"
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/policy"
@@ -141,7 +142,8 @@ const (
 
 // docsInput is the comment costroid demo prints and docs/comment-example.md
 // shows: the recorded run on a pull request whose costroid.yml at the base
-// commit sets a USD 5 run budget, reported without the run's cap.
+// commit sets a USD 5 run budget, reported without the run's cap, beside the
+// accuracy record this build carries.
 func docsInput(t *testing.T) Input {
 	t.Helper()
 	data, err := os.ReadFile(demoRows)
@@ -176,6 +178,7 @@ func docsInput(t *testing.T) Input {
 		Amounts:      AmountsShown,
 		RunURL:       exampleRun,
 		Verdict:      &verdict,
+		Accuracy:     &accuracy.Built,
 	}
 }
 

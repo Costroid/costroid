@@ -50,7 +50,7 @@ func TestDemoRendersForATerminal(t *testing.T) {
 		}
 	}
 	lines := strings.Split(stdout, "\n")
-	if len(lines) > 50 {
+	if len(lines) > 55 {
 		t.Errorf("the demo prints %d lines", len(lines))
 	}
 	want := "Within budget, by the job's own figures: this run cost USD " + demoTotal + " at list\n(Measured) of the USD 5.00 run budget. Nothing outside the job checked the\nfigures, so the check is neutral.\n\n" +

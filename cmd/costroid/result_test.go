@@ -206,8 +206,13 @@ func TestActionOutputsAreTheOnesTheActionDeclares(t *testing.T) {
 }
 
 // codeSpan is where the summary puts a catalog version or a commit, the only
-// digits a withheld summary may hold.
+// digits a withheld summary may hold beside the accuracy line.
 var codeSpan = regexp.MustCompile("`[^`]*`")
+
+// accuracyParagraph is the summary's last line, on Costroid's own test: its
+// digits are days, dates and an agent's version, never an amount or a token
+// count of the run.
+var accuracyParagraph = regexp.MustCompile("\n\nCostroid's own test, not this run: [^\n]*\n$")
 
 func TestStepSummaryWithholdsAmountsAndTokenCountsOnAPublicRepository(t *testing.T) {
 	stub := reportEnvironment(t, pullRequestEvent())
@@ -221,7 +226,10 @@ func TestStepSummaryWithholdsAmountsAndTokenCountsOnAPublicRepository(t *testing
 			t.Errorf("no %q in\n%s", want, summary)
 		}
 	}
-	if digits := regexp.MustCompile(`[0-9]+`).FindAllString(codeSpan.ReplaceAllString(summary, ""), -1); len(digits) > 0 {
+	if !accuracyParagraph.MatchString(summary) {
+		t.Errorf("the withheld summary does not end on the accuracy line:\n%s", summary)
+	}
+	if digits := regexp.MustCompile(`[0-9]+`).FindAllString(codeSpan.ReplaceAllString(accuracyParagraph.ReplaceAllString(summary, ""), ""), -1); len(digits) > 0 {
 		t.Errorf("the withheld summary holds %v:\n%s", digits, summary)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Costroid/costroid/internal/accuracy"
 	"github.com/Costroid/costroid/internal/adapter"
 	"github.com/Costroid/costroid/internal/amounts"
 	"github.com/Costroid/costroid/internal/catalog"
@@ -372,11 +373,12 @@ func verdictExit(conclusion string) int {
 }
 
 // rowsInput is what the rows file, the run's result object beside it and the
-// flags give a report, before any host is read. When the action refused the
-// artifact that carried them, neither file is read.
+// flags give a report, before any host is read, beside the accuracy record
+// this build carries. When the action refused the artifact that carried
+// them, neither file is read.
 func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 	if refused := refusedArtifact(os.Getenv, stderr); refused != nil {
-		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: runCap(flags, statedReason{}, stderr)}
+		return comment.Input{State: comment.Unreadable, Reason: comment.NoRowsFile, Refused: refused, Budget: runCap(flags, statedReason{}, stderr), Accuracy: &accuracy.Built}
 	}
 	rows, err := readReportRows(flags.rows)
 	if err != nil {
@@ -398,6 +400,7 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 		RowsFileSHA256:      rows.fileSHA256,
 		Recorded:            flags.recorded,
 		EstimateUnavailable: readEstimateNote(flags.rows, stderr),
+		Accuracy:            &accuracy.Built,
 	}
 	return withAgentResult(input, flags.agentResult, stderr)
 }

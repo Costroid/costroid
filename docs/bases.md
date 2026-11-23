@@ -21,7 +21,7 @@ The policy's budget rules read the list amount of every USD row of an agent's, w
 
 ## Measured
 
-The token counts come from the agent's own stream or files, read as [`docs/adapters.md`](adapters.md) describes. `costroid reconcile` tests the promise: it compares each token class with the provider's usage report, per credential per UTC day, and a miss over 1% is a defect. [`docs/reconcile.md`](reconcile.md) has the method, and [`docs/accuracy.md`](accuracy.md) publishes the comparison, one day at a time, for the key Costroid's own test repository spends on.
+The token counts come from the agent's own stream or files, read as [`docs/adapters.md`](adapters.md) describes. `costroid reconcile` tests the promise: it compares each token class with the provider's usage report, per credential per UTC day, and a miss over 1% is a defect. [`docs/reconcile.md`](reconcile.md) has the method, and [`docs/accuracy.md`](accuracy.md) publishes the comparison, one day at a time, for the key Costroid's own test repository spends on. The comment links that page from its folded details, where one line quotes the page's last 14 days as the release was built and says that nothing has compared the run itself with a provider's report.
 
 The amount is the tokens times the catalog's list price. A contract discount, a commitment or a credit makes your bill differ. `costroid reconcile` compares the list amount with the provider's cost report within 10% and splits the difference into named causes.
 
