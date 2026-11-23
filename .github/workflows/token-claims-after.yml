@@ -1,0 +1,37 @@
+# Records the claims a GitHub Actions ID token carries on a run that workflow_run starts
+# from the default branch, after a run of token-claims. The documentation cites a run of
+# it wherever it rests on one of these claims. It prints claims and never the token.
+name: token-claims-after
+
+on:
+  workflow_run:
+    workflows: [token-claims]
+    types: [completed]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  claims:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Print the claims that name the event, the ref and the commit
+        env:
+          BEFORE_ID: ${{ github.event.workflow_run.id }}
+          BEFORE_EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+          echo "the run before this one: $BEFORE_ID, started by $BEFORE_EVENT"
+          answer=$(curl --silent --show-error --fail --get \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            --data-urlencode "audience=https://example.invalid/token-claims" "$ACTIONS_ID_TOKEN_REQUEST_URL")
+          payload=$(jq -r .value <<<"$answer" | cut -d. -f2 | tr '_-' '/+')
+          while (( ${#payload} % 4 )); do payload+="="; done
+          base64 --decode <<<"$payload" \
+            | jq '{event_name, ref, ref_type, ref_protected, ref_protected_is: (.ref_protected | type), sha, workflow_ref, run_id, run_attempt, repository, repository_visibility}'
