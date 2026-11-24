@@ -2,6 +2,62 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.35 (2026-11-24)
+
+### Read this if you run `costroid serve`
+
+Release 1.0.0-alpha.34 said that the first statement of a row id stood whole, whoever sent it, so a sender of the same tenant who knew a run's row ids could state them first and keep the run's own rows off its pull request. This release closes that. A statement now has an owner: the repository and run a CI token verified, or one shared owner for every statement the ledger did not verify. A row id is kept once per owner, so a run's statement never meets another sender's, and a statement the ledger verified outranks one it did not. Every figure is read through the statements that stand. No stored row is changed. Migration `0014_statement_owner.sql` adds the index and the view; `costroid serve` applies it when it starts.
+
+Still open, as in 1.0.0-alpha.34: a key whose attestation names no pull request and whose rows never arrive takes its count with it, and a re-run of an agent's run gets no gateway key.
+
+### Read this if a script reads Costroid's lines
+
+This release corrects many lines a person reads at the terminal and in the comment. A script that matches on a line's text, or holds standard error to empty, should be read against the two lists below. No exit code changed its meaning, no flag was renamed or removed, and the `conclusion` output, every other output and the result object did not move.
+
+### Breaking changes
+
+At the terminal:
+
+- A flag of a command that stands after an argument is a wrong command line, exit 2: `costroid: --json stands after an argument, and flags come before arguments`, then the command line with its flags first. `costroid lint FILE --json` answered that `--json` does not exist and exited 125. `costroid run`, `report` and `follow-up` take every word after their first argument as before.
+- A flag before the command, as in `costroid -q validate` or `costroid -v`, is named as a flag. It was called an unknown command. The exit code is 2 as before.
+- An error that names no next step ends on the address of one section of the troubleshooting page, `See https://docs.costroid.com/troubleshooting#<section>.` It ended on the page's address.
+- Every line that named a page as `docs/<page>.md` names it as `https://docs.costroid.com/<page>`: fixes of `costroid doctor`, notes of `costroid init`, fifteen help pages, and warnings of `export`, `merged`, `reconcile`, `connect`, `gateway` and `report`.
+- `costroid validate` on a file whose own keys are valid and whose policy pack is not opens with `costroid.yml: the policy pack it names is not valid, and its own keys are`. It opened with `costroid.yml: valid`. Exit 1 is unchanged.
+- A policy pack with more than one fault is printed one fault to a line by `costroid validate`, `costroid policy` and the report, eight lines at most, the last saying how many more the compiler wrote. The faults ran together on one line, with a `?` where each line ended. `validate --json` states the same lines in `pack.message`.
+- `costroid run` and `costroid ingest-run` name the result object in the line that names the rows: `costroid: 19 rows in rows.jsonl, catalog 0.4.3, and the result object in rows.run.json`. Under `run --json` the object is printed before the summary.
+- `costroid policy --json` opens with a key `schema` that names `costroid.policy/0.1`, each line of `costroid merged --json` with one that names `costroid.merged/0.1`, and `costroid egress report --json` with one that names `costroid.egress/0.1`. `merged --dry-run` names its line `costroid.merged-fact/0.1`. The other keys are unchanged.
+- `costroid policy` prints the lines above its verdict sentence as plain text. They carried the comment's Markdown code marks.
+- `costroid result` says `costroid: asking <host>` on standard error before its first request, and `costroid export` and `costroid gateway mint` and `close` print a line every 10 s while they wait. `--quiet` drops each.
+- `costroid init` draws every amount with at least two decimal places, `USD 5.00`, and on GitLab ends on `… before its first merge request.` `costroid report`'s warning of another cap draws the cap the same way.
+- `costroid emit-otlp --rows -` with no rows says `costroid: standard input holds no rows, so nothing was sent`. It named `-`.
+
+In the comment, the check and the job summary:
+
+- Every amount states its basis in its own sentence, label or row. A baseline's median or P95 reads "at list". A rule's own line names the bases its cost adds. The cap line reads "Cost: USD 0.0283136 at list (Measured), USD 0.0273136 and 16960 tokens over the cap." A receipt's figure reads "at list (List-equivalent, not billed)". A figure's fold is labelled with its basis, and each infrastructure row has a Basis cell.
+- A comment says once who vouched for its figures, in its first line where a rule was kept: "Nothing outside the job checked the figures, so the check is neutral." or "A ledger checked the rows against the job's OIDC token." The "Unchecked:" and "Checked:" lines are left out there.
+- The title of a demoted rule carries the figure and the budget, and ends "After 2026-12-12 09:00 UTC this fails the check."
+- The job summary holds the comment's three columns. The catalog and each figure's token counts are in its folded details: "Tokens: 8 uncached input, 15605 cache read, 7945 cache write and 272 output." A figure from a subscription login is marked ", subscription" in its cell, and one sentence under the table says what that means.
+- Infrastructure figures, a receipt's sessions and the pull request's totals stand in one folded section under the table.
+- `costroid demo --state capped` opens on the run past its cap, where it opened "Within budget". Its example sets no budget.
+
+### What you can now do
+
+- Read in every comment what Costroid is, with a link to the page on how the check decides. No failing comment linked it.
+- Read under a check that fails because the rows artifact was refused that no approval changes it, with a link to the fix.
+- Run `costroid init … --pr` from a script or a coding agent without it waiting for ever. Where standard input is not a terminal and no `--key-env` is given, `init` lists the repository's secrets first, and where none is the agent's key it refuses before it writes a file and names `--key-env`.
+- Pipe rows into `costroid policy`, `report`, `follow-up`, `export` and `reconcile` with `--rows -`, as into `emit-otlp`.
+- Read `costroid lint-recipes` and `costroid reconcile` as JSON with `--json`: `costroid.lint/0.1` and `costroid.reconcile/0.1`. `lint-recipes` states a rejected line with the severity `costroid lint` gives the same finding, and exits 1 on any of them, so `count.high` can be 0 beside exit 1.
+- Ask for a subcommand's help by name: `costroid help keys create`.
+- Read `costroid doctor`, `init` and `policy` at a terminal of 80 columns without a word broken. Into a pipe each prints its lines whole, as before.
+- Open a pull request with a second `costroid init --force --pr` that holds the `costroid.yml` the first `init` wrote. The list `init` prints before its commit is the set it commits.
+- See in a ledger which rows met another statement: `POST /v1/rows` answers `contested`, the rows whose id another run's verified row also holds, and `outranked`, the rows of a run that an unverified statement of the same charge gave way to. `GET /v1/pulls/{pr}` answers `contested_rows` and `outranked_rows`. A team that sends telemetry with an ingest key and rows with the job's token reads its rows outranked, none contested.
+
+### Fixed
+
+- `costroid init --pr` waited for ever on a key prompt when standard input was not a terminal.
+- `--rows -` was read as a file named `-` on five commands.
+- The baseline sentences and the receipt's amount stated a figure with no basis.
+
 ## 1.0.0-alpha.34 (2026-11-24)
 
 ### Read this if you ask `costroid serve` for a verdict
