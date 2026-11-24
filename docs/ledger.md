@@ -91,7 +91,7 @@ DAY         HOST                                 OUTCOME    COUNT
 2026-11-01  token.actions.githubusercontent.com  completed  12
 ```
 
-`--json` prints the same lines as `{"counters":[{"day","host","outcome","count"}]}`. Each line is one UTC day, one host and one outcome: `completed` for any answer, `failed` for no answer, and `refused` for a call the list stopped before a socket opened. Each hop of a redirect counts once. The report keeps no path, query, header or body.
+`--json` prints the same lines as one object, `{"schema":"costroid.egress/0.1","counters":[{"day","host","outcome","count"}]}`, and an empty list when no call has been recorded. Each line is one UTC day, one host and one outcome: `completed` for any answer, `failed` for no answer, and `refused` for a call the list stopped before a socket opened. Each hop of a redirect counts once. The report keeps no path, query, header or body.
 
 The service writes its counters every 5 seconds, so a process that is killed loses at most the last 5 seconds. A failed write is logged and retried, and it never fails the call it counts.
 

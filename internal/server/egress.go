@@ -33,7 +33,7 @@ var EgressUsage = cli.Page{
 		{Heading: "What the report holds", Body: []cli.Block{cli.Text(`A refused call never
 opened a socket. The report holds no path, query, header or body. A service
 writes its counters every 5 seconds. --json prints the counters as one JSON
-object.`)}},
+object. Its first key, schema, names the object costroid.egress/0.1.`)}},
 	},
 	Environment: []cli.Block{cli.Rows{{envDatabase, "the application role's connection"}}},
 	Exits: []cli.Row{
@@ -99,11 +99,24 @@ func egressReport(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	if *asJSON {
-		return json.NewEncoder(stdout).Encode(struct {
-			Counters []egress.Count `json:"counters"`
-		}{counts})
+		return printEgressObject(stdout, counts)
 	}
 	return printEgress(stdout, counts)
+}
+
+// egressSchema names the object egress report --json prints.
+const egressSchema = "costroid.egress/0.1"
+
+// printEgressObject prints the counters as one object under its name. A
+// ledger that recorded no call prints an empty list, never null.
+func printEgressObject(w io.Writer, counts []egress.Count) error {
+	if counts == nil {
+		counts = []egress.Count{}
+	}
+	return json.NewEncoder(w).Encode(struct {
+		Schema   string         `json:"schema"`
+		Counters []egress.Count `json:"counters"`
+	}{egressSchema, counts})
 }
 
 func printEgress(w io.Writer, counts []egress.Count) error {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +33,37 @@ func TestFailExitsTwoOnAMistakeAnd125OnAnythingElse(t *testing.T) {
 		if code := Fail(&stderr, check.err); code != check.code || stderr.String() != check.want {
 			t.Errorf("%s: exit %d, stderr:\n%swant exit %d:\n%s", name, code, stderr.String(), check.code, check.want)
 		}
+	}
+}
+
+// TestAnErrorWithNoNextStepEndsOnItsSectionsAddress holds the address Explain
+// adds: the section its command named, the section for any command where a
+// file is what is wrong, and no address under a mistake or an error that
+// names its own next step.
+func TestAnErrorWithNoNextStepEndsOnItsSectionsAddress(t *testing.T) {
+	_, absent := os.ReadFile(filepath.Join(t.TempDir(), "rows.jsonl"))
+	for name, check := range map[string]struct {
+		err  error
+		want string
+	}{
+		"work that could not be done": {errors.New("the ledger did not answer"), "\nSee " + Troubleshooting + "#tallying-rows.\n"},
+		"a file that is not there":    {fmt.Errorf("read the rows: %w", absent), "\nSee " + Troubleshooting + "#" + AnyCommand + ".\n"},
+		"an error with its next step": {Stopped("no rows file at rows.jsonl", "costroid run writes one at --out."), "\ncostroid run writes one at --out.\n"},
+		"a wrong command line":        {Mistaken("tally", errors.New("tally takes no argument")), "\nRun costroid help tally to see its usage.\n"},
+	} {
+		var written bytes.Buffer
+		stderr := NewMessages(&written)
+		About(stderr, "tallying-rows")
+		Explain(stderr, check.err)
+		if got := written.String(); !strings.HasSuffix(got, check.want) || strings.Count(got, "See ") > 1 {
+			t.Errorf("%s prints %q, want it to end on %q", name, got, check.want)
+		}
+	}
+	var written bytes.Buffer
+	stderr := NewMessages(&written)
+	Explain(stderr, errors.New("the ledger did not answer"))
+	if want := "costroid: the ledger did not answer\nSee " + Troubleshooting + ".\n"; written.String() != want {
+		t.Errorf("with no section named: %q, want %q", written.String(), want)
 	}
 }
 

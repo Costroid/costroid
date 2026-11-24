@@ -72,7 +72,7 @@ func TestResultCommandSaysWhenNoCheckIsOnTheHead(t *testing.T) {
 	stub := reportEnvironment(t, pullRequestEvent())
 	stub.Head = headCommit
 	code, stdout, stderr := execute(t, "result", "--pr", "7")
-	if code != exitRejected || stdout != "" || stderr != "costroid: pull request 7: history: no costroid check run is on the commit yet\n" {
+	if code != exitRejected || stdout != "" || stderr != askingLine(stub)+"costroid: pull request 7: history: no costroid check run is on the commit yet\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -103,7 +103,7 @@ func TestResultNamesTheFixForAMissingToken(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code, stdout, stderr := execute(t, "result", "--pr", "7")
-	want := `costroid: GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in` + "\n" + seeTroubleshooting
+	want := `costroid: GITHUB_TOKEN is not set: set a token that can read the repository, such as with export GITHUB_TOKEN="$(gh auth token)" once gh is signed in` + "\n" + see(otherCommands)
 	if code != exitFailure || stdout != "" || stderr != want {
 		t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 	}
@@ -148,7 +148,7 @@ func TestResultReadsTheRepositoryFromTheRemote(t *testing.T) {
 			if code != 0 || stdout != checkBlock(t, newest.Text)+"\n" {
 				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
-			if want := "costroid: result reads " + test.read + ", the repository the remote " + test.remote + " names\n"; stderr != want {
+			if want := "costroid: result reads " + test.read + ", the repository the remote " + test.remote + " names\n" + askingLine(stub); stderr != want {
 				t.Errorf("stderr %q, want %q", stderr, want)
 			}
 			for _, request := range stub.Requests {
@@ -169,7 +169,7 @@ func TestResultReadsTheRepositoryFromTheRemote(t *testing.T) {
 		t.Run(refusal.label, func(t *testing.T) {
 			repositoryWithRemotes(t, refusal.remotes...)
 			code, stdout, stderr := execute(t, "result", "--pr", "7")
-			want := "costroid: name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY: " + refusal.want + "\n" + seeTroubleshooting
+			want := "costroid: name the repository with --repo OWNER/NAME, or set GITHUB_REPOSITORY: " + refusal.want + "\n" + see(otherCommands)
 			if code != exitFailure || stdout != "" || stderr != want {
 				t.Errorf("exit %d, stdout %q, stderr %q, want %q", code, stdout, stderr, want)
 			}

@@ -38,11 +38,11 @@ costroid: printed a patch for .github/workflows/review.yml, and wrote nothing
 Apply it from the repository's root with git apply. Your job keeps the
 permissions it has, and the read step asks for nothing more. The report job
 holds checks: write and pull-requests: write, runs on pull requests alone, and
-runs nothing the pull request wrote. docs/existing-workflow.md says more. The
-patch adds --max-budget-usd 5 to the claude_args of the claude-code-action step,
-so Claude Code stops a run once its own estimate passes USD 5, and gives the
-read step and the report job that cap. To change the cap, change it in
-claude_args, in claude-args and in both budget-usd inputs.
+runs nothing the pull request wrote. https://docs.costroid.com/existing-workflow
+says more. The patch adds --max-budget-usd 5 to the claude_args of the
+claude-code-action step, so Claude Code stops a run once its own estimate passes
+USD 5.00, and gives the read step and the report job that cap. To change the
+cap, change it in claude_args, in claude-args and in both budget-usd inputs.
 == four spaces: exit 0
 -- stdout --
 --- a/.github/workflows/review.yml
@@ -84,11 +84,11 @@ costroid: printed a patch for .github/workflows/review.yml, and wrote nothing
 Apply it from the repository's root with git apply. Your job keeps the
 permissions it has, and the read step asks for nothing more. The report job
 holds checks: write and pull-requests: write, runs on pull requests alone, and
-runs nothing the pull request wrote. docs/existing-workflow.md says more. The
-patch adds --max-budget-usd 2.50 to the claude_args of the claude-code-action
-step, so Claude Code stops a run once its own estimate passes USD 2.50, and
-gives the read step and the report job that cap. To change the cap, change it in
-claude_args, in claude-args and in both budget-usd inputs.
+runs nothing the pull request wrote. https://docs.costroid.com/existing-workflow
+says more. The patch adds --max-budget-usd 2.50 to the claude_args of the
+claude-code-action step, so Claude Code stops a run once its own estimate passes
+USD 2.50, and gives the read step and the report job that cap. To change the
+cap, change it in claude_args, in claude-args and in both budget-usd inputs.
 == a subscription's token: exit 0
 -- stdout --
 --- a/.github/workflows/review.yml
@@ -131,11 +131,11 @@ costroid: printed a patch for .github/workflows/review.yml, and wrote nothing
 Apply it from the repository's root with git apply. Your job keeps the
 permissions it has, and the read step asks for nothing more. The report job
 holds checks: write and pull-requests: write, runs on pull requests alone, and
-runs nothing the pull request wrote. docs/existing-workflow.md says more. The
-patch adds --max-budget-usd 5 to the claude_args of the claude-code-action step,
-so Claude Code stops a run once its own estimate passes USD 5, and gives the
-read step and the report job that cap. To change the cap, change it in
-claude_args, in claude-args and in both budget-usd inputs.
+runs nothing the pull request wrote. https://docs.costroid.com/existing-workflow
+says more. The patch adds --max-budget-usd 5 to the claude_args of the
+claude-code-action step, so Claude Code stops a run once its own estimate passes
+USD 5.00, and gives the read step and the report job that cap. To change the
+cap, change it in claude_args, in claude-args and in both budget-usd inputs.
 Figures will read List-equivalent, not billed. No subscription run has been
 recorded yet, so that reading is unverified.
 == the platform: exit 0
@@ -234,11 +234,11 @@ costroid: printed a patch for .github/workflows/review.yml and .github/workflows
 Apply it from the repository's root with git apply. Your job keeps the
 permissions it has, and the read step asks for nothing more. The report job
 holds checks: write and pull-requests: write, runs on pull requests alone, and
-runs nothing the pull request wrote. docs/existing-workflow.md says more. The
-patch adds --max-budget-usd 5 to the claude_args of the claude-code-action step,
-so Claude Code stops a run once its own estimate passes USD 5, and gives the
-read step and the report job that cap. To change the cap, change it in
-claude_args, in claude-args and in both budget-usd inputs.
+runs nothing the pull request wrote. https://docs.costroid.com/existing-workflow
+says more. The patch adds --max-budget-usd 5 to the claude_args of the
+claude-code-action step, so Claude Code stops a run once its own estimate passes
+USD 5.00, and gives the read step and the report job that cap. To change the
+cap, change it in claude_args, in claude-args and in both budget-usd inputs.
 
 The ingest job holds id-token: write and reads the platform's address from a
 repository variable. Set it with:
@@ -246,5 +246,5 @@ repository variable. Set it with:
 The ingest job sends the rows once the integration token is set as
 COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. The workflow
 costroid-connect.yml binds it from the default branch, on a push when that
-branch is protected and on its daily schedule otherwise. docs/connect.md says
-how.
+branch is protected and on its daily schedule otherwise.
+https://docs.costroid.com/connect says how.

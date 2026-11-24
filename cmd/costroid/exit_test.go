@@ -370,6 +370,110 @@ func TestACommandThatCouldNotDoItsWorkExits125(t *testing.T) {
 	}
 }
 
+// pageRow is a line the troubleshooting page quotes.
+var pageRow = regexp.MustCompile("`costroid: ([^`]+)`")
+
+// sectionLists reports whether the section of page under the heading that
+// makes anchor quotes a line of the shape of line, where a word in angle
+// brackets on the page stands for any text. A section runs to the next
+// heading of its own level.
+func sectionLists(page, anchor, line string) bool {
+	inside := false
+	for _, text := range strings.SplitAfter(page, "\n## ") {
+		heading, _, _ := strings.Cut(text, "\n")
+		if inside = anchors("## " + heading + "\n")[anchor]; !inside {
+			continue
+		}
+		for _, row := range pageRow.FindAllStringSubmatch(text, -1) {
+			parts := regexp.MustCompile(`<[a-z][a-z -]*>`).Split(row[1], -1)
+			for i, part := range parts {
+				parts[i] = regexp.QuoteMeta(part)
+			}
+			if row[1] != "<error>" && regexp.MustCompile("^"+strings.Join(parts, ".+")+"$").MatchString(line) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestAnErrorsAddressNamesTheSectionThatListsItsLine holds the address an
+// error with no next step of its own ends on. Every section a command can
+// name is a heading of the troubleshooting page. Then it walks errors of
+// that kind: each ends on a section's address, never on the page alone, and
+// the section quotes a line of the error's shape. The one row that stands
+// for any error does not count as quoting it.
+func TestAnErrorsAddressNamesTheSectionThatListsItsLine(t *testing.T) {
+	page := readFile(t, filepath.Join(repositoryRoot, "docs", "troubleshooting.md"))
+	headings := anchors(page)
+	named := []string{cli.AnyCommand, otherCommands, "writing-rows-for-another-tool", "reading-a-gh-aw-run"}
+	for _, entry := range commands {
+		named = append(named, section(entry.name))
+	}
+	for name := range sections {
+		if _, ok := lookup(name); !ok {
+			t.Errorf("a section is named for %s, which is no command", name)
+		}
+	}
+	for _, anchor := range named {
+		if !headings[anchor] {
+			t.Errorf("docs/troubleshooting.md has no heading that makes #%s", anchor)
+		}
+	}
+
+	clearCI(t)
+	directory := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(directory))
+	t.Chdir(directory)
+	writeFile(t, filepath.Join(directory, "rows.jsonl"), "")
+	writeFile(t, filepath.Join(directory, "no-currency.jsonl"), `{"BillingCurrency":"dollars","ListCost":"1"}`+"\n")
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+	}))
+	defer refusing.Close()
+	t.Setenv("GITHUB_TOKEN", "ghs_example")
+	t.Setenv("GITHUB_API_URL", refusing.URL)
+	for _, variable := range []string{"COSTROID_DATABASE_URL", "COSTROID_MIGRATION_DATABASE_URL", sealingKeyVariable, platformVariable} {
+		t.Setenv(variable, "")
+	}
+	for _, c := range []struct {
+		args   []string
+		anchor string
+	}{
+		{[]string{"lint", "absent.yml"}, cli.AnyCommand},
+		{[]string{"lint-recipes", "absent.yml"}, cli.AnyCommand},
+		{[]string{"validate", "absent.yml"}, cli.AnyCommand},
+		{[]string{"validate", directory}, cli.AnyCommand},
+		{[]string{"policy", "--rows", "absent.jsonl"}, cli.AnyCommand},
+		{[]string{"policy", "--rows", "rows.jsonl", "--config", directory}, cli.AnyCommand},
+		{[]string{"run", "--budget-usd", "5", "--out", filepath.Join("absent", "rows.jsonl"), "--", "claude", "-p", "work"}, cli.AnyCommand},
+		{[]string{"ingest-run", "--from", "execution-file=absent.json", "--out", "out.jsonl"}, cli.AnyCommand},
+		{[]string{"emit-otlp", "--rows", "absent.jsonl"}, cli.AnyCommand},
+		{[]string{"reconcile", "--rows", "absent.jsonl", "--from", "2026-11-01", "--to", "2026-11-01"}, cli.AnyCommand},
+		{[]string{"export", "--rows", "absent.jsonl", "--format", "focus-csv"}, cli.AnyCommand},
+		{[]string{"ingest-run", "--from", "gh-aw=absent", "--out", "out.jsonl"}, "reading-a-gh-aw-run"},
+		{[]string{"policy", "--rows", "no-currency.jsonl"}, otherCommands},
+		{[]string{"run", "--budget-usd", "5", "--agent", "claude-code", "--out", "out.jsonl", "--", "npx"}, "running-the-agent"},
+		{[]string{"result", "--quiet", "--pr", "7", "--repo", "example/widgets"}, otherCommands},
+		{[]string{"gateway", "public-key"}, otherCommands},
+		{[]string{"serve"}, otherCommands},
+		{[]string{"keys", "create", "--owner", "github.com:example"}, otherCommands},
+		{[]string{"egress", "report"}, otherCommands},
+	} {
+		code, _, stderr := execute(t, c.args...)
+		lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+		first, found := strings.CutPrefix(lines[0], "costroid: ")
+		want := "See " + cli.Troubleshooting + "#" + c.anchor + "."
+		if code != cli.ExitCouldNot || !found || len(lines) != 2 || lines[1] != want {
+			t.Errorf("%v: exit %d, and it ends on %q, want %q:\n%s", c.args, code, lines[len(lines)-1], want, stderr)
+			continue
+		}
+		if !sectionLists(page, c.anchor, first) {
+			t.Errorf("%v ends on #%s, and that section quotes no line of the shape of %q", c.args, c.anchor, lines[0])
+		}
+	}
+}
+
 // firstRun are the commands a person meets first.
 var firstRun = []string{"demo", "lint", "init", "doctor", "validate", "run", "policy", "report", "ingest-run", "follow-up", "approve", "result"}
 
@@ -411,7 +515,7 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		{args: []string{"init", "bitbucket", "--agent", "claude"}, names: `"bitbucket"`},
 		{args: []string{"doctor", "path"}, names: `"path"`},
 		{args: []string{"doctor", "--ci"}, names: "--ci"},
-		{args: []string{"validate", "absent.yml"}, names: "absent.yml does not exist", then: []string{"See " + cli.Troubleshooting + "."}},
+		{args: []string{"validate", "absent.yml"}, names: "absent.yml does not exist", then: []string{"See " + cli.Troubleshooting + "#" + cli.AnyCommand + "."}},
 		{args: []string{"validate", "a.yml", "b.yml"}, names: "validate takes one path"},
 		{args: []string{"run", "--budget-usd", "five", "--", "claude", "-p", "work"}, names: `--budget-usd is an amount in USD above 0, such as 5 or 2.50, not "five"`},
 		{args: []string{"run", "--budget-usd", "5", "--", "frobnicate"}, names: "frobnicate is not an agent costroid run reads", then: []string{"It reads " + strings.Join(run.Agents, ", ") + ".", "Name the one the command starts with --agent.", "Run costroid help run to see its usage."}},
@@ -419,8 +523,8 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		{args: []string{"policy"}, names: "policy needs --rows and takes no argument", then: []string{"Run costroid help policy to see its usage."}},
 		{args: []string{"policy", "--rows", "rows.jsonl", "--at", "yesterday"}, names: `--at takes a time in RFC 3339, such as 2026-11-21T09:00:00Z, not "yesterday"`},
 		{args: []string{"policy", "--rows", "absent.jsonl"}, names: "absent.jsonl does not exist"},
-		{args: []string{"policy", "--rows", "no-currency.jsonl"}, names: "rows line 1: BillingCurrency is not an ISO code", then: []string{"See " + cli.Troubleshooting + "."}},
-		{args: []string{"run", "--budget-usd", "5", "--agent", "claude-code", "--out", "out.jsonl", "--", "npx"}, names: "npx names no package or script", then: []string{"See " + cli.Troubleshooting + "."}},
+		{args: []string{"policy", "--rows", "no-currency.jsonl"}, names: "rows line 1: BillingCurrency is not an ISO code", then: []string{"See " + cli.Troubleshooting + "#" + otherCommands + "."}},
+		{args: []string{"run", "--budget-usd", "5", "--agent", "claude-code", "--out", "out.jsonl", "--", "npx"}, names: "npx names no package or script", then: []string{"See " + cli.Troubleshooting + "#running-the-agent."}},
 		{args: []string{"report"}, names: "report needs --rows"},
 		{args: []string{"report", "--rows", "rows.jsonl"}, names: "report refused: neither GitHub Actions nor GitLab CI was detected", then: []string{"report posts from a job of one of them.", "Run costroid report --preview --rows FILE to print the comment here."}},
 		{args: []string{"report", "--preview", "--rows", "absent.jsonl"}, names: "no rows file at absent.jsonl", then: []string{"costroid run writes one at --out, and costroid demo shows a comment without one."}},
@@ -432,7 +536,7 @@ func TestAnErrorsFirstLineSaysWhatIsWrong(t *testing.T) {
 		{args: []string{"approve"}, names: "approve refused: GitHub Actions was not detected", then: []string{"approve runs in a GitHub Actions job on the pull_request_review event, as recipes/github-approval.yml does."}},
 		{args: []string{"result"}, names: "result needs --pr"},
 		{args: []string{"result", "--pr", "7", "--repo", "example/widgets"}, names: "GITHUB_TOKEN is not set"},
-		{args: []string{"result", "--pr", "7", "--repo", "example/widgets"}, token: "ghs_example", names: "read pull request 7: GET /repos/example/widgets/pulls/7 answered 500", then: []string{"See " + cli.Troubleshooting + "."}},
+		{args: []string{"result", "--quiet", "--pr", "7", "--repo", "example/widgets"}, token: "ghs_example", names: "read pull request 7: GET /repos/example/widgets/pulls/7 answered 500", then: []string{"See " + cli.Troubleshooting + "#" + otherCommands + "."}},
 	} {
 		walked[check.args[0]] = true
 		t.Setenv("GITHUB_TOKEN", check.token)

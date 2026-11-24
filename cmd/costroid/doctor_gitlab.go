@@ -155,7 +155,7 @@ func gitlabLines(templates []gitlabTemplate, gitlab bool) []finding {
 	for _, template := range templates {
 		report := recipelint.LintBytes(template.path, template.source)
 		for _, problem := range report.Findings {
-			lines = append(lines, warn(problem.String(), "docs/recipes.md#what-the-recipes-hold-to says what the rule guards"))
+			lines = append(lines, warn(problem.String(), "https://docs.costroid.com/recipes#what-the-recipes-hold-to says what the rule guards"))
 		}
 		if len(report.Findings) == 0 {
 			lines = append(lines, ok("%s: costroid lint-recipes finds nothing", template.path))
@@ -203,5 +203,5 @@ func gitlabVariableLines(templates []gitlabTemplate) []finding {
 	if key == "" {
 		key = gitlabKeys["claude"]
 	}
-	return []finding{ok("on GitLab doctor reads no CI/CD variables; the template needs %s scoped to the environment costroid-agent and %s to costroid-report, as docs/recipes.md#give-the-report-a-token says", key, gitLabTokenVariable)}
+	return []finding{ok("on GitLab doctor reads no CI/CD variables; the template needs %s scoped to the environment costroid-agent and %s to costroid-report, as https://docs.costroid.com/recipes#give-the-report-a-token says", key, gitLabTokenVariable)}
 }

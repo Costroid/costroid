@@ -90,7 +90,7 @@ beside the App's. When the platform cannot read the CI system's keys,
 connect sends the proof once more after the Retry-After the platform names,
 when that is 120 seconds or less, or after 60 seconds when it names no whole
 seconds. The token and the proof are never printed.
-docs/connect.md gives the job.`)}},
+https://docs.costroid.com/connect gives the job.`)}},
 	},
 	Environment: []cli.Block{cli.Rows{
 		{platformTokenVariable, "the integration token"},
@@ -453,7 +453,7 @@ func (p platform) sendProof(ctx context.Context, installation, tenant, proof str
 // the contract's code.
 var refusalSentences = map[string]func(named binding) string{
 	"INSTALLATION_PROOF_UNPROTECTED_RUN": sentence("Run costroid connect from a scheduled job, or protect the default branch and run it on a push there."),
-	"INSTALLATION_BOUND_ELSEWHERE":       sentence("Another tenant holds this owner, and this proof does not outrank its binding, as docs/connect.md explains."),
+	"INSTALLATION_BOUND_ELSEWHERE":       sentence("Another tenant holds this owner, and this proof does not outrank its binding, as https://docs.costroid.com/connect explains."),
 	"INSTALLATION_PROOF_AUDIENCE_MISMATCH": func(named binding) string {
 		return fmt.Sprintf("The proof names another tenant than the integration token, so set the ID token's aud to %s%s.", proofAudience, named.tenant)
 	},
@@ -485,5 +485,5 @@ func refusalSentence(code string, named binding) string {
 	if says, ok := refusalSentences[code]; ok {
 		return says(named)
 	}
-	return "The contract's refusals in docs/connect.md say what each code means."
+	return "The contract's refusals in https://docs.costroid.com/connect say what each code means."
 }

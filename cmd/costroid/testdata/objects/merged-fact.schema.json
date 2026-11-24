@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/merged-fact.schema.json",
+  "title": "What costroid merged --dry-run prints for one fact, version 0.1",
+  "description": "One merge fact costroid merged would send: its id and the document. merged --dry-run prints one such object a line and sends nothing.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.merged-fact/0.1"
+    },
+    "merge_id": {
+      "description": "The fact's id: the repository's id and the pull request's number.",
+      "type": "string",
+      "minLength": 1
+    },
+    "document": {
+      "description": "The document merged would send for the fact. docs/export.md shows one.",
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "merge_id",
+    "document"
+  ]
+}

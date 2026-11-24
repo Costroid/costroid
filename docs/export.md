@@ -250,7 +250,7 @@ A fact can have more than one cause, and each gets its line. A merge queue's gro
 
 The facts of one push are sent in turn, and the exit code is the worst answer's. A platform that cannot be reached ends the command with exit code 125.
 
-`--json` prints, on standard output, one object per fact sent: `merge_id`, `pull_request`, the `status` the platform answered, `run_identity` and, on a `token_verified` fact by `integration/v0.6` or later, its `ref`, or the refusal's `code`. The lines above go to standard error, with or without it. `--dry-run` prints each fact's `merge_id` and `document` and sends nothing to the platform, so it needs neither the integration token nor the platform's flags:
+`--json` prints, on standard output, one object per fact sent: `schema`, which names it `costroid.merged/0.1`, `merge_id`, `pull_request`, the `status` the platform answered, `run_identity` and, on a `token_verified` fact by `integration/v0.6` or later, its `ref`, or the refusal's `code`. The lines above go to standard error, with or without it. `--dry-run` prints each fact as one object, `costroid.merged-fact/0.1` with its `merge_id` and `document`, and sends nothing to the platform, so it needs neither the integration token nor the platform's flags:
 
 ```sh
 costroid merged --dry-run

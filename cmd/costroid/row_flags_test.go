@@ -123,7 +123,7 @@ func TestFocusProfileFlagWritesStrictRows(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s: exit %d: %s", profile, code, stderr)
 		}
-		summaries[profile] = strings.ReplaceAll(stderr, profile+".jsonl", "rows.jsonl")
+		summaries[profile] = strings.ReplaceAll(stderr, filepath.Join(directory, profile), "rows")
 	}
 	if summaries["default"] != summaries["strict"] || !strings.Contains(summaries["strict"], "at list (Measured)") {
 		t.Errorf("ingest-run states the profiles differently:\n%s\n%s", summaries["default"], summaries["strict"])

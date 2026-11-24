@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/Costroid/costroid/internal/cli"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -568,5 +572,66 @@ func TestAnchorsAreGitHubs(t *testing.T) {
 	}
 	if got["not-a-heading"] {
 		t.Error("a comment in a code block made an anchor")
+	}
+}
+
+// repositoryDocsFile is a page of the documentation named by its file in the
+// repository, and siteAddress a page named by its address, with the heading
+// it names when it names one.
+var (
+	repositoryDocsFile = regexp.MustCompile(`\bdocs/[a-z0-9-]+\.md\b`)
+	siteAddress        = regexp.MustCompile(regexp.QuoteMeta(cli.Documentation) + `/([a-z0-9-]+)(?:#([a-z0-9-]+))?`)
+)
+
+// TestNoLineSendsAReaderToAFileTheyDoNotHave reads every string of the
+// command's own source, which holds each line it prints and each help page. A
+// person with the binary alone has no docs/ directory, so no string names a
+// page by its file there. Each names the page by its address, as an error
+// does, and every address is a page docs/ holds, with a heading the page
+// holds when it names one.
+func TestNoLineSendsAReaderToAFileTheyDoNotHave(t *testing.T) {
+	addresses := 0
+	for _, dir := range []string{".", filepath.Join(repositoryRoot, "internal", "cli")} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") {
+				continue
+			}
+			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ast.Inspect(parsed, func(node ast.Node) bool {
+				literal, ok := node.(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return true
+				}
+				text, err := strconv.Unquote(literal.Value)
+				if err != nil {
+					t.Fatalf("%s: %v", file, err)
+				}
+				if named := repositoryDocsFile.FindString(text); named != "" {
+					t.Errorf("%s holds a string that names %s, a file a reader of the binary does not have", file, named)
+				}
+				for _, address := range siteAddress.FindAllStringSubmatch(text, -1) {
+					addresses++
+					page, err := os.ReadFile(filepath.Join(repositoryRoot, "docs", address[1]+".md"))
+					if err != nil {
+						t.Errorf("%s names %s, and docs/ holds no such page", file, address[0])
+						continue
+					}
+					if address[2] != "" && !anchors(string(page))[address[2]] {
+						t.Errorf("%s names %s, and the page has no heading that makes #%s", file, address[0], address[2])
+					}
+				}
+				return true
+			})
+		}
+	}
+	if addresses < 40 {
+		t.Errorf("read %d addresses, which is too few to be every one the commands print", addresses)
 	}
 }

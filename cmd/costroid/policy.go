@@ -7,8 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Costroid/costroid/internal/cli"
@@ -21,10 +21,11 @@ import (
 const timeForm = "%s takes a time in RFC 3339, such as 2026-11-21T09:00:00Z, not %q"
 
 type policyFlags struct {
-	rows, config, pack, history, baseline string
-	start                                 policy.Start
-	at                                    time.Time
-	json                                  bool
+	rows                            rowsFile
+	config, pack, history, baseline string
+	start                           policy.Start
+	at                              time.Time
+	json                            bool
 	// warnings takes a warning, on the stderr the flags were parsed with.
 	warnings io.Writer
 }
@@ -45,7 +46,7 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 	if *rows == "" || set.NArg() > 0 {
 		return policyFlags{}, errors.New("policy needs --rows and takes no argument")
 	}
-	flags := policyFlags{rows: *rows, config: *config, pack: *pack, history: *earlier, baseline: *baseline, at: time.Now(), json: *asJSON, warnings: stderr}
+	flags := policyFlags{rows: rowsFile{path: *rows}, config: *config, pack: *pack, history: *earlier, baseline: *baseline, at: time.Now(), json: *asJSON, warnings: stderr}
 	if *added != "" {
 		start, err := time.Parse(time.RFC3339, *added)
 		if err != nil {
@@ -66,13 +67,17 @@ func parsePolicy(args []string, stdout, stderr io.Writer) (policyFlags, error) {
 // policyCommand gives the verdict the check gives, offline, and ends on the
 // sentence the check's title carries. It exits 1 on failure, so a script can
 // stop on it.
-func policyCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func policyCommand(ctx context.Context, args []string, std stdio) int {
+	stdout, stderr := std.stdout, std.stderr
 	flags, err := parsePolicy(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("policy", err))
+	}
+	if err := flags.rows.hold(std.stdin); err != nil {
+		return cli.Fail(stderr, err)
 	}
 	verdict, runs, err := offlineCheck(ctx, flags)
 	if err != nil {
@@ -99,7 +104,7 @@ func offlineVerdict(ctx context.Context, flags policyFlags) (policy.Verdict, err
 // offlineCheck gives the verdict and the history it was read with, so the
 // pull request's total the last line names is the one the verdict read.
 func offlineCheck(ctx context.Context, flags policyFlags) (policy.Verdict, earlierRuns, error) {
-	file, err := os.Open(flags.rows)
+	file, err := flags.rows.open()
 	if err != nil {
 		return policy.Verdict{}, earlierRuns{}, err
 	}
@@ -204,20 +209,30 @@ func historyOf(ctx context.Context, flags policyFlags, config policy.ConfigFile)
 	return runs, nil
 }
 
+// policySchema names the object policy --json prints.
+const policySchema = "costroid.policy/0.1"
+
+// namedVerdict is that object: the verdict as the check's machine block
+// carries it, under its name.
+type namedVerdict struct {
+	Schema string `json:"schema"`
+	policy.Verdict
+}
+
 // printVerdict prints what the verdict sentence leaves unsaid, one sentence a
 // line, and last the sentence itself, which names the rows' figures and,
 // under --history, the bases of lifetime, the pull request's total. --json
 // prints the verdict alone.
 func printVerdict(stdout io.Writer, verdict policy.Verdict, lifetime *comment.Lifetime, flags policyFlags) error {
 	if flags.json {
-		encoded, err := json.MarshalIndent(verdict, "", "  ")
+		encoded, err := json.MarshalIndent(namedVerdict{Schema: policySchema, Verdict: verdict}, "", "  ")
 		if err != nil {
 			return fmt.Errorf("encode the verdict: %w", err)
 		}
 		_, err = fmt.Fprintf(stdout, "%s\n", encoded)
 		return err
 	}
-	file, err := os.Open(flags.rows)
+	file, err := flags.rows.open()
 	if err != nil {
 		return err
 	}
@@ -230,9 +245,23 @@ func printVerdict(stdout io.Writer, verdict policy.Verdict, lifetime *comment.Li
 	if ledger.Rows == 0 {
 		report.State, report.Reason = comment.NoRows, comment.EmptyRowsFile
 	}
+	// The lines are the comment's, which marks a key as code. A terminal
+	// and a pipe show no Markdown, so the marks are taken off.
+	var lines []string
 	for _, line := range comment.VerdictLines(report, comment.LocalConfig(flags.config)) {
-		fmt.Fprintln(stdout, line)
+		lines = append(lines, plainText(line))
 	}
-	_, err = fmt.Fprintln(stdout, comment.VerdictSentence(report))
+	lines = append(lines, comment.VerdictSentence(report))
+	// A program reads one sentence a line. At a terminal each sentence is
+	// wrapped for the person there, a blank line apart, so the last
+	// paragraph is the verdict sentence.
+	if cli.AtTerminal(stdout) {
+		for i, line := range lines {
+			lines[i] = strings.TrimSuffix(wrap(line, terminalWidth), "\n")
+		}
+		_, err = fmt.Fprintln(stdout, strings.Join(lines, "\n\n"))
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, strings.Join(lines, "\n"))
 	return err
 }

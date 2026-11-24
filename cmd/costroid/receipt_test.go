@@ -233,19 +233,19 @@ func TestASessionTheRunAlsoHoldsCountsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	stated := &comment.Receipt{}
-	if err := priceReceipt(stated, receiptOnBranch(), runSessions(rows)); err != nil {
+	if err := priceReceipt(stated, receiptOnBranch(), runSessions(rowsFile{path: rows})); err != nil {
 		t.Fatal(err)
 	}
 	if stated.Sessions != 1 || stated.Held != 1 || len(stated.Figures) != 1 || stated.Figures[0].Cost.String() != "2" || stated.Figures[0].Rows != 1 {
 		t.Errorf("the receipt beside the run's rows: %+v", stated)
 	}
 	alone := &comment.Receipt{}
-	if err := priceReceipt(alone, receiptOnBranch(), runSessions(filepath.Join(t.TempDir(), "absent.jsonl"))); err != nil || alone.Sessions != 2 || alone.Held != 0 || alone.Figures[0].Cost.String() != "3" {
+	if err := priceReceipt(alone, receiptOnBranch(), runSessions(rowsFile{path: filepath.Join(t.TempDir(), "absent.jsonl")})); err != nil || alone.Sessions != 2 || alone.Held != 0 || alone.Figures[0].Cost.String() != "3" {
 		t.Errorf("the receipt with no rows file: %+v, %v", alone, err)
 	}
 	held := receiptOnBranch()
 	held.Sessions = held.Sessions[:1]
-	if err := priceReceipt(&comment.Receipt{}, held, runSessions(rows)); err == nil {
+	if err := priceReceipt(&comment.Receipt{}, held, runSessions(rowsFile{path: rows})); err == nil {
 		t.Error("a receipt whose every session the run holds was priced")
 	}
 }
@@ -431,7 +431,7 @@ func TestNoCommandSendsARowFromADevelopersMachine(t *testing.T) {
 		send := func(rows string) (int, string) {
 			var stdout, stderr bytes.Buffer
 			args := []string{"--rows", rows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
-			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 			return code, stdout.String() + stderr.String()
 		}
 		if code, said := send(withOrigin(t, exampleRows)); code != exitFailure || !strings.HasPrefix(said, refused) || stub.timesAsked() != 0 {

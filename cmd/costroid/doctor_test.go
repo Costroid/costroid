@@ -1111,7 +1111,7 @@ func TestDoctorReadsPlatformScopes(t *testing.T) {
 	const (
 		every    = "COSTROID_PLATFORM_TOKEN in this shell carries identity:read, installations:write and rows:write, and expires at 2027-01-01T08:00:00Z"
 		owner    = "github-owner:" + testOwner
-		connects = ": run costroid connect from a scheduled job, as docs/connect.md says"
+		connects = ": run costroid connect from a scheduled job, as https://docs.costroid.com/connect says"
 	)
 	revoked := `[{"id":"` + owner + `","tenant_id":"` + testTenant + `","owner_id":"` + testOwner + `","status":"revoked","proof_kind":"ci_oidc","bound_at":"2026-10-01T08:02:11Z","proven_at":"2026-10-02T08:00:00Z","ended_at":"2026-10-03T08:00:00Z"}]`
 	for _, check := range []struct {
@@ -1124,7 +1124,7 @@ func TestDoctorReadsPlatformScopes(t *testing.T) {
 			"ok: " + owner + " is bound to tenant " + testTenant + ", proven at 2026-11-08T06:00:00Z",
 		}},
 		{name: "a scope lacking", scopes: `["identity:read","rows:write"]`, paths: 2, want: []string{
-			"warn: COSTROID_PLATFORM_TOKEN in this shell carries identity:read and rows:write, and expires at 2027-01-01T08:00:00Z, and lacks installations:write: create one with identity:read, installations:write and rows:write, as docs/connect.md says",
+			"warn: COSTROID_PLATFORM_TOKEN in this shell carries identity:read and rows:write, and expires at 2027-01-01T08:00:00Z, and lacks installations:write: create one with identity:read, installations:write and rows:write, as https://docs.costroid.com/connect says",
 		}},
 		{name: "no identity:read", scopes: `["rows:write","quotas:read"]`, paths: 1, want: []string{
 			"warn: COSTROID_PLATFORM_TOKEN in this shell carries rows:write and quotas:read, and expires at 2027-01-01T08:00:00Z, and lacks identity:read and installations:write: ",
@@ -1188,7 +1188,7 @@ func TestDoctorNamesThePlatformTokenByItsSecret(t *testing.T) {
 	host = stub.platformHost("ANTHROPIC_API_KEY\n")
 	host.env[platformTokenVariable] = fakeKey
 	code, stdout, _ := runDoctor(t, root, host)
-	if want := "fail: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform, as docs/connect.md says"; code != exitRejected || lineWith(stdout, want) != want {
+	if want := "fail: COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform, as https://docs.costroid.com/connect says"; code != exitRejected || lineWith(stdout, want) != want {
 		t.Errorf("exit %d, want %d and %q:\n%s", code, exitRejected, want, stdout)
 	}
 

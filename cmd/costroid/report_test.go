@@ -259,7 +259,7 @@ func TestReportOnACommentEventPostsNothingAndSaysWhy(t *testing.T) {
 		t.Fatalf("exit %d, requests %v, stdout %q: %s", code, stub.Requests, stdout, stderr)
 	}
 	want := "costroid: not posted: report posts on the pull_request event, and this run's event is \"issue_comment\". " +
-		"docs/existing-workflow.md says how to report from the workflow you have\n"
+		"https://docs.costroid.com/existing-workflow says how to report from the workflow you have\n"
 	if stderr != want {
 		t.Errorf("stderr:\n%s", stderr)
 	}
@@ -410,7 +410,7 @@ func TestReportRowsRefuseALink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := readReportRows(link); err == nil || rows.state != comment.Unreadable || rows.reason != comment.NotAFile {
+	if rows, err := readReportRows(rowsFile{path: link}); err == nil || rows.state != comment.Unreadable || rows.reason != comment.NotAFile {
 		t.Fatalf("state %q, reason %q, error %v", rows.state, rows.reason, err)
 	}
 }

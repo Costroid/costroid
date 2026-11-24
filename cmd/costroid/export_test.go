@@ -220,9 +220,16 @@ func (s *platformStub) githubEnv() map[string]string {
 // TestExportSendsTheContractThePlatformStates holds.
 func (s *platformStub) export(t *testing.T, env map[string]string, extra ...string) (int, string, string) {
 	t.Helper()
+	return s.exportFrom(t, "", env, extra...)
+}
+
+// exportFrom is export with stdin on standard input, for a --rows that names
+// it.
+func (s *platformStub) exportFrom(t *testing.T, stdin string, env map[string]string, extra ...string) (int, string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
 	args := append([]string{"--rows", exampleRows, "--platform-url", s.server.URL, "--installation-id", testInstallation}, extra...)
-	code := export(context.Background(), args, s.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	code := export(context.Background(), args, s.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdin: strings.NewReader(stdin), stdout: &stdout, stderr: &stderr})
 	for _, secret := range []string{testIntegrationToken, testRunToken, testRequestToken} {
 		if strings.Contains(stdout.String()+stderr.String(), secret) {
 			t.Fatalf("the output holds a token: %s%s", stdout.String(), stderr.String())
@@ -311,7 +318,7 @@ func TestExportSendsTheContractThePlatformStates(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			env := stub.githubEnv()
 			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
-			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 			if code != 0 || len(stub.exports) != 1 {
 				t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr.String())
 			}
@@ -358,7 +365,7 @@ func TestExportFallsBackToV02WhenIdentityIsRefused(t *testing.T) {
 			stub.identityRefused = &refused
 			var stdout, stderr bytes.Buffer
 			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation, "--batch-id", "nightly-2026-11-07"}
-			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return outside[name] }, testPace, &stdout, &stderr)
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return outside[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 			if code != 0 || len(stub.exports) != 1 {
 				t.Fatalf("exit %d, %d exports: %s", code, len(stub.exports), stderr.String())
 			}
@@ -536,7 +543,7 @@ func TestExportWithNoRowsSendsNothing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	env := stub.githubEnv()
 	args := []string{"--rows", empty, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
-	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 	if code != 0 || len(stub.exports) != 0 || stdout.String() != "" || stderr.String() != "costroid: "+empty+" holds no rows, so nothing was sent\n" {
 		t.Fatalf("exit %d, %d exports: %s%s", code, len(stub.exports), stdout.String(), stderr.String())
 	}
@@ -771,7 +778,7 @@ func TestExportReadsTheIngestVerdict(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			env := stub.githubEnv()
 			args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
-			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, pace, &stdout, &stderr)
+			code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, pace, stdio{stdout: &stdout, stderr: &stderr})
 			if code != check.code || !strings.HasSuffix(stderr.String(), check.stderr) || stdout.String() != "" {
 				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 			}
@@ -812,7 +819,7 @@ func TestExportWarnsWhenNotBound(t *testing.T) {
 	}
 	stub := newPlatformStub(t, http.StatusConflict, `{"error":{"code":"INSTALLATION_NOT_BOUND","message":"::error::forged"}}`)
 	code, stdout, stderr := stub.export(t, stub.githubEnv())
-	want := "costroid: warning: Costroid Platform refused batch 903114-16873409921-1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as docs/connect.md shows, and " + exampleRows + " is kept to send again\n"
+	want := "costroid: warning: Costroid Platform refused batch 903114-16873409921-1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as https://docs.costroid.com/connect shows, and " + exampleRows + " is kept to send again\n"
 	if asked := stub.timesAsked(); code != 0 || stdout != "" || stderr != want || asked != 0 {
 		t.Fatalf("exit %d, asked %d, stdout %q, stderr %q", code, asked, stdout, stderr)
 	}
@@ -845,7 +852,7 @@ func TestExportKeepsTheRowsOfABatchBoundToItsRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	args := []string{"--rows", rows, "--platform-url", stub.server.URL, "--installation-id", testInstallation, "--batch-id", "903114-16873409921-1"}
 	env := map[string]string{platformTokenVariable: testIntegrationToken}
-	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 	want := versionLine(contractV04) + "costroid: Costroid Platform refused batch 903114-16873409921-1: 409 EXPORT_BATCH_RUN_BOUND. The batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it. Nothing was stored, and " + rows + " is kept\n"
 	if code != exitRejected || stdout.String() != "" || stderr.String() != want {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
@@ -873,7 +880,7 @@ func TestExportSendsByV03ToAPlatformThatStatesV03(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	env := stub.githubEnv()
 	args := []string{"--rows", exampleRows, "--platform-url", stub.server.URL, "--installation-id", testInstallation}
-	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 	if code != 0 || !strings.HasPrefix(stderr.String(), versionLine(contractV03)) || stdout.String() != "" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}

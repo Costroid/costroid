@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,9 @@ type command struct {
 	// help is what costroid help <name> prints.
 	help string
 	run  runner
+	// subcommands says the command takes a subcommand, which costroid help
+	// reads after its name.
+	subcommands bool
 }
 
 // group is where a command runs, or what it speaks to.
@@ -60,13 +64,13 @@ var commands = []command{
 	{name: "init", where: onYourMachine, does: "write the workflow", help: initHelp, run: withoutContext(initCommand)},
 	{name: "doctor", where: onYourMachine, does: "check a repository", help: doctorHelp, run: withOutputs(doctorCommand)},
 	{name: "run", where: onYourMachine, does: "run an agent under a cap", help: runHelp, run: runCommand},
-	{name: "policy", where: onYourMachine, does: "give the verdict offline", help: policyHelp, run: withOutputs(policyCommand)},
+	{name: "policy", where: onYourMachine, does: "give the verdict offline", help: policyHelp, run: policyCommand},
 	{name: "receipt", where: onYourMachine, does: "count your own sessions", help: receiptHelp, run: withoutContext(receiptCommand)},
 	{name: "validate", where: onYourMachine, does: "check costroid.yml", help: validateHelp, run: validateCommand},
 	{name: "version", where: onYourMachine, does: "print the release", help: versionHelp, run: versionCommand},
-	{name: "report", where: inAWorkflowJob, does: "post the check and comment", help: reportHelp, run: withOutputs(reportCommand)},
+	{name: "report", where: inAWorkflowJob, does: "post the check and comment", help: reportHelp, run: reportCommand},
 	{name: "ingest-run", where: inAWorkflowJob, does: "write rows after a run", help: ingestRunHelp, run: withoutContext(ingestRunCommand)},
-	{name: "follow-up", where: inAWorkflowJob, does: "post a fork's check", help: followUpHelp, run: withOutputs(followUpCommand)},
+	{name: "follow-up", where: inAWorkflowJob, does: "post a fork's check", help: followUpHelp, run: followUpCommand},
 	{name: "approve", where: inAWorkflowJob, does: "post an approved check", help: approveHelp, run: withOutputs(approveCommand)},
 	{name: "review", where: inAWorkflowJob, does: "post the agent's answer", help: reviewHelp, run: withOutputs(reviewCommand)},
 	{name: "result", where: inAWorkflowJob, does: "print a check's result", help: resultHelp, run: withOutputs(resultCommand)},
@@ -78,10 +82,42 @@ var commands = []command{
 	{name: "emit-otlp", where: toAPlatform, does: "send rows as OTLP spans", help: emitOTLPHelp, run: emitOTLPCommand},
 	{name: "reconcile", where: toAPlatform, does: "compare with a provider", help: reconcileHelp, run: reconcileWithProvider},
 	{name: "serve", where: forALedger, does: "run the ingest service", help: server.ServeUsage, run: withOutputs(server.Main)},
-	{name: "keys", where: forALedger, does: "issue and revoke keys", help: server.KeysUsage, run: withOutputs(server.KeysMain)},
-	{name: "egress", where: forALedger, does: "report outbound calls", help: server.EgressUsage, run: withOutputs(server.EgressMain)},
-	{name: "gateway", where: forALedger, does: "give a run its own key", help: gatewayUsage, run: withOutputs(gatewayCommand)},
-	{name: "app", where: forALedger, does: "register the GitHub App", help: appHelp, run: appCommand},
+	{name: "keys", where: forALedger, does: "issue and revoke keys", help: server.KeysUsage, run: withOutputs(server.KeysMain), subcommands: true},
+	{name: "egress", where: forALedger, does: "report outbound calls", help: server.EgressUsage, run: withOutputs(server.EgressMain), subcommands: true},
+	{name: "gateway", where: forALedger, does: "give a run its own key", help: gatewayUsage, run: withOutputs(gatewayCommand), subcommands: true},
+	{name: "app", where: forALedger, does: "register the GitHub App", help: appHelp, run: appCommand, subcommands: true},
+}
+
+// sections names, for each command that has one, the section of the
+// troubleshooting page that lists the command's lines. An error of the
+// command that names no next step ends on its address. export and ingest-run
+// name another once they know what they were asked for.
+var sections = map[string]string{
+	"doctor":     "checking-a-repository",
+	"run":        "running-the-agent",
+	"receipt":    "printing-a-receipt",
+	"validate":   "costroidyml",
+	"report":     "posting-the-report",
+	"ingest-run": "reading-a-claude-code-action-run",
+	"follow-up":  "posting-the-report",
+	"approve":    "posting-the-report",
+	"review":     "posting-the-agents-answer",
+	"export":     "sending-rows-to-costroid-platform",
+	"merged":     "sending-merge-facts-to-costroid-platform",
+	"connect":    "connecting-to-costroid-platform",
+	"emit-otlp":  "sending-spans-over-otlp",
+	"app":        "registering-the-github-app",
+}
+
+// otherCommands is the section for the lines of a command that has none of
+// its own.
+const otherCommands = "other-commands"
+
+func section(command string) string {
+	if named, ok := sections[command]; ok {
+		return named
+	}
+	return otherCommands
 }
 
 func withOutputs(fn func(ctx context.Context, args []string, stdout, stderr io.Writer) int) runner {
@@ -95,7 +131,7 @@ func withoutContext(fn func(args []string, stdout, stderr io.Writer) int) runner
 // reconcileWithProvider reads the admin key from the environment and asks the
 // provider's API.
 func reconcileWithProvider(ctx context.Context, args []string, std stdio) int {
-	return reconcileCommand(ctx, args, os.Getenv, asking(reconcile.NewClient(), std.stderr), time.Now, std.stdout, std.stderr)
+	return reconcileCommand(ctx, args, os.Getenv, asking(reconcile.NewClient(), std.stderr), time.Now, std)
 }
 
 func lookup(name string) (command, bool) {
@@ -171,11 +207,13 @@ func line(lines []string, i int) string {
 
 // The line a command that succeeded ends on names the command a person runs
 // next, on standard error, where --quiet drops it. demo ends on the verdict
-// sentence, so its line stands above that. No command of costroid's opens a
-// merge request, so on GitLab doctor's line names the page.
+// sentence, so its line stands above that. On GitLab the noun is the host's,
+// a merge request. No command of costroid's opens one, so doctor's line there
+// names the page.
 const (
 	nextAfterDemo           = "Next: costroid init github --agent claude writes the workflow that posts this."
 	nextAfterInit           = "Next: costroid doctor checks this repository before its first pull request."
+	nextAfterInitOnGitLab   = "Next: costroid doctor checks this repository before its first merge request."
 	nextAfterDoctor         = "Next: gh pr create --fill opens the pull request that Costroid comments on."
 	nextAfterDoctorOnGitLab = "Next: open a merge request, as " + cli.Documentation + "/recipes#gitlab-ci says."
 	nextAfterValidate       = "Next: costroid policy --rows FILE holds a run's rows to this file."
@@ -198,12 +236,68 @@ func printObject(stdout io.Writer, object any) error {
 // file.
 const standardInput = "-"
 
+// standardInputName is what a line calls standard input.
+const standardInputName = "standard input"
+
 // readNamed reads the file at path, or stdin when path names it.
 func readNamed(path string, stdin io.Reader) ([]byte, error) {
 	if path == standardInput {
 		return io.ReadAll(stdin)
 	}
 	return os.ReadFile(path)
+}
+
+// rowsFile is what --rows names: a file, or standard input for a dash.
+// Standard input is read once, by hold, and every later reading is of those
+// bytes. Nothing stands beside it: no result object, no note and no cache.
+type rowsFile struct {
+	path string
+	// held is what standard input held, once hold has read it.
+	held []byte
+}
+
+// hold reads standard input when a dash names the rows.
+func (r *rowsFile) hold(stdin io.Reader) (err error) {
+	if r.onStandardInput() {
+		r.held, err = readNamed(r.path, stdin)
+	}
+	return err
+}
+
+func (r rowsFile) onStandardInput() bool { return r.path == standardInput }
+
+// String names the rows in a line a command prints.
+func (r rowsFile) String() string {
+	if r.onStandardInput() {
+		return standardInputName
+	}
+	return r.path
+}
+
+// kept ends a line about rows a platform did not take with clause, which
+// names the file that is as it was. Standard input is no file to keep, so its
+// line ends before the clause.
+func (r rowsFile) kept(clause string) string {
+	if r.onStandardInput() {
+		return ""
+	}
+	return fmt.Sprintf(clause, r.path)
+}
+
+// read gives the rows whole.
+func (r rowsFile) read() ([]byte, error) {
+	if r.onStandardInput() {
+		return r.held, nil
+	}
+	return os.ReadFile(r.path)
+}
+
+// open opens the rows for one reading.
+func (r rowsFile) open() (io.ReadCloser, error) {
+	if r.onStandardInput() {
+		return io.NopCloser(bytes.NewReader(r.held)), nil
+	}
+	return os.Open(r.path)
 }
 
 // usageWidth is the widest line a help page or a closing screen may print.
@@ -231,29 +325,68 @@ func isHelpFlag(arg string) bool {
 }
 
 // parseFlags parses args with set. Help asked for after other flags prints on
-// stdout, as costroid <name> -h does. A flag the set refuses comes back as the
-// lines that say so, and nothing is printed for it here. --quiet, which every
-// set takes, quiets stderr.
+// stdout, as costroid <name> -h does. A flag the set refuses, or one that
+// stands after an argument, comes back as the lines that say so, and nothing
+// is printed for it here. --quiet, which every set takes, quiets stderr.
 func parseFlags(set *flag.FlagSet, args []string, help string, stdout, stderr io.Writer) error {
-	err := cli.Parse(set, args, stderr)
+	return helpOnStdout(cli.Parse(set, args, stderr), help, stdout)
+}
+
+// parseLeadingFlags is parseFlags for a command that leaves every word after
+// its first argument as it is.
+func parseLeadingFlags(set *flag.FlagSet, args []string, help string, stdout, stderr io.Writer) error {
+	return helpOnStdout(cli.ParseLeading(set, args, stderr), help, stdout)
+}
+
+func helpOnStdout(err error, help string, stdout io.Writer) error {
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(stdout, help)
 	}
 	return err
 }
 
-// helpCommand answers costroid help, with or without a command's name.
-func helpCommand(args []string, std stdio) int {
+// helpCommand answers costroid help, with or without a command's name. After
+// the name of a command that takes a subcommand, a subcommand gets what
+// costroid <name> <subcommand> --help gets: the page, or the lines that say
+// the command has no such subcommand.
+func helpCommand(ctx context.Context, args []string, std stdio) int {
 	if len(args) == 0 {
 		fmt.Fprint(std.stdout, usage)
 		return 0
 	}
 	entry, ok := lookup(args[0])
-	if !ok || len(args) > 1 {
-		return unknownCommand(strings.Join(args, " "), std.stderr)
+	switch {
+	case ok && len(args) == 1:
+		fmt.Fprint(std.stdout, entry.help)
+		return 0
+	case ok && entry.subcommands && len(args) == 2 && !strings.HasPrefix(args[1], "-"):
+		return entry.run(ctx, []string{args[1], "--help"}, std)
 	}
-	fmt.Fprint(std.stdout, entry.help)
-	return 0
+	return unknownCommand(strings.Join(args, " "), std.stderr)
+}
+
+// flagBeforeCommand says that a flag stands where the command goes, and runs
+// nothing. When a command's name follows, it shows the line with the command
+// first; it reads no meaning into a flag that stands alone.
+func flagBeforeCommand(args []string, stderr io.Writer) int {
+	typed, _, _ := strings.Cut(args[0], "=")
+	lines := []string{
+		typed + " is a flag, and no command stands before it",
+		"Without a command, costroid takes --help and --version.",
+		"Run costroid help to list the commands.",
+	}
+	at := slices.IndexFunc(args, func(word string) bool { return !strings.HasPrefix(word, "-") })
+	if at > 0 {
+		if _, ok := lookup(args[at]); ok {
+			line := slices.Concat([]string{"costroid", args[at]}, args[:at], args[at+1:])
+			lines = []string{
+				typed + " stands before the command, and flags come after it",
+				"With the command first: " + cli.CommandLine(line),
+			}
+		}
+	}
+	fmt.Fprintf(stderr, "costroid: %s\n", strings.Join(lines, "\n"))
+	return exitUsage
 }
 
 // unknownCommand names the command as it was typed and the nearest one the
@@ -307,7 +440,7 @@ and a reader that refused the agent's output adds its first error line.`
 const statusFileHelp cli.Text = `While the agent works, run writes a status file: what the run has spent so
 far, its cap, what is left and what holds it. It is COSTROID_STATUS_FILE, or
 costroid-status.json in RUNNER_TEMP when that is unset; with neither set, run
-writes none. docs/agents.md describes the file.`
+writes none. https://docs.costroid.com/agents describes the file.`
 
 var ingestRunHelp = cli.Page{
 	Command: "ingest-run",
@@ -369,7 +502,7 @@ ContractedCost and BilledCost the file holds. Every row needs BillingCurrency,
 ChargePeriodStart and ChargePeriodEnd. The file's Tags are dropped, and
 --credential is not read: SubAccountId is the file's. --source names the
 estimate's origin, infrastructure unless given. --optional adds no rows and
-says why when FILE is not there. docs/infrastructure.md describes the file.`)}},
+says why when FILE is not there. https://docs.costroid.com/infrastructure describes the file.`)}},
 		{Heading: "The rows", Body: []cli.Block{accountHelp, rowFlagsHelp, ciHelp}},
 		{Heading: "The result object", Body: []cli.Block{resultFileHelp}},
 	},
@@ -408,6 +541,8 @@ var reportHelp = cli.Page{
 		{"--recorded RUN_ID,DATE", "the rows are the recorded run RUN_ID's from DATE, not the pull request's"},
 	},
 	Sections: []cli.Section{
+		{Heading: "The rows", Body: []cli.Block{cli.Text(`With --rows -, report reads the rows from standard input, and no result
+object: none stands beside them.`)}},
 		{Heading: "What it posts", Body: []cli.Block{cli.Text(`On a pull
 request it reads costroid.yml at the head of the base branch when it runs, and
 at the event's base commit when that head cannot be read. On GitHub
@@ -446,7 +581,7 @@ and the comment there, on the one open pull request follow-up would find.`)}},
 		{Heading: "The result object", Body: []cli.Block{cli.Text(`--json prints on stdout the result object the check run carries, byte for
 byte: the conclusion, figures per currency and basis, token counts by class,
 grades, the cap and what is left or over, and a reason when there are no
-figures. docs/agents.md describes the object.`), resultFileHelp}},
+figures. https://docs.costroid.com/agents describes the object.`), resultFileHelp}},
 	},
 	Environment: []cli.Block{cli.Rows{
 		{"GITHUB_TOKEN", "the token the check run and the comment are posted with"},
@@ -487,7 +622,10 @@ which holds the base repository's token.`,
 		{Heading: "What it reads and posts", Body: []cli.Block{cli.Text(`It reads the finished run's rows as
 data, up to 8 MiB, and costroid.yml at the default branch's commit. It posts no
 comment, and nothing for a branch of the repository itself, whose report job
-posts the check.`)}},
+posts the check.
+
+With --rows -, follow-up reads the rows from standard input, up to the same
+8 MiB.`)}},
 		{Heading: "Rows this job ingested", Body: []cli.Block{cli.Text(`--ingested says this job wrote the rows with costroid ingest-run from the
 finished run's artifact, for a workflow with no report job of its own, such as
 gh-aw's. follow-up then posts for a branch of the repository as well, and reads
@@ -517,7 +655,7 @@ credential per UTC day.`,
 		"costroid reconcile --rows rows.jsonl --from D --to D [--credential ID]",
 		"                   [--upstream-credential SOURCE=ID]",
 		"                   [--out FILE] [--reports DIR --as-of T]",
-		"                   [--export [--installation-id ID]]",
+		"                   [--export [--installation-id ID]] [--json]",
 	},
 	Examples: []string{
 		"costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-20",
@@ -525,6 +663,7 @@ credential per UTC day.`,
 		"    --reports saved --as-of 2026-11-04T00:00:00Z",
 		"costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-20 \\",
 		"    --out reconciliation.jsonl --export",
+		"costroid reconcile --rows rows.jsonl --from 2026-11-01 --to 2026-11-20 --json",
 	},
 	Flags: []cli.Row{
 		{"--rows FILE", "the FOCUS rows, as JSON lines"},
@@ -537,14 +676,21 @@ credential per UTC day.`,
 		{"--as-of T", "when the saved reports were saved, as a UTC instant"},
 		{"--export", "send the rows --out keeps to Costroid Platform, by integration/v0.7, v0.6 or v0.5"},
 		{"--installation-id ID", "with --export, the installation the job runs under: github:<id>, github-owner:<id> or gitlab-namespace:<id>"},
+		{"--json", "print the comparison as one JSON object"},
 	},
 	Sections: []cli.Section{
+		{Heading: "The rows", Body: []cli.Block{cli.Text("With --rows -, reconcile reads the rows from standard input.")}},
+		{Heading: "The comparison as an object", Body: []cli.Block{cli.Text(`--json prints one object on stdout in place of the tables,
+costroid.reconcile/0.1: the reconciliation rows as --out keeps them, each
+source and credential the provider reports and the rows do not name, each day
+a figure stopped, and the count of misses. Standard error and the exit code
+are as without it. https://docs.costroid.com/output describes the object.`)}},
 		{Heading: "What counts as a match", Body: []cli.Block{cli.Text(`Tokens must match within 1% by class. List-price dollars
 are compared within 10%, and the residual is split into named causes.`)}},
 		{Heading: "The provider's reports", Body: []cli.Block{cli.Text(`It runs where the admin key lives, and it reads the key from
 ANTHROPIC_ADMIN_KEY or OPENAI_ADMIN_KEY. The key never leaves the process.
 --reports reads saved report files from a directory instead, and needs no key;
---as-of states when they were saved. docs/reconcile.md names the files.`)}},
+--as-of states when they were saved. https://docs.costroid.com/reconcile names the files.`)}},
 		{Heading: "Credentials and days", Body: []cli.Block{cli.Text(`A row's credential is its SubAccountId. --credential names one for rows where
 that is null. A gateway's rows name its run keys, which the provider never
 sees: --upstream-credential names the key the gateway sends with, once per
@@ -610,6 +756,7 @@ policy keys of the costroid.yml named, which should be the base branch's.`,
 		{"--json", "print the verdict as the machine block carries it"},
 	},
 	Sections: []cli.Section{
+		{Heading: "The rows", Body: []cli.Block{cli.Text("With --rows -, policy reads the rows from standard input.")}},
 		{Heading: "The policy pack", Body: []cli.Block{cli.Text(`--pack names the file of the policy pack its policy_pack names, as the base
 branch holds it. Without --pack, the path policy_pack names is read from the
 directory that holds the costroid.yml named.`)}},
@@ -624,7 +771,10 @@ and --at state when the workflow reached the base branch and when the check
 ran, both as RFC 3339. Without --workflow-added the warn-only period has not
 ended.`)}},
 		{Heading: "What it prints", Body: []cli.Block{cli.Text(`The last line is the verdict sentence, the title the check gets. --json
-prints the verdict as the check's machine block carries it.`)}},
+prints the verdict as the check's machine block carries it. Its first key,
+schema, names the object costroid.policy/0.1. At a terminal each sentence is
+wrapped at 80 columns, a blank line apart, and the last paragraph is the
+verdict sentence.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "success or neutral"},
@@ -660,7 +810,7 @@ standard input, a warning says validate did not read it.
 
 --json prints one object on stdout in place of the lines,
 costroid.validate/0.2: the file, whether it is valid, invalid or absent, each
-problem's pointer and message, and the pack. docs/output.md describes the
+problem's pointer and message, and the pack. https://docs.costroid.com/output describes the
 object.`)}},
 	},
 	Exits: []cli.Row{
@@ -679,12 +829,19 @@ security rules: no pull_request_target trigger, every action pinned by commit
 SHA, explicit permissions, an agent's job that holds read access to the code
 and no OIDC token, agent telemetry that carries no prompt or response, and no
 expression inside a script.`,
-	Usage:    []string{"costroid lint-recipes <paths>"},
-	Examples: []string{"costroid lint-recipes recipes action/action.yml"},
+	Usage:    []string{"costroid lint-recipes [--json] <paths>"},
+	Examples: []string{"costroid lint-recipes recipes action/action.yml", "costroid lint-recipes --json recipes"},
+	Flags:    []cli.Row{{"--json", "print the rejected lines as one JSON object"}},
 	Sections: []cli.Section{
 		{Heading: "What else it holds, and where it prints", Body: []cli.Block{cli.Text(`When the working directory holds a plugin
 marketplace, it holds the marketplace and its plugins to their rules too. Each
-rejected line goes to stdout. costroid lint judges your own workflows instead.`)}},
+rejected line goes to stdout. costroid lint judges your own workflows instead.
+
+--json prints one object on stdout in place of the lines, costroid.lint/0.1,
+the object costroid lint prints. A rejected line is a finding there, with the
+severity costroid lint gives the same finding, and high where the rule is
+lint-recipes' alone. lint-recipes exits 1 on any rejected line, whatever its
+severity. https://docs.costroid.com/output describes the object.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "every file passes"},
@@ -711,7 +868,7 @@ holds costroid.yml. It prints no secret, no value of the environment, and no
 path but the name costroid.yml.
 
 --json prints the same facts as one object on stdout, costroid.version/0.1.
-docs/output.md describes the object.`)}},
+https://docs.costroid.com/output describes the object.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "printed"},

@@ -129,5 +129,9 @@ func policyAnswer(ctx context.Context, request mcpserver.PolicyRequest) (policy.
 	if err != nil {
 		return policy.Verdict{}, err
 	}
+	// The server's standard input carries the protocol, so it holds no rows.
+	if flags.rows.onStandardInput() {
+		return policy.Verdict{}, errors.New("rows names a file: standard input carries the MCP session")
+	}
 	return offlineVerdict(ctx, flags)
 }

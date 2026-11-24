@@ -34,8 +34,16 @@ func (g Group) String() string {
 }
 
 // Unknown is the mistake of a subcommand the group does not have: it names
-// typed and the nearest subcommand, when one is near, and runs neither.
+// typed and the nearest subcommand, when one is near, and runs neither. A
+// flag where the subcommand goes is called a flag.
 func (g Group) Unknown(typed string) error {
+	list := fmt.Sprintf("Run costroid help %s to list its commands.", g.Command)
+	if strings.HasPrefix(typed, "-") {
+		return &Mistake{lines: []string{
+			fmt.Sprintf("%s stands before the %s command, and flags come after it", typed, g.Command),
+			list,
+		}}
+	}
 	names := make([]string, len(g.Subcommands))
 	for i, sub := range g.Subcommands {
 		names[i] = sub[0]
@@ -44,9 +52,5 @@ func (g Group) Unknown(typed string) error {
 	if near == "" {
 		near = "No command is near it."
 	}
-	return &Mistake{lines: []string{
-		fmt.Sprintf("unknown %s command %q", g.Command, typed),
-		near,
-		fmt.Sprintf("Run costroid help %s to list its commands.", g.Command),
-	}}
+	return &Mistake{lines: []string{fmt.Sprintf("unknown %s command %q", g.Command, typed), near, list}}
 }

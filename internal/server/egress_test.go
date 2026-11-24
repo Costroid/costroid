@@ -6,8 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -287,7 +290,7 @@ func TestPostgresAnEmptyReportIsAnEmptyList(t *testing.T) {
 	if code := EgressMain(context.Background(), []string{"report", "--json"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
-	if strings.TrimSpace(stdout.String()) != `{"counters":[]}` {
+	if strings.TrimSpace(stdout.String()) != `{"schema":"costroid.egress/0.1","counters":[]}` {
 		t.Fatalf("%q", stdout.String())
 	}
 	stdout.Reset()
@@ -296,5 +299,66 @@ func TestPostgresAnEmptyReportIsAnEmptyList(t *testing.T) {
 	}
 	if strings.TrimSpace(stdout.String()) != noEgress {
 		t.Fatalf("%q", stdout.String())
+	}
+}
+
+// TestTheReportsObjectNamesItsSchemaAndHoldsToIt holds what egress report
+// --json prints: one object on one line that opens with its name, the
+// counters in the order they were read, and an empty list, never null, when
+// no call has been recorded. The JSON Schema beside the commands' tests
+// accepts it, and rejects it under another name, without one, and with an
+// outcome a counter cannot have.
+func TestTheReportsObjectNamesItsSchemaAndHoldsToIt(t *testing.T) {
+	var out bytes.Buffer
+	err := printEgressObject(&out, []egress.Count{
+		{Day: "2026-11-02", Host: "gitlab.com", Outcome: egress.Refused, Count: 3},
+		{Day: "2026-11-01", Host: "token.actions.githubusercontent.com", Outcome: egress.Completed, Count: 12},
+	})
+	want := `{"schema":"costroid.egress/0.1","counters":[{"day":"2026-11-02","host":"gitlab.com","outcome":"refused","count":3},{"day":"2026-11-01","host":"token.actions.githubusercontent.com","outcome":"completed","count":12}]}` + "\n"
+	if err != nil || out.String() != want {
+		t.Fatalf("%v: %q, want %q", err, out.String(), want)
+	}
+	var none bytes.Buffer
+	if err := printEgressObject(&none, nil); err != nil || none.String() != `{"schema":"costroid.egress/0.1","counters":[]}`+"\n" {
+		t.Fatalf("no counters: %v: %q", err, none.String())
+	}
+
+	file, err := os.Open(filepath.Join("..", "..", "cmd", "costroid", "testdata", "objects", "egress.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	document, err := jsonschema.UnmarshalJSON(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("egress.schema.json", document); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile("egress.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := func(object string) error {
+		instance, err := jsonschema.UnmarshalJSON(strings.NewReader(object))
+		if err != nil {
+			return err
+		}
+		return schema.Validate(instance)
+	}
+	for _, object := range []string{want, none.String()} {
+		if err := valid(object); err != nil {
+			t.Errorf("the schema rejects what the report prints: %v\n%s", err, object)
+		}
+	}
+	for name, object := range map[string]string{
+		"another name":       strings.Replace(want, egressSchema, "costroid.other/9.9", 1),
+		"no name":            strings.Replace(want, `"schema"`, `"name"`, 1),
+		"an unknown outcome": strings.Replace(want, `"refused"`, `"dropped"`, 1),
+	} {
+		if valid(object) == nil {
+			t.Errorf("the schema accepts the object with %s", name)
+		}
 	}
 }

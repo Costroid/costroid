@@ -76,7 +76,12 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 	for _, warning := range warnings {
 		fmt.Fprintf(stderr, "costroid: warning: %s\n", warning)
 	}
-	data, err := readNamed(*rows, std.stdin)
+	from := rowsFile{path: *rows}
+	err = from.hold(std.stdin)
+	var data []byte
+	if err == nil {
+		data, err = from.read()
+	}
 	if err == nil {
 		err = policy.RefuseOriginRows(data)
 	}
@@ -93,7 +98,7 @@ func emitOTLP(ctx context.Context, args []string, getenv func(string) string, st
 	case err != nil:
 		return cli.Fail(stderr, err)
 	case result.Rows == 0:
-		cli.Say(stderr, "costroid: %s holds no rows, so nothing was sent\n", *rows)
+		cli.Say(stderr, "costroid: %s holds no rows, so nothing was sent\n", from)
 		return 0
 	case result.Rejected > 0:
 		fmt.Fprintf(stderr, "costroid: %s refused %d of %d spans: %q\n", endpoint, result.Rejected, result.Spans, result.Message)

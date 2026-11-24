@@ -62,9 +62,13 @@ type sourceKind struct {
 var sourceKinds = []sourceKind{
 	{name: "execution-file", alias: true, what: "the execution_file output of anthropics/claude-code-action", capped: true, open: openExecutionFile},
 	{name: "codex-home", alias: true, what: "the codex-home given to openai/codex-action", since: true, open: openCodexHome},
-	{name: "gh-aw", what: "the directory a gh-aw run's usage artifact was downloaded to", open: openGhAwUsage},
+	{name: ghAwKind, what: "the directory a gh-aw run's usage artifact was downloaded to", open: openGhAwUsage},
 	{name: "focus", what: "a FOCUS cost file, as CSV, that a step of the workflow wrote", estimate: true},
 }
+
+// ghAwKind names the source whose lines the troubleshooting page lists in a
+// section of their own.
+const ghAwKind = "gh-aw"
 
 // givenSource is one source the command line names.
 type givenSource struct {
@@ -341,6 +345,9 @@ func ingestRunCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("ingest-run", err))
 	}
+	if flags.source.kind.name == ghAwKind {
+		cli.About(stderr, "reading-a-gh-aw-run")
+	}
 	if flags.source.kind.estimate {
 		err = ingestEstimate(flags, stderr)
 	} else {
@@ -387,8 +394,7 @@ func ingestRun(flags ingestRunFlags, stderr io.Writer) error {
 		recordRunResult(io.Discard, stderr, record.failed(err))
 		return err
 	}
-	recordRunResult(io.Discard, stderr, record)
-	summarizeRows(stderr, flags.out, pinned.Version(), result)
+	summarizeRows(stderr, flags.out, recordRunResult(io.Discard, stderr, record), pinned.Version(), result)
 	cli.Say(stderr, "costroid: %s\n", result.Enforcement.Note)
 	if stated := result.Report.AgentStated; stated != nil {
 		cli.Say(stderr, "costroid: %s stated %s AI credits for this run. Costroid does not convert credits.\n", stated.Source, stated.Quantity)

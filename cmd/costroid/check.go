@@ -90,7 +90,7 @@ func postInputCheck(ctx context.Context, host scm.Reporter, input comment.Input,
 type verdictRequest struct {
 	commits  policy.Commits
 	start    func(context.Context) policy.Start
-	rowsPath string
+	rows     rowsFile
 	state    comment.State
 	earlier  *policy.Lifetime
 	baseline *policy.Baseline
@@ -108,7 +108,7 @@ type verdictRequest struct {
 func decideVerdict(ctx context.Context, host scm.Reporter, request verdictRequest, stderr io.Writer) *policy.Verdict {
 	ctx, cancel := context.WithTimeout(ctx, settingsTimeout)
 	defer cancel()
-	usage, err := reportUsage(request.rowsPath, request.state)
+	usage, err := reportUsage(request.rows, request.state)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}

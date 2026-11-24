@@ -20,6 +20,7 @@ import (
 
 func lintRecipes(args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("lint-recipes", flag.ContinueOnError)
+	asJSON := set.Bool("json", false, "print the rejected lines as one JSON object")
 	if err := parseFlags(set, args, lintRecipesHelp, stdout, stderr); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
@@ -39,13 +40,17 @@ func lintRecipes(args []string, stdout, stderr io.Writer) int {
 	}
 	report.Files += plugins.Files
 	report.Findings = append(report.Findings, plugins.Findings...)
-	for _, finding := range report.Findings {
-		fmt.Fprintln(stdout, finding)
+	found, lines := lintObject(report, lintGrades(paths))
+	if *asJSON {
+		if err := printObject(stdout, found); err != nil {
+			return cli.Fail(stderr, err)
+		}
+	} else {
+		for _, line := range lines {
+			fmt.Fprintln(stdout, line)
+		}
+		fmt.Fprintf(stdout, "costroid: %d files, %d rejected lines\n", report.Files, len(report.Findings))
 	}
-	for _, note := range report.Notes {
-		fmt.Fprintln(stdout, note)
-	}
-	fmt.Fprintf(stdout, "costroid: %d files, %d rejected lines\n", report.Files, len(report.Findings))
 	if len(report.Findings) > 0 {
 		return exitRejected
 	}

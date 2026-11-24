@@ -22,6 +22,7 @@ import (
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/agenttest"
 	"github.com/Costroid/costroid/internal/cli"
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/config"
 	"github.com/Costroid/costroid/internal/recipelint"
 	"go.yaml.in/yaml/v3"
@@ -39,8 +40,15 @@ var releaseBuild = buildInfo{version: testRelease, commit: testCommit}
 // releaseBuildPin is what init pins for releaseBuild.
 var releaseBuildPin = pin{commit: testCommit, version: testRelease}
 
-// testPR holds --pr to no terminal and to runs that show at once.
-var testPR = prSettings{getenv: os.Getenv, terminal: filepath.Join(os.TempDir(), "costroid-no-terminal"), polls: 3}
+// testPR holds --pr to no terminal and to runs that show at once. Its
+// standard input reads as a terminal, so a test that names a terminal's file
+// is asked for the key there.
+var testPR = prSettings{
+	getenv:   os.Getenv,
+	terminal: filepath.Join(os.TempDir(), "costroid-no-terminal"),
+	attended: func() bool { return true },
+	polls:    3,
+}
 
 // existingReview is a team's own review workflow, with no Costroid in it.
 const existingReview = `# Claude reviews a pull request.
@@ -206,7 +214,7 @@ func TestInitWritesLintCleanRecipe(t *testing.T) {
 		flat := strings.Join(strings.Fields(stderr), " ")
 		sentence := perPushSentence(shippedRecipe(t, recipe))
 		if needs := sdkPrograms[agent]; sentence == "" && needs != "" {
-			sentence = fmt.Sprintf(needs, recipeBudget.FindSubmatch(shippedRecipe(t, recipe))[1])
+			sentence = fmt.Sprintf(needs, capAmount(string(recipeBudget.FindSubmatch(shippedRecipe(t, recipe))[1])))
 		}
 		if sentence == "" || !strings.Contains(flat, sentence) {
 			t.Errorf("stderr lacks the per-push sentence %q:\n%s", sentence, stderr)
@@ -1609,7 +1617,7 @@ func TestGitLabPrintedCommandsRun(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	flat := strings.Join(strings.Fields(stderr), " ")
-	if !strings.Contains(flat, "with a budget of USD 5 for each run") || strings.Contains(stderr, "COSTROID_BUDGET_USD") {
+	if !strings.Contains(flat, "with a budget of USD 5.00 for each run") || strings.Contains(stderr, "COSTROID_BUDGET_USD") {
 		t.Errorf("stderr does not state the budget as an amount:\n%s", stderr)
 	}
 	script := "set -e\n" + strings.Join(printedCommands(t, stderr), "\n") + "\n"
@@ -1914,7 +1922,7 @@ func TestInitPRNamesEachStepBeforeRunningIt(t *testing.T) {
 			pending = line[2:]
 			named = append(named, pending)
 		case strings.HasPrefix(line, "ran:\t"):
-			command := shellJoin(strings.Split(line, "\t")[1:])
+			command := cli.CommandLine(strings.Split(line, "\t")[1:])
 			if command != pending {
 				t.Errorf("%q ran, and the line before it named %q", command, pending)
 			}
@@ -1993,6 +2001,146 @@ func TestInitPRNeverPrintsTheKey(t *testing.T) {
 	}
 }
 
+// TestInitPRAsksForNoKeyWhereNobodyCanAnswer runs --pr as a script or a
+// coding agent does: a terminal that opens, and a standard input that is not
+// one. With no --key-env, init lists the secrets before it writes anything.
+// Where the list names no key it refuses there, with the no-terminal
+// sentence: no file is written, no prompt, no change to the terminal, and no
+// other command. Where the list fails it refuses the same way. It still runs
+// where it needs no answer, and lists the secrets once.
+func TestInitPRAsksForNoKeyWhereNobodyCanAnswer(t *testing.T) {
+	const listed = "gh secret list --json name"
+	unattended := func(t *testing.T) prSettings {
+		settings := testPR
+		settings.terminal = filepath.Join(t.TempDir(), "tty")
+		writeFile(t, settings.terminal, "sk-ant-test-typed-by-nobody\n")
+		settings.attended = func() bool { return false }
+		return settings
+	}
+	ran := func(fake fakes) []string {
+		var lines []string
+		for _, call := range fake.calls(t) {
+			lines = append(lines, strings.Join(call, " "))
+		}
+		return lines
+	}
+	for name, refusal := range map[string]struct {
+		fails, want string
+	}{
+		"no key among the secrets": {"", "costroid: no terminal to ask for the key on, so name the environment variable that holds it with --key-env: standard input is not a terminal\n"},
+		"a list that fails":        {"gh secret list", "costroid: " + listed + " failed: exit status 1\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakes(t)
+			t.Setenv("FAKE_FAIL", refusal.fails)
+			root := t.TempDir()
+			code, output := runPR(t, root, unattended(t), "github", "--agent", "claude", "--pr")
+			if code != exitFailure || !strings.HasPrefix(output, "$ "+listed+"\n") || !strings.Contains(output, refusal.want) || strings.Contains(output, "The value of") || strings.Contains(output, "costroid: wrote") {
+				t.Errorf("exit %d, want %d and %q before anything is written:\n%s", code, exitFailure, refusal.want, output)
+			}
+			if written := tree(t, root); len(written) != 0 {
+				t.Errorf("init wrote %d files before it refused", len(written))
+			}
+			// Beside the list, init asks git for the remote's name, which
+			// changes nothing.
+			if calls := ran(fake); len(calls) != 2 || !strings.HasSuffix(calls[0], " remote") || calls[1] != listed {
+				t.Errorf("init ran %q, want the remote's name and the list of secrets alone", calls)
+			}
+		})
+	}
+	t.Run("a secret that is set already", func(t *testing.T) {
+		fake := installFakes(t)
+		t.Setenv("FAKE_SECRETS", `[{"name":"ANTHROPIC_API_KEY"}]`)
+		code, output := runPR(t, t.TempDir(), unattended(t), "github", "--agent", "claude", "--pr")
+		calls := ran(fake)
+		if code != 0 || calls[1] != listed || slices.Index(calls[2:], listed) >= 0 || strings.Index(output, "$ "+listed) > strings.Index(output, "costroid: wrote") {
+			t.Errorf("exit %d, and init does not list the secrets once, before it writes: %q\n%s", code, calls, output)
+		}
+	})
+	t.Run("--key-env", func(t *testing.T) {
+		installFakes(t)
+		t.Setenv("TEST_AGENT_KEY", "sk-ant-test-from-the-environment")
+		if code, output := runPR(t, t.TempDir(), unattended(t), "github", "--agent", "claude", "--pr", "--key-env", "TEST_AGENT_KEY"); code != 0 || strings.Index(output, "$ "+listed) < strings.Index(output, "costroid: wrote") {
+			t.Errorf("exit %d, or the secrets were listed before init wrote, where no answer is needed:\n%s", code, output)
+		}
+	})
+}
+
+// TestASecondInitPRCommitsTheCostroidYmlAnEarlierInitLeft runs init twice in
+// one repository: once without --pr, which writes costroid.yml, and again
+// with --force --pr. Where git does not track the file, the pull request's
+// commit takes it beside the workflow, and init says so. Where git tracks
+// it, or where git cannot say, init leaves it out as before.
+func TestASecondInitPRCommitsTheCostroidYmlAnEarlierInitLeft(t *testing.T) {
+	const both = "git add -- .github/workflows/costroid.yml costroid.yml"
+	const committed = "git commit --message Add the costroid check -- .github/workflows/costroid.yml costroid.yml"
+	for name, test := range map[string]struct {
+		fails string
+		taken bool
+	}{
+		"git does not track it": {"git ls-files", true},
+		"git tracks it":         {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := installFakes(t)
+			t.Setenv("TEST_AGENT_KEY", "sk-ant-test-second-init")
+			root := t.TempDir()
+			if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude"); code != 0 {
+				t.Fatalf("the first init: exit %d: %s", code, stderr)
+			}
+			before := readFile(t, filepath.Join(root, configFile))
+			t.Setenv("FAKE_FAIL", test.fails)
+			code, output := runPR(t, root, testPR, "github", "--agent", "claude", "--force", "--pr", "--key-env", "TEST_AGENT_KEY")
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, output)
+			}
+			var ran []string
+			for _, call := range fake.calls(t) {
+				ran = append(ran, strings.Join(call, " "))
+			}
+			said := strings.Contains(output, "costroid: costroid.yml exists and git does not track it, so init left it as it is and commits it with the workflow\n")
+			if slices.Contains(ran, both) != test.taken || slices.Contains(ran, committed) != test.taken || said != test.taken {
+				t.Errorf("costroid.yml in the commit and in init's line: want %t:\n%s\n%s", test.taken, strings.Join(ran, "\n"), output)
+			}
+			if !test.taken && !strings.Contains(output, "costroid: costroid.yml exists, and init left it as it is\n") {
+				t.Errorf("init does not say it left the file:\n%s", output)
+			}
+			if after := readFile(t, filepath.Join(root, configFile)); after != before {
+				t.Error("the second init changed costroid.yml")
+			}
+			// The list init prints before it commits is the set it commits:
+			// the line it says, the files it adds and the files it commits.
+			_, printed, found := strings.Cut(output, "$ git add -- ")
+			printed, _, _ = strings.Cut(printed, "\n")
+			var added, taken []string
+			for _, call := range fake.calls(t) {
+				switch {
+				case len(call) > 2 && call[1] == "add":
+					added = call[3:]
+				case len(call) > 2 && call[1] == "commit":
+					taken = call[slices.Index(call, "--")+1:]
+				}
+			}
+			if !found || len(added) == 0 || !slices.Equal(strings.Fields(printed), added) || !slices.Equal(added, taken) || slices.Contains(taken, configFile) != test.taken {
+				t.Errorf("init printed the list %q, added %q and committed %q", printed, added, taken)
+			}
+		})
+	}
+	// Without --pr init commits nothing, and asks git nothing about the file.
+	fake := installFakes(t)
+	root := t.TempDir()
+	for range 2 {
+		if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--agent", "claude", "--force"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+	}
+	for _, call := range fake.calls(t) {
+		if slices.Contains(call, "ls-files") {
+			t.Errorf("init without --pr ran %v", call)
+		}
+	}
+}
+
 func TestInitPRSkipsAnExistingSecret(t *testing.T) {
 	fake := installFakes(t)
 	t.Setenv("FAKE_SECRETS", `[{"name":"OPENAI_API_KEY"},{"name":"ANTHROPIC_API_KEY"}]`)
@@ -2057,7 +2205,7 @@ func TestInitPRSaysARepositorySecretWins(t *testing.T) {
 		var ran []string
 		for _, call := range fake.calls(t) {
 			if (call[0] == "gh" || call[0] == "git") && (len(call) < 2 || call[1] != "-C") {
-				ran = append(ran, shellJoin(call))
+				ran = append(ran, cli.CommandLine(call))
 			}
 		}
 		if want := prSteps[2:]; !slices.Equal(ran, want) {
@@ -2119,7 +2267,7 @@ func TestInitPRStopsAtTheFirstFailedStep(t *testing.T) {
 				t.Errorf("init does not say %q:\n%s", failed, output)
 			}
 			last := fake.calls(t)[len(fake.calls(t))-1]
-			if shellJoin(last) != prSteps[test.at] {
+			if cli.CommandLine(last) != prSteps[test.at] {
 				t.Errorf("the last command that ran is %v, want %s", last, prSteps[test.at])
 			}
 			_, list, found := strings.Cut(output, "init stopped at the first command that failed. These commands are left, that one first:\n")
@@ -2344,7 +2492,7 @@ func TestInitPlatformURLWritesTheIngestInputs(t *testing.T) {
 	}{
 		{[]string{"github", "--agent", "claude", "--platform-url", "http://app.costroid.com"}, "--platform-url must be an https origin"},
 		{[]string{"github", "--agent", "claude", "--platform-url", "https://app.costroid.com/v1"}, "--platform-url must be an https origin"},
-		{[]string{"gitlab", "--agent", "claude", "--platform-url", "https://app.costroid.com"}, "on GitLab, set the CI/CD variables docs/export.md lists"},
+		{[]string{"gitlab", "--agent", "claude", "--platform-url", "https://app.costroid.com"}, "on GitLab, set the CI/CD variables https://docs.costroid.com/export lists"},
 	} {
 		root := t.TempDir()
 		code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, refusal.args...)
@@ -2729,7 +2877,7 @@ func TestExistingTakesTheBudgetFlag(t *testing.T) {
 			if written["read"]["budget-usd"] != test.budget || written["read"]["claude-args"] != test.args || written["report"]["budget-usd"] != test.budget {
 				t.Errorf("read %v, report %v, want budget-usd %q", written["read"], written["report"], test.budget)
 			}
-			said := "The patch adds --max-budget-usd " + test.budget + " to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes USD " + test.budget + ","
+			said := "The patch adds --max-budget-usd " + test.budget + " to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes " + comment.Money("USD", test.budget) + ","
 			if flat := strings.Join(strings.Fields(stderr), " "); !strings.Contains(flat, said) {
 				t.Errorf("init does not say it adds USD %s: %s", test.budget, flat)
 			}
@@ -2905,7 +3053,7 @@ func TestInitWritesTheSDKRecipes(t *testing.T) {
 			flat := strings.Join(strings.Fields(stderr), " ")
 			for _, want := range []string{
 				"The recipe runs agent/review.mjs, with its package.json and package-lock.json in agent/. Change the path in the recipe to yours.",
-				fmt.Sprintf(sdkPrograms[agent], "5"),
+				fmt.Sprintf(sdkPrograms[agent], "USD 5.00"),
 				"Print the program's output on standard output: the recipe keeps it in a file on the runner, and Costroid does not read it.",
 				"Standard error reaches the job's log, which a public repository shows to anyone, so print nothing there that the agent read or wrote.",
 				"\n  gh secret set " + key + "\n",

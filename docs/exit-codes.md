@@ -6,7 +6,7 @@ Every `costroid` command ends in one of the ways below, and each way has one exi
 | ---- | --------------------- | ----------- |
 | 0 | It did its work, and a verdict is `success` or `neutral` | `costroid policy` on a run within its budget |
 | 1 | It did its work, and the answer is a failure | A `failure` verdict of `costroid policy`, a finding of `costroid lint` or `costroid validate`, a miss of `costroid reconcile`, a failed check of `costroid doctor` |
-| 2 | The command line is wrong | No command, a command or a subcommand that does not exist, a flag the command does not have, a flag without its value, a value of the wrong form, a required flag or argument left out, an argument too many |
+| 2 | The command line is wrong | No command, a command or a subcommand that does not exist, a flag the command does not have, a flag that stands before the command or after an argument, a flag without its value, a value of the wrong form, a required flag or argument left out, an argument too many |
 | 124 | `costroid run` stopped the agent at the cap | A run whose cost reached `--budget-usd` |
 | 125 | Costroid could not do its work | A file that is not there or cannot be read, a host or a service that did not answer, a directory that is no repository, a command that needs a CI job and has none, `costroid receipt` in one |
 

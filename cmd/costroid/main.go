@@ -69,16 +69,19 @@ func dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	switch name := args[0]; {
 	case name == "help":
-		return helpCommand(args[1:], std)
+		return helpCommand(ctx, args[1:], std)
 	case isHelpFlag(name):
-		return helpCommand(nil, std)
+		return helpCommand(ctx, nil, std)
 	case name == "--version":
 		return versionCommand(ctx, args[1:], std)
+	case strings.HasPrefix(name, "-"):
+		return flagBeforeCommand(args, stderr)
 	}
 	entry, ok := lookup(args[0])
 	if !ok {
 		return unknownCommand(args[0], stderr)
 	}
+	cli.About(stderr, section(entry.name))
 	if len(args) > 1 && isHelpFlag(args[1]) {
 		fmt.Fprint(stdout, entry.help)
 		return 0
@@ -162,9 +165,15 @@ costroid gateway help describes the other steps.`)}},
 and basis, token counts by class, grades, the cap and what is left or over, and
 a reason when there are no figures. The agent's stream then goes to stderr,
 and the object says why run wrote no rows when it wrote none. run prints no
-object when it exits 125 before it creates the rows file. docs/agents.md
+object when it exits 125 before it creates the rows file. https://docs.costroid.com/agents
 describes the object.`), resultFileHelp}},
 		{Heading: "The status file", Body: []cli.Block{statusFileHelp}},
+		{Heading: "What it leaves", Body: []cli.Block{cli.Text(`run leaves the rows file and the result object beside it, and names both in
+one line of its summary. A run of Claude Code also leaves costroid-run.lock,
+an empty file, in the agent's config directory: CLAUDE_CONFIG_DIR, or .claude
+in your home directory, which run creates when it is not there. The file is
+the lock that holds one run to that directory, and it stays after the run:
+a second run that had opened a lock file since removed would hold nothing.`)}},
 	},
 	Environment: []cli.Block{cli.Rows(slices.Concat(accountEnvironment, []cli.Row{
 		{gatewayURLVar, "the gateway, when --gateway is not given"},
@@ -205,7 +214,9 @@ func parseRun(args []string, stdout, stderr io.Writer) (runFlags, error) {
 	keyFile := set.String("gateway-key-file", os.Getenv(gatewayKeyFileVar), "the file costroid gateway request wrote the run's key to")
 	account := addAccountFlags(set)
 	shaping := addRowFlags(set)
-	if err := parseFlags(set, args, runHelp, stdout, stderr); err != nil {
+	// The words after the flags are the agent's command line, whose flags are
+	// the agent's.
+	if err := parseLeadingFlags(set, args, runHelp, stdout, stderr); err != nil {
 		return runFlags{}, err
 	}
 	if (*gatewayURL == "") != (*keyFile == "") {
@@ -349,8 +360,9 @@ func runCommand(ctx context.Context, args []string, std stdio) int {
 		recordRunResult(stdout, stderr, record.failed(err))
 		return exitFailure
 	}
-	summarize(stderr, flags, pinned.Version(), result)
-	recordRunResult(stdout, stderr, record)
+	// The object is written before the summary, so the line that names the
+	// rows names it only when it is there.
+	summarize(stderr, flags, pinned.Version(), result, recordRunResult(stdout, stderr, record))
 	if result.Stopped {
 		return exitBudgetStop
 	}
@@ -436,20 +448,24 @@ func (r runRecord) failed(err error) runRecord {
 // recordRunResult writes the result object beside the rows, where the report
 // reads the run's reason, and prints it under --json. A file that cannot be
 // written costs the report the reason and nothing else, so it is a warning.
-func recordRunResult(stdout, stderr io.Writer, record runRecord) {
+// It answers the file it wrote, empty when it wrote none.
+func recordRunResult(stdout, stderr io.Writer, record runRecord) string {
 	object, err := runResult(stderr, record)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
-		return
+		return ""
 	}
-	if err := writeNew(runResultPath(record.out), object+"\n"); err != nil {
+	written := runResultPath(record.out)
+	if err := writeNew(written, object+"\n"); err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: the run's result object was not written: %v\n", err)
+		written = ""
 	}
 	if record.json {
 		if _, err := fmt.Fprintln(stdout, object); err != nil {
 			fmt.Fprintf(stderr, "costroid: warning: %v\n", fmt.Errorf("print the result: %w", err))
 		}
 	}
+	return written
 }
 
 // writeNew creates path and fails if anything is there, so a link the agent
@@ -470,7 +486,7 @@ func writeNew(path, text string) error {
 // report reads them, with the run's reason when it wrote none. No check has
 // concluded on them yet.
 func runResult(stderr io.Writer, record runRecord) (string, error) {
-	rows, err := readReportRows(record.out)
+	rows, err := readReportRows(rowsFile{path: record.out})
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
@@ -503,13 +519,14 @@ var labels = map[focus.CostBasis]string{
 // runCurrency is the currency of a run's cap and of the cost it is held to.
 const runCurrency = "USD"
 
-// summarize prints what a run recorded: its rows, its cost, the cap
-// --budget-usd set and how far the cap held. An amount is drawn as the comment
-// draws it. The note stands without its grade's id, which the rows and the
-// result object keep. --quiet drops every line but the warnings.
-func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Result) {
+// summarize prints what a run recorded: its rows and the result object beside
+// them, its cost, the cap --budget-usd set and how far the cap held. An amount
+// is drawn as the comment draws it. The note stands without its grade's id,
+// which the rows and the result object keep. --quiet drops every line but the
+// warnings.
+func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Result, object string) {
 	report := result.Report
-	summarizeRows(w, flags.out, catalogVersion, result)
+	summarizeRows(w, flags.out, object, catalogVersion, result)
 	held := strings.TrimPrefix(result.Enforcement.Note, result.Enforcement.Grade+": ")
 	cli.Say(w, "costroid: cap %s (%s)\n", comment.Money(runCurrency, flags.budget.String()), held)
 	if result.Stopped {
@@ -524,7 +541,9 @@ func summarize(w io.Writer, flags runFlags, catalogVersion string, result run.Re
 	}
 }
 
-func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
+// summarizeRows names every file the run left beside what it holds: the rows,
+// and object, the result object, unless it is empty because none was written.
+func summarizeRows(w io.Writer, out, object, catalogVersion string, result run.Result) {
 	report := result.Report
 	// A run-grain entry is one model's total for the whole run, so the count is
 	// of models, never of runs.
@@ -533,7 +552,11 @@ func summarizeRows(w io.Writer, out, catalogVersion string, result run.Result) {
 	} else {
 		cli.Say(w, "costroid: %s, %d %s\n", result.Agent, count, noun(result, count))
 	}
-	cli.Say(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
+	if object == "" {
+		cli.Say(w, "costroid: %d rows in %s, catalog %s\n", result.Rows, out, catalogVersion)
+	} else {
+		cli.Say(w, "costroid: %d rows in %s, catalog %s, and the result object in %s\n", result.Rows, out, catalogVersion, object)
+	}
 	// A run with no rows measured nothing, so it states no cost.
 	if result.Rows > 0 {
 		cli.Say(w, "costroid: %s at list (%s)\n", comment.Money(runCurrency, result.ListTotal.String()), labels[report.CostBasis])

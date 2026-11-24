@@ -33,7 +33,7 @@ const (
 type clock func() time.Time
 
 type reconcileFlags struct {
-	rows       string
+	rows       rowsFile
 	credential string
 	upstream   map[string]string
 	out        string
@@ -44,6 +44,55 @@ type reconcileFlags struct {
 	// installation the job runs under.
 	export       bool
 	installation string
+	// json prints the comparison as one object in place of the tables.
+	json bool
+}
+
+// reconcileSchema names the object reconcile --json prints.
+const reconcileSchema = "costroid.reconcile/0.1"
+
+// comparison is what reconcile found: costroid.reconcile/0.1.
+type comparison struct {
+	Schema string `json:"schema"`
+	// Rows are the reconciliation rows, as --out keeps them.
+	Rows []reconcile.Row `json:"rows"`
+	// Unmatched are the credentials a provider reports that no row names.
+	Unmatched []unmatchedCredential `json:"unmatched"`
+	// Refused are the days a figure stopped, which hold no row.
+	Refused []refusedDay `json:"refused"`
+	Count   struct {
+		// Misses counts the comparisons with a token miss or a price miss.
+		Misses int `json:"misses"`
+	} `json:"count"`
+}
+
+type unmatchedCredential struct {
+	Source     string `json:"source"`
+	Credential string `json:"credential"`
+}
+
+// refusedDay is one day a figure stopped, with the line reconcile prints for
+// it on standard error.
+type refusedDay struct {
+	reconcile.Key
+	Field   string `json:"field"`
+	Figure  string `json:"figure"`
+	Message string `json:"message"`
+}
+
+func comparisonOf(result reconcile.Result) comparison {
+	found := comparison{Schema: reconcileSchema, Rows: result.Rows, Unmatched: []unmatchedCredential{}, Refused: []refusedDay{}}
+	if found.Rows == nil {
+		found.Rows = []reconcile.Row{}
+	}
+	for _, unmatched := range result.Unmatched {
+		found.Unmatched = append(found.Unmatched, unmatchedCredential{Source: unmatched.Source, Credential: unmatched.Credential})
+	}
+	for _, refused := range result.Refused {
+		found.Refused = append(found.Refused, refusedDay{Key: refused.Key, Field: refused.Field, Figure: refused.Figure, Message: refused.Error()})
+	}
+	found.Count.Misses = result.Misses()
+	return found
 }
 
 // upstreamSources are the sources an upstream credential can be named for.
@@ -79,6 +128,7 @@ func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, er
 	reports := set.String("reports", "", "a directory of saved provider reports, read in place of the provider")
 	asOf := set.String("as-of", "", "when the saved reports were saved, as a UTC instant")
 	send := set.Bool("export", false, "send the rows --out keeps to Costroid Platform, by integration/v0.7, v0.6 or v0.5")
+	asJSON := set.Bool("json", false, "print the comparison as one JSON object")
 	installation := set.String("installation-id", "", "with --export, the installation the job runs under")
 	if err := parseFlags(set, args, reconcileHelp, stdout, stderr); err != nil {
 		return reconcileFlags{}, err
@@ -90,7 +140,7 @@ func parseReconcile(args []string, stdout, stderr io.Writer) (reconcileFlags, er
 	if err != nil {
 		return reconcileFlags{}, err
 	}
-	flags := reconcileFlags{rows: *rows, credential: *credential, upstream: upstream, out: *out, days: days, reports: *reports, export: *send}
+	flags := reconcileFlags{rows: rowsFile{path: *rows}, credential: *credential, upstream: upstream, out: *out, days: days, reports: *reports, export: *send, json: *asJSON}
 	if (*reports == "") != (*asOf == "") {
 		return reconcileFlags{}, errors.New("--reports and --as-of go together")
 	}
@@ -126,12 +176,12 @@ func fromSavedReports(flags reconcileFlags, getenv func(string) string, client r
 // reconcileCommand reaches Costroid Platform, for --export, with a client that
 // follows no redirect, as export's does, so the token and the rows reach only
 // the origin named.
-func reconcileCommand(ctx context.Context, args []string, getenv func(string) string, client reconcile.Doer, now clock, stdout, stderr io.Writer) int {
+func reconcileCommand(ctx context.Context, args []string, getenv func(string) string, client reconcile.Doer, now clock, std stdio) int {
 	platformClient := &http.Client{
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return reconcileThrough(ctx, args, reconcileWorld{getenv: getenv, client: client, now: now, platform: asking(platformClient, stderr), pace: ingestPace}, stdout, stderr)
+	return reconcileThrough(ctx, args, reconcileWorld{getenv: getenv, client: client, now: now, platform: asking(platformClient, std.stderr), pace: ingestPace}, std)
 }
 
 // reconcileWorld is what a reconciliation reads and reaches: the environment,
@@ -145,13 +195,17 @@ type reconcileWorld struct {
 	pace     verdictPace
 }
 
-func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, stdout, stderr io.Writer) int {
+func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, std stdio) int {
+	stdout, stderr := std.stdout, std.stderr
 	flags, err := parseReconcile(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
 	if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("reconcile", err))
+	}
+	if err := flags.rows.hold(std.stdin); err != nil {
+		return cli.Fail(stderr, err)
 	}
 	var sender *reconcileSender
 	if flags.export {
@@ -163,7 +217,12 @@ func reconcileThrough(ctx context.Context, args []string, world reconcileWorld, 
 	if err != nil {
 		return cli.Fail(stderr, err)
 	}
-	if err := reconcile.Render(stdout, result); err != nil {
+	if flags.json {
+		err = printObject(stdout, comparisonOf(result))
+	} else {
+		err = reconcile.Render(stdout, result)
+	}
+	if err != nil {
 		return cli.Fail(stderr, err)
 	}
 	code := 0
@@ -223,7 +282,7 @@ func reconcileRows(ctx context.Context, flags reconcileFlags, getenv func(string
 }
 
 func readLedger(flags reconcileFlags) (*reconcile.Ledger, error) {
-	rows, err := os.ReadFile(flags.rows)
+	rows, err := flags.rows.read()
 	if err == nil {
 		err = policy.RefuseOriginRows(rows)
 	}
@@ -619,7 +678,7 @@ func (s *reconcileSender) refused(err error, body reconcile.Body, stderr io.Writ
 		fmt.Fprintf(stderr, "costroid: warning: %v%s. Nothing in the rows is wrong, and %s is kept to send again\n", err, retry, s.out)
 		return true
 	case refused.unbound():
-		fmt.Fprintf(stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as docs/connect.md shows, and %s is kept to send again\n", err, s.installation, s.out)
+		fmt.Fprintf(stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as https://docs.costroid.com/connect shows, and %s is kept to send again\n", err, s.installation, s.out)
 		return true
 	case refused.status == http.StatusRequestEntityTooLarge:
 		fmt.Fprintf(stderr, "costroid: %v. The body was cut at the limits GET /quotas stated, which can only rise, and nothing in it was stored. %s is kept to send again\n", err, s.out)

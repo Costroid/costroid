@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/merged.schema.json",
+  "title": "What costroid merged --json prints for one fact, version 0.1",
+  "description": "What Costroid Platform answered to one merge fact costroid merged sent. merged prints one such object a line.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.merged/0.1"
+    },
+    "merge_id": {
+      "description": "The fact's id: the repository's id and the pull request's number.",
+      "type": "string",
+      "minLength": 1
+    },
+    "pull_request": {
+      "description": "The pull request's number.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "description": "The HTTP status the platform answered.",
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "run_identity": {
+      "description": "The grade the platform stored the fact under. Absent on a refusal.",
+      "enum": [
+        "token_verified",
+        "unverified"
+      ]
+    },
+    "ref": {
+      "description": "The branch a token_verified fact names, as refs/heads/<name>.",
+      "type": "string",
+      "pattern": "^refs/heads/"
+    },
+    "code": {
+      "description": "The refusal's code, when the platform took the request and refused it.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "schema",
+    "merge_id",
+    "pull_request",
+    "status"
+  ]
+}

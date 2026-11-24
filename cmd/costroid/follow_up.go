@@ -48,7 +48,7 @@ type finishedRun struct {
 
 // followUpFlags are what follow-up is given.
 type followUpFlags struct {
-	rows string
+	rows rowsFile
 	// ingested says this job wrote the rows with costroid ingest-run from the
 	// finished run's artifact, for a workflow with no report job of its own.
 	ingested bool
@@ -58,13 +58,14 @@ func parseFollowUp(args []string, stdout, stderr io.Writer) (followUpFlags, erro
 	set := flag.NewFlagSet("follow-up", flag.ContinueOnError)
 	rows := set.String("rows", "", "the rows file the finished run kept, read as data")
 	ingested := set.Bool("ingested", false, "the rows are ones costroid ingest-run wrote in this job, for a workflow with no report job")
-	if err := parseFlags(set, args, followUpHelp, stdout, stderr); err != nil {
+	// follow-up ignores an argument, and so every word after one.
+	if err := parseLeadingFlags(set, args, followUpHelp, stdout, stderr); err != nil {
 		return followUpFlags{}, err
 	}
 	if *rows == "" {
 		return followUpFlags{}, errors.New("follow-up needs --rows")
 	}
-	return followUpFlags{rows: *rows, ingested: *ingested}, nil
+	return followUpFlags{rows: rowsFile{path: *rows}, ingested: *ingested}, nil
 }
 
 // followUpCommand posts the costroid check for a fork's pull request from a
@@ -75,7 +76,8 @@ func parseFollowUp(args []string, stdout, stderr io.Writer) (followUpFlags, erro
 // job of its own, and it reads the run's object beside the rows, which this
 // job's ingest-run wrote. Like report, it exits 0 once it finds GitHub Actions,
 // so a failed post never fails the job.
-func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func followUpCommand(ctx context.Context, args []string, std stdio) int {
+	stdout, stderr := std.stdout, std.stderr
 	flags, err := parseFollowUp(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -85,6 +87,9 @@ func followUpCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	if cicontext.Detect(os.Getenv) != cicontext.GitHubActions {
 		return cli.Fail(stderr, errNotGitHubActions)
+	}
+	if err := flags.rows.hold(io.LimitReader(std.stdin, maxFollowUpRows+1)); err != nil {
+		return cli.Fail(stderr, err)
 	}
 	repository := os.Getenv("GITHUB_REPOSITORY")
 	run, head, err := finishedPullRun(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_EVENT_PATH"), repository, flags.ingested)
@@ -262,14 +267,20 @@ func readFinishedRun(path string) (finishedRun, error) {
 
 // readFollowUpRows refuses a file past the cap before it reads a byte, then
 // reads the rest as report does: every string from the rows passes the
-// comment's allowlist and length cap.
-func readFollowUpRows(path string) (rowsReading, error) {
-	info, err := os.Lstat(path)
-	if err == nil && info.Mode().IsRegular() && info.Size() > maxFollowUpRows {
-		return rowsReading{state: comment.Unreadable, reason: comment.UnreadRowsFile},
-			fmt.Errorf("the rows file holds %d bytes, over the follow-up's cap of %d, so it was not read", info.Size(), maxFollowUpRows)
+// comment's allowlist and length cap. Standard input was held to one byte
+// past the cap, so what it held past the cap is refused the same way.
+func readFollowUpRows(rows rowsFile) (rowsReading, error) {
+	size := int64(len(rows.held))
+	if !rows.onStandardInput() {
+		if info, err := os.Lstat(rows.path); err == nil && info.Mode().IsRegular() {
+			size = info.Size()
+		}
 	}
-	return readReportRows(path)
+	if size > maxFollowUpRows {
+		return rowsReading{state: comment.Unreadable, reason: comment.UnreadRowsFile},
+			fmt.Errorf("the rows file holds %d bytes, over the follow-up's cap of %d, so it was not read", size, maxFollowUpRows)
+	}
+	return readReportRows(rows)
 }
 
 // finishedRunURL links the run the agent's workflow made, not the follow-up's.
@@ -286,7 +297,7 @@ func finishedRunURL(id int64) string {
 // workflow_run event, and the check is what a required check reads. A fork's
 // verdict is held at neutral, and the check's title and the reason under it
 // say so; a branch's stands as report's does.
-func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, workflow string, input comment.Input, rowsPath string, fork bool, stderr io.Writer) comment.Input {
+func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, workflow string, input comment.Input, rows rowsFile, fork bool, stderr io.Writer) comment.Input {
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	input.Amounts = resolveAmounts(ctx, host, pull.base, stderr)
@@ -298,9 +309,9 @@ func postFollowUp(ctx context.Context, host scm.Reporter, pull pullContext, work
 		start: func(ctx context.Context) policy.Start {
 			return finishedWorkflowStart(ctx, host, workflow, pull.base, stderr)
 		},
-		rowsPath: rowsPath,
-		state:    input.State,
-		offHead:  true,
+		rows:    rows,
+		state:   input.State,
+		offHead: true,
 	}, stderr)
 	if fork {
 		input = input.OnForkRows()

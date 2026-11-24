@@ -61,10 +61,10 @@ The schema is [`costroid.schema.json`](../costroid.schema.json), and the binary 
 
 ### A policy pack
 
-When a valid file names a pack with `policy_pack`, `validate` reads the pack from that path beside the file and compiles it as the check does: in a child process, under the same built-ins, the same 64 KiB and the same 2 seconds. A pack that compiles prints a second `valid` line. A pack that does not is a problem: `validate` prints the compiler's error, names the next step on standard error and exits 1.
+When a valid file names a pack with `policy_pack`, `validate` reads the pack from that path beside the file and compiles it as the check does: in a child process, under the same built-ins, the same 64 KiB and the same 2 seconds. A pack that compiles prints a second `valid` line. A pack that does not is a problem: `validate` prints the compiler's error, one fault to a line and eight lines at most, the last saying how many more the compiler wrote, names the next step on standard error and exits 1.
 
 ```text
-costroid.yml: valid
+costroid.yml: the policy pack it names is not valid, and its own keys are
 .costroid/policy.rego: pack_invalid at line 3: bundle activation failed: 1 error occurred: pack.rego:3: rego_type_error: undefined function http.send
 Next: costroid policy --rows FILE --pack FILE runs the pack once corrected.
 ```

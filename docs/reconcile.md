@@ -38,6 +38,8 @@ ANTHROPIC_ADMIN_KEY=... costroid reconcile --rows rows.jsonl --from 2026-10-01 -
 
 Each line of `--out` is one row, a `ReconciliationRow` of [`integration/v0.7`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.7#the-reconciliation-result), the same row as `integration/v0.6`'s and `integration/v0.5`'s. Its key is `source`, `credential` and `day`.
 
+`--json` prints the comparison as one object on standard output in place of the tables, `costroid.reconcile/0.1`: `rows`, the same rows as `--out` keeps; `unmatched`, each source and credential a provider's report names and no row does; `refused`, each day a figure stopped; and `count.misses`. [`output.md`](output.md#--json) lists the objects.
+
 | Key | What it holds |
 | --- | --- |
 | `source` | `anthropic` or `openai` |

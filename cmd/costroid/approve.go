@@ -57,7 +57,7 @@ latest approval, request for changes or dismissal is their standing.`)}},
 		{Heading: "Settings, forks and hosts", Body: []cli.Block{cli.Text(`The settings are read from costroid.yml at the head of the base branch. A
 review on a fork's pull request runs with a read-only token, so approve posts
 nothing there. Like report, it exits 0 whatever the host answers, and outside
-GitHub Actions it refuses and exits 125. docs/approval.md has the workflow.`)}},
+GitHub Actions it refuses and exits 125. https://docs.costroid.com/approval has the workflow.`)}},
 	},
 	Environment: []cli.Block{cli.Rows{
 		{"GITHUB_TOKEN", "the token the reviews are read and the check is posted with"},
@@ -162,7 +162,7 @@ func readReviewEvent(eventName, path, repository string) (int, error) {
 	case event.PullRequest == nil || event.PullRequest.Number <= 0 || !vcs.IsCommit(event.PullRequest.Head.SHA):
 		return 0, errors.New("the event names no pull request and head commit")
 	case event.PullRequest.Head.Repo == nil || !strings.EqualFold(event.PullRequest.Head.Repo.FullName, repository):
-		return 0, errors.New("a review on a fork's pull request runs with a read-only token, so it cannot post the check. docs/approval.md says what a fork's pull request gets")
+		return 0, errors.New("a review on a fork's pull request runs with a read-only token, so it cannot post the check. https://docs.costroid.com/approval says what a fork's pull request gets")
 	}
 	return event.PullRequest.Number, nil
 }

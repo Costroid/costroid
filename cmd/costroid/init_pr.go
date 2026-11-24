@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,23 +29,34 @@ const (
 	runPoll  = 3 * time.Second
 )
 
-// bareWord is an argument the shell reads as it is, which a printed command
-// shows without quotes.
-var bareWord = regexp.MustCompile(`^(?:[A-Za-z0-9_./:=@,+-]+|<[a-z ]+>)$`)
-
 // prSettings are what --pr reads beyond its arguments: the environment, the
-// terminal it asks for a key on, and how long it waits for the run to show.
+// terminal it asks for a key on, whether a person is there to answer, and how
+// long it waits for the run to show.
 type prSettings struct {
 	getenv   func(string) string
 	terminal string
+	// attended reports whether standard input is a terminal. A script or a
+	// coding agent can hold a terminal with nobody at it, and its standard
+	// input is then a pipe, a file or nothing.
+	attended func() bool
 	polls    int
 	poll     time.Duration
 }
 
-var prDefaults = prSettings{getenv: os.Getenv, terminal: "/dev/tty", polls: runPolls, poll: runPoll}
+var prDefaults = prSettings{
+	getenv:   os.Getenv,
+	terminal: "/dev/tty",
+	attended: func() bool { return cli.Terminal(os.Stdin) },
+	polls:    runPolls,
+	poll:     runPoll,
+}
 
 // newPRFlow checks what --pr needs before init writes anything: one secret
-// for the agent's key, and a remote to push to.
+// for the agent's key, a remote to push to, and a way to come by the key.
+// Where nobody is there to be asked for it and no variable holds it, the one
+// thing that decides whether init can go on is on the host: the secret may be
+// set already. So init lists the secrets first there, and refuses before it
+// writes a file when the list names none.
 func newPRFlow(repo repository, flags initFlags, settings prSettings, workflow string, recipe []byte, stdout, stderr io.Writer) (*prFlow, error) {
 	secrets := secretNames(recipe)
 	if len(secrets) != 1 {
@@ -56,7 +66,7 @@ func newPRFlow(repo repository, flags initFlags, settings prSettings, workflow s
 	if err != nil {
 		return nil, fmt.Errorf("--pr pushes the branch to the repository's remote: %w", err)
 	}
-	return &prFlow{
+	flow := &prFlow{
 		root:        repo.root,
 		remote:      remote,
 		secret:      secrets[0],
@@ -66,13 +76,28 @@ func newPRFlow(repo repository, flags initFlags, settings prSettings, workflow s
 		workflow:    workflowName(recipe, workflow),
 		stdout:      stdout,
 		stderr:      stderr,
-		said:        cli.Notes(stderr),
+		said:        cli.NotesFor(stderr),
 		getenv:      settings.getenv,
 		readKey:     terminal{path: settings.terminal, stderr: stderr}.readKey,
 		polls:       settings.polls,
 		poll:        settings.poll,
-	}, nil
+	}
+	if flow.keepOrg || flow.keyEnv != "" || settings.attended() {
+		return flow, nil
+	}
+	fmt.Fprintf(flow.said, "$ %s\n", cli.CommandLine(listSecretsCommand))
+	if err := flow.listSecrets(listSecretsCommand); err != nil {
+		return nil, fmt.Errorf("%s failed: %w", cli.CommandLine(listSecretsCommand), err)
+	}
+	if !flow.secretExists {
+		return nil, errors.New(noTerminal + ": standard input is not a terminal")
+	}
+	flow.listed = true
+	return flow, nil
 }
+
+// listSecretsCommand lists the repository's secrets by name.
+var listSecretsCommand = []string{"gh", "secret", "list", "--json", "name"}
 
 // workflowName is the name a workflow's runs carry: its name key, or else its
 // path, as GitHub names a workflow that has none.
@@ -108,7 +133,9 @@ type prFlow struct {
 	polls   int
 	poll    time.Duration
 
-	secretExists                       bool
+	// listed says the secrets were listed before init wrote anything, so the
+	// steps do not list them again.
+	listed, secretExists               bool
 	head, pull, runID, runURL, comment string
 }
 
@@ -131,7 +158,7 @@ func (f *prFlow) steps() []prStep {
 	var steps []prStep
 	if !f.keepOrg {
 		steps = append(steps,
-			prStep{args: fixed("gh", "secret", "list", "--json", "name"), run: f.listSecrets},
+			prStep{args: fixed(listSecretsCommand...), skip: func() bool { return f.listed }, run: f.listSecrets},
 			prStep{args: fixed("gh", "secret", "set", f.secret), skip: func() bool { return f.secretExists }, run: f.setSecret},
 		)
 	}
@@ -165,10 +192,10 @@ func (f *prFlow) run() error {
 			continue
 		}
 		args := step.args()
-		fmt.Fprintf(f.said, "$ %s\n", shellJoin(args))
+		fmt.Fprintf(f.said, "$ %s\n", cli.CommandLine(args))
 		if err := step.run(args); err != nil {
 			f.printLeft(steps[at:])
-			return fmt.Errorf("%s failed: %w", shellJoin(args), err)
+			return fmt.Errorf("%s failed: %w", cli.CommandLine(args), err)
 		}
 	}
 	fmt.Fprintf(f.said, "costroid: the run posted its comment at %s\n", f.comment)
@@ -179,7 +206,7 @@ func (f *prFlow) printLeft(steps []prStep) {
 	fmt.Fprint(f.said, "\ninit stopped at the first command that failed. These commands are left, that one first:\n")
 	for _, step := range steps {
 		if step.skip == nil || !step.skip() {
-			fmt.Fprintf(f.said, "  %s\n", shellJoin(step.args()))
+			fmt.Fprintf(f.said, "  %s\n", cli.CommandLine(step.args()))
 		}
 	}
 }
@@ -338,18 +365,6 @@ func (f *prFlow) findComment(args []string) error {
 	return fmt.Errorf("the run ended and the pull request holds no Costroid comment, so read the run's log at %s", f.runURL)
 }
 
-// shellJoin prints args as a shell reads them, quoting what it must.
-func shellJoin(args []string) string {
-	quoted := make([]string, len(args))
-	for i, arg := range args {
-		quoted[i] = arg
-		if !bareWord.MatchString(arg) {
-			quoted[i] = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
-		}
-	}
-	return strings.Join(quoted, " ")
-}
-
 // terminal asks for a key on the terminal at path with its echo off, and
 // prints its prompt to stderr.
 type terminal struct {
@@ -357,10 +372,15 @@ type terminal struct {
 	stderr io.Writer
 }
 
+// noTerminal is why init asks for no key, and what to do in its place.
+const noTerminal = "no terminal to ask for the key on, so name the environment variable that holds it with --key-env"
+
+// readKey is reached only where standard input is a terminal: newPRFlow
+// refuses a run nobody attends before init writes anything.
 func (t terminal) readKey(prompt string) (key string, err error) {
 	tty, err := os.Open(t.path)
 	if err != nil {
-		return "", fmt.Errorf("no terminal to ask for the key on, so name the environment variable that holds it with --key-env: %w", err)
+		return "", fmt.Errorf(noTerminal+": %w", err)
 	}
 	defer tty.Close()
 	if err := stty(tty, "-echo"); err != nil {

@@ -296,6 +296,131 @@ func TestEveryJSONObjectMatchesItsSchema(t *testing.T) {
 	}
 }
 
+// objectCount is the count an object of reconcile or of lint states.
+type objectCount struct {
+	Misses int `json:"misses"`
+	High   int `json:"high"`
+}
+
+// counted reads the count of the object printed.
+func counted(t *testing.T, printed string) objectCount {
+	t.Helper()
+	var object struct {
+		Count objectCount `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(printed), &object); err != nil {
+		t.Fatalf("%v: %s", err, printed)
+	}
+	return object.Count
+}
+
+// TestEveryNamedObjectOpensWithItsSchemaAndMatchesIt holds the objects that
+// state their name in a schema key beside the four of the test above: what
+// policy, reconcile and merged print under --json, what merged --dry-run
+// prints, and lint-recipes --json, which prints lint's object. Each object a
+// command prints opens with its name and is one the JSON Schema beside these
+// tests accepts. The schema rejects the same object under another name and
+// without one. The exit code is as without the flag.
+func TestEveryNamedObjectOpensWithItsSchemaAndMatchesIt(t *testing.T) {
+	clearCI(t)
+	printed := map[string][]string{}
+	keep := func(schema, stdout string) {
+		printed[schema] = append(printed[schema], strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")...)
+	}
+
+	for _, config := range []string{overBudget, "policy:\n  run_budget_usd: \"5\"\n"} {
+		args := []string{"policy", "--rows", realRows, "--config", writeBaseConfig(t, config), "--at", "2026-11-21T09:00:00Z"}
+		code, _, _ := execute(t, args...)
+		jsonCode, stdout, _ := execute(t, append(args, "--json")...)
+		if jsonCode != code || !strings.HasPrefix(stdout, "{\n  \"schema\": \""+policySchema+"\",\n") {
+			t.Errorf("policy --json exits %d, and without the flag %d; it prints\n%s", jsonCode, code, stdout)
+		}
+		printed["policy"] = append(printed["policy"], stdout)
+	}
+
+	days := []string{"--from", "2026-10-14", "--to", "2026-10-14"}
+	for _, input := range []int{100900, 150000} {
+		ledger := writeLedger(t, input)
+		code, _, stderr := runReconcile(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, environment, append(days, "--rows", ledger)...)
+		jsonCode, stdout, jsonStderr := runReconcile(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, environment, append(days, "--rows", ledger, "--json")...)
+		oneObject(t, stdout, reconcileSchema)
+		if misses := counted(t, stdout).Misses; jsonCode != code || jsonStderr != stderr || (misses > 0) != (code == exitRejected) {
+			t.Errorf("reconcile --json exits %d and counts %d misses, and without the flag it exits %d", jsonCode, misses, code)
+		}
+		keep("reconcile", stdout)
+	}
+
+	stub := newV06MergeStub(t)
+	stub.ref = "refs/heads/release/2026.11"
+	env := stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit)
+	if code, stdout, _ := stub.merged(t, env, "--json"); code != 0 || stdout == "" {
+		t.Fatalf("merged --json: exit %d, stdout %q", code, stdout)
+	} else {
+		keep("merged", stdout)
+	}
+	if code, stdout, _ := stub.merged(t, env, "--dry-run"); code != 0 || stdout == "" {
+		t.Fatalf("merged --dry-run: exit %d, stdout %q", code, stdout)
+	} else {
+		keep("merged-fact", stdout)
+	}
+
+	t.Chdir(lintWorkflows(t))
+	writeFile(t, "rejected.yml", "on: pull_request_target\njobs: {}\n")
+	code, lines, _ := execute(t, "lint-recipes", "rejected.yml")
+	jsonCode, stdout, _ := execute(t, "lint-recipes", "--json", "rejected.yml")
+	oneObject(t, stdout, lintSchema)
+	if rejected := strings.Count(lines, "\n") - 1; jsonCode != code || code != exitRejected || rejected < 1 || counted(t, stdout).High != rejected {
+		t.Errorf("lint-recipes --json exits %d and counts %d high findings, and without the flag it exits %d and rejects %d lines:\n%s", jsonCode, counted(t, stdout).High, code, rejected, lines)
+	}
+	keep("lint", stdout)
+
+	// A rejected line is stated as lint grades the same finding: an action
+	// that is not pinned is medium in both objects. A rule that is
+	// lint-recipes' alone is high. lint-recipes exits 1 on either.
+	writeFile(t, "unpinned.yml", "on: pull_request\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: openai/codex-action@v1\n")
+	_, ownObject, _ := execute(t, "lint", "--json", "unpinned.yml")
+	recipesCode, recipesLines, _ := execute(t, "lint-recipes", "unpinned.yml")
+	jsonCode, recipesObject, _ := execute(t, "lint-recipes", "--json", "unpinned.yml")
+	const unpinned, alone = `"rule":"unpinned-action","severity":"medium"`, `"rule":"explicit-permissions","severity":"high"`
+	if !strings.Contains(ownObject, unpinned) || !strings.Contains(recipesObject, unpinned) || !strings.Contains(recipesObject, alone) {
+		t.Errorf("lint grades an unpinned action in\n%sand lint-recipes states its rejected lines as\n%s", ownObject, recipesObject)
+	}
+	if rejected := strings.Count(recipesLines, "\n") - 1; jsonCode != exitRejected || recipesCode != exitRejected || strings.Count(recipesObject, `"rule":`) != rejected {
+		t.Errorf("lint-recipes --json exits %d and states %d findings for %d rejected lines", jsonCode, strings.Count(recipesObject, `"rule":`), rejected)
+	}
+	keep("lint", recipesObject)
+
+	names := map[string]string{"policy": policySchema, "reconcile": reconcileSchema, "merged": mergedSchema, "merged-fact": mergedFactSchema, "lint": lintSchema}
+	for file, name := range names {
+		schema := objectSchema(t, file)
+		if len(printed[file]) < 2 && file != "lint" {
+			t.Errorf("%d objects of %s were printed, which is too few to hold its schema", len(printed[file]), name)
+		}
+		for _, object := range printed[file] {
+			if !strings.Contains(strings.Join(strings.Fields(object), ""), `{"schema":"`+name+`",`) {
+				t.Errorf("an object of %s does not open with its name:\n%s", name, object)
+			}
+			if err := validObject(schema, object); err != nil {
+				t.Errorf("the schema of %s rejects what the command prints: %v\n%s", name, err, object)
+			}
+			renamed := strings.Replace(object, name, "costroid.other/9.9", 1)
+			unnamed := strings.Replace(object, `"schema"`, `"name"`, 1)
+			if validObject(schema, renamed) == nil || validObject(schema, unnamed) == nil {
+				t.Errorf("the schema of %s accepts the object under another name, or with none", name)
+			}
+		}
+	}
+	// The counters of a ledger's service are printed from a database, so the
+	// service's own test holds that object. The page names it with the rest.
+	names["egress"] = "costroid.egress/0.1"
+	page := readFile(t, outputPage)
+	for _, name := range names {
+		if !strings.Contains(page, "`"+name+"`") {
+			t.Errorf("docs/output.md does not name %s", name)
+		}
+	}
+}
+
 // droppable says whether --quiet drops a line of stderr: one that is neither
 // a warning nor part of an error. Every line of the walk below that stays is
 // named here by how it opens.
@@ -509,6 +634,10 @@ var quietForms = map[string][][]string{
 // its names: stdout and the exit code are the same. Every command, and every
 // subcommand, takes both names, and every help page lists them.
 func TestQuietNeverChangesStdoutOrTheExitCode(t *testing.T) {
+	// Two of the lines state when their verdict was reached. Each gets one
+	// time for all its runs, or the walk would fail whenever a second
+	// turned between two of them.
+	holdTheClock(t)
 	rows := recordedRows
 	workflows := lintWorkflows(t)
 	lines := []struct {
@@ -526,8 +655,8 @@ func TestQuietNeverChangesStdoutOrTheExitCode(t *testing.T) {
 		{[]string{"version"}, 0},
 		{[]string{"version", "--verbose"}, 0},
 		{[]string{"version", "--json"}, 0},
-		{[]string{"policy", "--rows", rows}, 0},
-		{[]string{"policy", "--rows", rows, "--json"}, 0},
+		{[]string{"policy", "--rows", rows, "--at", heldInstant}, 0},
+		{[]string{"policy", "--rows", rows, "--at", heldInstant, "--json"}, 0},
 		{[]string{"report", "--preview", "--rows", rows}, 0},
 		{[]string{"report", "--rows", rows}, exitFailure},
 		{[]string{"export", "--rows", requestRows, "--format", "focus-csv"}, 0},

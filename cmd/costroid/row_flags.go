@@ -25,7 +25,7 @@ digit, and is never a key.
 always is, and the measured figure in x_CostroidMeasuredCost, for a reader that
 adds these rows to the provider's own FOCUS data. The default profile keeps the
 figure in EffectiveCost. Send default rows to Costroid Platform and costroid
-export. docs/tags.md and docs/focus-profile.md describe both.`
+export. https://docs.costroid.com/tags and https://docs.costroid.com/focus-profile describe both.`
 
 // rowFlags are what a caller adds to every row a command writes.
 type rowFlags struct {

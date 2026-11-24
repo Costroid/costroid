@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/reconcile.schema.json",
+  "title": "What costroid reconcile --json prints, version 0.1",
+  "description": "What costroid reconcile found when it compared rows with a provider's reports: the reconciliation rows, the credentials the rows do not name, the days a figure stopped, and the count of misses. Every amount is a decimal string.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.reconcile/0.1"
+    },
+    "rows": {
+      "description": "The reconciliation rows, one for each source, credential and day, as --out keeps them. docs/reconcile.md describes a row.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "The provider whose report the day is compared with.",
+            "type": "string",
+            "minLength": 1
+          },
+          "credential": {
+            "description": "The credential's id.",
+            "type": "string",
+            "minLength": 1
+          },
+          "day": {
+            "description": "The UTC day, YYYY-MM-DD.",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "state": {
+            "description": "What the comparison found for the day.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "source",
+          "credential",
+          "day",
+          "state"
+        ]
+      }
+    },
+    "unmatched": {
+      "description": "Each source and credential a provider's report names and no row does.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "credential": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "source",
+          "credential"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "refused": {
+      "description": "Each day whose row would carry a figure past the form every row takes. The day has no row, and reconcile exits 125.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "The provider whose report the day is compared with.",
+            "type": "string",
+            "minLength": 1
+          },
+          "credential": {
+            "description": "The credential's id.",
+            "type": "string",
+            "minLength": 1
+          },
+          "day": {
+            "description": "The UTC day, YYYY-MM-DD.",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "field": {
+            "description": "The field whose figure stopped the day.",
+            "type": "string",
+            "minLength": 1
+          },
+          "figure": {
+            "description": "The figure, unrounded.",
+            "type": "string"
+          },
+          "message": {
+            "description": "The line reconcile prints for the day on standard error, without costroid's name.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "source",
+          "credential",
+          "day",
+          "field",
+          "figure",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "count": {
+      "description": "How many comparisons hold a token miss or a price miss. reconcile exits 1 when it is above 0.",
+      "type": "object",
+      "properties": {
+        "misses": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "misses"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "rows",
+    "unmatched",
+    "refused",
+    "count"
+  ]
+}

@@ -62,7 +62,7 @@ var appHelp = cli.Page{
 		{"--org ORG", "the organization that owns the App"},
 	},
 	Sections: []cli.Section{
-		{Heading: "Where it is described", Body: []cli.Block{cli.Text("docs/github-app.md walks through it.")}},
+		{Heading: "Where it is described", Body: []cli.Block{cli.Text("https://docs.costroid.com/github-app walks through it.")}},
 		{Heading: "manifest", Body: []cli.Block{cli.Text(`manifest prints the App's manifest as JSON: --name, the webhook at
 --webhook-url, the check_run event and the four permissions an installation
 token asks for, checks to write, pull_requests, contents and metadata to

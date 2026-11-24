@@ -388,8 +388,8 @@ func TestMergedSendsOneFactPerMergedPullRequest(t *testing.T) {
 		printed = append(printed, answer)
 	}
 	wantJSON := []mergedAnswer{
-		{MergeID: "903114-1481", PullRequest: 1481, Status: http.StatusCreated, RunIdentity: unverified},
-		{MergeID: "903114-1482", PullRequest: 1482, Status: http.StatusCreated, RunIdentity: tokenVerified},
+		{Schema: mergedSchema, MergeID: "903114-1481", PullRequest: 1481, Status: http.StatusCreated, RunIdentity: unverified},
+		{Schema: mergedSchema, MergeID: "903114-1482", PullRequest: 1482, Status: http.StatusCreated, RunIdentity: tokenVerified},
 	}
 	if code != 0 || !slices.Equal(printed, wantJSON) {
 		t.Errorf("--json: exit %d, printed %+v, want %+v", code, printed, wantJSON)
@@ -611,7 +611,7 @@ func TestMergedStatesEachRefusal(t *testing.T) {
 		line   string
 	}{
 		{402, "PLAN_WRITES_REFUSED", 0, "costroid: warning: Costroid Platform refused merge 903114-1482: 402 PLAN_WRITES_REFUSED. Nothing in the merge fact is wrong, and nothing keeps it: run this job again once the plan allows writes"},
-		{409, "INSTALLATION_NOT_BOUND", 0, "costroid: warning: Costroid Platform refused merge 903114-1482: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as docs/connect.md shows, then run this job again"},
+		{409, "INSTALLATION_NOT_BOUND", 0, "costroid: warning: Costroid Platform refused merge 903114-1482: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as https://docs.costroid.com/connect shows, then run this job again"},
 		{401, "AUTH_TOKEN_INVALID", 1, refused + "401 AUTH_TOKEN_INVALID. The token is absent, unknown, expired or revoked. Nothing was stored"},
 		{403, "AUTH_TOKEN_SCOPE", 1, refused + "403 AUTH_TOKEN_SCOPE. The token lacks merges:write. Nothing was stored"},
 		{403, "RUN_TOKEN_INVALID", 1, refused + "403 RUN_TOKEN_INVALID. The run token fails verification. Nothing was stored"},
@@ -857,7 +857,7 @@ func TestMergedSendsByV05ToAPlatformThatStatesV05(t *testing.T) {
 
 	stub = newMergeStub(t)
 	code, stdout, _ = stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit), "--json")
-	if want := `{"merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified"}` + "\n"; code != 0 || stdout != want {
+	if want := `{"schema":"costroid.merged/0.1","merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified"}` + "\n"; code != 0 || stdout != want {
 		t.Errorf("--json: exit %d, printed %q, want %q", code, stdout, want)
 	}
 }
@@ -910,17 +910,17 @@ func TestMergedNamesTheBranchOfACheckedFact(t *testing.T) {
 	stub = newV06MergeStub(t)
 	stub.ref = "refs/heads/release/2026.11"
 	code, stdout, _ = stub.merged(t, stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit), "--json")
-	wantJSON := `{"merge_id":"903114-1481","pull_request":1481,"status":201,"run_identity":"unverified"}` + "\n" +
-		`{"merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified","ref":"refs/heads/release/2026.11"}` + "\n"
+	wantJSON := `{"schema":"costroid.merged/0.1","merge_id":"903114-1481","pull_request":1481,"status":201,"run_identity":"unverified"}` + "\n" +
+		`{"schema":"costroid.merged/0.1","merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified","ref":"refs/heads/release/2026.11"}` + "\n"
 	if code != 0 || stdout != wantJSON {
 		t.Errorf("--json: exit %d, printed %q, want %q", code, stdout, wantJSON)
 	}
 
 	for _, ref := range []string{`"refs/heads/::error::forged"`, `"refs/heads/main\n::error::forged"`, `"refs/tags/v1"`, `7`} {
 		stub = newV06MergeStub(t)
-		stub.answers["903114-1482"] = []turn{{http.StatusCreated, `{"merge_id":"903114-1482","repo":"github.com/example/widgets","pull_request":1482,"merged_at":"2026-11-21T10:07:52Z","merge_commit_sha":"` + tipCommit + `","run_identity":"token_verified","ref":` + ref + `}`}}
+		stub.answers["903114-1482"] = []turn{{http.StatusCreated, `{"schema":"costroid.merged/0.1","merge_id":"903114-1482","repo":"github.com/example/widgets","pull_request":1482,"merged_at":"2026-11-21T10:07:52Z","merge_commit_sha":"` + tipCommit + `","run_identity":"token_verified","ref":` + ref + `}`}}
 		code, stdout, _ = stub.merged(t, stub.pushEnv(t, mergeHost(t), tipCommit), "--json")
-		want := `{"merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified"}` + "\n"
+		want := `{"schema":"costroid.merged/0.1","merge_id":"903114-1482","pull_request":1482,"status":201,"run_identity":"token_verified"}` + "\n"
 		if code != 0 || stdout != want {
 			t.Errorf("a ref of %s: exit %d, printed %q, want %q", ref, code, stdout, want)
 		}

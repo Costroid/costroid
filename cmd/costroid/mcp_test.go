@@ -211,7 +211,7 @@ func TestPolicyCheckMatchesPolicyCommand(t *testing.T) {
 			if test.conclusion == "" {
 				// The terminal says a missing file in words, and the tool
 				// answers the error as it is: both name the file.
-				if code != exitFailure || !result.IsError || stderr != "costroid: "+rows+" does not exist\n"+seeTroubleshooting || !strings.Contains(answer, rows) {
+				if code != exitFailure || !result.IsError || stderr != "costroid: "+rows+" does not exist\n"+see("any-command") || !strings.Contains(answer, rows) {
 					t.Errorf("policy exited %d with %q, policy_check answered %v %q", code, stderr, result.IsError, answer)
 				}
 				return
@@ -219,7 +219,11 @@ func TestPolicyCheckMatchesPolicyCommand(t *testing.T) {
 			if result.IsError {
 				t.Fatalf("policy_check failed: %s", answer)
 			}
-			if compactJSON(t, answer) != compactJSON(t, stdout) {
+			// The command prints the verdict under its name, in a first key
+			// the tool's answer does not carry.
+			named := "{\n  \"schema\": \"" + policySchema + "\",\n"
+			printed, found := strings.CutPrefix(stdout, named)
+			if !found || compactJSON(t, answer) != compactJSON(t, "{\n"+printed) {
 				t.Errorf("policy_check answered\n%s\ncostroid policy printed\n%s", answer, stdout)
 			}
 			var verdict struct {

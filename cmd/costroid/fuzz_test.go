@@ -50,7 +50,7 @@ func FuzzReportInput(f *testing.F) {
 			}
 		}
 		var log bytes.Buffer
-		input := rowsInput(reportFlags{rows: path, agentResult: agentResult}, &log)
+		input := rowsInput(reportFlags{rows: rowsFile{path: path}, agentResult: agentResult}, &log)
 		for _, line := range strings.Split(strings.TrimSuffix(log.String(), "\n"), "\n") {
 			if line != "" && !strings.HasPrefix(line, warningPrefix) {
 				t.Fatalf("the log holds a line that is not a warning: %q", line)

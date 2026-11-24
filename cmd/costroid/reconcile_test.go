@@ -83,7 +83,7 @@ func writeLedger(t *testing.T, input int) string {
 func runReconcile(t *testing.T, doer *replayDoer, getenv func(string) string, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := reconcileCommand(context.Background(), args, getenv, doer, fixedNow, &stdout, &stderr)
+	code := reconcileCommand(context.Background(), args, getenv, doer, fixedNow, stdio{stdout: &stdout, stderr: &stderr})
 	return code, stdout.String(), stderr.String()
 }
 
@@ -188,12 +188,12 @@ func TestReconcileReadsTheRowsARunWrites(t *testing.T) {
 	client := emptyReport{refreshed: "2026-11-03T00:00:00Z"}
 	later := func() time.Time { return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC) }
 	var stdout, stderr bytes.Buffer
-	code := reconcileCommand(context.Background(), []string{"--rows", out, "--from", day, "--to", day}, environment, client, later, &stdout, &stderr)
+	code := reconcileCommand(context.Background(), []string{"--rows", out, "--from", day, "--to", day}, environment, client, later, stdio{stdout: &stdout, stderr: &stderr})
 	if code != exitFailure || !strings.Contains(stderr.String(), "--credential") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 	stdout.Reset()
-	code = reconcileCommand(context.Background(), []string{"--rows", out, "--from", day, "--to", day, "--credential", "apikey_01ExampleCi"}, environment, client, later, &stdout, &stderr)
+	code = reconcileCommand(context.Background(), []string{"--rows", out, "--from", day, "--to", day, "--credential", "apikey_01ExampleCi"}, environment, client, later, stdio{stdout: &stdout, stderr: &stderr})
 	if code != exitRejected {
 		t.Fatalf("exit %d, want a miss against an empty report: %s", code, stderr.String())
 	}
@@ -418,7 +418,7 @@ func (s *reconcilePlatform) reconcileAndSend(t *testing.T, doer reconcile.Doer, 
 	args := append([]string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export"}, extra...)
 	var stdout, stderr bytes.Buffer
 	world := reconcileWorld{getenv: getenv, client: doer, now: fixedNow, platform: s.server.Client(), pace: testPace}
-	code := reconcileThrough(context.Background(), args, world, &stdout, &stderr)
+	code := reconcileThrough(context.Background(), args, world, stdio{stdout: &stdout, stderr: &stderr})
 	for _, secret := range []string{testIntegrationToken, testRunToken, testRequestToken, sentinelKey} {
 		if strings.Contains(stdout.String()+stderr.String(), secret) {
 			t.Fatalf("the output holds a token: %s%s", stdout.String(), stderr.String())
@@ -545,7 +545,7 @@ func TestReconcileExportSendsAgainOnAServerError(t *testing.T) {
 	world := reconcileWorld{getenv: down.env(nil), client: &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, now: fixedNow, platform: down.server.Client(), pace: verdictPace{interval: time.Millisecond, limit: 50 * time.Millisecond}}
 	out := filepath.Join(t.TempDir(), "reconciliation.jsonl")
 	var stdoutDown, stderrDown bytes.Buffer
-	code = reconcileThrough(context.Background(), []string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export"}, world, &stdoutDown, &stderrDown)
+	code = reconcileThrough(context.Background(), []string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export"}, world, stdio{stdout: &stdoutDown, stderr: &stderrDown})
 	want := "costroid: Costroid Platform refused body 1 of 1: 503 with no refusal code, sent again every 0 s for 0 s. Nothing in the rows is wrong, and " + out + " is kept to send again\n"
 	if puts, _ := down.sent(); code != exitFailure || len(puts) < 2 || !strings.HasSuffix(stderrDown.String(), want) {
 		t.Errorf("exit %d, %d sends, stderr %q", code, len(puts), stderrDown.String())
@@ -647,7 +647,7 @@ func TestReconcileExportFollowsTheContractsRefusals(t *testing.T) {
 		"429": {turn{http.StatusTooManyRequests, `{"error":{"code":"QUOTA_RECONCILIATIONS_PER_DAY","message":"x"}}`}, "3600", 0,
 			"costroid: warning: Costroid Platform refused body 1 of 1: 429 QUOTA_RECONCILIATIONS_PER_DAY, retry after 3600 s. Nothing in the rows is wrong, and OUT is kept to send again\n"},
 		"409": {turn{http.StatusConflict, `{"error":{"code":"INSTALLATION_NOT_BOUND","message":"x"}}`}, "", 0,
-			"costroid: warning: Costroid Platform refused body 1 of 1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as docs/connect.md shows, and OUT is kept to send again\n"},
+			"costroid: warning: Costroid Platform refused body 1 of 1: 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of github-owner:7204411: run costroid connect, as https://docs.costroid.com/connect shows, and OUT is kept to send again\n"},
 		"413": {turn{http.StatusRequestEntityTooLarge, `{"error":{"code":"RECONCILIATION_TOO_LARGE","message":"x"}}`}, "", exitFailure,
 			"costroid: Costroid Platform refused body 1 of 1: 413 RECONCILIATION_TOO_LARGE. The body was cut at the limits GET /quotas stated, which can only rise, and nothing in it was stored. OUT is kept to send again\n"},
 		"422": {turn{http.StatusUnprocessableEntity, `{"error":{"code":"RECONCILIATION_INVALID","message":"::error::forged","line":1}}`}, "", exitFailure,
@@ -669,7 +669,7 @@ func TestReconcileExportFollowsTheContractsRefusals(t *testing.T) {
 			world := reconcileWorld{getenv: stub.env(nil), client: &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, now: fixedNow, platform: stub.server.Client(), pace: testPace}
 			var stdout, stderr bytes.Buffer
 			args := []string{"--rows", writeLedger(t, 100900), "--from", "2026-10-14", "--to", "2026-10-14", "--out", out, "--export", "--installation-id", testInstallation}
-			code := reconcileThrough(context.Background(), args, world, &stdout, &stderr)
+			code := reconcileThrough(context.Background(), args, world, stdio{stdout: &stdout, stderr: &stderr})
 			want := reconcileVersionLine + strings.ReplaceAll(check.want, "OUT", out)
 			if code != check.code || stderr.String() != want {
 				t.Errorf("exit %d, stderr %q\nwant exit %d, %q", code, stderr.String(), check.code, want)
@@ -708,7 +708,7 @@ func TestReconcileExportRefusesBeforeAskingTheProvider(t *testing.T) {
 			doer := &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}
 			var stdout, stderr bytes.Buffer
 			world := reconcileWorld{getenv: stub.env(check.env), client: doer, now: fixedNow, platform: stub.server.Client(), pace: testPace}
-			code := reconcileThrough(context.Background(), append(slices.Clone(base), check.args...), world, &stdout, &stderr)
+			code := reconcileThrough(context.Background(), append(slices.Clone(base), check.args...), world, stdio{stdout: &stdout, stderr: &stderr})
 			// The first three are the command line's. The rest are the
 			// environment's, which the flags do not name.
 			want := exitFailure

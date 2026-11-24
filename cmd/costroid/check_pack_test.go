@@ -128,7 +128,7 @@ func TestCustomerPackFromBase(t *testing.T) {
 			}
 		}
 		code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", config, "--pack", pack)
-		if code != exitRejected || !strings.Contains(stdout, "- `base_rule` failed with `on_every_run`\n") || !strings.HasPrefix(lastLine(stdout), "Pack rule failed (base_rule): ") {
+		if code != exitRejected || !strings.Contains(stdout, "- base_rule failed with on_every_run\n") || !strings.HasPrefix(lastLine(stdout), "Pack rule failed (base_rule): ") {
 			t.Errorf("exit %d: %s%s", code, stdout, stderr)
 		}
 		if code, _, stderr := execute(t, "policy", "--rows", realRows, "--config", filepath.Join(directory, "none.yml"), "--pack", pack); code != exitFailure || !strings.Contains(stderr, "--pack names a policy pack, and") {

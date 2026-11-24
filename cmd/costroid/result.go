@@ -33,7 +33,7 @@ basis.`,
 	Sections: []cli.Section{
 		{Heading: "What it reads and prints", Body: []cli.Block{cli.Text(`It reads the check run, never the comment, whose copy can withhold
 amounts. --json prints the object whole, byte for byte as the check run
-carries it. docs/agents.md describes the object.`)}},
+carries it. https://docs.costroid.com/agents describes the object.`)}},
 		{Heading: "The repository and the token", Body: []cli.Block{cli.Text(`result reads GitHub with GITHUB_TOKEN, and the repository from --repo, else
 GITHUB_REPOSITORY, else the GitHub repository the git remote origin names, or
 the only remote, which result says on stderr. It never asks gh for a token:
@@ -144,8 +144,17 @@ func (r resultTarget) host() (pullHost, error) {
 		API:        os.Getenv("GITHUB_API_URL"),
 		Repository: repository,
 		Tokens:     scm.StaticToken(token),
-		Client:     &http.Client{},
+		Client:     r.client(),
 	})
+}
+
+// client says which host result asks before its first request there, where
+// the command has somewhere to say it.
+func (r resultTarget) client() *http.Client {
+	if r.said == nil {
+		return &http.Client{}
+	}
+	return asking(&http.Client{}, r.said)
 }
 
 func resultCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {

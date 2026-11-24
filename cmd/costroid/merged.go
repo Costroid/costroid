@@ -92,7 +92,7 @@ says why.`)}},
 On 402 or 409 INSTALLATION_NOT_BOUND nothing in the fact is wrong, and
 nothing keeps it: merged warns and exits 0, and the job sends it when it runs
 again. On 409 MERGE_FACT_CONFLICT the pull request already holds a different
-fact, and merged does not send it again. docs/export.md lists every answer.`)}},
+fact, and merged does not send it again. https://docs.costroid.com/export lists every answer.`)}},
 		{Heading: "What it prints", Body: []cli.Block{cli.Text(`--json prints, on standard output, one object per fact sent: its merge id,
 its pull request, the status the platform answered, the fact's run_identity
 and, on a token_verified fact by v0.6 or later, the ref of its branch, or the
@@ -337,9 +337,10 @@ func closedBy(ctx context.Context, push pushRun, client *http.Client, getenv fun
 func printFacts(facts []mergeFact, stdout, stderr io.Writer) int {
 	for _, fact := range facts {
 		line, _ := json.Marshal(struct {
+			Schema   string        `json:"schema"`
 			MergeID  string        `json:"merge_id"`
 			Document mergeDocument `json:"document"`
-		}{fact.id, fact.document})
+		}{mergedFactSchema, fact.id, fact.document})
 		fmt.Fprintf(stdout, "%s\n", line)
 	}
 	cli.Say(stderr, "costroid: --dry-run printed %d merge facts and sent none\n", len(facts))
@@ -392,8 +393,16 @@ func (s *mergedSend) all(ctx context.Context, facts []mergeFact) int {
 	return worst
 }
 
+// mergedSchema names the object --json prints for one fact sent, and
+// mergedFactSchema the one --dry-run prints for one fact it would send.
+const (
+	mergedSchema     = "costroid.merged/0.1"
+	mergedFactSchema = "costroid.merged-fact/0.1"
+)
+
 // mergedAnswer is the object --json prints for one fact.
 type mergedAnswer struct {
+	Schema      string `json:"schema"`
 	MergeID     string `json:"merge_id"`
 	PullRequest int    `json:"pull_request"`
 	Status      int    `json:"status"`
@@ -454,6 +463,7 @@ func (s *mergedSend) printJSON(answer mergedAnswer) {
 	if !s.json {
 		return
 	}
+	answer.Schema = mergedSchema
 	line, _ := json.Marshal(answer)
 	fmt.Fprintf(s.stdout, "%s\n", line)
 }
@@ -503,7 +513,7 @@ func (s *mergedSend) refused(fact mergeFact, refused *refusal) int {
 		fmt.Fprintf(s.stderr, "costroid: warning: %v. Nothing in the merge fact is wrong, and nothing keeps it: run this job again once the plan allows writes\n", refused)
 		return 0
 	case refused.unbound():
-		fmt.Fprintf(s.stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as docs/connect.md shows, then run this job again\n", refused, s.installation)
+		fmt.Fprintf(s.stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as https://docs.costroid.com/connect shows, then run this job again\n", refused, s.installation)
 		return 0
 	case refused.status == http.StatusConflict && refused.code == mergeFactConflict:
 		fmt.Fprintf(s.stderr, "costroid: %v. Pull request %d of %s already holds a different fact, and a pull request merges once, so merged does not send it again\n", refused, fact.document.PullRequest, fact.document.Repo)

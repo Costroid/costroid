@@ -27,11 +27,11 @@ your key, and what the agent's job holds.`,
 	},
 	Sections: []cli.Section{
 		{Heading: "Findings", Body: []cli.Block{cli.Text(`Each finding is high, medium or a
-note. docs/lint.md lists the rules.
+note. https://docs.costroid.com/lint lists the rules.
 
 lint prints one line per finding on stdout, the notes last, then the count.
 --json prints one object in their place, costroid.lint/0.1: each finding's
-rule, severity, file, line and message, and the counts. docs/output.md
+rule, severity, file, line and message, and the counts. https://docs.costroid.com/output
 describes the object.`)}},
 	},
 	Exits: []cli.Row{
@@ -71,6 +71,67 @@ type lintCount struct {
 	Note   int `json:"note"`
 }
 
+// graded names a finding by where it stands and the rule it breaks.
+type graded struct {
+	path string
+	line int
+	rule string
+}
+
+// lintGrades is the severity costroid lint gives each finding it has in the
+// files at paths. lint-recipes states its rejected lines by it, so one
+// finding reads the same in the object of either command. Files lint cannot
+// read give no grades.
+func lintGrades(paths []string) map[graded]recipelint.Severity {
+	grades := map[graded]recipelint.Severity{}
+	report, err := recipelint.LintWith(paths, recipelint.Options{Profile: recipelint.Customer})
+	if err != nil {
+		return grades
+	}
+	for _, finding := range report.Findings {
+		grades[graded{finding.Path, finding.Line, finding.Rule}] = finding.Severity
+	}
+	for _, note := range report.Notes {
+		grades[graded{note.Path, note.Line, note.Rule}] = recipelint.Note
+	}
+	return grades
+}
+
+// lintObject is what a lint found as the object --json prints, beside the
+// lines that say the same. A line lint-recipes rejects carries no severity of
+// its own. The object states it as lint grades the same finding, by grades,
+// and as high where the rule is lint-recipes' alone: it fails the command, as
+// a high finding fails lint.
+func lintObject(report recipelint.Report, grades map[graded]recipelint.Severity) (lintFindings, []string) {
+	found := lintFindings{Schema: lintSchema, Files: report.Files, Agents: report.Agents, Findings: []lintFinding{}}
+	var lines []string
+	for _, finding := range report.Findings {
+		lines = append(lines, finding.String())
+		severity := finding.Severity
+		if severity == "" {
+			severity = recipelint.High
+			if grade, known := grades[graded{finding.Path, finding.Line, finding.Rule}]; known {
+				severity = grade
+			}
+		}
+		found.Findings = append(found.Findings, lintFinding{Rule: finding.Rule, Severity: string(severity), File: finding.Path, Line: finding.Line, Message: finding.Message})
+		switch severity {
+		case recipelint.High:
+			found.Count.High++
+		case recipelint.Medium:
+			found.Count.Medium++
+		case recipelint.Note:
+			found.Count.Note++
+		}
+	}
+	for _, note := range report.Notes {
+		lines = append(lines, note.String())
+		found.Findings = append(found.Findings, lintFinding{Rule: note.Rule, Severity: string(recipelint.Note), File: note.Path, Line: note.Line, Message: note.Message})
+		found.Count.Note++
+	}
+	return found, lines
+}
+
 func lintCommand(args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("lint", flag.ContinueOnError)
 	strict := set.Bool("strict", false, "fail on a medium finding too")
@@ -93,23 +154,7 @@ func lintCommand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cli.Fail(stderr, cli.File(err))
 	}
-	found := lintFindings{Schema: lintSchema, Files: report.Files, Agents: report.Agents, Findings: []lintFinding{}}
-	var lines []string
-	for _, finding := range report.Findings {
-		lines = append(lines, finding.String())
-		found.Findings = append(found.Findings, lintFinding{Rule: finding.Rule, Severity: string(finding.Severity), File: finding.Path, Line: finding.Line, Message: finding.Message})
-		switch finding.Severity {
-		case recipelint.High:
-			found.Count.High++
-		case recipelint.Medium:
-			found.Count.Medium++
-		}
-	}
-	for _, note := range report.Notes {
-		lines = append(lines, note.String())
-		found.Findings = append(found.Findings, lintFinding{Rule: note.Rule, Severity: string(recipelint.Note), File: note.Path, Line: note.Line, Message: note.Message})
-		found.Count.Note++
-	}
+	found, lines := lintObject(report, nil)
 	if *asJSON {
 		if err := printObject(stdout, found); err != nil {
 			return cli.Fail(stderr, err)

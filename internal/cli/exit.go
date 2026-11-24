@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 )
 
@@ -34,6 +35,11 @@ var UsageExit = Row{"2", "the command line is wrong"}
 
 // Troubleshooting is the page that lists the lines costroid prints.
 const Troubleshooting = Documentation + "/troubleshooting"
+
+// AnyCommand is the section of that page for the lines any command prints: a
+// file that is not there, a command line that is wrong, and work that could
+// not be done.
+const AnyCommand = "any-command"
 
 // Mistaken says the command line of command is wrong for the reason err
 // gives: an argument too many, a required flag left out, a value of the wrong
@@ -74,14 +80,29 @@ func Stopped(what string, then ...string) error {
 
 // Explain prints what stopped a command, under costroid's name: what is wrong
 // on the first line, then why and what to do next when the error says them.
-// An error that names no next step ends on the page that lists costroid's
-// lines.
+// An error that names no next step ends on the address of the section that
+// lists its line, on the page that lists costroid's lines.
 func Explain(stderr io.Writer, err error) {
 	text := Plain(err)
 	if mistake := new(Mistake); !errors.As(err, &mistake) && !strings.Contains(text, "\n") {
-		text += "\nSee " + Troubleshooting + "."
+		text += "\nSee " + address(stderr, err) + "."
 	}
 	fmt.Fprintf(stderr, "costroid: %s\n", text)
+}
+
+// address is where the line of err is listed. A file that is not there, or is
+// not what the command reads, is listed once for every command. Any other
+// line is listed with its command's, in the section the command named with
+// About. A writer that belongs to no command gets the page.
+func address(stderr io.Writer, err error) string {
+	messages, ok := stderr.(*Messages)
+	switch {
+	case !ok || messages.section == "":
+		return Troubleshooting
+	case errors.As(err, new(*fs.PathError)):
+		return Troubleshooting + "#" + AnyCommand
+	}
+	return Troubleshooting + "#" + messages.section
 }
 
 // Fail explains err and answers the code its command exits with: ExitUsage

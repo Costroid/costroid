@@ -88,7 +88,7 @@ func TestPolicyEndsOnTheVerdictSentence(t *testing.T) {
 	figure := "this run cost USD " + realTotal + " at list (List-equivalent, not billed)"
 	for name, tc := range map[string]struct{ config, sentence, above string }{
 		"over the budget": {overBudget, "Over budget, warn-only: " + figure + ", over the USD 0.001 run budget. After the warn-only period this fails the check.",
-			"Warn-only: the commit that added this workflow to the base branch could not be read, so a rule that fails warns. Add `enforce: true` under `policy` in `costroid.yml` to enforce now.\n"},
+			"Warn-only: the commit that added this workflow to the base branch could not be read, so a rule that fails warns. Add enforce: true under policy in costroid.yml to enforce now.\n"},
 		"under the budget": {"policy:\n  run_budget_usd: \"5\"\n  monthly_budget_usd: \"100\"\n",
 			"Within budget, by the job's own figures: " + figure + " of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
 			"Monthly budget: the month to date comes only from a ledger, and this check has none, so the rule did not run.\n"},
@@ -216,10 +216,10 @@ func TestPolicyNamesTheFileItRead(t *testing.T) {
 		args   []string
 		want   string
 	}{
-		"no file":               {"", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no limit."},
-		"a file with no policy": {"comment:\n  show_cost: true\n", nil, "No rule applied: `costroid.yml` in this directory sets no budget and no limit."},
-		"an invalid file":       {"policy: [\n", nil, "No rule ran, so the check concludes neutral: `costroid.yml` in this directory is not valid"},
-		"another file":          {"", []string{"--config", other}, "No rule applied: `" + other + "` sets no budget and no limit."},
+		"no file":               {"", nil, "No rule applied: costroid.yml in this directory sets no budget and no limit."},
+		"a file with no policy": {"comment:\n  show_cost: true\n", nil, "No rule applied: costroid.yml in this directory sets no budget and no limit."},
+		"an invalid file":       {"policy: [\n", nil, "No rule ran, so the check concludes neutral: costroid.yml in this directory is not valid"},
+		"another file":          {"", []string{"--config", other}, "No rule applied: " + other + " sets no budget and no limit."},
 	} {
 		os.Remove(configFile)
 		if check.config != "" {

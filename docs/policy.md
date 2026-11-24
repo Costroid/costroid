@@ -352,7 +352,7 @@ git show origin/main:.costroid/policy.rego > base.rego
 costroid policy --rows rows.jsonl --config base.yml --pack base.rego
 ```
 
-The pack runs as the report runs it, and the lines list its results. `--json` prints the verdict as the machine block carries it. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
+The pack runs as the report runs it, and the lines list its results. `--json` prints the verdict as the machine block carries it, with a first key, `schema`, that names the object `costroid.policy/0.1`. `--workflow-added` and `--at` take the period's start and the time of the check, both as RFC 3339, so the command gives the same verdict the check gave. Without `--workflow-added` the period counts as not ended, as it does in the report.
 
 `--history` takes the result objects of the pull request's earlier check runs, one object per line, each with its `check_run_id`. The command reads the pull request's total and the count that ends the warn-only period from them, as the report reads them from the check runs, with the rows as this run's report. A line that is not a JSON object, or that names no check run, refuses the file with its line number. An object the report would skip, such as one that withholds its amounts, is skipped. This collects the objects on one commit:
 

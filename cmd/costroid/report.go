@@ -75,11 +75,11 @@ func eventRefusal(eventName string) string {
 		return "not posted: report posts on the pull_request event, and a review's job posts through costroid approve"
 	}
 	return fmt.Sprintf("not posted: report posts on the pull_request event, and this run's event is %q. "+
-		"docs/existing-workflow.md says how to report from the workflow you have", eventName)
+		"https://docs.costroid.com/existing-workflow says how to report from the workflow you have", eventName)
 }
 
 type reportFlags struct {
-	rows         string
+	rows         rowsFile
 	budget       *decimal.Decimal
 	installation string
 	// agentResult is the agent job's result as the CI system states it,
@@ -107,7 +107,8 @@ func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	preview := set.Bool("preview", false, "print the comment as Markdown and post nothing")
 	exitOnVerdict := set.Bool("exit-on-verdict", false, "on GitLab CI, exit 1 on a failure verdict and 3 on a neutral one")
 	recorded := set.String("recorded", "", "RUN_ID,DATE: the rows are the recorded run RUN_ID's from DATE, not the pull request's")
-	if err := parseFlags(set, args, reportHelp, stdout, stderr); err != nil {
+	// report ignores an argument, and so every word after one.
+	if err := parseLeadingFlags(set, args, reportHelp, stdout, stderr); err != nil {
 		return reportFlags{}, err
 	}
 	if *rows == "" {
@@ -119,7 +120,7 @@ func parseReport(args []string, stdout, stderr io.Writer) (reportFlags, error) {
 	if *preview && *exitOnVerdict {
 		return reportFlags{}, errors.New("report takes --preview or --exit-on-verdict, not both")
 	}
-	flags := reportFlags{rows: *rows, agentResult: *agentResult, json: *asJSON, preview: *preview, exitOnVerdict: *exitOnVerdict}
+	flags := reportFlags{rows: rowsFile{path: *rows}, agentResult: *agentResult, json: *asJSON, preview: *preview, exitOnVerdict: *exitOnVerdict}
 	if *installation != "" {
 		// An unreadable installation costs the comment its account link and
 		// nothing else: a missing input never blocks the report.
@@ -235,21 +236,25 @@ func (d *rowsDigest) sums() (rows, file string) {
 	return hex.EncodeToString(sum.Sum(nil)), file
 }
 
-func readReportRows(path string) (rowsReading, error) {
+// readReportRows reads the rows a report states. Standard input is the
+// job's own, so it is read as it is.
+func readReportRows(rows rowsFile) (rowsReading, error) {
 	unread := rowsReading{state: comment.Unreadable, reason: comment.UnreadRowsFile}
-	// The agent's job wrote this path, so a link could name any file on the
-	// runner.
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return rowsReading{state: comment.Unreadable, reason: comment.NoRowsFile}, err
+	if !rows.onStandardInput() {
+		// The agent's job wrote this path, so a link could name any file on
+		// the runner.
+		info, err := os.Lstat(rows.path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return rowsReading{state: comment.Unreadable, reason: comment.NoRowsFile}, err
+		}
+		if err != nil {
+			return unread, err
+		}
+		if !info.Mode().IsRegular() {
+			return rowsReading{state: comment.Unreadable, reason: comment.NotAFile}, errors.New("the rows path is not a regular file")
+		}
 	}
-	if err != nil {
-		return unread, err
-	}
-	if !info.Mode().IsRegular() {
-		return rowsReading{state: comment.Unreadable, reason: comment.NotAFile}, errors.New("the rows path is not a regular file")
-	}
-	file, err := os.Open(path)
+	file, err := rows.open()
 	if err != nil {
 		return unread, err
 	}
@@ -275,7 +280,8 @@ func readReportRows(path string) (rowsReading, error) {
 // stderr. Outside CI there is no job to protect, so it refuses and says why.
 // --preview needs no CI system. On GitLab CI, where no check can fail,
 // --exit-on-verdict makes the job's exit code the gate: verdictExit gives it.
-func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func reportCommand(ctx context.Context, args []string, std stdio) int {
+	stdout, stderr := std.stdout, std.stderr
 	flags, err := parseReport(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -283,8 +289,11 @@ func reportCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("report", err))
 	}
+	if err := flags.rows.hold(std.stdin); err != nil {
+		return cli.Fail(stderr, err)
+	}
 	if flags.preview {
-		return previewReport(ctx, flags, time.Now(), stdout, stderr)
+		return previewReport(ctx, flags, previewClock(), stdout, stderr)
 	}
 	system := cicontext.Detect(os.Getenv)
 	if system == cicontext.NoSystem {
@@ -409,8 +418,11 @@ func rowsInput(flags reportFlags, stderr io.Writer) comment.Input {
 // when the estimate it was given was not there, nil when there is none. The
 // agent's job wrote it, so a link, a large file or a reason off the closed
 // list is ignored with a warning.
-func readEstimateNote(rows string, stderr io.Writer) *focusfile.Unavailable {
-	path := estimateNotePath(rows)
+func readEstimateNote(rows rowsFile, stderr io.Writer) *focusfile.Unavailable {
+	if rows.onStandardInput() {
+		return nil
+	}
+	path := estimateNotePath(rows.path)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -458,6 +470,11 @@ func refusedArtifact(getenv func(string) string, stderr io.Writer) *comment.Refu
 	return &comment.RefusedArtifact{Count: count, Entries: entries}
 }
 
+// previewClock gives the time a preview's verdict is reached at, which the
+// comment's machine block states to the second. A test holds it still, so
+// that two previews of the same rows are the same bytes.
+var previewClock clock = time.Now
+
 // previewReport prints, as Markdown, the comment a report posts for the rows,
 // and reads and posts nothing on any host. The verdict holds the rows to
 // costroid.yml in the working directory, as costroid policy does, the
@@ -499,19 +516,22 @@ func printPreview(stdout, stderr io.Writer, input comment.Input) error {
 // job was skipped or the action refused the artifact, which the comment
 // states in place of the rows.
 func previewRowsExist(flags reportFlags) error {
-	_, err := os.Lstat(flags.rows)
+	if flags.rows.onStandardInput() {
+		return nil
+	}
+	_, err := os.Lstat(flags.rows.path)
 	if !errors.Is(err, fs.ErrNotExist) || flags.agentResult == agentSkipped ||
 		os.Getenv(refusedVariable) != "" || os.Getenv(refusedCountVariable) != "" {
 		return nil
 	}
-	return cli.Stopped("no rows file at "+flags.rows, "costroid run writes one at --out, and costroid demo shows a comment without one.")
+	return cli.Stopped("no rows file at "+flags.rows.path, "costroid run writes one at --out, and costroid demo shows a comment without one.")
 }
 
 // previewVerdict evaluates the policy offline at the given time. It reads no
 // workflow history, so a rule that fails warns, as it does under costroid
 // policy without --workflow-added.
-func previewVerdict(ctx context.Context, rowsPath string, state comment.State, at time.Time, stderr io.Writer) *policy.Verdict {
-	usage, err := reportUsage(rowsPath, state)
+func previewVerdict(ctx context.Context, rows rowsFile, state comment.State, at time.Time, stderr io.Writer) *policy.Verdict {
+	usage, err := reportUsage(rows, state)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v\n", err)
 	}
@@ -575,9 +595,13 @@ type statedAgentError struct {
 // wrote the rows, so only the reason, the reader's error line, the agent's
 // error class, the agent's own figure and the cap are read, and only a reason,
 // a class or a figure from its closed list, and a cap in USD above 0, is used.
-// A run that wrote no object, as an older release does, gives no reason.
-func readRunReason(rows string, stderr io.Writer) statedReason {
-	path := runResultPath(rows)
+// A run that wrote no object, as an older release does, gives no reason, and
+// neither do rows on standard input, which no object stands beside.
+func readRunReason(rows rowsFile, stderr io.Writer) statedReason {
+	if rows.onStandardInput() {
+		return statedReason{}
+	}
+	path := runResultPath(rows.path)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return statedReason{}
@@ -692,7 +716,7 @@ func runReasonFor(state comment.State, reason reason.Reason, stderr io.Writer) r
 // post posts the check and the comment, and returns the input as posted: with
 // the installation, the amounts setting, the policy's verdict and the check
 // run's id.
-func post(ctx context.Context, target reportTarget, input comment.Input, rowsPath string, stderr io.Writer) comment.Input {
+func post(ctx context.Context, target reportTarget, input comment.Input, rows rowsFile, stderr io.Writer) comment.Input {
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
 	host, pull := target.host, resolveBaseHead(ctx, target.host, target.pull, stderr)
@@ -702,7 +726,7 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 	shown, settings := resolveSettings(ctx, host, pull.settingsRef(), stderr)
 	input.Amounts = shown
 	if input.ReceiptsAsked {
-		input.Receipt, input.ReceiptsAsked = readReceipt(ctx, host, pull, settings, rowsPath, stderr)
+		input.Receipt, input.ReceiptsAsked = readReceipt(ctx, host, pull, settings, rows, stderr)
 	}
 	// A recorded run's figures were spent on no commit of this pull request,
 	// so they join no total and no baseline.
@@ -715,7 +739,7 @@ func post(ctx context.Context, target reportTarget, input comment.Input, rowsPat
 		input.Verdict = decideVerdict(ctx, host, verdictRequest{
 			commits:  policy.Commits{Base: pull.settingsRef(), Head: pull.head, PullRequest: pull.pullRequest > 0},
 			start:    func(ctx context.Context) policy.Start { return workflowStart(ctx, host, pull, stderr) },
-			rowsPath: rowsPath,
+			rows:     rows,
 			state:    input.State,
 			earlier:  runs.earlier,
 			baseline: runs.baseline,
@@ -861,11 +885,11 @@ func measuredReports(lifetime *comment.Lifetime) int {
 
 // reportUsage reads the rows again for the policy. A file the comment could
 // not read gives the policy no rows either.
-func reportUsage(path string, state comment.State) (policy.Usage, error) {
+func reportUsage(rows rowsFile, state comment.State) (policy.Usage, error) {
 	if state != comment.Reported {
 		return policy.Usage{}, nil
 	}
-	file, err := os.Open(path)
+	file, err := rows.open()
 	if err != nil {
 		return policy.Usage{}, err
 	}
@@ -930,7 +954,7 @@ type receiptHost interface {
 // fork's pull request, which this release leaves out, and when every session
 // the receipt states is one the run's own rows hold. Nothing it returns
 // reaches a rule, a total or the verdict.
-func readReceipt(ctx context.Context, host scm.Reporter, pull pullContext, settings *comment.Config, rowsPath string, stderr io.Writer) (*comment.Receipt, bool) {
+func readReceipt(ctx context.Context, host scm.Reporter, pull pullContext, settings *comment.Config, rows rowsFile, stderr io.Writer) (*comment.Receipt, bool) {
 	reader, readable := host.(receiptHost)
 	if !readable || pull.pullRequest < 1 {
 		return nil, false
@@ -966,7 +990,7 @@ func readReceipt(ctx context.Context, host scm.Reporter, pull pullContext, setti
 		stated.Refused = comment.ReceiptReason(reading.Refused)
 		return stated, true
 	}
-	if err := priceReceipt(stated, reading.Receipt, runSessions(rowsPath)); err != nil {
+	if err := priceReceipt(stated, reading.Receipt, runSessions(rows)); err != nil {
 		noReceipt(stderr, err.Error())
 		return nil, false
 	}
@@ -1006,9 +1030,9 @@ func priceReceipt(stated *comment.Receipt, read receipts.Receipt, held func(stri
 // runSessions reports a session id that a row of the rows file names, so a
 // session the run also holds is counted once. A file that cannot be read
 // names none.
-func runSessions(rowsPath string) func(string) bool {
+func runSessions(rows rowsFile) func(string) bool {
 	named := map[string]bool{}
-	file, err := os.Open(rowsPath)
+	file, err := rows.open()
 	if err != nil {
 		return func(string) bool { return false }
 	}

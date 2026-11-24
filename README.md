@@ -80,7 +80,7 @@ costroid report --preview --rows rows.jsonl
 ```text
 costroid: running claude-code under a cap of USD 5.00
 costroid: claude-code, 4 requests
-costroid: 19 rows in rows.jsonl, catalog 0.4.3
+costroid: 19 rows in rows.jsonl, catalog 0.4.3, and the result object in rows.run.json
 costroid: USD 0.001619725 at list (List-equivalent, not billed)
 costroid: cap USD 5.00 (client-side estimate, can pass the cap)
 costroid: note: BillingAccountId reads unknown: pass --billing-account or set COSTROID_BILLING_ACCOUNT

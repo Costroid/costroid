@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"testing"
 )
 
@@ -17,15 +18,18 @@ func TestParseGivesEverySetQuietAndQuietsItsMessages(t *testing.T) {
 	for _, check := range []struct {
 		args  []string
 		quiet bool
+		// parse is ParseLeading where a word after an argument is left to the
+		// command, which Parse refuses when it names a flag.
+		parse func(*flag.FlagSet, []string, io.Writer) error
 	}{
-		{nil, false}, {[]string{"-q"}, true}, {[]string{"--quiet"}, true}, {[]string{"--rows", "r.jsonl", "-q", "rest"}, true},
-		{[]string{"--quiet=false"}, false}, {[]string{"rest", "-q"}, false}, {[]string{"--", "-q"}, false},
+		{nil, false, Parse}, {[]string{"-q"}, true, Parse}, {[]string{"--quiet"}, true, Parse}, {[]string{"--rows", "r.jsonl", "-q", "rest"}, true, Parse},
+		{[]string{"--quiet=false"}, false, Parse}, {[]string{"rest", "-q"}, false, ParseLeading}, {[]string{"--", "-q"}, false, Parse},
 	} {
 		var written bytes.Buffer
 		stderr := NewMessages(&written)
 		set := flag.NewFlagSet("tally", flag.ContinueOnError)
 		set.String("rows", "", "the rows file")
-		if err := Parse(set, check.args, stderr); err != nil {
+		if err := check.parse(set, check.args, stderr); err != nil {
 			t.Fatalf("%v: %v", check.args, err)
 		}
 		Say(stderr, "costroid: wrote %d rows\n", 3)

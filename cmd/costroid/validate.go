@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/config"
@@ -30,6 +31,10 @@ const (
 	packNotValid = "invalid"
 	packNotRead  = "unread"
 )
+
+// packNotValidLine is what validate says of a file whose own keys are valid
+// and whose policy pack is not: the refusal first, then what holds.
+const packNotValidLine = "the policy pack it names is not valid, and its own keys are"
 
 // validation is what validate found in one file: costroid.validate/0.2.
 type validation struct {
@@ -68,15 +73,17 @@ func (v validation) lines() []string {
 	case fileAbsent:
 		return []string{v.File + ": no file, so the defaults apply"}
 	case fileValid:
-		lines := []string{v.File + ": valid"}
 		switch {
-		case v.Pack == nil:
+		case v.Pack == nil || v.Pack.State == packNotRead:
 		case v.Pack.State == packCompiles:
-			lines = append(lines, v.Pack.File+": valid")
+			return []string{v.File + ": valid", v.Pack.File + ": valid"}
 		case v.Pack.State == packNotValid:
-			lines = append(lines, v.Pack.File+": "+v.Pack.Message)
+			// The first line is the one a reader takes the answer from, so
+			// it never reads valid above a pack that is not.
+			// The message holds a line for each thing the compiler found.
+			return append([]string{v.File + ": " + packNotValidLine}, strings.Split(v.Pack.File+": "+v.Pack.Message, "\n")...)
 		}
-		return lines
+		return []string{v.File + ": valid"}
 	}
 	lines := make([]string, len(v.Problems))
 	for i, problem := range v.Problems {
@@ -106,7 +113,7 @@ func validateCommand(ctx context.Context, args []string, std stdio) int {
 	}
 	data, err := readNamed(path, std.stdin)
 	if path == standardInput {
-		path = "standard input"
+		path = standardInputName
 	}
 	found := validation{Schema: validateSchema, File: path, State: fileValid, Problems: []schemaProblem{}}
 	switch {

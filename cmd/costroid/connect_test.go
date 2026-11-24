@@ -281,7 +281,7 @@ func TestConnectNamesBoundElsewhere(t *testing.T) {
 	stub := refuseProof(t, http.StatusConflict, "INSTALLATION_BOUND_ELSEWHERE")
 	code, stdout, stderr := stub.connect(t, stub.githubEnv())
 	want := "costroid: Costroid Platform refused the proof for github-owner:" + testOwner + ": 409 INSTALLATION_BOUND_ELSEWHERE. " +
-		"Another tenant holds this owner, and this proof does not outrank its binding, as docs/connect.md explains.\n"
+		"Another tenant holds this owner, and this proof does not outrank its binding, as https://docs.costroid.com/connect explains.\n"
 	if code != exitRejected || stdout != "" || stderr != want {
 		t.Errorf("exit %d, stdout %q, stderr %q, want stderr %q", code, stdout, stderr, want)
 	}

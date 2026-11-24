@@ -14,7 +14,7 @@ import (
 // The warnings a report prints about the cap it states.
 const (
 	emptyBudgetFlag = "costroid: warning: --budget-usd is empty, so the report states no cap. A variable that gives it, such as \"$COSTROID_BUDGET_USD\", reads empty where the job does not set it\n"
-	otherCap        = "costroid: warning: --budget-usd 5 is ignored, because the run's result object states a cap of USD 2, and the report states that one. The report reads the cap from that object, so its step needs no budget-usd\n"
+	otherCap        = "costroid: warning: --budget-usd 5 is ignored, because the run's result object states a cap of USD 2.00, and the report states that one. The report reads the cap from that object, so its step needs no budget-usd\n"
 	uncappedRun     = "costroid: warning: --budget-usd 5 is ignored, because the run's result object states no cap, so the report states none: it states the cap the run or the read step was given\n"
 	unreadCap       = "costroid: warning: the run's result object states a cap that is not an amount in USD above 0, so the report states no cap\n"
 )

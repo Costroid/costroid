@@ -32,6 +32,7 @@ var nextSteps = []struct {
 }{
 	{line: nextAfterDemo, after: "demo", names: []string{"init", "github", "--agent", "claude"}},
 	{line: nextAfterInit, after: "init", names: []string{"doctor"}},
+	{line: nextAfterInitOnGitLab, after: "init on GitLab", names: []string{"doctor"}},
 	{line: nextAfterDoctor, after: "doctor", left: []string{"gh", "pr", "create", "--fill"}},
 	{line: nextAfterDoctorOnGitLab, after: "doctor", page: "recipes#gitlab-ci"},
 	{line: nextAfterValidate, after: "validate", names: []string{"policy", "--rows", "FILE"}},
@@ -308,4 +309,48 @@ func TestAPackThatIsNotValidNamesTheCommandThatRunsItCorrected(t *testing.T) {
 		t.Errorf("stdout:\n%s", stdout)
 	}
 	troubleshootingLists(t, policy.NextAfterInvalidPack)
+}
+
+// bareAmount is an amount in USD drawn with no decimal place, or with one.
+var bareAmount = regexp.MustCompile(`USD [0-9]+(?:\.[0-9])?(?:[^0-9.]|\.[^0-9]|\.?$)`)
+
+// TestTheTerminalUsesTheRuledWords holds three rules of the product's wording
+// where init and policy print. An amount a person reads has at least two
+// decimal places, in the sentence init reads from a recipe's header, in what
+// it says of an SDK program and in the note under a patch. The noun follows
+// the host: init on GitLab ends on a merge request. And policy prints its
+// lines as plain text, with no mark of the comment's Markdown.
+func TestTheTerminalUsesTheRuledWords(t *testing.T) {
+	for _, args := range [][]string{
+		{"github", "--agent", "claude"},
+		{"github", "--agent", "codex"},
+		{"github", "--agent", "claude-agent-sdk"},
+		{"github", "--agent", "codex-sdk"},
+		{"gitlab", "--agent", "claude"},
+	} {
+		code, _, stderr := runInit(t, t.TempDir(), releaseBuild, costroid.Recipes, args...)
+		flat := strings.Join(strings.Fields(stderr), " ")
+		if code != 0 || !strings.Contains(flat, "USD 5.00") || bareAmount.MatchString(flat) {
+			t.Errorf("init %v: exit %d, and an amount it prints has fewer than two decimal places, %q:\n%s", args, code, bareAmount.FindString(flat), stderr)
+		}
+		want := nextAfterInit
+		if args[0] == gitlabHost {
+			want = nextAfterInitOnGitLab
+		}
+		if lastLine(stderr) != want || strings.Contains(nextAfterInitOnGitLab, "pull request") || !strings.Contains(nextAfterInitOnGitLab, "merge request") {
+			t.Errorf("init %v ends on %q, want %q", args, lastLine(stderr), want)
+		}
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, workflowDir, "review.yml"), existingReview)
+	if code, _, stderr := runInit(t, root, releaseBuild, costroid.Recipes, "github", "--existing", filepath.Join(workflowDir, "review.yml")); code != 0 || bareAmount.MatchString(strings.Join(strings.Fields(stderr), " ")) || !strings.Contains(stderr, "USD 5.00") {
+		t.Errorf("init --existing: exit %d, and the note under the patch draws its cap another way:\n%s", code, stderr)
+	}
+
+	for name, config := range map[string]string{"over a budget": overBudget, "no policy": "comment:\n  show_cost: true\n", "a file that is not valid": "policy: [\n"} {
+		code, stdout, stderr := execute(t, "policy", "--rows", realRows, "--config", writeBaseConfig(t, config))
+		if code != 0 || strings.ContainsAny(stdout, "`*") || strings.Contains(stdout, "](") || strings.Count(stdout, "\n") < 2 {
+			t.Errorf("policy, %s: exit %d, and its lines hold a mark of Markdown:\n%s%s", name, code, stdout, stderr)
+		}
+	}
 }

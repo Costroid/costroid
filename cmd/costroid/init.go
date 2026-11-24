@@ -21,6 +21,7 @@ import (
 
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/cli"
+	"github.com/Costroid/costroid/internal/comment"
 	"github.com/Costroid/costroid/internal/recipelint"
 	"go.yaml.in/yaml/v3"
 )
@@ -41,7 +42,7 @@ to.`,
 		"              [--pr [--key-env NAME | --keep-org-secret]]",
 		"costroid init github --agent claude-code-action --auth subscription",
 		"costroid init github --existing PATH [--action-ref SHA] [--post-review]",
-		"              [--platform-url URL] [--budget-usd AMOUNT]",
+		"              [--platform-url URL] [--budget-usd AMOUNT] [--agent AGENT]",
 	},
 	Examples: []string{
 		"costroid init github --agent claude",
@@ -91,9 +92,9 @@ when they hold no cap, or the amount in USD --budget-usd names, and gives the
 read step and the report job the cap they hold. On a codex-action step that
 sets no codex-home, the patch adds a step before it that makes one for the
 job under runner.temp, and gives the action that codex-home.
-docs/existing-workflow.md shows the result.`)}},
+https://docs.costroid.com/existing-workflow shows the result.`)}},
 		{Heading: "What it can add", Body: []cli.Block{cli.Text(`--post-review adds post-review: "true" to the agent's step and the report's
-step, so the agent's own answer is posted as a second comment. docs/review.md
+step, so the agent's own answer is posted as a second comment. https://docs.costroid.com/review
 says what that comment shows.
 
 --platform-url names Costroid Platform's address. init prints the command that
@@ -101,7 +102,7 @@ sets it as the repository variable COSTROID_PLATFORM_URL, which the recipe's
 ingest job reads, and with --existing the patch adds that ingest job. It also
 writes .github/workflows/costroid-connect.yml, pinned as the recipe is, which
 binds the owner to the platform from the default branch. With --existing the
-patch creates that file, unless the repository holds one. docs/export.md says
+patch creates that file, unless the repository holds one. https://docs.costroid.com/export says
 what else the platform needs.
 
 --skills writes .agents/skills/costroid/SKILL.md for Codex and
@@ -115,10 +116,12 @@ pushes, opens the pull request, watches its run and prints the URL of
 Costroid's comment. The key goes to gh secret set on standard input, read
 from the environment variable --key-env names, or else from a prompt on the
 terminal that does not echo it. init never prints it, logs it or writes it to
-a file. A repository secret takes precedence over an organization secret of
-the same name, so --keep-org-secret sets none and the run reads the
-organization's. It stops at the first command that fails and lists the ones
-left.`)}},
+a file. Where standard input is not a terminal, init does not ask: it lists
+the secrets first, and where none is the key it refuses before it writes a
+file, so a script passes --key-env. A repository secret takes
+precedence over an organization secret of the same name, so --keep-org-secret
+sets none and the run reads the organization's. It stops at the first command
+that fails and lists the ones left.`)}},
 		{Heading: "The release it pins", Body: []cli.Block{cli.Text(`A development build belongs to no release, so it pins nothing and refuses.
 go install at a release's tag records the release's version and no commit,
 so init reads the commit that tag names on github.com with git ls-remote.
@@ -185,13 +188,13 @@ const (
 // what the program must do for the run to be read. %s is the budget the
 // recipe passes to --budget-usd.
 var sdkPrograms = map[string]string{
-	"claude-agent-sdk": "The program holds its own budget in maxBudgetUsd: set it to USD %s, the figure the recipe passes to --budget-usd, so the report states the budget the program held. It must leave persistSession on, because the rows come from the sessions Claude Code writes in CLAUDE_CONFIG_DIR.",
-	"codex-sdk":        "The run stops the program at USD %s, the figure the recipe passes to --budget-usd. The program must leave CODEX_HOME as the recipe sets it, because the rows come from the threads Codex writes there.",
+	"claude-agent-sdk": "The program holds its own budget in maxBudgetUsd: set it to %s, the figure the recipe passes to --budget-usd, so the report states the budget the program held. It must leave persistSession on, because the rows come from the sessions Claude Code writes in CLAUDE_CONFIG_DIR.",
+	"codex-sdk":        "The run stops the program at %s, the figure the recipe passes to --budget-usd. The program must leave CODEX_HOME as the recipe sets it, because the rows come from the threads Codex writes there.",
 }
 
 // sdkOutput says where an SDK program's output goes, and what it must keep
 // out of the job's log.
-const sdkOutput = "Print the program's output on standard output: the recipe keeps it in a file on the runner, and Costroid does not read it. Standard error reaches the job's log, which a public repository shows to anyone, so print nothing there that the agent read or wrote. docs/sdk.md says more."
+const sdkOutput = "Print the program's output on standard output: the recipe keeps it in a file on the runner, and Costroid does not read it. Standard error reaches the job's log, which a public repository shows to anyone, so print nothing there that the agent read or wrote. https://docs.costroid.com/sdk says more."
 
 // recipeBudget finds the budget a recipe passes to costroid run.
 var recipeBudget = regexp.MustCompile(`--budget-usd ([0-9]+(?:\.[0-9]+)?)\b`)
@@ -425,10 +428,15 @@ func parseInit(args []string, stdout, stderr io.Writer) (initFlags, error) {
 	set.StringVar(&flags.keyEnv, "key-env", "", "the environment variable that holds the agent's key, for --pr")
 	set.BoolVar(&flags.keepOrg, "keep-org-secret", false, "set no repository secret, so the run reads the organization's, for --pr")
 	set.StringVar(&flags.budgetUSD, "budget-usd", "", "the cap in USD --existing adds to claude_args that hold none")
+	// With the host first, any word after the flags is one too many, and the
+	// line below says so of that word. With the flags first, a flag after the
+	// host is shown where it goes.
+	parse := parseFlags
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		flags.host, args = args[0], args[1:]
+		parse = parseLeadingFlags
 	}
-	if err := parseFlags(set, args, initHelp, stdout, stderr); err != nil {
+	if err := parse(set, args, initHelp, stdout, stderr); err != nil {
 		return flags, err
 	}
 	rest := set.Args()
@@ -495,7 +503,7 @@ func (f initFlags) checkHost() error {
 	case f.postReview:
 		return errors.New("--post-review posts the agent's answer on GitHub alone")
 	case f.platformURL != "":
-		return errors.New("--platform-url sets a GitHub repository variable: on GitLab, set the CI/CD variables docs/export.md lists")
+		return errors.New("--platform-url sets a GitHub repository variable: on GitLab, set the CI/CD variables https://docs.costroid.com/export lists")
 	}
 	return nil
 }
@@ -749,6 +757,16 @@ func gitOutput(root string, args ...string) (string, error) {
 	return string(output), err
 }
 
+// untracked reports a file of the repository at root that git does not
+// track: git ls-files exits 1 on a path it does not know. A git that cannot
+// be run, or that fails another way, reports nothing, so init then leaves
+// the file out as it did.
+func untracked(root, file string) bool {
+	_, err := gitOutput(root, "ls-files", "--error-unmatch", "--", file)
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 1
+}
+
 // existingWorkflow is a workflow that runs an agent's own action.
 type existingWorkflow struct {
 	path   string
@@ -836,8 +854,9 @@ type written struct {
 
 func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, pr prSettings, stdout, stderr io.Writer) int {
 	// What init says about what it wrote and what is left goes to standard
-	// error, as its patch's notes do, and --quiet drops it.
-	said := cli.Notes(stderr)
+	// error, as its patch's notes do, and --quiet drops it. At a terminal a
+	// line under costroid's name is wrapped for the person there.
+	said := cli.NotesFor(stderr)
 	name := initRecipes[flags.host][flags.agent]
 	source, err := fs.ReadFile(recipes, path.Join("recipes", name))
 	if err != nil {
@@ -913,6 +932,11 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 	case err == nil:
 		changed = append(changed, configFile)
 		fmt.Fprintf(said, "costroid: wrote %s, with every key commented out\n", configFile)
+	case errors.Is(err, fs.ErrExist) && flow != nil && untracked(repo.root, configFile):
+		// An earlier init wrote the file and nothing committed it, so the
+		// pull request's commit takes it with the workflow that reads it.
+		changed = append(changed, configFile)
+		fmt.Fprintf(said, "costroid: %s exists and git does not track it, so init left it as it is and commits it with the workflow\n", configFile)
 	case errors.Is(err, fs.ErrExist):
 		fmt.Fprintf(said, "costroid: %s exists, and init left it as it is\n", configFile)
 	default:
@@ -949,7 +973,11 @@ func writeRecipe(repo repository, flags initFlags, release pin, recipes fs.FS, p
 		fmt.Fprintf(said, "\nnote: %s\n", note)
 	}
 	if flow == nil {
-		fmt.Fprintf(said, "\n%s\n", nextAfterInit)
+		next := nextAfterInit
+		if flags.host == gitlabHost {
+			next = nextAfterInitOnGitLab
+		}
+		fmt.Fprintf(said, "\n%s\n", next)
 	}
 	return 0
 }
@@ -1235,6 +1263,23 @@ func addInclude(source []byte, include *yaml.Node, entry string) ([]byte, error)
 	return []byte(text), nil
 }
 
+// wholeAmount is an amount written as digits, with or without a fraction,
+// and statedAmount one that a sentence states after its currency.
+var (
+	wholeAmount  = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?$`)
+	statedAmount = regexp.MustCompile(`\bUSD [0-9]+(?:\.[0-9]+)?`)
+)
+
+// capAmount draws the cap a recipe or a patch states as every amount a person
+// reads is drawn, with at least two decimal places. A cap that is a workflow
+// expression stands as it was written.
+func capAmount(figure string) string {
+	if !wholeAmount.MatchString(figure) {
+		return runCurrency + " " + figure
+	}
+	return comment.Money(runCurrency, figure)
+}
+
 // perPushSentence is the recipe header's statement of what each push runs,
 // with the GitLab template's budget variable read as its amount.
 func perPushSentence(recipe []byte) string {
@@ -1245,9 +1290,13 @@ func perPushSentence(recipe []byte) string {
 	}
 	sentence = "Each push" + sentence
 	if budget := gitlabBudget.FindSubmatch(recipe); budget != nil {
-		sentence = strings.ReplaceAll(sentence, "COSTROID_BUDGET_USD", "USD "+string(budget[1]))
+		sentence = strings.ReplaceAll(sentence, "COSTROID_BUDGET_USD", runCurrency+" "+string(budget[1]))
 	}
-	return sentence
+	// The header writes the amount as the recipe's flag takes it. A person
+	// reads it here, so it is drawn as every amount is.
+	return statedAmount.ReplaceAllStringFunc(sentence, func(amount string) string {
+		return capAmount(strings.TrimPrefix(amount, runCurrency+" "))
+	})
 }
 
 func printNextSteps(said io.Writer, repo repository, flags initFlags, changed []string, recipe []byte) {
@@ -1260,7 +1309,7 @@ func printNextSteps(said io.Writer, repo repository, flags initFlags, changed []
 		}
 	}
 	if flags.host == gitlabHost {
-		fmt.Fprint(said, "\n"+wrap(fmt.Sprintf("Set %s as a CI/CD variable scoped to the environment costroid-agent, and COSTROID_GITLAB_TOKEN scoped to costroid-report. docs/recipes.md#give-the-report-a-token says which token. Every merge request needs the label %s.", gitlabKeys[flags.agent], agentLabel), usageWidth))
+		fmt.Fprint(said, "\n"+wrap(fmt.Sprintf("Set %s as a CI/CD variable scoped to the environment costroid-agent, and COSTROID_GITLAB_TOKEN scoped to costroid-report. https://docs.costroid.com/recipes#give-the-report-a-token says which token. Every merge request needs the label %s.", gitlabKeys[flags.agent], agentLabel), usageWidth))
 	} else {
 		for _, name := range secretNames(recipe) {
 			commands = append(commands, "gh secret set "+name)
@@ -1306,7 +1355,7 @@ func printProgram(said io.Writer, flags initFlags, recipe []byte) {
 		return
 	}
 	where := fmt.Sprintf("The recipe runs %s, with its package.json and package-lock.json in %s/. Change the path in the recipe to yours.", sdkProgram, path.Dir(sdkProgram))
-	for _, paragraph := range []string{where, fmt.Sprintf(needs, budget[1]), sdkOutput} {
+	for _, paragraph := range []string{where, fmt.Sprintf(needs, capAmount(string(budget[1]))), sdkOutput} {
 		fmt.Fprint(said, "\n"+wrap(paragraph, usageWidth))
 	}
 }
@@ -1476,8 +1525,8 @@ func addInputs(block []string, postReview bool, capAfter string, cap []string) [
 // platformNeeds is what the ingest job needs besides the variable, and
 // connectNeeds the same once init wrote the connect workflow.
 const (
-	platformNeeds = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. docs/connect.md says how."
-	connectNeeds  = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. The workflow costroid-connect.yml binds it from the default branch, on a push when that branch is protected and on its daily schedule otherwise. docs/connect.md says how."
+	platformNeeds = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. https://docs.costroid.com/connect says how."
+	connectNeeds  = "The ingest job sends the rows once the integration token is set as COSTROID_PLATFORM_TOKEN and the owner is bound to the platform. The workflow costroid-connect.yml binds it from the default branch, on a push when that branch is protected and on its daily schedule otherwise. https://docs.costroid.com/connect says how."
 )
 
 func printExistingPatch(repo repository, flags initFlags, release pin, recipes fs.FS, stdout, stderr io.Writer) int {
@@ -1513,7 +1562,7 @@ func printExistingPatch(repo repository, flags initFlags, release pin, recipes f
 		cli.Say(stderr, "costroid: %s exists, and init left it as it is\n", connectWorkflow)
 	}
 	said := cli.Notes(stderr)
-	text := "Apply it from the repository's root with git apply. Your job keeps the permissions it has, and the read step asks for nothing more. The report job holds checks: write and pull-requests: write, runs on pull requests alone, and runs nothing the pull request wrote. docs/existing-workflow.md says more."
+	text := "Apply it from the repository's root with git apply. Your job keeps the permissions it has, and the read step asks for nothing more. The report job holds checks: write and pull-requests: write, runs on pull requests alone, and runs nothing the pull request wrote. https://docs.costroid.com/existing-workflow says more."
 	if patch.note != "" {
 		text += " " + patch.note
 	}
@@ -1580,7 +1629,7 @@ func existingEdits(source []byte, lines []string, release pin, flags initFlags) 
 	}
 	found := agentSteps(jobs, flags.agent)
 	if len(found) != 1 {
-		return workflowPatch{}, fmt.Errorf("runs %s in %d steps, and init adds to exactly one: docs/existing-workflow.md shows the two blocks to add by hand", actionNames(flags.agent), len(found))
+		return workflowPatch{}, fmt.Errorf("runs %s in %d steps, and init adds to exactly one: https://docs.costroid.com/existing-workflow shows the two blocks to add by hand", actionNames(flags.agent), len(found))
 	}
 	step := found[0]
 	stepID, addID, err := agentStepID(step)
@@ -1807,7 +1856,7 @@ func addedCap(lines []string, step agentStep, budget string, change edit) (heldC
 		edits:  []edit{change},
 		budget: budget,
 		args:   args.Value,
-		note:   fmt.Sprintf("The patch adds --max-budget-usd %s to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes USD %s, and gives the read step and the report job that cap. To change the cap, change it in claude_args, in claude-args and in both budget-usd inputs.", budget, budget),
+		note:   fmt.Sprintf("The patch adds --max-budget-usd %s to the claude_args of the claude-code-action step, so Claude Code stops a run once its own estimate passes %s, and gives the read step and the report job that cap. To change the cap, change it in claude_args, in claude-args and in both budget-usd inputs.", budget, capAmount(budget)),
 	}, nil
 }
 
@@ -1830,7 +1879,7 @@ func statedCap(args string) heldCap {
 }
 
 func unheldCap(reason string) heldCap {
-	return heldCap{note: "The claude-code-action step's claude_args are left as they are, because " + reason + ", so the patch states no cap. docs/existing-workflow.md#hold-each-run-to-a-cap shows the lines to add by hand."}
+	return heldCap{note: "The claude-code-action step's claude_args are left as they are, because " + reason + ", so the patch states no cap. https://docs.costroid.com/existing-workflow#hold-each-run-to-a-cap shows the lines to add by hand."}
 }
 
 // withoutComments drops the lines of claude_args that start with #, as
@@ -2033,7 +2082,7 @@ func existingHome(lines []string, step agentStep, dash, unit int) (heldHome, err
 	case with.Kind == yaml.ScalarNode && with.Tag == "!!null" && with.Value == "":
 		change = edit{at: blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1, lines: []string{strings.Repeat(" ", withKey.Column-1+unit) + input}}
 	case with.Kind != yaml.MappingNode || with.Style&yaml.FlowStyle != 0:
-		return heldHome{}, errors.New("its openai/codex-action step writes its with in a layout init does not write into: add the codex-home step and input by hand, as docs/existing-workflow.md#on-openaicodex-action shows them")
+		return heldHome{}, errors.New("its openai/codex-action step writes its with in a layout init does not write into: add the codex-home step and input by hand, as https://docs.costroid.com/existing-workflow#on-openaicodex-action shows them")
 	default:
 		change = edit{at: blockEnd(lines, withKey.Line-1, withKey.Column-1) + 1, lines: []string{strings.Repeat(" ", with.Column-1) + input}}
 	}
@@ -2096,7 +2145,7 @@ func makeHomeStep(dash, unit int) []string {
 // readsBackHome applies the edits that add the codex-home and reads the
 // workflow back: the action's step must hold it.
 func readsBackHome(edits []edit, lines []string, step agentStep) error {
-	failed := errors.New("adding codex-home would not read back: add the codex-home step and input by hand, as docs/existing-workflow.md#on-openaicodex-action shows them")
+	failed := errors.New("adding codex-home would not read back: add the codex-home step and input by hand, as https://docs.costroid.com/existing-workflow#on-openaicodex-action shows them")
 	_, jobs, err := workflowJobs([]byte(strings.Join(applyEdits(lines, edits), "\n") + "\n"))
 	if err != nil {
 		return failed

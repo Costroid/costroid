@@ -215,7 +215,7 @@ func TestIngestRunAliasesStillWork(t *testing.T) {
 				}
 				rows, _ := os.ReadFile(out)
 				object, _ := os.ReadFile(runResultPath(out))
-				return strings.ReplaceAll(stderr, out, "rows.jsonl"), rows, object
+				return strings.ReplaceAll(stderr, filepath.Dir(out), "."), rows, object
 			}
 			aliasErr, aliasRows, aliasObject := read("alias", tc.alias)
 			tableErr, tableRows, tableObject := read("table", tc.table)

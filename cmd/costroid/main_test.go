@@ -60,8 +60,15 @@ func TestMainRunsACustomerPackAsItsChild(t *testing.T) {
 	}
 }
 
-// seeTroubleshooting is the line an error that names no next step ends on.
+// seeTroubleshooting is the line an error that names no next step ends on,
+// where the command was called without the command line that names it.
 const seeTroubleshooting = "See " + cli.Troubleshooting + ".\n"
+
+// see is that line under a command line: it names the section of the
+// troubleshooting page that lists the error's line.
+func see(section string) string {
+	return "See " + cli.Troubleshooting + "#" + section + ".\n"
+}
 
 // seeUsage is the line a command's own finding about its command line ends
 // on.
@@ -520,4 +527,71 @@ func TestUsageGolden(t *testing.T) {
 			t.Errorf("%v: exit %d, stderr %q, stdout differs from %s:\n%s", args, code, stderr, golden, stdout)
 		}
 	}
+}
+
+// TestRunNamesEveryFileItLeavesBesideTheRows runs costroid run in an empty
+// directory and holds its summary to name every file the run left there: the
+// rows, and the result object in the line that names the rows. ingest-run
+// leaves the same two and says the same. Where the object cannot be written,
+// the line ends at the catalog and a warning says why, so the line never
+// names a file that is not there.
+func TestRunNamesEveryFileItLeavesBesideTheRows(t *testing.T) {
+	claude := replayClaude(t)
+	rowsLine := regexp.MustCompile(`(?m)^costroid: [0-9]+ rows in rows\.jsonl, catalog [0-9.]+, and the result object in rows\.run\.json$`)
+	named := func(t *testing.T, dir, stderr string) {
+		t.Helper()
+		if !rowsLine.MatchString(stderr) {
+			t.Errorf("no line names the rows and the result object beside them:\n%s", stderr)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 2 {
+			t.Fatalf("the directory holds %d entries, want the rows and the object: %v", len(entries), err)
+		}
+		for _, entry := range entries {
+			if !strings.Contains(stderr, " in "+entry.Name()) {
+				t.Errorf("the run left %s, and no line names it:\n%s", entry.Name(), stderr)
+			}
+		}
+	}
+	t.Run("run", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		code, _, stderr := execute(t, "run", "--budget-usd", "5", "--out", "rows.jsonl", "--", claude, "-p", "work")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		named(t, dir, stderr)
+	})
+	t.Run("ingest-run", func(t *testing.T) {
+		source, err := filepath.Abs(measuredExecutionFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		t.Chdir(dir)
+		code, _, stderr := execute(t, "ingest-run", "--from", "execution-file="+source, "--out", "rows.jsonl")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		named(t, dir, stderr)
+	})
+	t.Run("an object that cannot be written", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root writes in a directory no one may write in")
+		}
+		dir := t.TempDir()
+		t.Chdir(dir)
+		writeFile(t, filepath.Join(dir, "rows.jsonl"), "")
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		code, _, stderr := execute(t, "run", "--budget-usd", "5", "--out", "rows.jsonl", "--", claude, "-p", "work")
+		if code != 0 || !strings.Contains(stderr, "costroid: warning: the run's result object was not written: ") {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		if strings.Contains(stderr, "the result object in") || !regexp.MustCompile(`(?m)^costroid: [0-9]+ rows in rows\.jsonl, catalog [0-9.]+$`).MatchString(stderr) {
+			t.Errorf("the summary names an object that was not written:\n%s", stderr)
+		}
+	})
 }

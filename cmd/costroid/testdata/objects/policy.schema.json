@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/policy.schema.json",
+  "title": "What costroid policy --json prints, version 0.1",
+  "description": "The verdict costroid policy gives offline, as the check's machine block carries it under policy, with the object's name in its first key. docs/policy.md describes each field of the verdict.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "costroid.policy/0.1"
+    },
+    "conclusion": {
+      "description": "What the check would conclude on this verdict.",
+      "enum": [
+        "success",
+        "neutral",
+        "failure"
+      ]
+    },
+    "trust": {
+      "description": "How far the rows are checked. Offline they are the job's own, so it reads unverified.",
+      "type": "string"
+    },
+    "config": {
+      "description": "Whether the costroid.yml named was found, and whether it is valid.",
+      "type": "string"
+    },
+    "evaluated_at": {
+      "description": "When the verdict was reached, in RFC 3339.",
+      "type": "string"
+    },
+    "results": {
+      "description": "One entry for each rule that ran: the rule, its outcome and its reason.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outcome": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "rule",
+          "outcome"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "conclusion",
+    "results"
+  ]
+}

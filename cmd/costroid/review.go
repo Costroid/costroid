@@ -42,7 +42,7 @@ apart from the report's.`,
 	},
 	Sections: []cli.Section{
 		{Heading: "Turning it on", Body: []cli.Block{cli.Text(`Nothing runs it by default: the action runs it only
-with post-review: "true". docs/review.md says how to turn it on.`)}},
+with post-review: "true". https://docs.costroid.com/review says how to turn it on.`)}},
 		{Heading: "Keeping the answer", Body: []cli.Block{
 			cli.Text(`--keep runs in the agent's job, after the run. It reads the answer the run
 ended with from PATH and writes that text, and nothing else, to --out. KIND is

@@ -489,3 +489,87 @@ func unsettledCountIsPrinted(t *testing.T, shown string) {
 		t.Errorf("close says\n%s\nand the page shows\n%s", stderr.String(), shown)
 	}
 }
+
+// commandLine is one costroid command line the documentation shows a reader.
+type commandLine struct {
+	page  string
+	block int
+	words []string
+}
+
+// envAssignment is a variable set for one command, before its name.
+var envAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// documentedCommandLines reads every costroid command line of the sh and yaml
+// blocks of the README and of docs/: a line whose command is costroid, by its
+// name or by a path that ends in it, after any variable set for it, and in a
+// yaml block after "run:" or a list's dash. A backslash carries a line on.
+// The words end at a comment, a pipe, a redirection or the next command.
+func documentedCommandLines(t *testing.T) []commandLine {
+	t.Helper()
+	var lines []commandLine
+	for _, block := range docstest.Blocks(t, repositoryRoot) {
+		if block.Language != "sh" && block.Language != "yaml" {
+			continue
+		}
+		for _, line := range strings.Split(strings.ReplaceAll(block.Body, "\\\n", " "), "\n") {
+			line = strings.TrimSpace(line)
+			if block.Language == "yaml" {
+				line = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "- "), "run: "))
+			}
+			if !strings.Contains(line, "costroid ") || strings.Count(line, `"`)%2 != 0 || strings.Count(line, "'")%2 != 0 {
+				continue
+			}
+			words := shellWords(t, line)
+			for len(words) > 0 && envAssignment.MatchString(words[0]) {
+				words = words[1:]
+			}
+			if len(words) == 0 || words[0] != "costroid" && !strings.HasSuffix(words[0], "/costroid") {
+				continue
+			}
+			words[0] = "costroid"
+			if end := slices.IndexFunc(words, func(word string) bool {
+				return strings.HasPrefix(word, "#") || word == "|" || word == "&&" || word == ";" || word == "<" || strings.HasPrefix(word, ">")
+			}); end >= 0 {
+				words = words[:end]
+			}
+			lines = append(lines, commandLine{page: block.Page, block: block.Line, words: words})
+		}
+	}
+	return lines
+}
+
+// TestEveryDocumentedCommandLineParsesWithItsCommandsFlags holds each costroid
+// command line the documentation shows to what the help's own examples are
+// held to: its command exists, its flags parse with the command's own flag
+// set, and a usage form of the command holds it. costroid help <command>
+// names a command that exists, and a flag before any command is one the bare
+// call takes. Nothing runs, so the test does not prove a line does what the
+// page says, that a file it names exists, or that a host answers.
+func TestEveryDocumentedCommandLineParsesWithItsCommandsFlags(t *testing.T) {
+	flags := commandFlags(t)
+	lines := documentedCommandLines(t)
+	if len(lines) < 50 {
+		t.Fatalf("found %d command lines, which is too few to be the documentation's", len(lines))
+	}
+	pages := map[string]bool{}
+	for _, line := range lines {
+		pages[line.page] = true
+		t.Run(fmt.Sprintf("%s:%d: %s", line.page, line.block, strings.Join(line.words, " ")), func(t *testing.T) {
+			switch words := line.words; {
+			case len(words) == 2 && (words[1] == "--version" || isHelpFlag(words[1]) || words[1] == "help"):
+			case len(words) > 2 && words[1] == "help":
+				if _, ok := lookup(words[2]); !ok {
+					t.Errorf("the line asks for the help of %s, which is no command", words[2])
+				}
+			default:
+				holdCommandLine(t, flags, words)
+			}
+		})
+	}
+	for _, page := range []string{"README.md", "docs/install.md", "docs/export.md", "docs/connect.md", "docs/reconcile.md"} {
+		if !pages[page] {
+			t.Errorf("no command line was read from %s", page)
+		}
+	}
+}

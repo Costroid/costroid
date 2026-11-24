@@ -40,7 +40,7 @@ func exportBy(t *testing.T, stub *platformStub, env map[string]string, extra ...
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	args := append([]string{"--platform-url", stub.server.URL, "--installation-id", testInstallation}, extra...)
-	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+	code := export(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 	if stdout.String() != "" {
 		t.Errorf("export printed on stdout: %q", stdout.String())
 	}
@@ -258,7 +258,7 @@ func TestALaterAttemptSendsABatchOfItsOwn(t *testing.T) {
 		platform.attempt, env["GITHUB_RUN_ATTEMPT"] = attempt, attempt
 		var stdout, stderr bytes.Buffer
 		args := append([]string{"--rows", exampleRows, "--platform-url", platform.server.URL, "--installation-id", testInstallation}, extra...)
-		code := export(context.Background(), args, platform.server.Client(), func(name string) string { return env[name] }, testPace, &stdout, &stderr)
+		code := export(context.Background(), args, platform.server.Client(), func(name string) string { return env[name] }, testPace, stdio{stdout: &stdout, stderr: &stderr})
 		return code, stdout.String() + stderr.String()
 	}
 	for _, attempt := range []string{"1", vector.Run.RunAttempt} {

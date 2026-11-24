@@ -1103,8 +1103,8 @@ func holdAKeyToOneMint(t *testing.T, stack *gatewayStack, job *gatewayJob, key s
 // The warnings mint and close print when the ledger refuses a job of the
 // agent's own run.
 const (
-	unprotectedWarning      = "costroid: warning: the ledger takes an attestation only from a run of a protected default branch, so this run's rows read windowed: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
-	unprotectedCountWarning = "costroid: warning: the ledger takes a gateway count only from a run of a protected default branch, so no budget on this run's rows passes on it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
+	unprotectedWarning      = "costroid: warning: the ledger takes an attestation only from a run of a protected default branch, so this run's rows read windowed: mint and close the run's key with recipes/github-gateway.yml, as https://docs.costroid.com/gateway shows\n"
+	unprotectedCountWarning = "costroid: warning: the ledger takes a gateway count only from a run of a protected default branch, so no budget on this run's rows passes on it: mint and close the run's key with recipes/github-gateway.yml, as https://docs.costroid.com/gateway shows\n"
 )
 
 func holdTheInWorkflowJobsToWindowed(t *testing.T, stack *gatewayStack, mock *mockUpstream) {

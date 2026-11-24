@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -146,6 +148,50 @@ func TestParseTakesWhatTheSetTakesAndPassesHelpOn(t *testing.T) {
 	}
 }
 
+// TestParseCallsAFlagAfterAnArgumentWhatItIs holds the mistake of a flag that
+// stands after an argument: the flag as typed, and the command line with its
+// flags first, each flag with its value. A word the set does not define, a
+// lone dash and every word after two dashes are arguments.
+func TestParseCallsAFlagAfterAnArgumentWhatItIs(t *testing.T) {
+	const wrong = " stands after an argument, and flags come before arguments"
+	for _, c := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"a.yml", "--json"}, []string{"--json" + wrong, "With the flags first: costroid tally rows --json a.yml"}},
+		{[]string{"--limit", "2", "a.yml", "-json", "b.yml"}, []string{"-json" + wrong, "With the flags first: costroid tally rows --limit 2 -json a.yml b.yml"}},
+		{[]string{"a.yml", "--rows", "r.jsonl", "b.yml"}, []string{"--rows" + wrong, "With the flags first: costroid tally rows --rows r.jsonl a.yml b.yml"}},
+		{[]string{"a.yml", "--rows=r.jsonl", "b.yml", "--json"}, []string{"--rows" + wrong, "With the flags first: costroid tally rows --rows=r.jsonl --json a.yml b.yml"}},
+		{[]string{"a file.yml", "--rows"}, []string{"--rows" + wrong, "With the flags first: costroid tally rows --rows 'a file.yml'"}},
+		{[]string{"a.yml", "--quiet"}, []string{"--quiet" + wrong, "With the flags first: costroid tally rows --quiet a.yml"}},
+		{[]string{"a.yml", "-q"}, []string{"-q" + wrong, "With the flags first: costroid tally rows -q a.yml"}},
+		{[]string{"a.yml", "--help"}, []string{"--help" + wrong, "With the flags first: costroid tally rows --help a.yml"}},
+		{[]string{"a.yml", "--json", "--", "--rows"}, []string{"--json" + wrong, "With the flags first: costroid tally rows --json a.yml -- --rows"}},
+	} {
+		var mistake *Mistake
+		if err := Parse(newSet(), c.args, io.Discard); !errors.As(err, &mistake) || err.Error() != strings.Join(c.want, "\n") {
+			t.Errorf("%v: %v, want %q", c.args, err, c.want)
+		}
+		set := newSet()
+		if err := ParseLeading(set, c.args, io.Discard); err != nil || set.NArg() == 0 {
+			t.Errorf("%v, for a command that leaves its arguments as they are: %v, %d arguments", c.args, err, set.NArg())
+		}
+	}
+	for _, args := range [][]string{
+		{"a.yml", "b.yml"},
+		{"a.yml", "--no-such-flag"},
+		{"a.yml", "-"},
+		{"a.yml", "-5"},
+		{"--", "a.yml", "--json"},
+		{"--json", "--", "a.yml", "--rows"},
+		{"a.yml", "--", "--json"},
+	} {
+		if err := Parse(newSet(), args, io.Discard); err != nil {
+			t.Errorf("%v: %v, want no mistake", args, err)
+		}
+	}
+}
+
 func TestNearestNamesWhatAMistypedWordStandsFor(t *testing.T) {
 	names := []string{"lint", "init", "run", "report", "reconcile", "follow-up", "policy", "version", "validate"}
 	for typed, want := range map[string][]string{
@@ -179,5 +225,42 @@ func TestNearestNamesWhatAMistypedWordStandsFor(t *testing.T) {
 		if got := NearestLine("flag", "--", strings.Fields(near)); got != want {
 			t.Errorf("%q: %q, want %q", near, got, want)
 		}
+	}
+}
+
+// TestHangWrapsALineUnderItsLabelAndBreaksNoWord holds a line at 80 columns:
+// the label stays on the first line, each line after it stands under the
+// label's text, a line that fits is as it was, and a word wider than a line
+// keeps a line to itself.
+func TestHangWrapsALineUnderItsLabelAndBreaksNoWord(t *testing.T) {
+	long := "warn: gh is not signed in, so doctor did not read the repository's secrets, variables or visibility: run gh auth login, then doctor again"
+	want := "warn: gh is not signed in, so doctor did not read the repository's secrets,\n      variables or visibility: run gh auth login, then doctor again"
+	if got := Hang(long); got != want {
+		t.Errorf("a check hangs as\n%s\nwant\n%s", got, want)
+	}
+	for _, line := range []string{"", "ok: costroid.yml: valid", strings.Repeat("x", Width)} {
+		if got := Hang(line); got != line {
+			t.Errorf("a line that fits reads %q, want %q", got, line)
+		}
+	}
+	// One column past the width is wrapped, as 60 past it is.
+	if barely := "ok: " + strings.Repeat("word ", 15) + "ok"; len(barely) != Width+1 || strings.Count(Hang(barely), "\n") != 1 {
+		t.Errorf("a line of %d columns hangs as %q", len(barely), Hang(barely))
+	}
+	address := "https://example.com/" + strings.Repeat("a", Width)
+	if got, want := Hang("costroid: wrote the file at "+address+" today"), "costroid: wrote the file at\n          "+address+"\n          today"; got != want {
+		t.Errorf("a word wider than a line:\n%s\nwant\n%s", got, want)
+	}
+	prose := strings.TrimSuffix(strings.Repeat("no label opens this line ", 5), " ")
+	if got := Hang(prose); strings.Contains(got, "\n ") || strings.ReplaceAll(got, "\n", " ") != prose {
+		t.Errorf("a line without a label hangs as %q", got)
+	}
+	var written bytes.Buffer
+	fmt.Fprintf(Hanging(&written), "$ %s\n%s\n", strings.Repeat("git add ", 20), long)
+	if got := written.String(); !strings.HasPrefix(got, "$ "+strings.Repeat("git add ", 20)+"\n") || strings.HasSuffix(got, want+"\n") {
+		t.Errorf("a writer hangs a command to copy, or a line under another label than costroid's:\n%s", got)
+	}
+	if AtTerminal(&written) || AtTerminal(NewMessages(&written)) {
+		t.Error("a buffer reads as a terminal")
 	}
 }

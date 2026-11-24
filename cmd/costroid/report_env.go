@@ -286,7 +286,7 @@ func runCap(flags reportFlags, stated statedReason, stderr io.Writer) *decimal.D
 	case recorded == nil:
 		fmt.Fprintf(stderr, "costroid: warning: --budget-usd %s is ignored, because the run's result object states no cap, so the report states none: it states the cap the run or the read step was given\n", flags.budget)
 	case recorded.Cmp(*flags.budget) != 0:
-		fmt.Fprintf(stderr, "costroid: warning: --budget-usd %s is ignored, because the run's result object states a cap of USD %s, and the report states that one. The report reads the cap from that object, so its step needs no budget-usd\n", flags.budget, recorded)
+		fmt.Fprintf(stderr, "costroid: warning: --budget-usd %s is ignored, because the run's result object states a cap of %s, and the report states that one. The report reads the cap from that object, so its step needs no budget-usd\n", flags.budget, comment.Money(runCurrency, recorded.String()))
 	}
 	return recorded
 }

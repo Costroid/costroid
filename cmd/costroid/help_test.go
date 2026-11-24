@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,7 +26,7 @@ var flagSources = []string{".", filepath.Join("..", "..", "internal", "server")}
 
 // flagless are the commands that define no flag of their own. Each takes
 // --quiet, which internal/cli gives every command.
-var flagless = []string{"approve", "lint-recipes", "receipt"}
+var flagless = []string{"approve", "receipt"}
 
 // computedFlags gives the names of flags a command defines from a table of its
 // own, rather than as a literal.
@@ -68,12 +69,13 @@ var helpAfterFlags = map[string][][]string{
 		{"gateway", "mint", "--url", "https://gateway.example"},
 		{"gateway", "close", "--url", "https://gateway.example"},
 	},
-	"result":    {{"result", "--pr", "1"}},
-	"validate":  {{"validate", "--json"}},
-	"version":   {{"version", "--verbose"}},
-	"mcp":       {{"mcp", "--repo", "owner/name"}},
-	"emit-otlp": {{"emit-otlp", "--rows", "rows.jsonl"}},
-	"app":       {{"app", "manifest", "--name", "Costroid"}, {"app", "create", "--name", "Costroid"}},
+	"result":       {{"result", "--pr", "1"}},
+	"validate":     {{"validate", "--json"}},
+	"lint-recipes": {{"lint-recipes", "--json"}},
+	"version":      {{"version", "--verbose"}},
+	"mcp":          {{"mcp", "--repo", "owner/name"}},
+	"emit-otlp":    {{"emit-otlp", "--rows", "rows.jsonl"}},
+	"app":          {{"app", "manifest", "--name", "Costroid"}, {"app", "create", "--name", "Costroid"}},
 }
 
 // serverFlagSets are the commands whose flag sets live in internal/server.
@@ -463,74 +465,85 @@ func TestEveryHelpExampleParsesWithItsCommandsFlags(t *testing.T) {
 	for _, entry := range commands {
 		for _, example := range pageExamples(entry.help) {
 			t.Run(example, func(t *testing.T) {
-				words := shellWords(t, example)
-				if len(words) < 2 || words[0] != "costroid" {
-					t.Fatalf("the example is no costroid command line")
-				}
-				called, ok := lookup(words[1])
-				if !ok {
-					t.Fatalf("the example calls %s, which is no command", words[1])
-				}
-				boolean := map[string]bool{}
-				for _, defined := range flags[called.name] {
-					boolean[defined.name] = defined.boolean
-				}
-				valued := func(name string) bool { return !boolean[name] }
-				var given, values []string
-				args, end, dashes := words[2:], 0, false
-				for i := 0; i < len(args); i++ {
-					arg := args[i]
-					switch name, _, inline := strings.Cut(strings.TrimPrefix(arg, "--"), "="); {
-					case arg == "--":
-						dashes = true
-						values = append(values, args[i+1:]...)
-						i = len(args)
-					case !strings.HasPrefix(arg, "--"):
-						values = append(values, arg)
-					default:
-						if _, defined := boolean[name]; !defined {
-							t.Fatalf("the example gives --%s, which %s does not have", name, called.name)
-						}
-						given = append(given, name)
-						if valued(name) && !inline {
-							i++
-							if i >= len(args) {
-								t.Fatalf("--%s has no value", name)
-							}
-						}
-						end = i + 1
-					}
-				}
-				if end > 0 {
-					code, stdout, stderr := execute(t, append(slices.Concat([]string{called.name}, args[:end]), "--help")...)
-					if code != 0 || stdout+stderr != called.help {
-						t.Fatalf("%s does not parse the example's flags: exit %d, %s", called.name, code, stderr)
-					}
-				}
-				var why []string
-				for _, form := range usageForms(called.help, valued) {
-					missing := slices.DeleteFunc(slices.Clone(form.required), func(name string) bool { return slices.Contains(given, name) })
-					extra := slices.DeleteFunc(slices.Clone(given), func(name string) bool { return slices.Contains(form.allowed, name) })
-					words := slices.DeleteFunc(slices.Clone(form.words), func(word string) bool { return slices.Contains(values, word) })
-					switch {
-					case len(missing) > 0:
-						why = append(why, fmt.Sprintf("it lacks --%s", strings.Join(missing, ", --")))
-					case len(extra) > 0:
-						why = append(why, fmt.Sprintf("the form has no --%s", strings.Join(extra, ", --")))
-					case len(words) > 0:
-						why = append(why, fmt.Sprintf("it lacks %s", strings.Join(words, ", ")))
-					case form.dashes && !dashes:
-						why = append(why, "it lacks --")
-					case len(values)-len(form.words) < form.values:
-						why = append(why, fmt.Sprintf("it gives %d values of %d", len(values)-len(form.words), form.values))
-					default:
-						return
-					}
-				}
-				t.Errorf("no usage form of %s holds the example: %s", called.name, strings.Join(why, "; "))
+				holdCommandLine(t, flags, shellWords(t, example))
 			})
 		}
 	}
+}
+
+// holdCommandLine holds words, a costroid command line, to its command: the
+// command is in the table, its flags parse with the command's own flag set,
+// and one of the command's usage forms holds it. Nothing runs.
+func holdCommandLine(t *testing.T, flags map[string][]definedFlag, words []string) {
+	t.Helper()
+	if len(words) < 2 || words[0] != "costroid" {
+		t.Fatalf("the line is no costroid command line")
+	}
+	called, ok := lookup(words[1])
+	if !ok {
+		t.Fatalf("the line calls %s, which is no command", words[1])
+	}
+	boolean := map[string]bool{}
+	for _, defined := range flags[called.name] {
+		boolean[defined.name] = defined.boolean
+	}
+	// Every command takes --quiet, which no usage form names.
+	boolean["quiet"] = true
+	valued := func(name string) bool { return !boolean[name] }
+	var given, values []string
+	args, end, dashes := words[2:], 0, false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch name, _, inline := strings.Cut(strings.TrimPrefix(arg, "--"), "="); {
+		case arg == "--":
+			dashes = true
+			values = append(values, args[i+1:]...)
+			i = len(args)
+		case !strings.HasPrefix(arg, "--"):
+			values = append(values, arg)
+		default:
+			if _, defined := boolean[name]; !defined {
+				t.Fatalf("the line gives --%s, which %s does not have", name, called.name)
+			}
+			if name != "quiet" {
+				given = append(given, name)
+			}
+			if valued(name) && !inline {
+				i++
+				if i >= len(args) {
+					t.Fatalf("--%s has no value", name)
+				}
+			}
+			end = i + 1
+		}
+	}
+	if end > 0 {
+		code, stdout, stderr := execute(t, append(slices.Concat([]string{called.name}, args[:end]), "--help")...)
+		if code != 0 || stdout+stderr != called.help {
+			t.Fatalf("%s does not parse the line's flags: exit %d, %s", called.name, code, stderr)
+		}
+	}
+	var why []string
+	for _, form := range usageForms(called.help, valued) {
+		missing := slices.DeleteFunc(slices.Clone(form.required), func(name string) bool { return slices.Contains(given, name) })
+		extra := slices.DeleteFunc(slices.Clone(given), func(name string) bool { return slices.Contains(form.allowed, name) })
+		words := slices.DeleteFunc(slices.Clone(form.words), func(word string) bool { return slices.Contains(values, word) })
+		switch {
+		case len(missing) > 0:
+			why = append(why, fmt.Sprintf("it lacks --%s", strings.Join(missing, ", --")))
+		case len(extra) > 0:
+			why = append(why, fmt.Sprintf("the form has no --%s", strings.Join(extra, ", --")))
+		case len(words) > 0:
+			why = append(why, fmt.Sprintf("it lacks %s", strings.Join(words, ", ")))
+		case form.dashes && !dashes:
+			why = append(why, "it lacks --")
+		case len(values)-len(form.words) < form.values:
+			why = append(why, fmt.Sprintf("it gives %d values of %d", len(values)-len(form.words), form.values))
+		default:
+			return
+		}
+	}
+	t.Errorf("no usage form of %s holds the line: %s", called.name, strings.Join(why, "; "))
 }
 
 // flagMistakes are command lines with one flag wrong, and the lines each
@@ -588,6 +601,115 @@ func TestAFlagMistakeNamesTheFlagAsTypedAndNeverPrintsTheHelp(t *testing.T) {
 				t.Errorf("%v prints the help page or the flag package's message:\n%s", args, stderr)
 			}
 		}
+	}
+}
+
+// TestAFlagInTheWrongPlaceIsCalledWhatItIsAndNothingRuns holds the two places
+// a flag cannot stand: after an argument, and before the command. Each is
+// named as what it is, with the line that puts it where it goes, on stderr
+// with exit 2. Nothing is run and no meaning is guessed: a directory that
+// holds a valid costroid.yml and a workflow gets no verdict on either.
+func TestAFlagInTheWrongPlaceIsCalledWhatItIsAndNothingRuns(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, "costroid.yml"), "policy:\n  run_budget_usd: \"5\"\n")
+	writeFile(t, filepath.Join(dir, "review.yml"), existingReview)
+	const after = " stands after an argument, and flags come before arguments\nWith the flags first: costroid "
+	const before = " stands before the command, and flags come after it\nWith the command first: costroid "
+	const alone = " is a flag, and no command stands before it\nWithout a command, costroid takes --help and --version.\nRun costroid help to list the commands.\n"
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"lint", "review.yml", "--json"}, "costroid: --json" + after + "lint --json review.yml\n"},
+		{[]string{"lint", "review.yml", "--strict", "costroid.yml"}, "costroid: --strict" + after + "lint --strict review.yml costroid.yml\n"},
+		{[]string{"validate", "costroid.yml", "--json"}, "costroid: --json" + after + "validate --json costroid.yml\n"},
+		{[]string{"validate", "costroid.yml", "-q"}, "costroid: -q" + after + "validate -q costroid.yml\n"},
+		{[]string{"lint", "review.yml", "--help"}, "costroid: --help" + after + "lint --help review.yml\n"},
+		{[]string{"lint-recipes", "review.yml", "--quiet"}, "costroid: --quiet" + after + "lint-recipes --quiet review.yml\n"},
+		{[]string{"init", "--agent", "claude", "github", "--force"}, "costroid: --force" + after + "init --agent claude --force github\n"},
+		{[]string{"policy", "rows.jsonl", "--rows", "rows.jsonl"}, "costroid: --rows" + after + "policy --rows rows.jsonl rows.jsonl\n"},
+		{[]string{"keys", "create", "github.com:example", "--owner", "github.com:example"}, "costroid: --owner" + after + "keys create --owner github.com:example github.com:example\n"},
+		{[]string{"-q", "validate"}, "costroid: -q" + before + "validate -q\n"},
+		{[]string{"--json", "validate", "costroid.yml"}, "costroid: --json" + before + "validate --json costroid.yml\n"},
+		{[]string{"--quiet=true", "lint"}, "costroid: --quiet" + before + "lint --quiet=true\n"},
+		{[]string{"-v"}, "costroid: -v" + alone},
+		{[]string{"-V"}, "costroid: -V" + alone},
+		{[]string{"--verbose"}, "costroid: --verbose" + alone},
+		{[]string{"--rows", "rows.jsonl", "policy"}, "costroid: --rows" + alone},
+		{[]string{"keys", "--quiet", "create"}, "costroid: --quiet stands before the keys command, and flags come after it\nRun costroid help keys to list its commands.\n"},
+		{[]string{"gateway", "-q", "mint"}, "costroid: -q stands before the gateway command, and flags come after it\nRun costroid help gateway to list its commands.\n"},
+	} {
+		if code, stdout, stderr := execute(t, c.args...); code != exitUsage || stdout != "" || stderr != c.want {
+			t.Errorf("%v: exit %d, stdout %q, stderr:\n%swant:\n%s", c.args, code, stdout, stderr, c.want)
+		}
+	}
+	// Two dashes end the flags, so a word after them is the argument it was
+	// typed as.
+	writeFile(t, filepath.Join(dir, "--json"), "policy:\n  run_budget_usd: \"5\"\n")
+	if code, stdout, _ := execute(t, "validate", "--", "--json"); code != 0 || !strings.HasPrefix(stdout, "--json: valid\n") {
+		t.Errorf("validate -- --json: exit %d, stdout %q", code, stdout)
+	}
+}
+
+// TestACommandThatLeavesItsArgumentsAloneTakesAFlagsNameAmongThem holds the
+// three commands whose arguments are not theirs to judge. run's are the
+// agent's command line, whose flags can share a name with run's. report and
+// follow-up ignore an argument, so a job that passes one keeps running.
+func TestACommandThatLeavesItsArgumentsAloneTakesAFlagsNameAmongThem(t *testing.T) {
+	t.Chdir(t.TempDir())
+	flags, err := parseRun([]string{"--budget-usd", "5", "--out", "rows.jsonl", "codex", "exec", "--json", "--agent", "reviewer"}, io.Discard, io.Discard)
+	if err != nil || flags.json || flags.agent != "" || !slices.Equal(flags.argv, []string{"codex", "exec", "--json", "--agent", "reviewer"}) {
+		t.Errorf("run read the agent's flags as its own: %v, %+v", err, flags)
+	}
+	for _, name := range []string{"report", "follow-up"} {
+		code, _, stderr := execute(t, name, "--rows", "rows.jsonl", "an-argument", "--quiet")
+		if code == exitUsage || strings.Contains(stderr, "stands after an argument") {
+			t.Errorf("%s refuses a word after an argument it ignores: exit %d, stderr %q", name, code, stderr)
+		}
+	}
+	// With the host first, a second word is one too many, and init says so of
+	// that word.
+	code, _, stderr := execute(t, "init", "github", "--agent", "claude", "gitlab", "--force")
+	if want := "costroid: unexpected \"gitlab\": init takes one host\nRun costroid help init to see its usage.\n"; code != exitUsage || stderr != want {
+		t.Errorf("init with two hosts: exit %d, stderr %q, want %q", code, stderr, want)
+	}
+}
+
+// TestHelpWithASubcommandPrintsThePageTheSubcommandsHelpPrints walks every
+// subcommand the usage of a command names, and holds costroid help <command>
+// <subcommand> to the bytes of costroid <command> <subcommand> --help. A
+// subcommand the command does not have gets the lines it gets there.
+func TestHelpWithASubcommandPrintsThePageTheSubcommandsHelpPrints(t *testing.T) {
+	walked := 0
+	for _, entry := range commands {
+		if !entry.subcommands {
+			if code, _, stderr := execute(t, "help", entry.name, "create"); code != exitUsage || !strings.HasPrefix(stderr, "costroid: unknown command \""+entry.name+" create\"\n") {
+				t.Errorf("help %s create: exit %d, stderr %q", entry.name, code, stderr)
+			}
+			continue
+		}
+		for _, form := range usageForms(entry.help, func(string) bool { return true }) {
+			walked++
+			sub := form.words[0]
+			code, page, stderr := execute(t, entry.name, sub, "--help")
+			if code != 0 || page != entry.help || stderr != "" {
+				t.Fatalf("%s %s --help: exit %d, stderr %q", entry.name, sub, code, stderr)
+			}
+			if code, stdout, stderr := execute(t, "help", entry.name, sub); code != 0 || stdout != page || stderr != "" {
+				t.Errorf("help %s %s: exit %d, stderr %q, and stdout is the page: %t", entry.name, sub, code, stderr, stdout == page)
+			}
+		}
+		code, stdout, stderr := execute(t, "help", entry.name, "frob")
+		if want := "costroid: unknown " + entry.name + " command \"frob\"\n"; code != exitUsage || stdout != "" || !strings.HasPrefix(stderr, want) {
+			t.Errorf("help %s frob: exit %d, stdout %q, stderr %q", entry.name, code, stdout, stderr)
+		}
+		if code, _, stderr := execute(t, "help", entry.name, "create", "more"); code != exitUsage || !strings.HasPrefix(stderr, "costroid: unknown command ") {
+			t.Errorf("help %s create more: exit %d, stderr %q", entry.name, code, stderr)
+		}
+	}
+	if walked < 10 {
+		t.Errorf("walked %d subcommands, which is too few to be every one", walked)
 	}
 }
 
@@ -694,7 +816,6 @@ func TestAMistypedCommandGetsASuggestionAndIsNeverRun(t *testing.T) {
 		"follow":     "The nearest command is follow-up.",
 		"reconsile":  "The nearest command is reconcile.",
 		"frobnicate": "No command is near it.",
-		"-v":         "No command is near it.",
 		"x":          "No command is near it.",
 	} {
 		for _, args := range [][]string{{typed}, {"help", typed}} {
@@ -766,6 +887,10 @@ func sentences(prose string) []string {
 	return found
 }
 
+// docsFile is a page of the documentation named by its file in the
+// repository, with the heading it names when it names one.
+var docsFile = regexp.MustCompile(`\bdocs/([a-z0-9-]+)\.md(#[a-z0-9-]+)?`)
+
 // withdrawn are the sentences of an earlier page that are false now and are
 // no longer said. validate takes a policy amount such as 5.0, as the schema
 // and the check do. export, merged and reconcile send by integration/v0.7
@@ -783,7 +908,7 @@ var withdrawn = map[string][]string{
 	"ingest-run":   {"125 costroid could not read the flags or the source, or write the rows"},
 	"init":         {"2 the directory is in no git repository", "125 costroid could not read or write a file, refused to, or a command --pr runs failed"},
 	"keys":         {"125 costroid could not read the command line, reach the database or find the tenant or the key"},
-	"lint-recipes": {"Each rejected line goes to stderr."},
+	"lint-recipes": {"Each rejected line goes to stderr.", "costroid lint-recipes <paths>"},
 	"lint":         {"costroid lint [--strict] [paths]"},
 	"mcp":          {"125 costroid could not read the flags or --ledger, or the session failed"},
 	"merged":       {"125 costroid could not read the flags, the run or GitHub's answer, or reach Costroid Platform, or the platform does not serve integration/v0.5 or later", "It sends by integration/v0.6, or by v0.5 to a platform that states no later version, under the integration token in COSTROID_PLATFORM_TOKEN, and names the version on standard error.", "The platform stores a fact as token_verified when the run token names the fact's commit, which is the tip of the push, and, by v0.6, a protected branch, which merged then names.", "A fact sent without a run token, a fact of a merge queue's group whose commit is not the tip, or by v0.6 a fact of a push to a branch that is not protected, is stored as unverified, and merged says why.", "--json prints, on standard output, one object per fact sent: its merge id, its pull request, the status the platform answered, the fact's run_identity and, on a token_verified fact by v0.6, the ref of its branch, or the refusal's code."},
@@ -819,7 +944,10 @@ func TestNothingAHelpPageSaidIsDropped(t *testing.T) {
 			if slices.Contains(withdrawn[name], unit) {
 				continue
 			}
-			if !strings.Contains(now, unit) {
+			// A page of the documentation was named then by its file in the
+			// repository, which a reader with the binary alone does not
+			// have, and is named now by its address.
+			if !strings.Contains(now, unit) && !strings.Contains(now, docsFile.ReplaceAllString(unit, cli.Documentation+"/$1$2")) {
 				t.Errorf("help %s no longer says: %s", name, unit)
 			}
 		}
@@ -1131,16 +1259,18 @@ var twoMeanings = map[string]map[string]string{
 		"connect":   "github-owner:<id> or gitlab-namespace:<id>",
 	},
 	"--json": {
-		"run":      "print the result object on stdout",
-		"report":   "print the result object on stdout",
-		"result":   "print the result object whole",
-		"policy":   "print the verdict as the machine block carries it",
-		"merged":   "print one object per fact sent",
-		"egress":   "print the counters as one JSON object",
-		"doctor":   "print the checks as one JSON object",
-		"lint":     "print the findings as one JSON object",
-		"validate": "print what validate found as one JSON object",
-		"version":  "print the same facts as one JSON object",
+		"run":          "print the result object on stdout",
+		"report":       "print the result object on stdout",
+		"result":       "print the result object whole",
+		"policy":       "print the verdict as the machine block carries it",
+		"merged":       "print one object per fact sent",
+		"egress":       "print the counters as one JSON object",
+		"doctor":       "print the checks as one JSON object",
+		"lint":         "print the findings as one JSON object",
+		"lint-recipes": "print the rejected lines as one JSON object",
+		"reconcile":    "print the comparison as one JSON object",
+		"validate":     "print what validate found as one JSON object",
+		"version":      "print the same facts as one JSON object",
 	},
 }
 

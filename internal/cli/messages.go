@@ -12,6 +12,9 @@ import (
 type Messages struct {
 	to    io.Writer
 	quiet bool
+	// section is the section of the troubleshooting page that lists the
+	// lines of the command these messages belong to.
+	section string
 }
 
 // NewMessages is the standard error of one command line, written to to.
@@ -20,6 +23,15 @@ func NewMessages(to io.Writer) *Messages {
 }
 
 func (m *Messages) Write(p []byte) (int, error) { return m.to.Write(p) }
+
+// About names the section of the troubleshooting page that lists the lines
+// of the command stderr belongs to, so that an error with no next step of
+// its own ends on that section's address.
+func About(stderr io.Writer, section string) {
+	if messages, ok := stderr.(*Messages); ok {
+		messages.section = section
+	}
+}
 
 // The flag every command takes, under both its names. Parse defines it, so no
 // command does.

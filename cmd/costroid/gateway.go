@@ -141,7 +141,8 @@ ledger's refusal does; a platform or a ledger that could not be reached exits
 there until costroid connect binds the installation. A server error is sent
 again under the same token every 2 s, or after Retry-After, while the send
 would start within 150 s, three sends under the contract's Retry-After of
-60 s. Without
+60 s. While it waits, the command says so every 10 s on standard error.
+Without
 --for-triggering-run, mint and close state nothing to Costroid Platform, and
 warn when it is named.`)}},
 		{Heading: "close", Body: []cli.Block{cli.Text(`close deletes the run's key by its alias, and prints deleted, or absent when no
@@ -572,10 +573,10 @@ func baseBudget(ctx context.Context, host *scm.GitHub, base string, fallback dec
 // states is not protected, as on a private repository on GitHub Free. The key
 // is registered, holds the run to its budget and is deleted either way.
 const (
-	unprotectedKey         = "costroid: warning: the ledger takes an attestation only from a run of a protected default branch, so this run's rows read windowed: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
-	unprotectedCount       = "costroid: warning: the ledger takes a gateway count only from a run of a protected default branch, so no budget on this run's rows passes on it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n"
-	unprotectedBranchKey   = "costroid: warning: this run is on the default branch and GitHub's token says the branch is not protected, so the rows of the run it serves read windowed: protect the default branch, which a private repository can on GitHub Pro or Team and not on GitHub Free, as docs/gateway.md says\n"
-	unprotectedBranchCount = "costroid: warning: this run is on the default branch and GitHub's token says the branch is not protected, so no budget on the rows of the run it serves passes on the gateway's count: protect the default branch, which a private repository can on GitHub Pro or Team and not on GitHub Free, as docs/gateway.md says\n"
+	unprotectedKey         = "costroid: warning: the ledger takes an attestation only from a run of a protected default branch, so this run's rows read windowed: mint and close the run's key with recipes/github-gateway.yml, as https://docs.costroid.com/gateway shows\n"
+	unprotectedCount       = "costroid: warning: the ledger takes a gateway count only from a run of a protected default branch, so no budget on this run's rows passes on it: mint and close the run's key with recipes/github-gateway.yml, as https://docs.costroid.com/gateway shows\n"
+	unprotectedBranchKey   = "costroid: warning: this run is on the default branch and GitHub's token says the branch is not protected, so the rows of the run it serves read windowed: protect the default branch, which a private repository can on GitHub Pro or Team and not on GitHub Free, as https://docs.costroid.com/gateway says\n"
+	unprotectedBranchCount = "costroid: warning: this run is on the default branch and GitHub's token says the branch is not protected, so no budget on the rows of the run it serves passes on the gateway's count: protect the default branch, which a private repository can on GitHub Pro or Team and not on GitHub Free, as https://docs.costroid.com/gateway says\n"
 )
 
 // warnUnprotected prints the warning for a ledger's refusal of a run no
@@ -624,7 +625,7 @@ func attestKey(ctx context.Context, client *http.Client, attestation gateway.Att
 
 // olderLedger warns of a ledger that took the attestation only without the
 // pull requests it names.
-const olderLedger = "costroid: warning: the ledger took the attestation only without the pull requests it names, so it is a costroid serve from before it kept them, and a budget in its verdict can pass while a run's rows are missing: upgrade costroid serve, as docs/serve.md says\n"
+const olderLedger = "costroid: warning: the ledger took the attestation only without the pull requests it names, so it is a costroid serve from before it kept them, and a budget in its verdict can pass while a run's rows are missing: upgrade costroid serve, as https://docs.costroid.com/serve says\n"
 
 // sendAttestation sends the attestation. A ledger from before attestations
 // named pull requests refuses the field as it refuses any body it cannot
@@ -870,7 +871,7 @@ const (
 // 60 s and asks for the same token again inside its window of 300 s, so the
 // bound is 150 s: the write goes three times at that pace, and half the
 // window is left.
-var statementPace = verdictPace{interval: 2 * time.Second, limit: 150 * time.Second}
+var statementPace = verdictPace{interval: 2 * time.Second, limit: 150 * time.Second, every: saidEvery}
 
 // retryAfterSecond is one second of a Retry-After.
 var retryAfterSecond = time.Second
@@ -913,7 +914,7 @@ var statementSentences = map[string]string{
 var (
 	keyWrite = credentialWrite{
 		what:        "the key's attestation",
-		workflowRun: "costroid: warning: Costroid Platform takes a key's attestation only from a run that workflow_run started, so mint stated none to it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n",
+		workflowRun: "costroid: warning: Costroid Platform takes a key's attestation only from a run that workflow_run started, so mint stated none to it: mint and close the run's key with recipes/github-gateway.yml, as https://docs.costroid.com/gateway shows\n",
 		notOffered:  "costroid: warning: Costroid Platform answered 404 NOT_FOUND to the key's attestation: it speaks no integration/v0.7, or its integration paths are shut, so the rows of the run the key serves read windowed there\n",
 		unprotected: unprotectedBranchKey,
 		unstated:    "the key is registered and not attested to Costroid Platform, so the run's rows cannot read exact there",
@@ -924,7 +925,7 @@ var (
 	}
 	countWrite = credentialWrite{
 		what:        "the gateway's count",
-		workflowRun: "costroid: warning: Costroid Platform takes a gateway count only from a run that workflow_run started, so close stated none to it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n",
+		workflowRun: "costroid: warning: Costroid Platform takes a gateway count only from a run that workflow_run started, so close stated none to it: mint and close the run's key with recipes/github-gateway.yml, as https://docs.costroid.com/gateway shows\n",
 		notOffered:  "costroid: warning: Costroid Platform answered 404 NOT_FOUND to the gateway's count: it speaks no integration/v0.7, or its integration paths are shut, so no budget on the rows of the run the key serves passes on the count there\n",
 		unprotected: unprotectedBranchCount,
 		unstated:    "the key is deleted and the gateway's count is not stated to Costroid Platform, so no budget on the run's rows can pass on it there",
@@ -1049,6 +1050,7 @@ func (k *keyPlatform) state(ctx context.Context, write credentialWrite, path str
 // the same write the same way.
 func (k *keyPlatform) put(ctx context.Context, write credentialWrite, path string, body []byte, token string) (int, []byte, error) {
 	deadline := time.Now().Add(k.pace.limit)
+	waiting := stillWaiting{stderr: k.stderr, what: "Costroid Platform to take " + write.what, every: k.pace.every, limit: k.pace.limit}
 	for {
 		request, err := k.target.request(ctx, http.MethodPut, path, bytes.NewReader(body))
 		if err != nil {
@@ -1074,10 +1076,8 @@ func (k *keyPlatform) put(ctx context.Context, write credentialWrite, path strin
 		if time.Now().Add(wait).After(deadline) {
 			return 0, nil, err
 		}
-		select {
-		case <-ctx.Done():
+		if !waiting.sleep(ctx, wait) {
 			return 0, nil, err
-		case <-time.After(wait):
 		}
 	}
 }
@@ -1150,7 +1150,7 @@ func (k *keyPlatform) refused(write credentialWrite, err error) error {
 		}
 		return nil
 	case refused.unbound():
-		fmt.Fprintf(k.stderr, "costroid: warning: %v. The tenant holds no binding of %s, so the rows of the run the key serves read windowed there until it is bound: run costroid connect, as docs/connect.md shows\n", err, k.installation)
+		fmt.Fprintf(k.stderr, "costroid: warning: %v. The tenant holds no binding of %s, so the rows of the run the key serves read windowed there until it is bound: run costroid connect, as https://docs.costroid.com/connect shows\n", err, k.installation)
 		return nil
 	case known && refused.what == write.what:
 		fmt.Fprintf(k.stderr, "costroid: %v. %s. Nothing was stored\n", err, sentence)

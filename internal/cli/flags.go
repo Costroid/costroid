@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -24,7 +26,24 @@ func (m *Mistake) Error() string { return strings.Join(m.lines, "\n") }
 // either. The set's name is the command's, with its subcommand when it has
 // one. Parse gives every set --quiet, and under it stderr drops the lines
 // that are neither a warning nor an error.
+//
+// A flag of the set that stands after an argument is a mistake too. The flag
+// package stops at the first argument and hands the command every word after
+// it, so a flag there would be read as a file, or as an argument too many.
 func Parse(set *flag.FlagSet, args []string, stderr io.Writer) error {
+	err := ParseLeading(set, args, stderr)
+	if err == nil {
+		if late := misplaced(set, args); late != nil {
+			return late
+		}
+	}
+	return err
+}
+
+// ParseLeading is Parse for a command whose arguments are not its own to
+// judge: another program's command line, or words it ignores. Every word
+// after the first argument is left as it is.
+func ParseLeading(set *flag.FlagSet, args []string, stderr io.Writer) error {
 	set.SetOutput(io.Discard)
 	set.Usage = func() {}
 	quiet := false
@@ -38,6 +57,65 @@ func Parse(set *flag.FlagSet, args []string, stderr io.Writer) error {
 		return err
 	}
 	return mistake(set, args, err)
+}
+
+// misplaced is the mistake of a flag of set that stands after an argument,
+// nil when none does. It shows the command line with its flags first, and
+// reads nothing into the flag: the line is shown, never run. Words after a
+// "--" are arguments, whatever they look like.
+func misplaced(set *flag.FlagSet, args []string) *Mistake {
+	taken := len(args) - set.NArg()
+	if taken > 0 && args[taken-1] == "--" {
+		return nil
+	}
+	var first string
+	var flags, arguments []string
+	rest := set.Args()
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == "--" {
+			arguments = append(arguments, rest[i:]...)
+			break
+		}
+		typed, _, hasValue := strings.Cut(rest[i], "=")
+		name := strings.TrimPrefix(strings.TrimPrefix(typed, "-"), "-")
+		defined := set.Lookup(name)
+		if name == typed || defined == nil && name != "h" && name != "help" {
+			arguments = append(arguments, rest[i])
+			continue
+		}
+		if first == "" {
+			first = typed
+		}
+		flags = append(flags, rest[i])
+		if defined != nil && !isBool(defined) && !hasValue && i+1 < len(rest) {
+			i++
+			flags = append(flags, rest[i])
+		}
+	}
+	if first == "" {
+		return nil
+	}
+	line := slices.Concat([]string{"costroid"}, strings.Fields(set.Name()), args[:taken], flags, arguments)
+	return &Mistake{lines: []string{
+		first + " stands after an argument, and flags come before arguments",
+		"With the flags first: " + CommandLine(line),
+	}}
+}
+
+// bareWord is a word a shell reads as it is, which a printed command line
+// shows without quotes: a plain word, or a placeholder such as <commit>.
+var bareWord = regexp.MustCompile(`^(?:[A-Za-z0-9_./:=@,+-]+|<[a-z ]+>)$`)
+
+// CommandLine prints args as a shell reads them, quoting what it must.
+func CommandLine(args []string) string {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = arg
+		if !bareWord.MatchString(arg) {
+			quoted[i] = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(quoted, " ")
 }
 
 // NoArgument is the mistake of an argument where set's command takes none.

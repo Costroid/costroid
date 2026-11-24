@@ -53,11 +53,13 @@ const (
 // verdictPace is how often export asks for a batch's verdict, and for how long.
 type verdictPace struct {
 	interval, limit time.Duration
+	// every is how often a command says it still waits, and never when zero.
+	every time.Duration
 }
 
 // ingestPace waits at most 60 s, so a CI job learns a batch's verdict and a
 // slow ingest still ends the job in about a minute.
-var ingestPace = verdictPace{interval: 2 * time.Second, limit: 60 * time.Second}
+var ingestPace = verdictPace{interval: 2 * time.Second, limit: 60 * time.Second, every: saidEvery}
 
 // contract is one version of the integration contract, as GET /identity
 // states it under that version's path.
@@ -142,6 +144,8 @@ integration token in COSTROID_PLATFORM_TOKEN.`,
 		{"--root-dir BUCKET", "the bucket or container a cloudability manifest names"},
 	},
 	Sections: []cli.Section{
+		{Heading: "The rows", Body: []cli.Block{cli.Text(`With --rows -, export reads the rows from standard input. A line that says
+the rows file is kept then says no such thing: there is no file.`)}},
 		{Heading: "Sending a batch", Body: []cli.Block{cli.Text(`It reads GET /identity first and
 sends by integration/v0.7, or by v0.6, v0.4, v0.3 or v0.2 to a platform that
 states no later version, and names the version on standard error. Outside
@@ -168,7 +172,7 @@ sent, and every row goes as unverified.
 
 Once the platform takes the batch, export asks for its verdict every 2 s for
 up to 60 s, and prints ingested with a link to each pull request, or the code
-the batch failed on.`)}},
+the batch failed on. While it waits it says so every 10 s on standard error.`)}},
 		{Heading: "When the platform takes nothing", Body: []cli.Block{cli.Text(`On 402 or 429 the platform took nothing for now and nothing in the rows is
 wrong. On 409 INSTALLATION_NOT_BOUND the tenant holds no binding of the
 installation, which costroid connect makes. In each case export warns, keeps
@@ -178,7 +182,7 @@ On 409 EXPORT_BATCH_RUN_BOUND the batch holds token_verified rows, so it is
 bound to the run that sent it, by v0.7 to the run's attempt as well, and only
 that run or attempt restates it. Export keeps the rows file and exits 1. On
 GitHub Actions export names a batch for each attempt itself, so the line says
-to drop --batch-id there. docs/export.md lists every answer.`)}},
+to drop --batch-id there. https://docs.costroid.com/export lists every answer.`)}},
 		{Heading: "Writing a file for another tool", Body: []cli.Block{
 			cli.Text(`With --format, export sends nothing and writes the rows as a file another
 tool imports, to --out or to standard output. Every amount is written as the
@@ -208,7 +212,7 @@ is then named focus-1.5`},
 			cli.Text(`In vantage and datadog, BilledCost is the row's EffectiveCost, because a row's
 own BilledCost is 0: Costroid issues no invoice.
 
-docs/export.md says which column each format takes from the row.`),
+https://docs.costroid.com/export says which column each format takes from the row.`),
 		}},
 	},
 	Environment: []cli.Block{cli.Rows{
@@ -229,7 +233,8 @@ names them`},
 }.String()
 
 type exportFlags struct {
-	rows, origin, installation, batch string
+	rows                        rowsFile
+	origin, installation, batch string
 	// format and out are the file export writes instead of sending, and
 	// rootDir the bucket a cloudability manifest names.
 	format  exportformat.Format
@@ -300,10 +305,11 @@ func exportCommand(ctx context.Context, args []string, std stdio) int {
 		Timeout:       platformTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return export(ctx, args, asking(client, std.stderr), os.Getenv, ingestPace, std.stdout, std.stderr)
+	return export(ctx, args, asking(client, std.stderr), os.Getenv, ingestPace, std)
 }
 
-func export(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, stdout, stderr io.Writer) int {
+func export(ctx context.Context, args []string, client *http.Client, getenv func(string) string, pace verdictPace, std stdio) int {
+	stdout, stderr := std.stdout, std.stderr
 	flags, err := parseExport(args, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -311,7 +317,11 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	if err != nil {
 		return cli.Fail(stderr, cli.Mistaken("export", err))
 	}
+	if err := flags.rows.hold(std.stdin); err != nil {
+		return cli.Fail(stderr, err)
+	}
 	if flags.format != "" {
+		cli.About(stderr, "writing-rows-for-another-tool")
 		return writeFormat(flags, stdout, stderr)
 	}
 	target := platform{client: client, origin: flags.origin, token: getenv(platformTokenVariable)}
@@ -324,16 +334,16 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 		if runNumberPattern.MatchString(refused.retryAfter) {
 			retry = ", retry after " + refused.retryAfter + " s"
 		}
-		fmt.Fprintf(stderr, "costroid: warning: %v%s. Nothing in the rows is wrong, and %s is kept to send again\n", err, retry, flags.rows)
+		fmt.Fprintf(stderr, "costroid: warning: %v%s. Nothing in the rows is wrong%s\n", err, retry, flags.rows.kept(", and %s is kept to send again"))
 		return 0
 	case errors.As(err, &refused) && refused.unbound():
-		fmt.Fprintf(stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as docs/connect.md shows, and %s is kept to send again\n", err, flags.installation, flags.rows)
+		fmt.Fprintf(stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as https://docs.costroid.com/connect shows%s\n", err, flags.installation, flags.rows.kept(", and %s is kept to send again"))
 		return 0
 	case errors.As(err, &refused) && refused.runBound() && target.version.bindsAttemptAndPull():
-		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it belongs to the run and the attempt that sent it, and only that attempt restates it. Nothing was stored, and %s is kept. On GitHub Actions export names a batch for each attempt itself, so drop --batch-id there\n", err, flags.rows)
+		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it belongs to the run and the attempt that sent it, and only that attempt restates it. Nothing was stored%s. On GitHub Actions export names a batch for each attempt itself, so drop --batch-id there\n", err, flags.rows.kept(", and %s is kept"))
 		return exitRejected
 	case errors.As(err, &refused) && refused.runBound():
-		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it. Nothing was stored, and %s is kept\n", err, flags.rows)
+		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it. Nothing was stored%s\n", err, flags.rows.kept(", and %s is kept"))
 		return exitRejected
 	case errors.As(err, &refused):
 		fmt.Fprintf(stderr, "costroid: %v\n", err)
@@ -341,11 +351,11 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	default:
 		return cli.Fail(stderr, err)
 	}
-	sent.print(flags.rows, stderr)
+	sent.print(flags.rows.String(), stderr)
 	if sent.rows == 0 {
 		return 0
 	}
-	verdict, err := target.awaitVerdict(ctx, sent, pace)
+	verdict, err := target.awaitVerdict(ctx, sent, pace, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "costroid: warning: %v. The platform took batch %s, and states its verdict at GET /exports/%s\n", err, sent.batch, sent.batch)
 		return 0
@@ -369,7 +379,7 @@ func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 		return exportFlags{}, errors.New("export takes no argument")
 	}
 	if *format != "" {
-		return parseFormatFlags(exportFlags{rows: *rows, out: *out, rootDir: *rootDir}, *format, *address != "" || *installation != "" || *batch != "")
+		return parseFormatFlags(exportFlags{rows: rowsFile{path: *rows}, out: *out, rootDir: *rootDir}, *format, *address != "" || *installation != "" || *batch != "")
 	}
 	if *out != "" || *rootDir != "" {
 		return exportFlags{}, errors.New("--out and --root-dir name what --format writes, and export without --format sends to Costroid Platform")
@@ -388,13 +398,13 @@ func parseExport(args []string, stdout, stderr io.Writer) (exportFlags, error) {
 	if err != nil {
 		return exportFlags{}, err
 	}
-	return exportFlags{rows: *rows, origin: origin, installation: installationID, batch: *batch}, nil
+	return exportFlags{rows: rowsFile{path: *rows}, origin: origin, installation: installationID, batch: *batch}, nil
 }
 
 // parseFormatFlags reads the flags of a file export, which refuses any flag
 // that names the platform: sends reports one.
 func parseFormatFlags(flags exportFlags, format string, sends bool) (exportFlags, error) {
-	if flags.rows == "" {
+	if flags.rows.path == "" {
 		return exportFlags{}, errors.New("export --format needs --rows")
 	}
 	if sends {
@@ -419,7 +429,7 @@ func parseFormatFlags(flags exportFlags, format string, sends bool) (exportFlags
 // writeFormat writes the rows file in its format. Nothing is written until
 // every row is taken, so a refused export leaves no file.
 func writeFormat(flags exportFlags, stdout, stderr io.Writer) int {
-	rows, err := os.ReadFile(flags.rows)
+	rows, err := flags.rows.read()
 	if err == nil {
 		err = policy.RefuseOriginRows(rows)
 	}
@@ -669,8 +679,8 @@ type stampedRows struct {
 	pulls    []pullRequest
 }
 
-func readStamped(path string, claim runClaim) (stampedRows, error) {
-	data, err := os.ReadFile(path)
+func readStamped(from rowsFile, claim runClaim) (stampedRows, error) {
+	data, err := from.read()
 	if err == nil {
 		err = policy.RefuseOriginRows(data)
 	}
@@ -681,7 +691,7 @@ func readStamped(path string, claim runClaim) (stampedRows, error) {
 	var body bytes.Buffer
 	rows, err := focus.WriteCSV(&body, bytes.NewReader(lines))
 	if err != nil {
-		return stampedRows{}, fmt.Errorf("%s: %w", path, err)
+		return stampedRows{}, fmt.Errorf("%s: %w", from, err)
 	}
 	return stampedRows{body: body.Bytes(), rows: rows, verified: verified, pulls: pulls}, nil
 }
@@ -1029,15 +1039,14 @@ func (a batchAnswer) pending() bool {
 // to the send when that settled it, else from GET /exports/{batch_id}, asked
 // every pace.interval for at most pace.limit. A refusal of the request ends
 // the wait. A server error or a lost connection is asked again.
-func (p platform) awaitVerdict(ctx context.Context, sent sentBatch, pace verdictPace) (batchAnswer, error) {
+func (p platform) awaitVerdict(ctx context.Context, sent sentBatch, pace verdictPace, stderr io.Writer) (batchAnswer, error) {
 	answer := sent.answer
 	wait, cancel := context.WithTimeout(ctx, pace.limit)
 	defer cancel()
+	waiting := stillWaiting{stderr: stderr, what: "Costroid Platform's verdict on batch " + sent.batch, every: pace.every, limit: pace.limit}
 	for answer.pending() {
-		select {
-		case <-wait.Done():
+		if !waiting.sleep(wait, pace.interval) {
 			return batchAnswer{}, fmt.Errorf("batch %s has no verdict after %d s", sent.batch, int(pace.limit.Seconds()))
-		case <-time.After(pace.interval):
 		}
 		next, err := p.batch(wait, sent.batch)
 		var refused *refusal

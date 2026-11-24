@@ -32,6 +32,12 @@ Every `costroid` command writes to two streams. Standard output holds what the c
 
 Every other command prints nothing on standard output unless `--json` is given: `init`, `report`, `ingest-run`, `follow-up`, `approve`, `review`, `export` to Costroid Platform or to `--out`, `merged`, `connect`, `emit-otlp`, `serve`, `keys revoke` and `app create` say what they did on standard error.
 
+## At a terminal and in a pipe
+
+A program reads a line whole, so into a pipe, a file or a job's log every command prints each line unbroken: one check of `costroid doctor` to a line, one sentence of `costroid policy` to a line, one `costroid:` line of `costroid init` to a line.
+
+At a terminal `costroid doctor`, `costroid init` and `costroid policy` wrap those lines at 80 columns for the person there. A check of `doctor` and a `costroid:` line of `init` carry on under their own text, so the state or the name stays the first word. `policy` sets its sentences a blank line apart, and the last paragraph is the verdict sentence. Nothing but the line breaks differs, and no word is broken: a path or an address wider than a line keeps a line to itself. The object `--json` prints is the same in both.
+
 ## `--quiet`
 
 `-q` or `--quiet`, on any command, keeps warnings and errors on standard error and drops every other line there. Standard output and the exit code do not change.
@@ -49,15 +55,22 @@ Two lines stay under `--quiet`, because the command then waits on a person: the 
 | Command | Object | Described in |
 | ------- | ------ | ------------ |
 | `costroid run`, `costroid report`, `costroid result` | The result object, `costroid.result/<version>` | [`agents.md`](agents.md) |
-| `costroid policy` | The verdict, as the check's machine block carries it | [`policy.md`](policy.md) |
-| `costroid merged` | One object per fact sent, one a line | [`export.md`](export.md) |
-| `costroid egress report` | The counters | [`ledger.md`](ledger.md) |
+| `costroid policy` | `costroid.policy/0.1`: the verdict, as the check's machine block carries it | [`policy.md`](policy.md) |
+| `costroid reconcile` | `costroid.reconcile/0.1`: the reconciliation rows, the credentials no row names, the days a figure stopped and the count of misses | [`reconcile.md`](reconcile.md) |
+| `costroid merged` | `costroid.merged/0.1`, one object per fact sent, one a line. `--dry-run` prints `costroid.merged-fact/0.1`, one per fact it would send | [`export.md`](export.md) |
+| `costroid egress report` | `costroid.egress/0.1`: the counters | [`ledger.md`](ledger.md) |
 | `costroid doctor` | `costroid.doctor/0.1` | This page |
-| `costroid lint` | `costroid.lint/0.1` | This page |
-| `costroid validate` | `costroid.validate/0.1` | This page |
+| `costroid lint`, `costroid lint-recipes` | `costroid.lint/0.1` | This page |
+| `costroid validate` | `costroid.validate/0.2` | This page |
 | `costroid version` | `costroid.version/0.1` | This page |
 
-Each of the four objects on this page opens with `schema`, its name and version. A later release may add a field under the same first number, and raises the second: a reader ignores a field it does not know. A field is removed, renamed or given another meaning only under a new first number: a reader refuses a first number it does not know. A JSON Schema for each object is in [`cmd/costroid/testdata/objects`](../cmd/costroid/testdata/objects), and a test holds each example below to it.
+Every object in this table opens with `schema`, its name and version. For each but the result object, a later release may add a field under the same first number, and raises the second: a reader ignores a field it does not know. A field is removed, renamed or given another meaning only under a new first number: a reader refuses a first number it does not know.
+
+`costroid lint-recipes --json` prints the object of `costroid lint`. A line it rejects carries no severity of its own, so the object states it with the severity `costroid lint` gives the same finding, such as `medium` for an action that is not pinned, and `high` where the rule is `lint-recipes`' alone. `lint-recipes` exits 1 on any rejected line, whatever its severity, so read its exit code or the length of `findings`, not `count.high`.
+
+`costroid demo` and `costroid receipt` have no `--json`. Each prints a comment for a person to read, not a report: `demo` the comment of a recorded run, and `receipt` the comment its author posts. The figures of a real run are in the result object.
+
+A JSON Schema for each object is in [`cmd/costroid/testdata/objects`](../cmd/costroid/testdata/objects), and a test holds each example below to it.
 
 ### `costroid doctor --json`
 
@@ -79,7 +92,7 @@ Each check has the `status` it ended in, `ok`, `warn` or `fail`, and the `line` 
     },
     {
       "status": "ok",
-      "line": "ok: ANTHROPIC_API_KEY is not set in this shell, so a local run of claude uses its own sign-in, priced as docs/bases.md says"
+      "line": "ok: ANTHROPIC_API_KEY is not set in this shell, so a local run of claude uses its own sign-in, priced as https://docs.costroid.com/bases says"
     }
   ],
   "count": { "fail": 0, "warn": 2, "ok": 3 }
@@ -157,7 +170,13 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
 
 ## A step that waits
 
-`costroid export`, `merged`, `connect`, `reconcile`, `doctor`, `app create` and `gateway mint` say `costroid: asking <host>` on standard error before their first request to a host, once per host, and then nothing while they wait. `costroid doctor` says `costroid: asking GitHub through gh` before it first runs `gh`. `costroid run` says `costroid: running <agent> under a cap of USD <amount>` before it starts the agent. `--quiet` drops all three lines.
+`costroid export`, `merged`, `connect`, `reconcile`, `doctor`, `result`, `app create` and `gateway mint` say `costroid: asking <host>` on standard error before their first request to a host, once per host. Two of them can then wait long, and say so every 10 s while they do: `costroid export` for the platform's verdict on a batch, up to 60 s, and `costroid gateway mint` and `close` for the platform to take a statement it answered with a server error, up to 150 s. The line reads `costroid: still waiting for <what>, <seconds> s of at most <seconds> s`. It is a plain line, the same on a terminal and in a job's log. `costroid doctor` says `costroid: asking GitHub through gh` before it first runs `gh`. `costroid run` says `costroid: running <agent> under a cap of USD <amount>` before it starts the agent. `--quiet` drops all four lines.
+
+## What `costroid run` leaves
+
+`costroid run` writes two files, and one line of its summary names both: `costroid: <count> rows in <rows file>, catalog <version>, and the result object in <object>`. The object stands beside the rows and is named after them, so `--out rows.jsonl` gives `rows.run.json`. `costroid ingest-run` writes the same two and prints the same line. While the agent works, `run` also writes the status file [`agents.md`](agents.md) describes, where `COSTROID_STATUS_FILE` or `RUNNER_TEMP` names a place for it.
+
+A run of Claude Code leaves one more file that no line names: `costroid-run.lock`, empty, in the agent's config directory, which is `CLAUDE_CONFIG_DIR` or `.claude` in your home directory. `run` creates that directory when it is not there. The file is the lock that holds one run to the directory, as [`adapters.md`](adapters.md) describes. It stays after the run on purpose: a lock is held on the file itself, so a second run that had opened a lock file since removed would hold nothing, and two runs could count each other's sessions.
 
 ## Ctrl-C
 

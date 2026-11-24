@@ -47,7 +47,7 @@ on PATH, and those of the environment a job names through gh secret list
 --env. It never prints a secret's value, prefix or length.
 
 --json prints one object on stdout in their place, costroid.doctor/0.1: each
-check's status and line, and the count of each status. docs/output.md
+check's status and line, and the count of each status. https://docs.costroid.com/output
 describes the object.`)}},
 		{Heading: "On GitLab, and outside a repository", Body: []cli.Block{cli.Text(`On GitLab it checks the template that installs Costroid, .gitlab/costroid.yml
 or a local file .gitlab-ci.yml includes, and its pins, in place of the
@@ -222,8 +222,16 @@ func doctor(ctx context.Context, root string, build buildInfo, host doctorHost, 
 			return cli.Fail(stderr, err)
 		}
 	} else {
+		// A check is one line, in the object and wherever a program reads
+		// the checks. At a terminal it is wrapped for the person there, with
+		// its state as the first word of the check.
+		wrapped := cli.AtTerminal(stdout)
 		for _, check := range found.Checks {
-			fmt.Fprintln(stdout, check.Line)
+			line := check.Line
+			if wrapped {
+				line = cli.Hang(line)
+			}
+			fmt.Fprintln(stdout, line)
 		}
 		fmt.Fprintf(stdout, "costroid: doctor: %d fail, %d warn, %d ok\n", found.Count.Fail, found.Count.Warn, found.Count.OK)
 	}
@@ -429,7 +437,7 @@ func configLines(root string) ([]finding, error) {
 	}
 	var lines []finding
 	for _, problem := range problems {
-		lines = append(lines, fail(configFile+": "+problem.String(), "docs/configuration.md lists each key"))
+		lines = append(lines, fail(configFile+": "+problem.String(), "https://docs.costroid.com/configuration lists each key"))
 	}
 	return lines, nil
 }
@@ -461,7 +469,7 @@ func lintLines(flow workflow) []finding {
 	report := recipelint.LintCustomer(flow.path, flow.source)
 	var lines []finding
 	for _, problem := range report.Findings {
-		line := warn(problem.String(), "docs/lint.md says what the rule guards")
+		line := warn(problem.String(), "https://docs.costroid.com/lint says what the rule guards")
 		if problem.Severity == recipelint.High {
 			line.verdict = verdictFail
 		}
@@ -620,7 +628,7 @@ func keyLines(host doctorHost, agents []localAgent) []finding {
 			}
 			lines = append(lines, ok("%s %s set in this shell", joinNames(set), verb))
 		} else {
-			lines = append(lines, ok("%s is not set in this shell, so a local run of %s uses its own sign-in, priced as docs/bases.md says", strings.Join(keyVariables[agent.name], " or "), agent.name))
+			lines = append(lines, ok("%s is not set in this shell, so a local run of %s uses its own sign-in, priced as https://docs.costroid.com/bases says", strings.Join(keyVariables[agent.name], " or "), agent.name))
 		}
 	}
 	if focus.ReadsLikeKey(host.getenv(credentialVariable)) {
@@ -944,7 +952,7 @@ func variableLines(have []string, err error) []finding {
 	url, audience := slices.Contains(have, "COSTROID_INGEST_URL"), slices.Contains(have, "COSTROID_INGEST_AUDIENCE")
 	switch {
 	case url && !audience:
-		lines = append(lines, warn("the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE", "set COSTROID_INGEST_AUDIENCE to the audience your ledger requires, as docs/recipes.md#send-rows-to-a-ledger says"))
+		lines = append(lines, warn("the repository sets COSTROID_INGEST_URL and not COSTROID_INGEST_AUDIENCE", "set COSTROID_INGEST_AUDIENCE to the audience your ledger requires, as https://docs.costroid.com/recipes#send-rows-to-a-ledger says"))
 	case url:
 		lines = append(lines, ok("the repository sets COSTROID_INGEST_URL and COSTROID_INGEST_AUDIENCE, so the ingest job sends the rows"))
 	}
@@ -982,7 +990,7 @@ func visibilityLines(ctx context.Context, root string, host doctorHost, flows []
 	for _, flow := range flows {
 		if bytes.Contains(flow.source, []byte("step-security/harden-runner@")) {
 			lines = append(lines, warn(flow.path+" runs step-security/harden-runner, which needs a paid plan on a private repository",
-				"read docs/recipes.md#egress-in-the-agents-job, and keep the step or delete it"))
+				"read https://docs.costroid.com/recipes#egress-in-the-agents-job, and keep the step or delete it"))
 		}
 	}
 	return lines
@@ -998,7 +1006,7 @@ const (
 	// bindingCurrentFor is how long a binding stays current after its last
 	// proof, under integration/v0.2.
 	bindingCurrentFor = 7 * 24 * time.Hour
-	connectFix        = "run costroid connect from a scheduled job, as docs/connect.md says"
+	connectFix        = "run costroid connect from a scheduled job, as https://docs.costroid.com/connect says"
 )
 
 // platformLines ask Costroid Platform, when COSTROID_PLATFORM_URL is set in
@@ -1020,7 +1028,7 @@ func platformLines(ctx context.Context, root string, host doctorHost, gitlab boo
 		return []finding{ok("%s is not set in this shell, so doctor did not read its scopes or the binding; set it to the integration token to check them", platformTokenVariable)}
 	}
 	if !integrationTokenPattern.MatchString(token) {
-		return []finding{fail(platformTokenVariable+" is not an integration token, which starts costroid_it_", "create one on Costroid Platform, as docs/connect.md says")}
+		return []finding{fail(platformTokenVariable+" is not an integration token, which starts costroid_it_", "create one on Costroid Platform, as https://docs.costroid.com/connect says")}
 	}
 	target := platform{client: host.client, base: base, token: token}
 	scopes, err := target.currentScopes(ctx)
@@ -1076,7 +1084,7 @@ func scopeLine(token tokenAnswer) finding {
 	if len(lacks) == 0 {
 		return ok("%s", held)
 	}
-	return warn(held+", and lacks "+joinNames(lacks), "create one with "+joinNames(tokenScopes)+", as docs/connect.md says")
+	return warn(held+", and lacks "+joinNames(lacks), "create one with "+joinNames(tokenScopes)+", as https://docs.costroid.com/connect says")
 }
 
 // bindingLines state the binding of the installation a CI job of this
@@ -1179,9 +1187,9 @@ func platformFailure(what string, err error) finding {
 	case "AUTH_TOKEN_INVALID":
 		return warn(fact, "the token is unknown, expired or revoked, so create one on Costroid Platform")
 	case "AUTH_TOKEN_SCOPE":
-		return warn(fact, "create a token with "+joinNames(tokenScopes)+", as docs/connect.md says")
+		return warn(fact, "create a token with "+joinNames(tokenScopes)+", as https://docs.costroid.com/connect says")
 	default:
-		return warn(fact, "the contract's refusals in docs/connect.md say what each code means")
+		return warn(fact, "the contract's refusals in https://docs.costroid.com/connect say what each code means")
 	}
 }
 

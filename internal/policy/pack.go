@@ -43,8 +43,14 @@ const (
 	// does not see, the compiler's and what one step does. Unlike the count it
 	// ends a run sooner on a slower runner, and only ever in a fault that
 	// fails.
-	maxPackTime     = 2 * time.Second
+	maxPackTime = 2 * time.Second
+	// maxMessageBytes bounds a result's message, which a comment prints as a
+	// code span, and each line of a fault's error.
 	maxMessageBytes = 160
+	// maxFaultLines is the most lines of a fault's error a reader is shown.
+	// When the compiler wrote more, the last of them says how many are left
+	// out.
+	maxFaultLines = 8
 	// maxAnswerBytes is the most the parent reads of the child's answer: 32
 	// results at their longest come to about 10 KiB.
 	maxAnswerBytes = 64 << 10
@@ -140,13 +146,14 @@ func (f *PackFault) Error() string {
 	return f.statement()
 }
 
-// statement is the fault's detail under the policy's name, on one line.
+// statement is the fault's detail under the policy's name.
 func (f *PackFault) statement() string {
 	return "policy: customer pack: " + f.Detail()
 }
 
 // Detail is the fault's reason, its line when the compiler named one, and its
-// error, on one line.
+// error. A compiler that found more than one thing wrong wrote a line for
+// each, and the detail keeps them a line each under its first.
 func (f *PackFault) Detail() string {
 	if f.Line > 0 {
 		return fmt.Sprintf("%s at line %d: %v", f.reason, f.Line, f.err)
@@ -476,7 +483,28 @@ func answeredFault(stated childFault, results int, source []byte) *PackFault {
 	if !known || results > 0 || stated.Line < 0 || stated.Line > lines {
 		return fault(ReasonPackResult, 0, fmt.Errorf("the pack's process stated the fault %q at line %d", printable(stated.Reason), stated.Line))
 	}
-	return fault(stated.Reason, stated.Line, errors.New(printable(stated.Error)))
+	return fault(stated.Reason, stated.Line, errors.New(faultLines(stated.Error)))
+}
+
+// faultLines is the error a child stated for a fault, as a reader is shown
+// it: a line for each line the compiler wrote that says what is wrong, each
+// cleaned and cut as a result's message is. The lines of the pack's source
+// that the compiler quotes under a fault, which it sets in by a tab, are left
+// out. At most maxFaultLines lines stand, and when the compiler wrote more,
+// the last says how many it leaves out.
+func faultLines(stated string) string {
+	var lines []string
+	for _, line := range strings.Split(stated, "\n") {
+		if strings.HasPrefix(line, "\t") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines = append(lines, printable(strings.TrimSpace(line)))
+	}
+	if len(lines) > maxFaultLines {
+		left := len(lines) - (maxFaultLines - 1)
+		lines = append(lines[:maxFaultLines-1], fmt.Sprintf("and %d more lines", left))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // checkResult holds one result to the pack's words: warn or fail, a rule and

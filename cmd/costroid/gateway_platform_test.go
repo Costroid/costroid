@@ -708,7 +708,7 @@ func TestAStatementIsSentAgainOnlyWithinTheBound(t *testing.T) {
 // bound of 150 s of their own, every 2 s or after Retry-After, and the other
 // senders to export's 60 s.
 func TestTheStatementsWaitTheirOwnBound(t *testing.T) {
-	if want := (verdictPace{interval: 2 * time.Second, limit: 150 * time.Second}); statementPace != want || retryAfterSecond != time.Second {
+	if want := (verdictPace{interval: 2 * time.Second, limit: 150 * time.Second, every: 10 * time.Second}); statementPace != want || retryAfterSecond != time.Second {
 		t.Errorf("the statements wait %+v, a second of Retry-After is %s; want %+v and 1s", statementPace, retryAfterSecond, want)
 	}
 	if ingestPace.limit != 60*time.Second {
@@ -726,7 +726,7 @@ func TestAnUnboundInstallationIsWarnedOfAndTheStepGoesOn(t *testing.T) {
 	platform.names(t)
 	line := func(what string) string {
 		return "costroid: warning: Costroid Platform refused " + what + ": 409 INSTALLATION_NOT_BOUND. The tenant holds no binding of " + testInstallation +
-			", so the rows of the run the key serves read windowed there until it is bound: run costroid connect, as docs/connect.md shows\n"
+			", so the rows of the run the key serves read windowed there until it is bound: run costroid connect, as https://docs.costroid.com/connect shows\n"
 	}
 	platform.turns = []statementTurn{{status: http.StatusConflict, body: refusalExample("INSTALLATION_NOT_BOUND", attestationWrite)}}
 	code, stdout, stderr := job.mintFor(t, gatewaytest.New(t, gatewayAdmin))
