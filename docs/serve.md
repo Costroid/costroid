@@ -404,7 +404,7 @@ No App delivered to this route: the App is not created yet. These fields were re
 
 ## Throughput
 
-The target is 10,000 rows a second per instance. These figures are from 2026-11-01, through the whole path: token check, parse, price and one transaction per batch of 10,000 rows, from a client in the same process.
+These figures are readings from 2026-11-01, through the whole path: token check, parse, price and one transaction per batch of 10,000 rows, from a client in the same process. No job holds ingest to a figure, as [`performance.md`](performance.md#ingest) says.
 
 | Cores for the service | One stream, rows/s | Four streams, rows/s |
 | --------------------- | ------------------ | -------------------- |
@@ -414,7 +414,7 @@ The target is 10,000 rows a second per instance. These figures are from 2026-11-
 | 16                    | 10,774             | 23,597               |
 | 32                    | 10,226             | 23,569               |
 
-A range is every run at that core count, on a machine with other work on it. One stream sits at the target, and a run can land under it.
+A range is every run at that core count, on a machine with other work on it.
 
 Conditions: Postgres 17-alpine in Docker on the same machine, an AMD Ryzen AI MAX+ 395 under WSL2, with `fsync=off` and `shared_buffers=256MB`. A real disk's fsync is not in these figures. The table starts empty. With one million rows already in it, one stream on 4 cores read 9,543 rows/s.
 

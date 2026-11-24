@@ -1,15 +1,14 @@
 # Performance
 
-Costroid states four performance bars. Each has a make target that measures it and fails when the bar does not hold.
+Costroid states three performance bars. Each has a make target that measures it and fails when the bar does not hold, and a CI job that runs the target.
 
 | Bar | Measured by | In CI |
 | --- | ----------- | ----- |
 | `costroid --version` exits in under 100 ms at p95, on two cores | `make bench-start` | the `bench-start` job |
 | `costroid policy` exits in under 1 second at p95, on two cores | `make bench-start` | the `bench-start` job |
 | The per-PR view, `GET /v1/pulls/{pr}`, answers in under 200 ms at p99 on one million rows | `make bench-view` | the `bench` job |
-| `POST /v1/rows` takes 10,000 rows a second, one stream on one instance | `make bench-ingest` | no job |
 
-CI holds the first three bars on every push to `main` and on every pull request, in the `bench-start` and `bench` jobs of `.github/workflows/ci.yml`. No CI job runs the ingest bar.
+CI holds each bar on every push to `main` and on every pull request, in the `bench-start` and `bench` jobs of `.github/workflows/ci.yml`. Ingest has no bar: no job runs `make bench-ingest`, so its figures below are readings of one machine.
 
 The readings below were taken on 2026-11-12, of the code at commit `d6e52fc`, on an AMD Ryzen AI MAX+ 395 with 32 cores under WSL2, with other work running on the machine. The load average beside each reading is the machine's, from `uptime`, as the reading started. These are not a hosted runner's cores. The CI job's log holds the runner's reading.
 
@@ -38,17 +37,15 @@ Last local reading, on all 32 cores, load average 19.4 as `make check` started a
 
 ## Ingest
 
-`make bench-ingest` starts Postgres in Docker and posts 10 batches of 10,000 rows through `POST /v1/rows`, one after another: token check, parse, price and one batched write. Go runs with `GOMAXPROCS` set to `INGEST_CORES`, 8 by default. The benchmark fails when that one stream writes under 10,000 rows a second. It also prints the rate of four streams at once, which nothing holds to a floor.
+`make bench-ingest` starts Postgres in Docker and posts 10 batches of 10,000 rows through `POST /v1/rows`, one after another: token check, parse, price and one batched write. Go runs with `GOMAXPROCS` set to `INGEST_CORES`, 8 by default. It prints the rows per second of that one stream, and of four streams at once.
 
-The bar names no core count. This page reads "one instance" as one `costroid serve` process with 8 cores, the default `make bench-ingest` has measured since its first figures in [`serve.md`](serve.md#throughput).
+Neither `make check` nor CI runs it, and it fails at no figure, so this page holds ingest to none.
 
 Last local readings, 8 cores for the service, Postgres 17 in Docker on the same machine with `fsync=off`:
 
-| Load average | One stream, rows/s | Four streams, rows/s | Floor |
-| ------------ | ------------------ | -------------------- | ----- |
-| 11.1 | 9,656 | 21,512 | not held |
-| 8.3 | 11,221 | 20,798 | held |
-| 5.9 | 9,988 | 17,600 | not held |
-| 11.6 | 9,722 | 22,997 | not held |
-
-Three of the four readings are under the bar. The bar is not moved.
+| Load average | One stream, rows/s | Four streams, rows/s |
+| ------------ | ------------------ | -------------------- |
+| 11.1 | 9,656 | 21,512 |
+| 8.3 | 11,221 | 20,798 |
+| 5.9 | 9,988 | 17,600 |
+| 11.6 | 9,722 | 22,997 |
