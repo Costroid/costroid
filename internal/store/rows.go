@@ -97,9 +97,10 @@ FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text
 
 // A batch holds no stored row in the common case, and ON CONFLICT pays for a
 // speculative insert on every row of it. So the first attempt reads the primary
-// key instead. A repeat inside the batch, or another sender writing the same
-// row at this moment, then fails the unique index, and the second attempt takes
-// ON CONFLICT. The index is the authority on both.
+// key instead. A repeat inside the batch never reaches it: laterStatements
+// leaves it out. Another sender writing the same row at this moment then fails
+// the unique index, and the second attempt takes ON CONFLICT. The index is the
+// authority on that race.
 const (
 	insertNewRows = insertFrom + `
 WHERE NOT EXISTS (SELECT FROM focus_rows f WHERE f.row_id = t.id)`
@@ -143,22 +144,46 @@ func (s *Store) writeBatch(ctx context.Context, tenant TenantID, batch Batch, co
 		if _, err := tx.Exec(ctx, batchWorkMem); err != nil {
 			return fmt.Errorf("store: set work_mem: %w", err)
 		}
-		skip, err := storedWrites(ctx, tx, tenant, batch.Records)
+		writes := writesOf(batch.Records)
+		skip, err := writes.stored(ctx, tx, tenant, batch.Records)
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, statement, cols.without(skip).args()...)
+		tag, err := tx.Exec(ctx, statement, cols.without(laterStatements(batch.Records, skip)).args()...)
 		if err != nil {
 			return fmt.Errorf("store: insert rows: %w", err)
 		}
 		receipt.Inserted = int(tag.RowsAffected())
 		receipt.Duplicates = len(batch.Records) - receipt.Inserted
+		if err := writes.record(ctx, tx); err != nil {
+			return err
+		}
 		return writeDrops(ctx, tx, batch)
 	})
 	if err != nil {
 		return Receipt{}, err
 	}
 	return receipt, nil
+}
+
+// laterStatements adds to skip every record whose row id an earlier record of
+// the batch states. The earlier line is the first statement and stands, so
+// which one does is decided here and never by the order the database happens
+// to insert in.
+func laterStatements(records []Record, skip map[int]bool) map[int]bool {
+	seen := make(map[string]bool, len(records))
+	for i := range records {
+		id := records[i].Row.RowID
+		if !seen[id] {
+			seen[id] = true
+			continue
+		}
+		if skip == nil {
+			skip = map[int]bool{}
+		}
+		skip[i] = true
+	}
+	return skip
 }
 
 func writeDrops(ctx context.Context, tx pgx.Tx, batch Batch) error {

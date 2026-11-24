@@ -45,6 +45,8 @@ Set `OTEL_EXPORTER_OTLP_ENDPOINT` to `https://<host>/otlp`.
 
 Every path but `/healthz` and `/webhooks/github` takes a bearer: a CI OIDC ID token, or a tenant ingest key that starts `costroid_ik_`. An absent or invalid bearer answers one `AUTH_TOKEN_INVALID`, and the answer does not say which. A token whose issuer's host is off the egress allowlist cannot be checked, so it answers `503` with `EGRESS_REFUSED`.
 
+A tenant's ledger keeps a row id once, and the first statement of it stands whole. A row sent again under the same `x_CostroidRowId`, whatever else it changes (its tags, its accounts, its stated grade, its token count, its pull request, the order or the request it arrives in, or the run attempt), is counted in `duplicates` and moves no figure. A provider request's cache writes take one split by lifetime, the first the ledger stored, so a later write of that request at another lifetime in the same run is left out too, whether telemetry or `POST /v1/rows` sent each. A row under another id is another charge, and counts. Two statements of one request's cache writes sent to `POST /v1/rows` at different lifetimes still count twice, because a row names no request and its ids differ.
+
 ## Ingest keys
 
 An ingest key authenticates a sender with no CI token. Its rows stay unverified and unattributed, and never reach a budget.

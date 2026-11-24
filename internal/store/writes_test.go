@@ -109,7 +109,7 @@ func TestOneBatchKeepsEveryLifetimeOfAStatedSplit(t *testing.T) {
 }
 
 // A request's writes keep out another lifetime only in their own run and
-// tenant, and a record that names no request is stored as it always was.
+// tenant, and a record that names no request keeps out only by its own id.
 func TestOnlyOneRequestInOneRunIsMatched(t *testing.T) {
 	cases := map[string]struct {
 		second  func(store.Record) store.Record
@@ -117,7 +117,8 @@ func TestOnlyOneRequestInOneRunIsMatched(t *testing.T) {
 	}{
 		"another request": {second: func(r store.Record) store.Record { return requestRow("req_2", r.Row.SkuMeter, writesRun) }},
 		"another run":     {second: func(r store.Record) store.Record { return requestRow("req_1", r.Row.SkuMeter, "4243") }},
-		"no request id": {second: func(r store.Record) store.Record {
+		"another request, naming none": {second: func(r store.Record) store.Record {
+			r = requestRow("req_2", r.Row.SkuMeter, writesRun)
 			r.RequestID = ""
 			return r
 		}},
