@@ -2,6 +2,32 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.32 (2026-11-24)
+
+### Read this if `costroid.yml` writes a switch with a capital letter
+
+`policy.enforce`, `approval.allow_author`, `comment.show_cost` and `comment.receipts` read `True` and `TRUE` as false, though `costroid validate` took them. So under `enforce: True` the warn-only period ran on, under `allow_author: True` the author could not approve, under `show_cost: True` amounts were withheld, and under `receipts: True` receipts were off. Each switch now reads as the boolean YAML writes: `true`, `True` and `TRUE` are true, and `false`, `False` and `FALSE` are false. A file that writes `true` and `false` in lower case reads as it did.
+
+### Breaking changes
+
+- `costroid gateway mint` and `costroid gateway close` exit 1 when a ledger of the team's own took the key's attestation or the gateway's count and refused it. They exited 125 up to 1.0.0-alpha.31. A ledger that cannot be reached still exits 125. [`docs/exit-codes.md`](docs/exit-codes.md) states the rule: a service that took the request and refused it is exit 1.
+- Migration `0011_rule_demotions.sql` adds the table `rule_demotions` and the column `base_branch` to `failing_verdicts`, which no release wrote to. `costroid serve` applies it when it starts.
+
+### What you can now do
+
+- Let a ledger demote a cost rule that reviewers keep overriding. `costroid serve` now keeps its own record of the failing verdicts it answered and the approvals it verified, and a cost rule whose failures were approved more than one time in five warns for 30 days where it would fail. The record needs 10 failing pull requests and approvals from 2 accounts, is kept per base branch, and never counts the pull request being judged. A failing verdict is recorded only when the service read `costroid.yml` itself at the head of the pull request's base branch, as GitHub names it, and an approval only after GitHub confirmed the approver's write role. A check run, a rows file and a request body never reach the record, and without a ledger no rule is demoted. A demoted rule concludes `neutral` at best. [`docs/policy.md`](docs/policy.md#demotion-by-the-override-rate) states the rule.
+- Know where a demotion shows, and where it does not. It shows in the verdict the service answers at `POST /v1/pulls/{pr}/verdict`. The check and the comment the report job posts are not changed by it. Of the six cost rules only `pr_budget` can fail at the service, so only it is demoted today.
+- Turn demotion off: `policy.auto_demote: false` in `costroid.yml` on the base branch keeps every rule as written and re-arms each at once. The default is `true`. A release before this one refuses the whole `policy` mapping when it holds the key, and runs no rule, as for each key added before.
+- Read from the verdict's `override_record` whether it reached the ledger's record, and why not when it did not.
+- Send to a Costroid Platform that speaks `integration/v0.7`. `costroid export`, `costroid merged` and `costroid reconcile --export` send by v0.7 to a platform that states it, and fall back as before. By v0.7 a batch belongs to one attempt of its run, and on a `pull_request` run a row that names another pull request than the run token's goes as `unverified`. A refusal of a batch bound to another attempt says to drop `--batch-id` on GitHub Actions, where `export` names a batch per attempt.
+- State a gateway key to Costroid Platform. With `COSTROID_PLATFORM_URL` set, `costroid gateway mint --for-triggering-run` and `close --for-triggering-run` attest the run's key and the gateway's settled count to the platform as well as to a ledger. A platform that does not offer the statement, one that has not bound the installation, and one that refuses a run no protected branch holds each warn, and the step goes on. Any other refusal names its code and the contract's sentence and exits 1. A server error is sent again for up to 150 s. No request follows a redirect. [`recipes/github-gateway.yml`](recipes/github-gateway.yml) passes the platform's address, its token and the owner's installation to both jobs, and states nothing where they are not set.
+
+### Changed
+
+- An object with a demoted result is written as `costroid.result/0.14`. Its title names no amount and says the check is neutral, and the rule's own line gives the amounts. Every other object is the version it was.
+- `costroid merged` names a GitHub key set that stays unavailable: after its resends it prints the code `INSTALLATION_PROOF_KEYS_UNAVAILABLE` with its sentence and exits 1.
+- The help of `costroid export`, `costroid merged` and `costroid reconcile` names the versions each sends by.
+
 ## 1.0.0-alpha.31 (2026-11-23)
 
 ### Read this if you run `costroid serve` with the gateway
