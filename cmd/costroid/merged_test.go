@@ -34,12 +34,11 @@ const (
 )
 
 // contractCopy is a version's openapi.json of Costroid/costroid-schemas,
-// copied: integration/v0.5 at 4cf76ee, and integration/v0.6 at 338c5ec.
+// copied: integration/v0.5 at 4cf76ee, integration/v0.6 at 338c5ec, and
+// integration/v0.7 at 4f1bc81.
 func contractCopy(version contract) string {
 	return filepath.Join("testdata", "integration-v"+version.Version+".openapi.json")
 }
-
-var mergeContractPath = contractCopy(contractV05)
 
 // contractSchema compiles one schema of a version's copy of the contract.
 func contractSchema(t *testing.T, version contract, name string) *jsonschema.Schema {
@@ -101,7 +100,7 @@ type mergeStub struct {
 
 func newMergeStub(t *testing.T) *mergeStub {
 	t.Helper()
-	states := speaksEvery()
+	states := speaksBefore06()
 	states[contractV05.path()] = contractV05
 	facts := map[contract]*jsonschema.Schema{}
 	for _, version := range statementContracts {
@@ -110,6 +109,15 @@ func newMergeStub(t *testing.T) *mergeStub {
 	stub := &mergeStub{t: t, states: states, facts: facts, ref: "refs/heads/main", answers: map[string][]turn{}, held: map[string]mergeDocument{}}
 	stub.server = httptest.NewTLSServer(http.HandlerFunc(stub.serve))
 	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+// newV07MergeStub is a platform that states integration/v0.7 and v0.6 under
+// their paths, beside every earlier version.
+func newV07MergeStub(t *testing.T) *mergeStub {
+	t.Helper()
+	stub := newV06MergeStub(t)
+	stub.states[contractV07.path()] = contractV07
 	return stub
 }
 
@@ -141,15 +149,12 @@ func (s *mergeStub) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && rest == "/identity":
 		stated, _ := json.Marshal(s.states[prefix])
 		w.Write([]byte(`{"contract":` + string(stated) + `,"tenant":{"id":"` + testTenant + `","name":"Example Inc","region":"eu"}}`))
-	case r.Method == http.MethodPut && strings.HasPrefix(rest, "/merges/") && (prefix == contractV05.path() || prefix == contractV06.path()):
+	case r.Method == http.MethodPut && strings.HasPrefix(rest, "/merges/") && slices.ContainsFunc(statementContracts, func(c contract) bool { return c.path() == prefix }):
 		body := new(bytes.Buffer)
 		body.ReadFrom(r.Body)
 		s.puts = append(s.puts, r)
 		s.bodies = append(s.bodies, body.Bytes())
-		version := contractV05
-		if prefix == contractV06.path() {
-			version = contractV06
-		}
+		version := s.states[prefix]
 		s.answer(w, r, version, strings.TrimPrefix(rest, "/merges/"), body.Bytes())
 	default:
 		http.Error(w, "", http.StatusNotFound)
@@ -190,7 +195,7 @@ func (s *mergeStub) answer(w http.ResponseWriter, r *http.Request, version contr
 		"merge_id": id, "repo": document.Repo, "pull_request": document.PullRequest,
 		"merged_at": document.MergedAt, "merge_commit_sha": document.MergeCommitSHA, "run_identity": grade,
 	}
-	if version == contractV06 {
+	if version != contractV05 {
 		fact["ref"] = nil
 		if grade == tokenVerified {
 			fact["ref"] = s.ref
@@ -478,7 +483,7 @@ func TestMergedRefusesAPlatformBeforeV05(t *testing.T) {
 		want   string
 	}{
 		"a platform of integration/v0.4": {
-			speaksEvery(),
+			speaksBefore06(),
 			"costroid: Costroid Platform does not serve integration/v0.5, and a merge fact needs integration/v0.5 or later, so nothing was sent\n",
 		},
 		"a v0.5 path that states v0.4": {
@@ -626,10 +631,27 @@ func TestMergedStatesEachRefusal(t *testing.T) {
 	}
 }
 
-// TestMergedNamesEveryRefusalTheContractLists holds merged's sentences to the
-// refusal codes integration/v0.5 lists for a merge fact: each has a line of
-// its own, and merged names no code the contract does not list.
-func TestMergedNamesEveryRefusalTheContractLists(t *testing.T) {
+// TestMergedNamesAKeySetThatStaysUnavailable answers each send of a fact 503
+// INSTALLATION_PROOF_KEYS_UNAVAILABLE, the refusal integration/v0.7 lists for
+// GitHub's key set. merged sends the fact again until its pace ends, then
+// names the code and the contract's sentence for it, and exits 1.
+func TestMergedNamesAKeySetThatStaysUnavailable(t *testing.T) {
+	stub := newV07MergeStub(t)
+	stub.answers["903114-1482"] = slices.Repeat([]turn{{http.StatusServiceUnavailable, `{"error":{"code":"INSTALLATION_PROOF_KEYS_UNAVAILABLE","message":"x"}}`}}, 1000)
+	var stdout, stderr bytes.Buffer
+	args := []string{"--platform-url", stub.server.URL, "--installation-id", testInstallation}
+	env := stub.pushEnv(t, mergeHost(t), tipCommit)
+	code := merged(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, verdictPace{interval: time.Millisecond, limit: 50 * time.Millisecond}, &stdout, &stderr)
+	want := "costroid: Costroid Platform refused merge 903114-1482: 503 INSTALLATION_PROOF_KEYS_UNAVAILABLE. GitHub's key set cannot be read. Retry inside the run token's window. Nothing was stored\n"
+	if code != exitRejected || stderr.String() != mergedVersionLine(contractV07)+want || len(stub.puts) < 2 {
+		t.Errorf("exit %d, %d sends, stderr %q, want %q", code, len(stub.puts), stderr.String(), want)
+	}
+}
+
+// mergeRefusalCodes are the refusal codes a version lists for a merge fact,
+// with AUTH_TOKEN_INVALID, which each answers for a bearer it does not know.
+func mergeRefusalCodes(t *testing.T, version contract) []string {
+	t.Helper()
 	var contractDocument struct {
 		Components struct {
 			Schemas struct {
@@ -639,22 +661,38 @@ func TestMergedNamesEveryRefusalTheContractLists(t *testing.T) {
 			} `json:"schemas"`
 		} `json:"components"`
 	}
-	if err := json.Unmarshal([]byte(readFile(t, mergeContractPath)), &contractDocument); err != nil {
+	if err := json.Unmarshal([]byte(readFile(t, contractCopy(version))), &contractDocument); err != nil {
 		t.Fatal(err)
 	}
-	listed := append(contractDocument.Components.Schemas.MergeRefusalCode.Enum, "AUTH_TOKEN_INVALID")
-	if len(listed) < 9 {
-		t.Fatalf("integration/v0.5 lists %v", listed)
+	return append(contractDocument.Components.Schemas.MergeRefusalCode.Enum, "AUTH_TOKEN_INVALID")
+}
+
+// TestMergedNamesEveryRefusalTheContractLists holds merged's sentences to the
+// refusal codes integration/v0.7, the version it sends by, lists for a merge
+// fact: each has a line of its own, but MERGE_FACT_NOT_FOUND, which answers
+// GET alone and merged never asks. merged names no code that no version it
+// sends by lists: PLAN_WRITES_REFUSED is v0.6's and v0.5's, not v0.7's.
+func TestMergedNamesEveryRefusalTheContractLists(t *testing.T) {
+	listed := mergeRefusalCodes(t, statementContracts[0])
+	if statementContracts[0] != contractV07 || len(listed) < 9 {
+		t.Fatalf("integration/v%s lists %v", statementContracts[0].Version, listed)
 	}
 	own := []string{"PLAN_WRITES_REFUSED", installationNotBound, mergeFactConflict}
 	for _, code := range listed {
+		if code == "MERGE_FACT_NOT_FOUND" {
+			continue
+		}
 		if _, known := mergeRefusals[code]; known == slices.Contains(own, code) {
 			t.Errorf("%s: a sentence %t, a line of its own %t", code, known, slices.Contains(own, code))
 		}
 	}
+	var every []string
+	for _, version := range statementContracts {
+		every = append(every, mergeRefusalCodes(t, version)...)
+	}
 	for _, code := range slices.Concat(slices.Collect(maps.Keys(mergeRefusals)), own) {
-		if !slices.Contains(listed, code) {
-			t.Errorf("merged names %s, which integration/v0.5 does not list", code)
+		if !slices.Contains(every, code) {
+			t.Errorf("merged names %s, which no version it sends by lists", code)
 		}
 	}
 }
@@ -715,7 +753,7 @@ func (s *mergeStub) sentRequests() []string {
 
 // TestMergedSendsByV06ToAPlatformThatStatesIt sends a merge queue's push to a
 // platform that states integration/v0.6 beside every earlier version. merged
-// reads GET /identity under v0.6 alone, names that version on standard error,
+// reads GET /identity under v0.7, then v0.6, names v0.6 on standard error,
 // and sends each fact to v0.6's path, each body a valid v0.6 MergeDocument.
 func TestMergedSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 	schema := contractSchema(t, contractV06, "MergeDocument")
@@ -725,6 +763,7 @@ func TestMergedSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	want := []string{
+		"GET /api/integration/v0.7/identity",
 		"GET /api/integration/v0.6/identity",
 		"PUT /api/integration/v0.6/merges/903114-1481",
 		"PUT /api/integration/v0.6/merges/903114-1482",
@@ -745,8 +784,41 @@ func TestMergedSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 	}
 }
 
+// TestMergedSendsByV07ToAPlatformThatStatesIt sends a merge queue's push to a
+// platform that states integration/v0.7 beside every earlier version. merged
+// reads GET /identity under v0.7 alone, names v0.7, and sends each fact to
+// v0.7's path, the same document v0.6 takes, each a valid v0.7 MergeDocument.
+// The answers are read as v0.6's are: the fact of the tip names its branch.
+func TestMergedSendsByV07ToAPlatformThatStatesIt(t *testing.T) {
+	schema := contractSchema(t, contractV07, "MergeDocument")
+	stub := newV07MergeStub(t)
+	code, stdout, stderr := stub.merged(t, stub.pushEnv(t, mergeHost(t), groupCommit, tipCommit))
+	if code != 0 || stdout != "" || !strings.HasPrefix(stderr, mergedVersionLine(contractV07)) {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	want := []string{
+		"GET /api/integration/v0.7/identity",
+		"PUT /api/integration/v0.7/merges/903114-1481",
+		"PUT /api/integration/v0.7/merges/903114-1482",
+	}
+	if got := stub.sentRequests(); !slices.Equal(got, want) {
+		t.Errorf("the platform was asked %q, want %q", got, want)
+	}
+	v06 := newV06MergeStub(t)
+	v06.merged(t, v06.pushEnv(t, mergeHost(t), groupCommit, tipCommit))
+	for i, body := range stub.bodies {
+		validMergeDocument(t, schema, body)
+		if i >= len(v06.bodies) || !bytes.Equal(body, v06.bodies[i]) {
+			t.Errorf("by v0.7 merged sent %s, and by v0.6 another document", body)
+		}
+	}
+	if line := "costroid: merge 903114-1482, pull request 1482 of github.com/example/widgets: stored as token_verified, from a push to the protected branch main\n"; !strings.Contains(stderr, line) {
+		t.Errorf("stderr lacks %q:\n%s", line, stderr)
+	}
+}
+
 // TestMergedSendsByV05ToAPlatformThatStatesV05 sends to a platform that serves
-// no integration/v0.6. merged asks v0.6 first, sends by v0.5 and says so, and
+// no integration/v0.6. merged asks v0.7 and v0.6 first, sends by v0.5 and says so, and
 // reads the answers as v0.5 has them: no branch is named, and the job's
 // GITHUB_REF_PROTECTED, which v0.5 does not grade by, names no cause.
 func TestMergedSendsByV05ToAPlatformThatStatesV05(t *testing.T) {
@@ -759,6 +831,7 @@ func TestMergedSendsByV05ToAPlatformThatStatesV05(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	want := []string{
+		"GET /api/integration/v0.7/identity",
 		"GET /api/integration/v0.6/identity",
 		"GET /api/integration/v0.5/identity",
 		"PUT /api/integration/v0.5/merges/903114-1481",

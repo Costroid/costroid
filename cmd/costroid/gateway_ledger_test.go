@@ -255,8 +255,8 @@ func TestTheOldRecipeWarnsAndItsRowsReadWindowed(t *testing.T) {
 			}))
 			t.Setenv(ingestURLVariable, ledger.URL+"/v1/rows")
 			for _, triggering := range []bool{false, true} {
-				if err := attestKey(context.Background(), ledger.Client(), gateway.AttestationFor(id, counter.Run, headCommit), triggering, io.Discard); err == nil {
-					t.Errorf("%s, for the triggering run %t: mint went on", name, triggering)
+				if _, err := attestKey(context.Background(), ledger.Client(), gateway.AttestationFor(id, counter.Run, headCommit), triggering, io.Discard); !refusedByLedger(err) {
+					t.Errorf("%s, for the triggering run %t: mint went on, or the refusal is not the ledger's: %v", name, triggering, err)
 				}
 			}
 			ledger.Close()
@@ -264,8 +264,8 @@ func TestTheOldRecipeWarnsAndItsRowsReadWindowed(t *testing.T) {
 		unreachable := httptest.NewTLSServer(http.NotFoundHandler())
 		unreachable.Close()
 		t.Setenv(ingestURLVariable, unreachable.URL+"/v1/rows")
-		if err := attestKey(context.Background(), unreachable.Client(), gateway.AttestationFor(id, counter.Run, headCommit), false, io.Discard); err == nil {
-			t.Error("a ledger that cannot be reached: mint went on")
+		if _, err := attestKey(context.Background(), unreachable.Client(), gateway.AttestationFor(id, counter.Run, headCommit), false, io.Discard); err == nil || refusedByLedger(err) {
+			t.Errorf("a ledger that cannot be reached: mint went on, or it reads as a refusal: %v", err)
 		}
 	})
 }

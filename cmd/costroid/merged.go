@@ -31,8 +31,8 @@ const (
 	mergedInstant = "2006-01-02T15:04:05Z"
 )
 
-// mergeRefusals are the meanings integration/v0.6 and v0.5 give the refusals
-// of a merge fact that merged prints no other sentence for.
+// mergeRefusals are the meanings integration/v0.7, v0.6 and v0.5 give the
+// refusals of a merge fact that merged prints no other sentence for.
 var mergeRefusals = map[string]string{
 	"AUTH_TOKEN_INVALID":           "The token is absent, unknown, expired or revoked",
 	"AUTH_TOKEN_SCOPE":             "The token lacks merges:write",
@@ -40,6 +40,9 @@ var mergeRefusals = map[string]string{
 	"RUN_TOKEN_OWNER_MISMATCH":     "The run token names another owner than the installation",
 	"MERGE_FACT_IDENTITY_MISMATCH": "A verified run token names another repository than repo",
 	"MERGE_FACT_INVALID":           "A key is missing, unknown or of the wrong form",
+	// INSTALLATION_PROOF_KEYS_UNAVAILABLE is a 503, sent again first, and
+	// named once the resends have ended.
+	"INSTALLATION_PROOF_KEYS_UNAVAILABLE": "GitHub's key set cannot be read. Retry inside the run token's window",
 }
 
 var mergedHelp = cli.Page{
@@ -71,18 +74,20 @@ nothing and says so.
 
 On GitLab CI merged sends nothing: it reads the pull requests a commit closed
 from GitHub alone.`)}},
-		{Heading: "What it sends", Body: []cli.Block{cli.Text(`It sends by integration/v0.6, or by v0.5 to a platform that states no later
-version, under the integration token in COSTROID_PLATFORM_TOKEN, and names the
-version on standard error. --platform-url and --installation-id are read as
+		{Heading: "What it sends", Body: []cli.Block{cli.Text(`It sends by integration/v0.7, or by v0.6 or v0.5 to a platform that states
+no later version, under the integration token in COSTROID_PLATFORM_TOKEN, and
+names the version on standard error. The fact is the same in each.
+--platform-url and --installation-id are read as
 export reads them. The token needs identity:read and merges:write. The merge
 id is the repository id and the pull request's number, joined by a hyphen, so
 the same fact sent again changes nothing. The job's OIDC token rides with each
 fact, as with a batch, and needs id-token: write on the job. The platform
 stores a fact as token_verified when the run token names the fact's commit,
-which is the tip of the push, and, by v0.6, a protected branch, which merged
-then names. A fact sent without a run token, a fact of a merge queue's group
-whose commit is not the tip, or by v0.6 a fact of a push to a branch that is
-not protected, is stored as unverified, and merged says why.`)}},
+which is the tip of the push, and, by v0.6 or later, a protected branch,
+which merged then names. A fact sent without a run token, a fact of a merge
+queue's group whose commit is not the tip, or by v0.6 or later a fact of a
+push to a branch that is not protected, is stored as unverified, and merged
+says why.`)}},
 		{Heading: "When the platform does not take a fact", Body: []cli.Block{cli.Text(`A server error or a lost connection is sent again every 2 s for up to 60 s.
 On 402 or 409 INSTALLATION_NOT_BOUND nothing in the fact is wrong, and
 nothing keeps it: merged warns and exits 0, and the job sends it when it runs
@@ -90,8 +95,8 @@ again. On 409 MERGE_FACT_CONFLICT the pull request already holds a different
 fact, and merged does not send it again. docs/export.md lists every answer.`)}},
 		{Heading: "What it prints", Body: []cli.Block{cli.Text(`--json prints, on standard output, one object per fact sent: its merge id,
 its pull request, the status the platform answered, the fact's run_identity
-and, on a token_verified fact by v0.6, the ref of its branch, or the refusal's
-code. --dry-run prints each fact's merge id and document instead, and reaches
+and, on a token_verified fact by v0.6 or later, the ref of its branch, or the
+refusal's code. --dry-run prints each fact's merge id and document instead, and reaches
 nothing but GitHub.`)}},
 	},
 	Environment: []cli.Block{cli.Rows{
@@ -410,8 +415,8 @@ type storedFact struct {
 }
 
 // branch is the ref and the branch of a token_verified fact by
-// integration/v0.6, or empty. A version before 0.6 grades a fact from any
-// branch and names none.
+// integration/v0.6 or later, or empty. A version before 0.6 grades a fact
+// from any branch and names none.
 func (f storedFact) branch(version contract) (string, string) {
 	var ref string
 	if version == contractV05 || f.RunIdentity != tokenVerified || json.Unmarshal(f.Ref, &ref) != nil {

@@ -8,7 +8,7 @@ The rules it follows are the contract's: [`integration/v0.2`, Identity](https://
 
 Create one integration token on Costroid Platform for each GitHub owner or GitLab group, with three scopes: `identity:read`, `installations:write` and `rows:write`. Keep it as an organization secret named `COSTROID_PLATFORM_TOKEN` on GitHub, or as a masked CI/CD variable of the group on GitLab. Every repository under the owner then connects and exports with the same token, and revoking it stops them all at once.
 
-`costroid connect` uses the first two scopes and `costroid export` the first and the third. Both read the token from `COSTROID_PLATFORM_TOKEN`, never from an argument, and neither prints it.
+`costroid connect` uses the first two scopes and `costroid export` the first and the third. Both read the token from `COSTROID_PLATFORM_TOKEN`, never from an argument, and neither prints it. The gateway recipe's mint and close jobs use the first and `credentials:write`, which a token for them carries as well, as [Costroid Platform](gateway.md#costroid-platform) says.
 
 ## On GitHub Actions
 

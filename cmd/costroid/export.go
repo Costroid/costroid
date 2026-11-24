@@ -72,20 +72,31 @@ func (c contract) path() string {
 	return "/api/integration/v" + c.Version
 }
 
-// Version 0.4 is 0.3 with a batch of token_verified rows bound to the run
-// that sent it, and the refusal EXPORT_BATCH_RUN_BOUND of a restatement from
-// any other. Version 0.3 is 0.2 with rows of focus-row/v0.5 and tags of
-// tags/v0.4, which carry the tags a caller names and the repository's
-// visibility. Version 0.2 is what export sent before it read the platform's
-// contract, so it is also what export sends when the token may not read
-// GET /identity.
+// Version 0.7 is 0.6 with rows of focus-row/v0.6 and tags of tags/v0.5, a
+// pull request named by a pull_request run's token, a batch bound to its
+// run's attempt, and the two credential writes the gateway commands make.
+// Version 0.6 sends a batch as 0.4 does. Version 0.4 is 0.3 with a batch of
+// token_verified rows bound to the run that sent it, and the refusal
+// EXPORT_BATCH_RUN_BOUND of a restatement from any other. Version 0.3 is 0.2
+// with rows of focus-row/v0.5 and tags of tags/v0.4, which carry the tags a
+// caller names and the repository's visibility. Version 0.2 is what export
+// sent before it read the platform's contract, so it is also what export
+// sends when the token may not read GET /identity.
 var (
+	contractV07 = contract{Version: "0.7", TagSet: "tags/v0.5", FocusRow: "focus-row/v0.6"}
 	contractV04 = contract{Version: "0.4", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
 	contractV03 = contract{Version: "0.3", TagSet: "tags/v0.4", FocusRow: "focus-row/v0.5"}
 	contractV02 = contract{Version: "0.2", TagSet: "tags/v0.2", FocusRow: "focus-row/v0.3"}
 	// exportContracts are the versions export sends by, newest first.
-	exportContracts = []contract{contractV04, contractV03, contractV02}
+	exportContracts = []contract{contractV07, contractV06, contractV04, contractV03, contractV02}
 )
+
+// bindsAttemptAndPull reports a version that binds a batch to its run's
+// attempt, and a pull_request run's token_verified rows to the pull request
+// its token names.
+func (c contract) bindsAttemptAndPull() bool {
+	return c == contractV07
+}
 
 // The patterns are integration/v0.2's, and versions 0.3 and 0.4 keep them.
 var (
@@ -132,9 +143,10 @@ integration token in COSTROID_PLATFORM_TOKEN.`,
 	},
 	Sections: []cli.Section{
 		{Heading: "Sending a batch", Body: []cli.Block{cli.Text(`It reads GET /identity first and
-sends by integration/v0.4, or by v0.3 or v0.2 to a platform that states no
-later version, and names the version on standard error. Outside GitHub
-Actions a token without identity:read still sends, by v0.2, with a warning.
+sends by integration/v0.7, or by v0.6, v0.4, v0.3 or v0.2 to a platform that
+states no later version, and names the version on standard error. Outside
+GitHub Actions a token without identity:read still sends, by
+v0.2, with a warning.
 --platform-url is the platform's
 https origin, or an http one on a loopback address such as
 http://127.0.0.1:8787. --installation-id names the installation the rows came
@@ -144,12 +156,15 @@ reads it.
 
 On GitHub Actions the batch id is the repository id, the run id and the run
 attempt, joined by hyphens, so sending a run's rows again restates its batch.
+A later attempt sends a batch of its own.
 The job's OIDC token rides with the batch and names the run. That needs
 id-token: write on the job, and identity:read beside rows:write on the token.
 A row that names this run in GITHUB_RUN_ID and this repository in
 GITHUB_REPOSITORY goes as token_verified, and every other row as unverified.
-Elsewhere --batch-id names the batch, no run token is sent, and every row goes
-as unverified.
+By v0.7, on a pull_request run the token names the pull request as well, from
+GITHUB_REF, refs/pull/<n>/merge, and a row that names another pull request
+goes as unverified. Elsewhere --batch-id names the batch, no run token is
+sent, and every row goes as unverified.
 
 Once the platform takes the batch, export asks for its verdict every 2 s for
 up to 60 s, and prints ingested with a link to each pull request, or the code
@@ -160,8 +175,10 @@ installation, which costroid connect makes. In each case export warns, keeps
 the rows file and exits 0, so it can be sent later.
 
 On 409 EXPORT_BATCH_RUN_BOUND the batch holds token_verified rows, so it is
-bound to the run that sent it, and only that run restates it. Export keeps
-the rows file and exits 1. docs/export.md lists every answer.`)}},
+bound to the run that sent it, by v0.7 to the run's attempt as well, and only
+that run or attempt restates it. Export keeps the rows file and exits 1. On
+GitHub Actions export names a batch for each attempt itself, so the line says
+to drop --batch-id there. docs/export.md lists every answer.`)}},
 		{Heading: "Writing a file for another tool", Body: []cli.Block{
 			cli.Text(`With --format, export sends nothing and writes the rows as a file another
 tool imports, to --out or to standard output. Every amount is written as the
@@ -261,12 +278,19 @@ func (r *refusal) runBound() bool {
 }
 
 // platform is Costroid Platform's integration API under one token. origin
-// is set where the version is still to be read, and base once it is.
+// is set where the version is still to be read, and base and version once it
+// is.
 type platform struct {
-	client *http.Client
-	origin string
-	base   string
-	token  string
+	client  *http.Client
+	origin  string
+	base    string
+	version contract
+	token   string
+}
+
+// under sets the version the platform is spoken to by.
+func (p *platform) under(version contract) {
+	p.base, p.version = p.origin+version.path(), version
 }
 
 // exportCommand sends with a client that follows no redirect, so the token
@@ -305,6 +329,9 @@ func export(ctx context.Context, args []string, client *http.Client, getenv func
 	case errors.As(err, &refused) && refused.unbound():
 		fmt.Fprintf(stderr, "costroid: warning: %v. The tenant holds no binding of %s: run costroid connect, as docs/connect.md shows, and %s is kept to send again\n", err, flags.installation, flags.rows)
 		return 0
+	case errors.As(err, &refused) && refused.runBound() && target.version.bindsAttemptAndPull():
+		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it belongs to the run and the attempt that sent it, and only that attempt restates it. Nothing was stored, and %s is kept. On GitHub Actions export names a batch for each attempt itself, so drop --batch-id there\n", err, flags.rows)
+		return exitRejected
 	case errors.As(err, &refused) && refused.runBound():
 		fmt.Fprintf(stderr, "costroid: %v. The batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it. Nothing was stored, and %s is kept\n", err, flags.rows)
 		return exitRejected
@@ -571,7 +598,10 @@ func (s sentBatch) print(path string, stderr io.Writer) {
 		outcome = "already held, so nothing changed"
 	}
 	cli.Say(stderr, "costroid: batch %s, %d rows, sha256 %x: %s\n", s.batch, s.rows, s.digest, outcome)
-	if s.claim.runID != "" {
+	switch {
+	case s.claim.pull != "":
+		cli.Say(stderr, "costroid: %d of %d rows name run %s of %s and pull request %s, so they went as token_verified and the rest as unverified\n", s.verified, s.rows, s.claim.runID, s.claim.repository, s.claim.pull)
+	case s.claim.runID != "":
 		cli.Say(stderr, "costroid: %d of %d rows name run %s of %s, so they went as token_verified and the rest as unverified\n", s.verified, s.rows, s.claim.runID, s.claim.repository)
 	}
 	if s.quota == "approaching" || s.quota == "exhausted" {
@@ -598,6 +628,12 @@ func sendBatch(ctx context.Context, flags exportFlags, target *platform, getenv 
 	tenant, err := target.contractFor(ctx, getenv, stderr)
 	if err != nil {
 		return sentBatch{}, err
+	}
+	if pull := tokenPull(getenv); pull != "" && claim.runID != "" && target.version.bindsAttemptAndPull() {
+		claim.pull = pull
+		if stamped, err = readStamped(flags.rows, claim); err != nil {
+			return sentBatch{}, err
+		}
 	}
 	runToken, err := target.runToken(ctx, getenv, tenant)
 	if err != nil {
@@ -701,7 +737,7 @@ func (p *platform) contractFor(ctx context.Context, getenv func(string) string, 
 		cli.Say(stderr, "costroid: Costroid Platform states integration/v%s, so export sends the batch by it\n", stated.Version)
 		return tenant, nil
 	case getenv("GITHUB_ACTIONS") != "true" && errors.As(err, &refused) && refused.unauthorized():
-		p.base = p.origin + contractV02.path()
+		p.under(contractV02)
 		fmt.Fprintf(stderr, "costroid: warning: %v, so export could not read the platform's contract and sends the batch by integration/v%s, as it did before. Give the token identity:read to send by the newest version\n", err, contractV02.Version)
 		return "", nil
 	default:
@@ -720,7 +756,7 @@ func (p *platform) statedContract(ctx context.Context) (contract, string, error)
 		var tenant string
 		tenant, err = p.identityUnder(ctx, version)
 		if err == nil {
-			p.base = p.origin + version.path()
+			p.under(version)
 			return version, tenant, nil
 		}
 	}
@@ -730,7 +766,7 @@ func (p *platform) statedContract(ctx context.Context) (contract, string, error)
 // identityUnder reads GET /identity under one version's path, and returns the
 // token's tenant when the answer states exactly that version.
 func (p platform) identityUnder(ctx context.Context, version contract) (string, error) {
-	p.base = p.origin + version.path()
+	p.under(version)
 	request, err := p.request(ctx, http.MethodGet, "/identity", nil)
 	if err != nil {
 		return "", err
@@ -793,10 +829,11 @@ func (p platform) do(request *http.Request, what string) (*http.Response, []byte
 }
 
 // runClaim is the run a run token names, as the rows' tags write it: the run
-// id and github.com/ with the repository. Off GitHub Actions no run token is
-// sent, and the zero claim names no row.
+// id and github.com/ with the repository, and the pull request where the
+// version reads one from the token. Off GitHub Actions no run token is sent,
+// and the zero claim names no row.
 type runClaim struct {
-	runID, repository string
+	runID, repository, pull string
 }
 
 func runClaimOf(getenv func(string) string) runClaim {
@@ -810,11 +847,28 @@ func runClaimOf(getenv func(string) string) runClaim {
 	return runClaim{runID: run, repository: "github.com/" + repository}
 }
 
+// pullRef is the ref of a pull_request run, whose token names the pull
+// request: refs/pull/<n>/merge.
+var pullRef = regexp.MustCompile(`^refs/pull/([1-9][0-9]{0,9})/merge$`)
+
+// tokenPull is the pull request a pull_request run's token names, from the
+// event and the ref GitHub Actions sets as the token states them, or empty.
+// Under any other event the token names none, and a row's pull request is
+// its own statement.
+func tokenPull(getenv func(string) string) string {
+	match := pullRef.FindStringSubmatch(getenv("GITHUB_REF"))
+	if getenv("GITHUB_EVENT_NAME") != "pull_request" || match == nil {
+		return ""
+	}
+	return match[1]
+}
+
 // names reports a row the run token stands behind: its run and repository
-// are the token's, and its join to the pull request is not a time window.
+// are the token's, its pull request is the token's where the token names
+// one, and its join to the pull request is not a time window.
 func (c runClaim) names(tags map[string]string) bool {
 	return c.runID != "" && tags[focus.TagWorkflowRunID] == c.runID && tags[focus.TagRepo] == c.repository &&
-		tags[focus.TagAttributionGrade] != windowed
+		(c.pull == "" || tags[focus.TagPR] == c.pull) && tags[focus.TagAttributionGrade] != windowed
 }
 
 // pullRequest is a pull request the rows name, from their costroid/repo and

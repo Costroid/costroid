@@ -535,7 +535,7 @@ credential per UTC day.`,
 		{"--out FILE", "the file reconciliation rows are kept in, one per source, credential and day"},
 		{"--reports DIR", "a directory of saved provider reports, read in place of the provider"},
 		{"--as-of T", "when the saved reports were saved, as a UTC instant"},
-		{"--export", "send the rows --out keeps to Costroid Platform, by integration/v0.6 or v0.5"},
+		{"--export", "send the rows --out keeps to Costroid Platform, by integration/v0.7, v0.6 or v0.5"},
 		{"--installation-id ID", "with --export, the installation the job runs under: github:<id>, github-owner:<id> or gitlab-namespace:<id>"},
 	},
 	Sections: []cli.Section{
@@ -558,8 +558,9 @@ and dollars, on the first day's row. A later day's row keeps its own prices
 and carries no tokens or dollars.`)}},
 		{Heading: "Sending to Costroid Platform", Body: []cli.Block{cli.Text(`--export sends the rows this run wrote to --out to the Costroid Platform
 COSTROID_PLATFORM_URL names, under the integration token in
-COSTROID_PLATFORM_TOKEN, by integration/v0.6, or by v0.5 to a platform that
-states no later version, and names the version on standard error. A platform
+COSTROID_PLATFORM_TOKEN, by integration/v0.7, or by v0.6 or v0.5 to a
+platform that states no later version, and names the version on standard
+error. A platform
 that states only an earlier version gets nothing. The rows go in bodies cut at
 the limits GET /quotas states, a span's rows in one body. On GitHub Actions
 with id-token: write the job's run token goes with them, beside the

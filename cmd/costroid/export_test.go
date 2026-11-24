@@ -58,7 +58,8 @@ type platformStub struct {
 	// body. Once they run out, the batch has ingested.
 	verdicts []turn
 	// states holds, by version path, the contract GET /identity states
-	// there. A path it does not hold is not served.
+	// there. A path it does not hold is not served, and answers 404
+	// NOT_FOUND as the contract says.
 	states map[string]contract
 	// identityRefused, when set, answers every GET /identity in its place,
 	// and identityDrops closes the connection instead.
@@ -113,6 +114,16 @@ func speaksEvery() map[string]contract {
 	return states
 }
 
+// speaksBefore06 states each version export sends by from before
+// integration/v0.6, as a platform that speaks no statement path of 0.6 or
+// later does.
+func speaksBefore06() map[string]contract {
+	states := speaksEvery()
+	delete(states, contractV07.path())
+	delete(states, contractV06.path())
+	return states
+}
+
 func newPlatformStub(t *testing.T, status int, body string) *platformStub {
 	t.Helper()
 	stub := &platformStub{status: status, body: body, header: http.Header{}, states: speaksEvery()}
@@ -145,7 +156,8 @@ func (s *platformStub) serve(w http.ResponseWriter, r *http.Request) {
 		s.audience = append(s.audience, r.URL.Query().Get("audience"))
 		w.Write([]byte(`{"value":"` + testRunToken + `"}`))
 	case !served:
-		http.Error(w, "", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(contractExamples["Error.not-mounted.json"].body))
 	case r.Method == http.MethodGet && rest == "/identity" && s.identityDrops:
 		panic(http.ErrAbortHandler)
 	case r.Method == http.MethodGet && rest == "/identity" && s.identityRefused != nil:
@@ -278,19 +290,17 @@ func TestExportSendsTheContractHeaders(t *testing.T) {
 // answer states it, naming that version on stderr. A platform that states
 // none gets nothing.
 func TestExportSendsTheContractThePlatformStates(t *testing.T) {
-	if len(exportContracts) != 3 {
+	if !slices.Equal(exportContracts, []contract{contractV07, contractV06, contractV04, contractV03, contractV02}) {
 		t.Fatalf("export sends by %v", exportContracts)
 	}
-	v04, v03, v02 := exportContracts[0], exportContracts[1], exportContracts[2]
-	if v04.Version != "0.4" || v03.Version != "0.3" || v02.Version != "0.2" {
-		t.Fatalf("export sends by %v", exportContracts)
-	}
+	v04, v03, v02 := contractV04, contractV03, contractV02
 	for name, check := range map[string]struct {
 		states map[string]contract
 		want   contract
 		asked  int
 	}{
-		"a platform that states v0.4":                       {speaksEvery(), v04, 1},
+		"a platform that states v0.7":                       {speaksEvery(), contractV07, 1},
+		"a platform that states v0.4":                       {speaksBefore06(), v04, 1},
 		"a platform that states only v0.2":                  {map[string]contract{v02.path(): v02}, v02, 1},
 		"a platform whose v0.4 path states another version": {map[string]contract{v04.path(): v03, v03.path(): v03}, v03, 2},
 		"a platform whose v0.3 path states another version": {map[string]contract{v03.path(): v02, v02.path(): v02}, v02, 2},
@@ -359,7 +369,7 @@ func TestExportFallsBackToV02WhenIdentityIsRefused(t *testing.T) {
 			if len(stub.verdict) != 1 || stub.verdict[0] != batch {
 				t.Errorf("the verdict was asked at %q, want %s", stub.verdict, batch)
 			}
-			if want := []string{contractV04.path() + "/identity", contractV03.path() + "/identity", contractV02.path() + "/identity"}; !slices.Equal(stub.identity, want) {
+			if want := []string{contractV07.path() + "/identity", contractV06.path() + "/identity", contractV04.path() + "/identity", contractV03.path() + "/identity", contractV02.path() + "/identity"}; !slices.Equal(stub.identity, want) {
 				t.Errorf("GET /identity was asked at %q, want %q", stub.identity, want)
 			}
 			want := "costroid: warning: Costroid Platform refused the identity request: " + name + ", so export could not read the platform's contract and sends the batch by integration/v0.2, as it did before. Give the token identity:read to send by the newest version\n"

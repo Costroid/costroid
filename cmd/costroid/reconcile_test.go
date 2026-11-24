@@ -340,9 +340,7 @@ const reconcileQuotas = `{"as_of":"2026-11-21T09:40:03Z","quotas":[{"name":"reco
 func newReconcilePlatform(t *testing.T) *reconcilePlatform {
 	t.Helper()
 	stub := &reconcilePlatform{states: map[string]contract{contractV05.path(): contractV05}, quotas: reconcileQuotas}
-	for _, version := range exportContracts {
-		stub.states[version.path()] = version
-	}
+	maps.Copy(stub.states, speaksBefore06())
 	stub.server = httptest.NewTLSServer(http.HandlerFunc(stub.serve))
 	t.Cleanup(stub.server.Close)
 	return stub
@@ -386,7 +384,7 @@ func (s *reconcilePlatform) serve(w http.ResponseWriter, r *http.Request) {
 
 // carriesRows reports a version path that serves reconciliation rows.
 func carriesRows(prefix string) bool {
-	return prefix == contractV05.path() || prefix == contractV06.path()
+	return prefix == contractV05.path() || prefix == contractV06.path() || prefix == contractV07.path()
 }
 
 func (s *reconcilePlatform) sent() ([][]byte, []seenRequest) {
@@ -730,10 +728,47 @@ func TestReconcileExportRefusesBeforeAskingTheProvider(t *testing.T) {
 	}
 }
 
+// A platform that states integration/v0.7 beside every earlier version gets
+// the rows by v0.7, under v0.7's path alone: the same body v0.6 takes, each
+// line a ReconciliationRow of v0.7.
+func TestReconcileExportSendsByV07ToAPlatformThatStatesIt(t *testing.T) {
+	schema := contractSchema(t, contractV07, "ReconciliationRow")
+	stub := newReconcilePlatform(t)
+	stub.states[contractV06.path()] = contractV06
+	stub.states[contractV07.path()] = contractV07
+	code, _, stderr, stored := stub.reconcileAndSend(t, &replayDoer{t: t, usage: "usage.json", cost: "cost-at-list.json"}, stub.env(stub.githubJob()), "--installation-id", testInstallation)
+	if want := "costroid: Costroid Platform states integration/v0.7, so reconcile sends the rows by it\n" + "costroid: Costroid Platform took 1 row in 1 body: 1 stored, 0 unchanged, 0 ignored\n"; code != 0 || stderr != want {
+		t.Fatalf("exit %d, stderr %q, want %q", code, stderr, want)
+	}
+	puts, seen := stub.sent()
+	if len(puts) != 1 || string(puts[0]) != stored || stored == "" {
+		t.Fatalf("%d bodies sent, want --out's rows once:\n%q\n%q", len(puts), puts, stored)
+	}
+	var asked []string
+	for _, request := range seen {
+		if request.path != "/oidc" {
+			asked = append(asked, request.method+" "+request.path)
+		}
+	}
+	want := []string{"GET /api/integration/v0.7/identity", "GET /api/integration/v0.7/quotas", "PUT /api/integration/v0.7/reconciliations"}
+	if !slices.Equal(asked, want) {
+		t.Errorf("the platform was asked %q, want %q", asked, want)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(stored, "\n"), "\n") {
+		instance, err := jsonschema.UnmarshalJSON(strings.NewReader(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(instance); err != nil {
+			t.Errorf("a line breaks integration/v0.7's ReconciliationRow: %v\n%s", err, line)
+		}
+	}
+}
+
 // A platform that states integration/v0.6 beside every earlier version gets
-// the rows by v0.6: the identity, the limits and the body are asked for under
-// v0.6's path alone, the line names v0.6, and each line of the body is a
-// ReconciliationRow of v0.6.
+// the rows by v0.6: the identity is asked for under v0.7, then v0.6, the
+// limits and the body under v0.6's path alone, the line names v0.6, and each
+// line of the body is a ReconciliationRow of v0.6.
 func TestReconcileExportSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 	schema := contractSchema(t, contractV06, "ReconciliationRow")
 	stub := newReconcilePlatform(t)
@@ -752,7 +787,7 @@ func TestReconcileExportSendsByV06ToAPlatformThatStatesIt(t *testing.T) {
 			asked = append(asked, request.method+" "+request.path)
 		}
 	}
-	want := []string{"GET /api/integration/v0.6/identity", "GET /api/integration/v0.6/quotas", "PUT /api/integration/v0.6/reconciliations"}
+	want := []string{"GET /api/integration/v0.7/identity", "GET /api/integration/v0.6/identity", "GET /api/integration/v0.6/quotas", "PUT /api/integration/v0.6/reconciliations"}
 	if !slices.Equal(asked, want) {
 		t.Errorf("the platform was asked %q, want %q", asked, want)
 	}

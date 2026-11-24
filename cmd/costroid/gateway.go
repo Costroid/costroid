@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -120,7 +122,26 @@ key carries the repository's cap alone. close runs once that run has
 completed, and attests the gateway's count only once it has settled. On a
 default branch that GitHub's token states is not protected, the ledger
 refuses both attestations: mint and close warn and go on, and the rows read
-windowed.`)}},
+windowed.
+
+When COSTROID_PLATFORM_URL is set as well, mint and close state the key and
+its count to Costroid Platform by integration/v0.7, beside any ledger, under
+the integration token in COSTROID_PLATFORM_TOKEN and the installation in
+COSTROID_PLATFORM_INSTALLATION_ID. The token needs identity:read and
+credentials:write. Each statement goes under the job's own OIDC token, for an
+audience that names the tenant, the key, the run the key is for and its
+attempt. A platform that answers 404 NOT_FOUND does not offer the statement,
+and a platform that refuses the run because its branch is not protected
+gives the ledger's warning: mint and close warn and go on. Any other refusal
+names its code and the contract's sentence, and the step exits 1, as a
+ledger's refusal does; a platform or a ledger that could not be reached exits
+125. 409 INSTALLATION_NOT_BOUND warns and goes on: the rows read windowed
+there until costroid connect binds the installation. A server error is sent
+again under the same token every 2 s, or after Retry-After, while the send
+would start within 150 s, three sends under the contract's Retry-After of
+60 s. Without
+--for-triggering-run, mint and close state nothing to Costroid Platform, and
+warn when it is named.`)}},
 		{Heading: "close", Body: []cli.Block{cli.Text(`close deletes the run's key by its alias, and prints deleted, or absent when no
 key was left. Run it when the job ends, also on failure. When it finds no key,
 mint may still be waiting for the request, so close waits --retry-after, no
@@ -141,6 +162,9 @@ first figure it takes for a key.`)}},
 		{gatewayURLVar, "the gateway's URL, when --url is not given"},
 		{ingestURLVariable, "the ledger mint and close attest to"},
 		{ingestAudienceVariable, "the audience of the OIDC token they attest under"},
+		{platformVariable, "the Costroid Platform mint and close state the key to, with --for-triggering-run"},
+		{platformTokenVariable, "its integration token"},
+		{platformInstallationVariable, "the installation the statements come through, such as github-owner:7204411"},
 		{"GITHUB_TOKEN", "the token mint reads this run's artifact with"},
 		{"GITHUB_EVENT_PATH", "the event file mint reads the pull request from"},
 		{"GITHUB_EVENT_NAME", "workflow_run, with --for-triggering-run"},
@@ -148,6 +172,7 @@ first figure it takes for a key.`)}},
 	}},
 	Exits: []cli.Row{
 		{"0", "done"},
+		{"1", "a ledger or Costroid Platform refused a statement, and the line names its code"},
 		cli.UsageExit,
 		{"125", "not done, and the line on stderr says why"},
 	},
@@ -203,10 +228,15 @@ func gatewayCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	default:
 		err = gatewayGroup.Unknown(args[0])
 	}
-	if errors.Is(err, flag.ErrHelp) {
+	switch {
+	case errors.Is(err, flag.ErrHelp):
 		return 0
-	}
-	if err != nil {
+	case errors.Is(err, errStatementRefused):
+		return exitRejected
+	case refusedByLedger(err):
+		cli.Explain(stderr, err)
+		return exitRejected
+	case err != nil:
 		return cli.Fail(stderr, err)
 	}
 	return 0
@@ -416,7 +446,14 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	fmt.Fprintln(stdout, id)
-	return attestKey(ctx, asking(&http.Client{Timeout: 30 * time.Second}, stderr), gateway.AttestationFor(id, target.run, target.head), flags.triggering, stderr)
+	client := asking(&http.Client{Timeout: 30 * time.Second}, stderr)
+	warned, ledger := attestKey(ctx, client, gateway.AttestationFor(id, target.run, target.head), flags.triggering, stderr)
+	stating, err := platformFor(flags.triggering, client, keyWrite, stderr)
+	if stating != nil {
+		stating.warned = warned
+		err = stating.stateKey(ctx, id, target.run, target.head)
+	}
+	return both(stderr, ledger, err)
 }
 
 // mintTarget is the run a key is minted for, its sealed request, and what the
@@ -548,33 +585,51 @@ func warnUnprotected(stderr io.Writer, triggering bool, branch, own string) {
 
 // attestKey tells the ledger the key was minted for a run. Without a ledger
 // there is nothing to tell. A failure fails the step, and the key stays
-// registered for the agent. A ledger that takes only a protected run's word
-// refuses a job of the agent's own workflow, and a run of a default branch no
-// rule protects: that refusal alone warns and goes on, so the run completes
-// at the windowed grade, the true reading.
-func attestKey(ctx context.Context, client *http.Client, attestation gateway.Attestation, triggering bool, stderr io.Writer) error {
+// registered for the agent: a refusal the ledger answered exits 1, and a
+// ledger that could not be reached 125. A ledger that takes only a protected
+// run's word refuses a job of the agent's own workflow, and a run of a default
+// branch no rule protects: that refusal alone warns and goes on, so the run
+// completes at the windowed grade, the true reading. It reports whether it
+// gave that warning.
+func attestKey(ctx context.Context, client *http.Client, attestation gateway.Attestation, triggering bool, stderr io.Writer) (bool, error) {
 	ingest := os.Getenv(ingestURLVariable)
 	if ingest == "" {
-		return nil
+		return false, nil
 	}
 	target, err := gateway.CredentialsURL(ingest)
 	if err != nil {
-		return err
+		return false, err
 	}
 	token, err := gateway.ActionsToken(ctx, client, os.Getenv, os.Getenv(ingestAudienceVariable))
 	if err != nil {
-		return err
+		return false, err
 	}
 	err = gateway.Attest(ctx, client, target, token, attestation)
 	if gateway.Unprotected(err) {
 		warnUnprotected(stderr, triggering, unprotectedBranchKey, unprotectedKey)
-		return nil
+		return true, nil
 	}
 	if err != nil {
-		return fmt.Errorf("the key is registered and not attested, so the run's rows cannot read exact: %w", err)
+		return false, ledgerFailure(fmt.Errorf("the key is registered and not attested, so the run's rows cannot read exact: %w", err))
 	}
 	cli.Say(stderr, "attested to the ledger\n")
-	return nil
+	return false, nil
+}
+
+// ledgerRefusal is a statement the ledger took and refused. The step names
+// it and exits 1, as for Costroid Platform's refusal.
+type ledgerRefusal struct{ error }
+
+func (r ledgerRefusal) Unwrap() error { return r.error }
+
+// ledgerFailure marks err a ledgerRefusal when the ledger answered it, and
+// leaves it as it is when the ledger could not be reached.
+func ledgerFailure(err error) error {
+	var refused *gateway.Refusal
+	if errors.As(err, &refused) {
+		return ledgerRefusal{err}
+	}
+	return err
 }
 
 func readMintRequest(ctx context.Context, path string, binding gateway.Binding, stderr io.Writer) (gateway.Request, error) {
@@ -678,11 +733,13 @@ func closingRun(triggering bool) (gateway.Binding, error) {
 	return run.Binding, err
 }
 
-// closeKey deletes the run's key, and when a ledger is named, reads the key's
-// spend before the delete and attests it after, through ledger. triggering
-// says the key is the run's a workflow_run event follows.
-func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration, ledger *http.Client, triggering bool, stdout, stderr io.Writer) error {
-	counted := os.Getenv(ingestURLVariable) != ""
+// closeKey deletes the run's key, and when a ledger or Costroid Platform is
+// named, reads the key's spend before the delete and states it to each after,
+// through client. triggering says the key is the run's a workflow_run event
+// follows, the one run whose count Costroid Platform takes.
+func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration, client *http.Client, triggering bool, stdout, stderr io.Writer) error {
+	ledger := os.Getenv(ingestURLVariable) != ""
+	counted := ledger || triggering && os.Getenv(platformVariable) != ""
 	count, unread := readCount(ctx, counter, counted, stderr)
 	deleted, err := gateway.Close(ctx, counter.Client, counter.AdminKey, counter.Run)
 	if err == nil && !deleted {
@@ -706,17 +763,27 @@ func closeKey(ctx context.Context, counter gateway.Counter, retry time.Duration,
 	if unread != nil {
 		return fmt.Errorf("the key's spend was not read before the delete, so the ledger holds no gateway count for this run: %w", unread)
 	}
+	stating, err := platformFor(triggering, client, countWrite, stderr)
 	if count == nil {
-		return nil
+		return err
 	}
-	return attestSpend(ctx, ledger, *count, counter.Run, triggering, stderr)
+	var attested error
+	var warned bool
+	if ledger {
+		warned, attested = attestSpend(ctx, client, *count, counter.Run, triggering, stderr)
+	}
+	if stating != nil {
+		stating.warned = warned
+		err = stating.stateSpend(ctx, *count, counter.Run)
+	}
+	return both(stderr, attested, err)
 }
 
-// readCount reads what the gateway counted on the run's key, when a ledger is
-// named to attest it to. It answers nil when no ledger is named or no key is
-// there. A ledger keeps the first figure it takes for a key and never a later
-// one, so a figure that may not have settled is not attested: close warns and
-// sends none.
+// readCount reads what the gateway counted on the run's key, when a ledger or
+// Costroid Platform is named to attest it to. It answers nil when neither is
+// named or no key is there. A ledger keeps the first figure it takes for a key
+// and never a later one, and so does the platform, so a figure that may not
+// have settled is not attested: close warns and sends none.
 func readCount(ctx context.Context, counter gateway.Counter, counted bool, stderr io.Writer) (*gateway.Count, error) {
 	if !counted {
 		return nil, nil
@@ -733,26 +800,358 @@ func readCount(ctx context.Context, counter gateway.Counter, counted bool, stder
 }
 
 // attestSpend tells the ledger what the gateway counted on the run's key. A
-// failure fails the step. The key is deleted by then. A refusal of a run no
-// protected branch holds warns and goes on, as attestKey's does.
-func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, binding gateway.Binding, triggering bool, stderr io.Writer) error {
+// failure fails the step, as attestKey's does. The key is deleted by then. A
+// refusal of a run no protected branch holds warns and goes on, as attestKey's
+// does, and it reports whether it gave that warning.
+func attestSpend(ctx context.Context, client *http.Client, count gateway.Count, binding gateway.Binding, triggering bool, stderr io.Writer) (bool, error) {
 	target, err := gateway.SpendURL(os.Getenv(ingestURLVariable), count.KeyID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	token, err := gateway.ActionsToken(ctx, client, os.Getenv, os.Getenv(ingestAudienceVariable))
 	if err != nil {
-		return err
+		return false, err
 	}
 	attestation := gateway.SpendFor(count, binding)
 	err = gateway.AttestSpend(ctx, client, target, token, attestation)
 	if gateway.Unprotected(err) {
 		warnUnprotected(stderr, triggering, unprotectedBranchCount, unprotectedCount)
-		return nil
+		return true, nil
 	}
 	if err != nil {
-		return fmt.Errorf("the key is deleted and the gateway's count is not attested, so no budget on the run's rows can pass on it: %w", err)
+		return false, ledgerFailure(fmt.Errorf("the key is deleted and the gateway's count is not attested, so no budget on the run's rows can pass on it: %w", err))
 	}
 	cli.Say(stderr, "attested the gateway's count of USD %s to the ledger\n", attestation.Spend)
-	return nil
+	return false, nil
+}
+
+// Costroid Platform takes a key's attestation and its count by
+// integration/v0.7, from the run that workflow_run started, under the tenant's
+// integration token, the installation and the run's own ID token.
+const (
+	platformInstallationVariable = "COSTROID_PLATFORM_INSTALLATION_ID"
+	// notMounted is the code of the one answer a platform gives for a path
+	// it does not mount: a version it does not speak, or a closed door.
+	notMounted = "NOT_FOUND"
+)
+
+// statementPace is how often a statement Costroid Platform answered with a
+// server error, or never answered, is sent again, and for how long. The
+// platform answers INSTALLATION_PROOF_KEYS_UNAVAILABLE with a Retry-After of
+// 60 s and asks for the same token again inside its window of 300 s, so the
+// bound is 150 s: the write goes three times at that pace, and half the
+// window is left.
+var statementPace = verdictPace{interval: 2 * time.Second, limit: 150 * time.Second}
+
+// retryAfterSecond is one second of a Retry-After.
+var retryAfterSecond = time.Second
+
+// errStatementRefused is a statement Costroid Platform took and refused. Its
+// line is printed already, and the step exits 1.
+var errStatementRefused = errors.New("the statement was refused by Costroid Platform")
+
+// credentialWrite is one of the two writes mint and close make to Costroid
+// Platform, with what each prints.
+type credentialWrite struct {
+	// what names the write in a refusal's line.
+	what string
+	// workflowRun warns that a run workflow_run did not start states none.
+	workflowRun string
+	// notOffered warns of a platform that does not mount the write.
+	notOffered string
+	// unprotected warns of the refusal of a run no protected branch holds,
+	// in the words of the ledger's.
+	unprotected string
+	// unstated says what a write that could not be made leaves undone.
+	unstated string
+	// sentences are the contract's sentences for each refusal of the write.
+	sentences map[string]string
+}
+
+// statementSentences are the contract's sentences for the refusals both
+// writes share, and keyWrite and countWrite add the two that differ.
+var statementSentences = map[string]string{
+	"AUTH_TOKEN_INVALID":                  "The token is absent, unknown, expired or revoked",
+	"AUTH_TOKEN_SCOPE":                    "The token holds no scope of this version, or lacks credentials:write",
+	"RUN_TOKEN_OWNER_MISMATCH":            "The installation is not a GitHub one, or the run token names another owner than the installation",
+	"INSTALLATION_PROOF_KEYS_UNAVAILABLE": "GitHub's key set cannot be read. Retry inside the run token's window",
+	"CREDENTIAL_ATTESTING_RUN_USED":       "This attesting repository, run and attempt holds another key, or this key with another run, attempt or head",
+	"CREDENTIAL_ATTESTED_ELSEWHERE":       "The key is held by another attesting run. The first one stands",
+	"CREDENTIAL_NOT_ATTESTED":             "The key holds no attestation for this run and attempt, so no figure is taken",
+	"CREDENTIAL_SPEND_HELD":               "The key holds another decimal string",
+}
+
+var (
+	keyWrite = credentialWrite{
+		what:        "the key's attestation",
+		workflowRun: "costroid: warning: Costroid Platform takes a key's attestation only from a run that workflow_run started, so mint stated none to it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n",
+		notOffered:  "costroid: warning: Costroid Platform answered 404 NOT_FOUND to the key's attestation: it speaks no integration/v0.7, or its integration paths are shut, so the rows of the run the key serves read windowed there\n",
+		unprotected: unprotectedBranchKey,
+		unstated:    "the key is registered and not attested to Costroid Platform, so the run's rows cannot read exact there",
+		sentences: withSentences(map[string]string{
+			"TOOL_INPUT_INVALID": "The key id in the path is malformed, a header is missing or malformed, or the body is not an attestation of this version",
+			"RUN_TOKEN_INVALID":  "The run token is not valid for this attestation's audience",
+		}),
+	}
+	countWrite = credentialWrite{
+		what:        "the gateway's count",
+		workflowRun: "costroid: warning: Costroid Platform takes a gateway count only from a run that workflow_run started, so close stated none to it: mint and close the run's key with recipes/github-gateway.yml, as docs/gateway.md shows\n",
+		notOffered:  "costroid: warning: Costroid Platform answered 404 NOT_FOUND to the gateway's count: it speaks no integration/v0.7, or its integration paths are shut, so no budget on the rows of the run the key serves passes on the count there\n",
+		unprotected: unprotectedBranchCount,
+		unstated:    "the key is deleted and the gateway's count is not stated to Costroid Platform, so no budget on the run's rows can pass on it there",
+		sentences: withSentences(map[string]string{
+			"TOOL_INPUT_INVALID": "The key id in the path is malformed, a header is missing or malformed, or the body is not a spend of this version",
+			"RUN_TOKEN_INVALID":  "The run token is not valid for this spend's audience",
+		}),
+	}
+)
+
+// withSentences is the sentences both writes share, with a write's own.
+func withSentences(own map[string]string) map[string]string {
+	sentences := maps.Clone(statementSentences)
+	maps.Copy(sentences, own)
+	return sentences
+}
+
+// keyPlatform is Costroid Platform as mint and close state a key to it.
+type keyPlatform struct {
+	target       platform
+	installation string
+	pace         verdictPace
+	// second is how long one second of Retry-After waits.
+	second time.Duration
+	// warned says a ledger already gave the warning for a run no protected
+	// branch holds, which the platform's same refusal does not repeat.
+	warned bool
+	stderr io.Writer
+}
+
+// platformFor reads the Costroid Platform COSTROID_PLATFORM_URL names, its
+// integration token and the installation the statements come through. It
+// answers nil when no platform is named, and when the run is not one
+// workflow_run started, which warns: the platform takes no other run's
+// statement. The client follows no redirect, so the tokens reach only the
+// origin named.
+func platformFor(triggering bool, client *http.Client, write credentialWrite, stderr io.Writer) (*keyPlatform, error) {
+	address := os.Getenv(platformVariable)
+	switch {
+	case address == "":
+		return nil, nil
+	case !triggering:
+		fmt.Fprint(stderr, write.workflowRun)
+		return nil, nil
+	}
+	origin, err := platformOrigin(address)
+	if err != nil {
+		return nil, errors.New("COSTROID_PLATFORM_URL must be an https origin, such as https://app.costroid.com, or http on a loopback address")
+	}
+	token := os.Getenv(platformTokenVariable)
+	if !integrationTokenPattern.MatchString(token) {
+		return nil, errors.New("COSTROID_PLATFORM_TOKEN is not an integration token, which starts costroid_it_: create one on Costroid Platform")
+	}
+	installation, err := exportInstallation(os.Getenv(platformInstallationVariable))
+	if err != nil {
+		return nil, errors.New("COSTROID_PLATFORM_INSTALLATION_ID must name the installation Costroid Platform bound, such as github-owner:7204411, as recipes/github-gateway.yml sets it")
+	}
+	following := *client
+	following.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &keyPlatform{
+		target:       platform{client: &following, origin: origin, token: token},
+		installation: installation,
+		pace:         statementPace,
+		second:       retryAfterSecond,
+		stderr:       stderr,
+	}, nil
+}
+
+// stateKey attests to the platform that the key is for the run at the head.
+func (k *keyPlatform) stateKey(ctx context.Context, keyID string, run gateway.Binding, head string) error {
+	statement, err := gateway.NewKeyStatement(keyID, run, head)
+	if err != nil {
+		return fmt.Errorf("%s: %w", keyWrite.unstated, err)
+	}
+	audience := func(tenant string) string { return gateway.KeyAudience(tenant, keyID, run) }
+	return k.state(ctx, keyWrite, "/credentials/"+keyID, audience, statement, "")
+}
+
+// stateSpend states to the platform what the gateway counted on the run's key.
+func (k *keyPlatform) stateSpend(ctx context.Context, count gateway.Count, run gateway.Binding) error {
+	statement, err := gateway.NewSpendStatement(count, run)
+	if err != nil {
+		return fmt.Errorf("%s: %w", countWrite.unstated, err)
+	}
+	audience := func(tenant string) string { return gateway.SpendAudience(tenant, count.KeyID, run) }
+	return k.state(ctx, countWrite, "/credentials/"+count.KeyID+"/spend", audience, statement, statement.Spend)
+}
+
+// state reads the tenant from GET /identity of integration/v0.7, asks GitHub
+// for the job's ID token under the write's audience, sends the write, and
+// prints what came of it. It answers nil when the platform took the write,
+// and when it does not mount the path or refused a run no protected branch
+// holds, each of which warns and lets the step go on; errStatementRefused
+// when it refused the write otherwise; and the error when the platform or
+// GitHub could not be reached.
+func (k *keyPlatform) state(ctx context.Context, write credentialWrite, path string, audience func(string) string, body any, spend string) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("%s: %w", write.unstated, err)
+	}
+	tenant, err := k.target.identityUnder(ctx, contractV07)
+	if err == nil {
+		k.target.under(contractV07)
+		var token string
+		if token, err = gateway.ActionsToken(ctx, k.target.client, os.Getenv, audience(tenant)); err != nil {
+			return fmt.Errorf("%s: %w", write.unstated, err)
+		}
+		var status int
+		if status, data, err = k.put(ctx, write, path, data, token); err == nil {
+			k.taken(status, data, spend)
+			return nil
+		}
+	}
+	return k.refused(write, err)
+}
+
+// put sends the write, and sends it again under the same token on a server
+// error or a lost connection, after the seconds Retry-After names or the
+// pace's interval, whichever is longer, while the send after the wait would
+// start inside the pace's limit. The token lives 300 s and the limit is
+// 150 s, so a write sent again is inside its window, and the contract answers
+// the same write the same way.
+func (k *keyPlatform) put(ctx context.Context, write credentialWrite, path string, body []byte, token string) (int, []byte, error) {
+	deadline := time.Now().Add(k.pace.limit)
+	for {
+		request, err := k.target.request(ctx, http.MethodPut, path, bytes.NewReader(body))
+		if err != nil {
+			return 0, nil, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Costroid-Installation-Id", k.installation)
+		request.Header.Set("Costroid-Run-Token", token)
+		response, data, err := k.target.do(request, write.what)
+		var refused *refusal
+		switch {
+		case err == nil:
+			return response.StatusCode, data, nil
+		case errors.As(err, &refused) && refused.status < http.StatusInternalServerError:
+			return 0, nil, err
+		}
+		wait := k.pace.interval
+		if errors.As(err, &refused) {
+			if seconds, parsed := strconv.Atoi(refused.retryAfter); parsed == nil && time.Duration(seconds)*k.second > wait {
+				wait = time.Duration(seconds) * k.second
+			}
+		}
+		if time.Now().Add(wait).After(deadline) {
+			return 0, nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return 0, nil, err
+		case <-time.After(wait):
+		}
+	}
+}
+
+// statedBy is the part of a stored attestation or spend that names the run
+// that stated it.
+type statedBy struct {
+	AttestedBy struct {
+		Ref string `json:"ref"`
+	} `json:"attested_by"`
+}
+
+// branch is the branch of the run that stated a write, as the platform read
+// it from that run's token, or empty when the answer names none git admits.
+func (s statedBy) branch() string {
+	name, found := strings.CutPrefix(s.AttestedBy.Ref, "refs/heads/")
+	if !found || !branchName.MatchString(name) {
+		return ""
+	}
+	return s.AttestedBy.Ref
+}
+
+// taken prints a write the platform took: 201 stored it, and 200 held it
+// already. spend is the figure a count stated, and empty for an attestation.
+func (k *keyPlatform) taken(status int, data []byte, spend string) {
+	var stored statedBy
+	by := ""
+	if json.Unmarshal(data, &stored) == nil && stored.branch() != "" {
+		by = stored.branch()
+	}
+	switch {
+	case spend == "" && status == http.StatusCreated && by != "":
+		cli.Say(k.stderr, "attested to Costroid Platform by a run of %s\n", by)
+	case spend == "" && status == http.StatusCreated:
+		cli.Say(k.stderr, "attested to Costroid Platform\n")
+	case spend == "" && by != "":
+		cli.Say(k.stderr, "Costroid Platform held this attestation already, from a run of %s, so nothing changed\n", by)
+	case spend == "":
+		cli.Say(k.stderr, "Costroid Platform held this attestation already, so nothing changed\n")
+	case status == http.StatusCreated && by != "":
+		cli.Say(k.stderr, "attested the gateway's count of USD %s to Costroid Platform by a run of %s\n", spend, by)
+	case status == http.StatusCreated:
+		cli.Say(k.stderr, "attested the gateway's count of USD %s to Costroid Platform\n", spend)
+	case by != "":
+		cli.Say(k.stderr, "Costroid Platform held the gateway's count of USD %s already, from a run of %s, so nothing changed\n", spend, by)
+	default:
+		cli.Say(k.stderr, "Costroid Platform held the gateway's count of USD %s already, so nothing changed\n", spend)
+	}
+}
+
+// refused prints a write the platform did not take, and answers the error the
+// step ends on. A platform that does not mount the path, a refusal of a run
+// no protected branch holds, and one of an installation the tenant has not
+// bound, warn and end on none. Every other refusal is
+// printed with its code and the contract's sentence for it, and anything
+// else is an error of the job's.
+func (k *keyPlatform) refused(write credentialWrite, err error) error {
+	var refused *refusal
+	if !errors.As(err, &refused) {
+		return fmt.Errorf("%s: %w", write.unstated, err)
+	}
+	sentence, known := write.sentences[refused.code]
+	switch {
+	case refused.status == http.StatusNotFound && refused.code == notMounted:
+		fmt.Fprint(k.stderr, write.notOffered)
+		return nil
+	case refused.status == http.StatusForbidden && refused.code == gateway.CodeRunUnprotected:
+		if !k.warned {
+			fmt.Fprint(k.stderr, write.unprotected)
+		}
+		return nil
+	case refused.unbound():
+		fmt.Fprintf(k.stderr, "costroid: warning: %v. The tenant holds no binding of %s, so the rows of the run the key serves read windowed there until it is bound: run costroid connect, as docs/connect.md shows\n", err, k.installation)
+		return nil
+	case known && refused.what == write.what:
+		fmt.Fprintf(k.stderr, "costroid: %v. %s. Nothing was stored\n", err, sentence)
+	default:
+		fmt.Fprintf(k.stderr, "costroid: %v\n", err)
+	}
+	return errStatementRefused
+}
+
+// both is the error a step ends on that told a ledger and Costroid Platform
+// of a key: the worse of the two, with the other explained first. A service
+// that could not be reached is worse than one that refused. A refusal the
+// platform answered is printed already.
+func both(stderr io.Writer, ledger, platform error) error {
+	switch {
+	case ledger == nil:
+		return platform
+	case platform == nil:
+		return ledger
+	case refusedByLedger(ledger) && !errors.Is(platform, errStatementRefused):
+		cli.Explain(stderr, ledger)
+		return platform
+	case !errors.Is(platform, errStatementRefused):
+		cli.Explain(stderr, platform)
+	}
+	return ledger
+}
+
+// refusedByLedger reports a statement a ledger took and refused.
+func refusedByLedger(err error) bool {
+	var refused ledgerRefusal
+	return errors.As(err, &refused)
 }

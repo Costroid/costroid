@@ -16,6 +16,8 @@ The row and its tags each have a contract, published in [Costroid/costroid-schem
 
 | Integration contract | Rows | Tags |
 | -------------------- | ---- | ---- |
+| `integration/v0.7` | `focus-row/v0.6` | `tags/v0.5` |
+| `integration/v0.6` | `focus-row/v0.5` | `tags/v0.4` |
 | `integration/v0.4` | `focus-row/v0.5` | `tags/v0.4` |
 | `integration/v0.3` | `focus-row/v0.5` | `tags/v0.4` |
 | `integration/v0.2` | `focus-row/v0.3` | `tags/v0.2` |
@@ -49,7 +51,7 @@ curl --header "Authorization: Bearer $TOKEN" \
 
 ## Costroid Platform
 
-`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.4`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.4), or by `integration/v0.3` or `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.4` first, then `v0.3`, then `v0.2`, and names it on standard error. The body is the rows as CSV, in the form [the row contract](#the-row-contract) of that version gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
+`costroid export` sends a rows file to Costroid Platform as one batch, by the integration contract [`integration/v0.7`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.7), or by `integration/v0.6`, `integration/v0.4`, `integration/v0.3` or `integration/v0.2` to a platform that states no later version. It reads the version from `GET /identity`, under `v0.7` first, then `v0.6`, `v0.4`, `v0.3` and `v0.2`, and names it on standard error. A platform that does not speak a version answers its path with 404 `NOT_FOUND`, and the command asks the next. `integration/v0.6` sends a batch as `integration/v0.4` does. The body is the rows as CSV, in the form [the row contract](#the-row-contract) of that version gives it: a header of its 40 columns, a blank cell for null, and `Tags` as its JSON object in one cell. Each row's `costroid/run_identity` is set as [What a row claims](#what-a-row-claims) says. Nothing else in the row changes.
 
 The platform needs an integration token, which a tenant administrator creates there. It needs the `rows:write` scope, and `identity:read` on GitHub Actions. Elsewhere, a token without `identity:read` still sends, by `integration/v0.2`, and `costroid export` warns that it could not read the platform's contract. Keep it as a secret named `COSTROID_PLATFORM_TOKEN`. `costroid export` reads it from `COSTROID_PLATFORM_TOKEN` and never from an argument. [`docs/connect.md`](connect.md) says why one token per owner, with `installations:write` as well, serves both commands.
 
@@ -57,7 +59,11 @@ The platform takes rows only under an installation its tenant has bound, so bind
 
 ### Reconciliation rows
 
-`costroid reconcile --export` sends a second kind of statement: how each credential's UTC day compared with the provider's usage and cost reports. It sends the rows `reconcile --out` writes, one per source, credential and day, as newline-delimited JSON to `PUT /reconciliations` of [`integration/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#the-reconciliation-result), or of `integration/v0.5` to a platform that states no later version, and only to a platform that states one of them. The row is the same in both. It reads the same `COSTROID_PLATFORM_URL` and `COSTROID_PLATFORM_TOKEN` under the same rules, with `quotas:read` and `reconciliations:write` on the token beside `identity:read`, and a GitHub job's run token goes beside the installation as on a batch. The provider's admin key never goes with them. [Send the rows to Costroid Platform](reconcile.md#send-the-rows-to-costroid-platform) says how the rows are cut into bodies and how each answer is read.
+`costroid reconcile --export` sends a second kind of statement: how each credential's UTC day compared with the provider's usage and cost reports. It sends the rows `reconcile --out` writes, one per source, credential and day, as newline-delimited JSON to `PUT /reconciliations` of [`integration/v0.7`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.7#the-reconciliation-result), or of `integration/v0.6` or `integration/v0.5` to a platform that states no later version, and only to a platform that states one of them. The row is the same in each. It reads the same `COSTROID_PLATFORM_URL` and `COSTROID_PLATFORM_TOKEN` under the same rules, with `quotas:read` and `reconciliations:write` on the token beside `identity:read`, and a GitHub job's run token goes beside the installation as on a batch. The provider's admin key never goes with them. [Send the rows to Costroid Platform](reconcile.md#send-the-rows-to-costroid-platform) says how the rows are cut into bodies and how each answer is read.
+
+### A gateway key and its count
+
+With the [gateway recipe](gateway.md), `costroid gateway mint --for-triggering-run` and `costroid gateway close --for-triggering-run` make two statements to the platform by `integration/v0.7`: which run a key is for, from the run that mints it, and what the gateway counted on it, from the run that closes it. Only such a key lets a row read `exact` there. They read the same `COSTROID_PLATFORM_URL` and `COSTROID_PLATFORM_TOKEN`, with `credentials:write` on the token beside `identity:read`, and the installation from `COSTROID_PLATFORM_INSTALLATION_ID`. [Costroid Platform](gateway.md#costroid-platform) says what each sends and how each answer is read.
 
 ### From the action
 
@@ -84,11 +90,11 @@ The job passes them to the action's `ingest` stage, with the owner's installatio
 
 `costroid lint-recipes` holds an `ingest` step that sets `platform-url` to the rest: `installation-id` of a GitHub kind, `platform-token` as one secret and never the token itself, and a job `if` that names the platform's variable beside any other it tests, so the job runs when only the platform is named. Each break is an `ingest-platform` finding.
 
-On GitHub Actions the batch id is the repository id, the run id and the run attempt, joined by hyphens: `903114-16873409921-1`. Sending one run's rows again restates its batch, and the same bytes change nothing. A re-run attempt runs the agent again, so it adds a batch.
+On GitHub Actions the batch id is the repository id, the run id and the run attempt, joined by hyphens: `903114-16873409921-1`. Sending one run's rows again restates its batch, and the same bytes change nothing. A re-run attempt runs the agent again, so it adds a batch: a later attempt never restates an earlier attempt's batch, and both stand.
 
 The job's OIDC token rides with the batch in `Costroid-Run-Token`, minted for the tenant's rows audience, which `costroid export` reads from `GET /identity`. It names the run and the repository that sent the rows, and the platform refuses a batch whose run belongs to an owner other than the installation's. It says nothing about the counts in the rows, which the agent's job wrote.
 
-A batch that holds `token_verified` rows is bound to the run that sent it, and only a run token of that run and repository restates it ([`integration/v0.4`, The batch id](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.4#the-batch-id)). The same batch id sent from another run, or from outside GitHub Actions, answers 409 `EXPORT_BATCH_RUN_BOUND`, and the platform keeps the batch's earlier rows.
+A batch that holds `token_verified` rows is bound to the run that sent it, and only a run token of that run and repository restates it ([`integration/v0.4`, The batch id](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.4#the-batch-id)). The same batch id sent from another run, or from outside GitHub Actions, answers 409 `EXPORT_BATCH_RUN_BOUND`, and the platform keeps the batch's earlier rows. By `integration/v0.7` the batch belongs to the run's attempt as well ([A batch belongs to one attempt](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.7#a-batch-belongs-to-one-attempt)), so a later attempt that names an earlier attempt's batch id, as a job that passes `--batch-id` can, meets the same refusal. On GitHub Actions the command names a batch for each attempt itself, so leave `--batch-id` out there; the refusal's line says so.
 
 ### Bind the owner
 
@@ -126,11 +132,13 @@ The contract lets the sender say which rows the run token stands behind: a row t
 
 | The row | Sent as |
 | ------- | ------- |
-| On GitHub Actions, its `costroid/workflow_run_id` is `GITHUB_RUN_ID`, its `costroid/repo` is `github.com/` and `GITHUB_REPOSITORY`, and its `costroid/attribution_grade` is not `windowed` | `token_verified` |
+| On GitHub Actions, its `costroid/workflow_run_id` is `GITHUB_RUN_ID`, its `costroid/repo` is `github.com/` and `GITHUB_REPOSITORY`, and its `costroid/attribution_grade` is not `windowed`. By `integration/v0.7`, on a `pull_request` run, its `costroid/pr` is also the pull request the run token names | `token_verified` |
 | Any other row, a fork's rows sent from the follow-up's own run among them | `unverified`, and `unattributed`, because the tag set allows no other grade beside it |
 | Every row sent outside GitHub Actions, where no run token goes | `unverified` and `unattributed` |
 
-The command prints how many rows went as `token_verified`. A `token_verified` row proves which run sent it. It proves nothing about its counts, as [What a row proves](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#what-a-row-proves) says.
+By `integration/v0.7` a run token names a pull request only when its `event_name` is `pull_request` and its `ref` is `refs/pull/<n>/merge` ([The pull request](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.7#the-pull-request)). The command reads both from the job's `GITHUB_EVENT_NAME` and `GITHUB_REF`, which state the same run as its token. A `token_verified` row that names another pull request would fail the whole batch `ROW_IDENTITY_MISMATCH`, so such a row goes as `unverified`. Under any other event, a merged close, `pull_request_target` and `merge_group` among them, the token names no pull request, and each row's `costroid/pr` is the row's own statement.
+
+The command prints how many rows went as `token_verified`, and by `integration/v0.7` on a `pull_request` run, the pull request they name. A `token_verified` row proves which run sent it. It proves nothing about its counts, as [What a row proves](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.2#what-a-row-proves) says.
 
 ### What the platform answers
 
@@ -143,7 +151,7 @@ The command prints how many rows went as `token_verified`. A `token_verified` ro
 | 402 `PLAN_WRITES_REFUSED` | A warning. Nothing in the rows is wrong, and the file is kept to send again | 0 |
 | 409 `INSTALLATION_NOT_BOUND` | A warning that names `costroid connect`. The tenant holds no binding of the installation, or it was revoked or displaced. The file is kept to send again | 0 |
 | 429 `QUOTA_` and the quota's name | A warning with the seconds in `Retry-After`. The file is kept to send again | 0 |
-| 409 `EXPORT_BATCH_RUN_BOUND` | The refusal line, then that the batch is bound to the run that sent it and only that run restates it. Nothing was stored, and the file is kept. The same batch id meets the same answer, so the line never says to send it again | 1 |
+| 409 `EXPORT_BATCH_RUN_BOUND` | The refusal line, then that the batch is bound to the run that sent it and only that run restates it, or by `integration/v0.7` that it belongs to the run and the attempt that sent it and only that attempt restates it, and to drop `--batch-id` on GitHub Actions. Nothing was stored, and the file is kept. The same batch id meets the same answer, so the line never says to send it again | 1 |
 | Any other refusal | `costroid: Costroid Platform refused batch <id>: <status> <code>` | 1 |
 
 A batch the platform took can still fail as it ingests. So `costroid export` asks `GET /exports/{batch_id}` for the verdict every 2 s, for up to 60 s:
@@ -158,7 +166,7 @@ In the `ingest` stage, each warning becomes a warning annotation, and any failur
 
 ### Merge facts
 
-Rows say what a pull request's runs spent. A merge fact says when the pull request ended: this pull request of this repository merged at this instant as this commit. With it the platform counts merged pull requests and dates what follows a merge. `costroid merged` sends one fact per merged pull request by `PUT /merges/{merge_id}` of [`integration/v0.6`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.6#the-merge-fact), or of `integration/v0.5` to a platform that states no later version. It reads `GET /identity` under `v0.6` first, then `v0.5`, names the version it sends by on standard error, and sends nothing to a platform that states neither. The document is the same in both:
+Rows say what a pull request's runs spent. A merge fact says when the pull request ended: this pull request of this repository merged at this instant as this commit. With it the platform counts merged pull requests and dates what follows a merge. `costroid merged` sends one fact per merged pull request by `PUT /merges/{merge_id}` of [`integration/v0.7`](https://github.com/Costroid/costroid-schemas/tree/main/integration/v0.7#the-merge-fact), or of `integration/v0.6` or `integration/v0.5` to a platform that states no later version. It reads `GET /identity` under `v0.7` first, then `v0.6`, then `v0.5`, names the version it sends by on standard error, and sends nothing to a platform that states none of them. The document is the same in each:
 
 ```json
 {"repo":"github.com/example/widgets","pull_request":1482,"merged_at":"2026-11-21T10:07:52Z","merge_commit_sha":"9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d"}
@@ -200,7 +208,7 @@ A job on a pull request's `closed` event runs the workflow file of the pull requ
 
 #### What `token_verified` proves
 
-The job's OIDC token rides with each fact in `Costroid-Run-Token`, minted for the tenant's rows audience as on an export. By `integration/v0.6`, the platform stores a fact as `token_verified` when that token verifies, its `sha` is the fact's `merge_commit_sha`, its `ref_type` is `branch`, and its `ref_protected` is `"true"`: the push was to a protected branch. It then proves which repository and which run sent the fact, and that the run was on a protected branch at that commit. It proves nothing about `pull_request` or `merged_at`: the command reads both from GitHub, and the platform does not check them. So a `token_verified` fact does not prove that the commit closed this pull request, or when. `integration/v0.5` grades a fact the same way without `ref_protected`, so a `token_verified` fact of that version can come from any branch.
+The job's OIDC token rides with each fact in `Costroid-Run-Token`, minted for the tenant's rows audience as on an export. By `integration/v0.6`, the platform stores a fact as `token_verified` when that token verifies, its `sha` is the fact's `merge_commit_sha`, its `ref_type` is `branch`, and its `ref_protected` is `"true"`: the push was to a protected branch. `integration/v0.7` grades it the same way, and also needs the token's `ref` to begin `refs/heads/`. It then proves which repository and which run sent the fact, and that the run was on a protected branch at that commit. It proves nothing about `pull_request` or `merged_at`: the command reads both from GitHub, and the platform does not check them. So a `token_verified` fact does not prove that the commit closed this pull request, or when. `integration/v0.5` grades a fact the same way without `ref_protected`, so a `token_verified` fact of that version can come from any branch.
 
 #### The grade needs a protected branch
 
@@ -223,7 +231,7 @@ Any other fact is stored as `unverified`, and the command says why when the caus
 | ----- | -------- |
 | The job holds no `id-token: write`, so no run token went with the fact | `costroid: merge <id> reads unverified because no run token went with it: give the job id-token: write, so the run token names the commit` |
 | The fact's commit is not the tip of the push | `costroid: merge <id> reads unverified because its commit <sha> is not the tip of the push, <sha>, which the run token names, as in a merge queue's group` |
-| By `integration/v0.6`, the push was to a branch that is not protected. The command reads that from the job's `GITHUB_REF_PROTECTED`, `false`, and prints nothing when the variable is absent | `costroid: merge <id> reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch` |
+| By `integration/v0.6` or later, the push was to a branch that is not protected. The command reads that from the job's `GITHUB_REF_PROTECTED`, `false`, and prints nothing when the variable is absent | `costroid: merge <id> reads unverified because the push was to a branch that is not protected, and a merge fact reads token_verified only from a protected branch` |
 
 A fact can have more than one cause, and each gets its line. A merge queue's group puts more than one pull request's commit on the branch in one push. The run token names the tip alone, so only the pull request merged as the tip reads `token_verified`, and the group's others read `unverified`. That is an honest cause, not a defect: those facts still count the merge and date it. `GITHUB_REF_PROTECTED` only names a cause. Whatever it holds, the run token goes with each fact, and the platform grades it from the token.
 
@@ -233,17 +241,17 @@ A fact can have more than one cause, and each gets its line. A merge queue's gro
 
 | Answer | `costroid merged` | Exit code |
 | ------ | ----------------- | --------- |
-| 201 | `costroid: merge <id>, pull request <number> of <repo>: stored as <grade>`, and on a `token_verified` fact by `integration/v0.6`, `, from a push to the protected branch <branch>` | 0 |
+| 201 | `costroid: merge <id>, pull request <number> of <repo>: stored as <grade>`, and on a `token_verified` fact by `integration/v0.6` or later, `, from a push to the protected branch <branch>` | 0 |
 | 200 | The same line, with `already held as <grade>` and ending `, so nothing changed` | 0 |
 | 402 `PLAN_WRITES_REFUSED` | A warning. Nothing in the fact is wrong, and nothing keeps it: run the job again once the plan allows writes | 0 |
 | 409 `INSTALLATION_NOT_BOUND` | A warning that names `costroid connect`, then run the job again | 0 |
 | 409 `MERGE_FACT_CONFLICT` | The refusal line, then that the pull request already holds a different fact. A pull request merges once, so the command does not send it again | 1 |
-| 401, 403 or 422 | The refusal line, then the contract's meaning of its code | 1 |
+| 401, 403 or 422, or 503 `INSTALLATION_PROOF_KEYS_UNAVAILABLE` still answered when the 60 s of resends end | The refusal line, then the contract's meaning of its code | 1 |
 | Any other refusal | `costroid: Costroid Platform refused merge <id>: <status> <code>` | 1 |
 
 The facts of one push are sent in turn, and the exit code is the worst answer's. A platform that cannot be reached ends the command with exit code 125.
 
-`--json` prints, on standard output, one object per fact sent: `merge_id`, `pull_request`, the `status` the platform answered, `run_identity` and, on a `token_verified` fact by `integration/v0.6`, its `ref`, or the refusal's `code`. The lines above go to standard error, with or without it. `--dry-run` prints each fact's `merge_id` and `document` and sends nothing to the platform, so it needs neither the integration token nor the platform's flags:
+`--json` prints, on standard output, one object per fact sent: `merge_id`, `pull_request`, the `status` the platform answered, `run_identity` and, on a `token_verified` fact by `integration/v0.6` or later, its `ref`, or the refusal's `code`. The lines above go to standard error, with or without it. `--dry-run` prints each fact's `merge_id` and `document` and sends nothing to the platform, so it needs neither the integration token nor the platform's flags:
 
 ```sh
 costroid merged --dry-run

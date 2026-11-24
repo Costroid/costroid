@@ -38,8 +38,8 @@ jobs:
       contents: read
       # Reads the pull request's author, for the author's daily cap.
       pull-requests: read
-      # Attests the key to the ledger, when one is named. The token states a
-      # run of the protected default branch.
+      # Attests the key to the ledger and to Costroid Platform, each when
+      # one is named. The token states a run of the protected default branch.
       id-token: write
     steps:
       - name: Install costroid
@@ -53,6 +53,9 @@ jobs:
           COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
           COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
           COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
+          COSTROID_PLATFORM_URL: ${{ vars.COSTROID_PLATFORM_URL }}
+          COSTROID_PLATFORM_TOKEN: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+          COSTROID_PLATFORM_INSTALLATION_ID: github-owner:${{ github.repository_owner_id }}
           GITHUB_TOKEN: ${{ github.token }}
         # The key lives as long as the agent's job may. The largest request is
         # the recorded context window, 1000000 tokens, plus the recorded largest
@@ -71,8 +74,9 @@ jobs:
     timeout-minutes: 5
     environment: costroid-gateway
     permissions:
-      # Attests what the gateway counted on the key to the ledger, when one is
-      # named. The token states a run of the protected default branch.
+      # Attests what the gateway counted on the key to the ledger and to
+      # Costroid Platform, each when one is named. The token states a run of
+      # the protected default branch.
       id-token: write
     steps:
       - name: Install costroid
@@ -85,4 +89,7 @@ jobs:
           COSTROID_GATEWAY_URL: ${{ vars.COSTROID_GATEWAY_URL }}
           COSTROID_INGEST_URL: ${{ vars.COSTROID_INGEST_URL }}
           COSTROID_INGEST_AUDIENCE: ${{ vars.COSTROID_INGEST_AUDIENCE }}
+          COSTROID_PLATFORM_URL: ${{ vars.COSTROID_PLATFORM_URL }}
+          COSTROID_PLATFORM_TOKEN: ${{ secrets.COSTROID_PLATFORM_TOKEN }}
+          COSTROID_PLATFORM_INSTALLATION_ID: github-owner:${{ github.repository_owner_id }}
         run: costroid gateway close --for-triggering-run

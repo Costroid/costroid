@@ -76,7 +76,7 @@ func TestMintAttestsTheKeyToTheLedgerUnderTheJobsToken(t *testing.T) {
 	t.Setenv(ingestURLVariable, w.ledger.URL+"/ledger/v1/rows")
 	run := gateway.Binding{Repository: "github.com/acme/widgets", Run: attestedRunID, Attempt: attestedAttempt}
 	var stderr bytes.Buffer
-	if err := attestKey(context.Background(), w.ledger.Client(), gateway.AttestationFor(attestedKeyID, run, headCommit), false, &stderr); err != nil {
+	if _, err := attestKey(context.Background(), w.ledger.Client(), gateway.AttestationFor(attestedKeyID, run, headCommit), false, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if w.audience != ingestAudience || w.bearer != "Bearer "+issuedToken {
@@ -93,7 +93,7 @@ func TestMintAttestsTheKeyToTheLedgerUnderTheJobsToken(t *testing.T) {
 func TestMintWithNoLedgerAttestsNothing(t *testing.T) {
 	w := newAttestWorld(t)
 	t.Setenv(ingestURLVariable, "")
-	if err := attestKey(context.Background(), w.ledger.Client(), gateway.Attestation{KeyID: attestedKeyID}, false, io.Discard); err != nil {
+	if _, err := attestKey(context.Background(), w.ledger.Client(), gateway.Attestation{KeyID: attestedKeyID}, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if w.bearer != "" || w.audience != "" {
@@ -104,13 +104,13 @@ func TestMintWithNoLedgerAttestsNothing(t *testing.T) {
 func TestMintRefusesToAttestOverPlainHTTPOrWithoutTheIDTokenPermission(t *testing.T) {
 	w := newAttestWorld(t)
 	t.Setenv(ingestURLVariable, "http://ledger.example/v1/rows")
-	err := attestKey(context.Background(), w.ledger.Client(), gateway.Attestation{KeyID: attestedKeyID}, false, io.Discard)
+	_, err := attestKey(context.Background(), w.ledger.Client(), gateway.Attestation{KeyID: attestedKeyID}, false, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("plain http: %v", err)
 	}
 	t.Setenv(ingestURLVariable, w.ledger.URL+"/v1/rows")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
-	err = attestKey(context.Background(), w.ledger.Client(), gateway.Attestation{KeyID: attestedKeyID}, false, io.Discard)
+	_, err = attestKey(context.Background(), w.ledger.Client(), gateway.Attestation{KeyID: attestedKeyID}, false, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "id-token") {
 		t.Fatalf("no id-token permission: %v", err)
 	}

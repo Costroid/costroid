@@ -24,9 +24,11 @@ A command that Ctrl-C ends exits 130, whatever it was doing, as a shell reports 
 
 On GitLab CI, `costroid report --exit-on-verdict` ends with the verdict: 0 on `success`, 1 on `failure`, and 3 on `neutral` or when the report could not reach GitLab. The GitLab template allows the job to fail on 3 and on no other code, as [`gitlab.md`](gitlab.md) describes. Without the flag, and on GitHub Actions, `report` exits 0 once it finds a CI system, whatever the host answers.
 
-## A service that refuses is exit 1 on four commands
+## A service that refuses is exit 1 on five commands
 
 `costroid export`, `costroid merged`, `costroid connect` and `costroid emit-otlp` exit 1 when Costroid Platform or the endpoint took the request and refused it, and the line names the refusal's code. They exit 125 when the service could not be reached.
+
+`costroid gateway mint` and `costroid gateway close` exit 1 when a ledger of the team's own or Costroid Platform took the key's attestation or the gateway's count and refused it, and the line names the code, with the contract's sentence for it on the platform's. Up to 1.0.0-alpha.31 a ledger's refusal exited 125. Three answers warn, and the command exits 0: a platform that does not offer the statement, 404 `NOT_FOUND`; a refusal of a run no protected branch holds, `CREDENTIAL_RUN_UNPROTECTED`, from either; and the platform's 409 `INSTALLATION_NOT_BOUND`. The platform's 503 is sent again for up to 150 s before it is named. A ledger or a platform that cannot be reached is exit 125.
 
 ## The codes of each command
 
@@ -57,5 +59,5 @@ On GitLab CI, `costroid report --exit-on-verdict` ends with the verdict: 0 on `s
 | `costroid serve` | yes |  | yes |  |  |  | yes |
 | `costroid keys` | yes |  | yes |  |  |  | yes |
 | `costroid egress` | yes |  | yes |  |  |  | yes |
-| `costroid gateway` | yes |  | yes |  |  |  | yes |
+| `costroid gateway` | yes | a ledger or Costroid Platform refused a statement of a key | yes |  |  |  | yes |
 | `costroid app` | yes |  | yes |  |  |  | yes |

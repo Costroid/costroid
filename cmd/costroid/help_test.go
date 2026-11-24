@@ -768,14 +768,17 @@ func sentences(prose string) []string {
 
 // withdrawn are the sentences of an earlier page that are false now and are
 // no longer said. validate takes a policy amount such as 5.0, as the schema
-// and the check do. The rest are rows of an exit code table from when a wrong
-// command line exited 125 and init outside a repository exited 2: each page
-// now gives the command line a row of its own.
+// and the check do. export, merged and reconcile send by integration/v0.7
+// first, and a batch of v0.7 belongs to its run's attempt as well. The rest
+// are rows of an exit code table from when a wrong command line exited 125
+// and init outside a repository exited 2: each page now gives the command
+// line a row of its own.
 var withdrawn = map[string][]string{
 	"validate":     {"A policy amount or approval.expires_days that YAML reads as a float, such as 5.0, is a problem too, because the check refuses it.", "costroid validate [costroid.yml]"},
 	"approve":      {"125 GitHub Actions was not detected, or an argument was given"},
 	"demo":         {"125 an argument or an unknown --state was given, or costroid could not build the comment"},
 	"egress":       {"125 costroid could not read the command line or the database"},
+	"export":       {"It reads GET /identity first and sends by integration/v0.4, or by v0.3 or v0.2 to a platform that states no later version, and names the version on standard error.", "On 409 EXPORT_BATCH_RUN_BOUND the batch holds token_verified rows, so it is bound to the run that sent it, and only that run restates it."},
 	"follow-up":    {"125 GitHub Actions was not detected, or the flags could not be read"},
 	"ingest-run":   {"125 costroid could not read the flags or the source, or write the rows"},
 	"init":         {"2 the directory is in no git repository", "125 costroid could not read or write a file, refused to, or a command --pr runs failed"},
@@ -783,7 +786,8 @@ var withdrawn = map[string][]string{
 	"lint-recipes": {"Each rejected line goes to stderr."},
 	"lint":         {"costroid lint [--strict] [paths]"},
 	"mcp":          {"125 costroid could not read the flags or --ledger, or the session failed"},
-	"merged":       {"125 costroid could not read the flags, the run or GitHub's answer, or reach Costroid Platform, or the platform does not serve integration/v0.5 or later"},
+	"merged":       {"125 costroid could not read the flags, the run or GitHub's answer, or reach Costroid Platform, or the platform does not serve integration/v0.5 or later", "It sends by integration/v0.6, or by v0.5 to a platform that states no later version, under the integration token in COSTROID_PLATFORM_TOKEN, and names the version on standard error.", "The platform stores a fact as token_verified when the run token names the fact's commit, which is the tip of the push, and, by v0.6, a protected branch, which merged then names.", "A fact sent without a run token, a fact of a merge queue's group whose commit is not the tip, or by v0.6 a fact of a push to a branch that is not protected, is stored as unverified, and merged says why.", "--json prints, on standard output, one object per fact sent: its merge id, its pull request, the status the platform answered, the fact's run_identity and, on a token_verified fact by v0.6, the ref of its branch, or the refusal's code."},
+	"reconcile":    {"--export sends the rows this run wrote to --out to the Costroid Platform COSTROID_PLATFORM_URL names, under the integration token in COSTROID_PLATFORM_TOKEN, by integration/v0.6, or by v0.5 to a platform that states no later version, and names the version on standard error."},
 	"report":       {"125 the flags could not be read, neither GitHub Actions nor GitLab CI was detected, or --preview could not build the comment"},
 	"review":       {"125 costroid could not read the flags or write --out, or --post found neither GitHub Actions nor GitLab CI"},
 }

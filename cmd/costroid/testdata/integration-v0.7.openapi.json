@@ -1,0 +1,2910 @@
+{
+  "openapi": "3.1.1",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Costroid integration contract",
+    "version": "0.7",
+    "summary": "How Costroid and Costroid Platform identify a tenant, authenticate, move FOCUS rows, merge facts, reconciliation results and attested gateway keys, and report quotas.",
+    "license": { "name": "Apache-2.0", "identifier": "Apache-2.0" }
+  },
+  "servers": [{ "url": "https://app.costroid.com/api/integration/v0.7" }],
+  "security": [{ "integrationToken": [] }],
+  "tags": [
+    { "name": "Identity", "description": "Who a token speaks for." },
+    { "name": "Tokens", "description": "The token in use: read, rotate, revoke." },
+    { "name": "Exports", "description": "FOCUS rows moving from Costroid to Costroid Platform." },
+    { "name": "Merges", "description": "One fact per merged pull request." },
+    {
+      "name": "Credentials",
+      "description": "A protected run's statement of which run a gateway key is for, and another's of that key's spend."
+    },
+    {
+      "name": "Reconciliations",
+      "description": "A sender's comparison of its rows with a provider's report, per credential per UTC day."
+    },
+    { "name": "Quotas", "description": "How much of each limit a tenant has left." }
+  ],
+  "paths": {
+    "/identity": {
+      "get": {
+        "operationId": "getIdentity",
+        "tags": ["Identity"],
+        "summary": "Read the tenant, account and token behind the bearer",
+        "description": "Requires the identity:read scope. A sender asks it first and sends by the newest version both sides speak. A platform that does not speak this version answers 404 NOT_FOUND here, as on every path of the version.",
+        "responses": {
+          "200": {
+            "description": "The identity.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Identity" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotMounted" }
+        }
+      }
+    },
+    "/installations/{installation_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/InstallationId" }],
+      "put": {
+        "operationId": "bindInstallation",
+        "tags": ["Identity"],
+        "summary": "Bind an SCM owner to the tenant with a proof",
+        "description": "Requires the installations:write scope. The body carries a CI proof or an App attestation, and README.md, section Identity, states the rules. A tenant that holds this installation answers 200 even when the proof has expired, and only a valid newer proof moves proven_at. A refused proof changes nothing. The platform reads who holds the owner only after the proof passes, so INSTALLATION_BOUND_ELSEWHERE reaches only a caller with a valid proof. A binding never moves rows between tenants.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InstallationBinding" },
+              "examples": {
+                "ciProof": {
+                  "summary": "A GitHub Actions ID token",
+                  "externalValue": "examples/InstallationBinding.ci-proof.json"
+                },
+                "appAttestation": {
+                  "summary": "An attestation signed by Costroid's hosted service",
+                  "externalValue": "examples/InstallationBinding.app-attestation.json"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The installation is bound to this tenant.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Installation" },
+                "examples": {
+                  "ciProof": {
+                    "summary": "Bound by a CI proof",
+                    "externalValue": "examples/Installation.ci-proof.json"
+                  },
+                  "appAttestation": {
+                    "summary": "Bound by an App attestation",
+                    "externalValue": "examples/Installation.app-attestation.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INSTALLATION_PROOF_MISSING: the body holds no proof, or no compact JWS.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InstallationRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_MISSING": {
+                    "summary": "No proof in the body",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_MISSING.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "AUTH_TOKEN_SCOPE: the token lacks installations:write. The other codes refuse the proof. INSTALLATION_PROOF_ISSUER_UNTRUSTED: the issuer is not GitHub Actions, GitLab.com or Costroid's hosted service. INSTALLATION_PROOF_SIGNATURE_INVALID: not RS256, an unknown key id, or a failed signature. INSTALLATION_PROOF_AUDIENCE_MISMATCH: the audience is not this tenant's. INSTALLATION_PROOF_EXPIRED: outside the window, or issued before the installation's last change. The window ends at exp and at most 600 seconds after iat. INSTALLATION_PROOF_CLAIMS_INVALID: a stable id is absent or is not a number. INSTALLATION_PROOF_UNPROTECTED_RUN: the run could start without the owner's branch rules. INSTALLATION_PROOF_SUBJECT_MISMATCH: the proof names another installation than the path.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "INSTALLATION_PROOF_ISSUER_UNTRUSTED": {
+                    "summary": "A self-hosted service or a self-managed SCM signed it",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_ISSUER_UNTRUSTED.json"
+                  },
+                  "INSTALLATION_PROOF_SIGNATURE_INVALID": {
+                    "summary": "The signature fails",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_SIGNATURE_INVALID.json"
+                  },
+                  "INSTALLATION_PROOF_AUDIENCE_MISMATCH": {
+                    "summary": "The proof names another tenant",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_AUDIENCE_MISMATCH.json"
+                  },
+                  "INSTALLATION_PROOF_EXPIRED": {
+                    "summary": "The window has passed",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_EXPIRED.json"
+                  },
+                  "INSTALLATION_PROOF_CLAIMS_INVALID": {
+                    "summary": "The proof holds names and no stable id",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_CLAIMS_INVALID.json"
+                  },
+                  "INSTALLATION_PROOF_UNPROTECTED_RUN": {
+                    "summary": "A run outside the protected branch",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_UNPROTECTED_RUN.json"
+                  },
+                  "INSTALLATION_PROOF_SUBJECT_MISMATCH": {
+                    "summary": "The proof names another owner",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_SUBJECT_MISMATCH.json"
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_BOUND_ELSEWHERE: the proof is valid, and another tenant holds the owner under a rule the proof does not beat.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InstallationRefusal" },
+                "examples": {
+                  "INSTALLATION_BOUND_ELSEWHERE": {
+                    "summary": "Another tenant holds the owner",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_BOUND_ELSEWHERE.json"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INSTALLATION_PROOF_KEYS_UNAVAILABLE: the issuer's keys cannot be read. Retry the same proof inside its window. Nothing was judged.",
+            "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InstallationRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_KEYS_UNAVAILABLE": {
+                    "summary": "The key set cannot be read",
+                    "externalValue": "examples/InstallationRefusal.INSTALLATION_PROOF_KEYS_UNAVAILABLE.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unbindInstallation",
+        "tags": ["Identity"],
+        "summary": "End the tenant's own binding",
+        "description": "Requires the installations:write scope. The binding ends as revoked and needs no proof, because a tenant can always give up what it holds. Costroid's hosted service calls this when GitHub reports the App uninstalled or suspended. The tenant keeps its rows. A repeat answers 200 and changes nothing.",
+        "responses": {
+          "200": {
+            "description": "The binding has ended.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Installation" },
+                "examples": {
+                  "revoked": {
+                    "summary": "Revoked after an uninstall",
+                    "externalValue": "examples/Installation.revoked.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_NOT_BOUND: this tenant never held this installation.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "INSTALLATION_NOT_BOUND": {
+                    "summary": "This tenant never held the installation",
+                    "externalValue": "examples/Error.installation-not-bound.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokens/current": {
+      "get": {
+        "operationId": "getCurrentToken",
+        "tags": ["Tokens"],
+        "summary": "Read the token in use",
+        "description": "Any scope. The answer never holds the secret.",
+        "responses": {
+          "200": {
+            "description": "The token's metadata.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Token" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotMounted" }
+        }
+      },
+      "delete": {
+        "operationId": "revokeCurrentToken",
+        "tags": ["Tokens"],
+        "summary": "Revoke the token in use",
+        "description": "Any scope. Effective at once.",
+        "responses": {
+          "204": { "description": "The token is revoked." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotMounted" }
+        }
+      }
+    },
+    "/tokens/current/rotate": {
+      "post": {
+        "operationId": "rotateCurrentToken",
+        "tags": ["Tokens"],
+        "summary": "Replace the token in use",
+        "description": "Any scope. The answer holds the new secret once. The old token keeps working until previous_token_expires_at.",
+        "responses": {
+          "200": {
+            "description": "The new token.",
+            "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TokenRotation" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotMounted" }
+        }
+      }
+    },
+    "/exports/{batch_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/BatchId" }],
+      "put": {
+        "operationId": "putExportBatch",
+        "tags": ["Exports"],
+        "summary": "Send one batch of rows",
+        "description": "Requires the rows:write scope. The body is a FOCUS row CSV as focus-row/v0.6 defines it, with the tag set of tags/v0.5, and no row states costroid/origin. The tenant comes from the token and never from the body. A new batch_id adds rows. The same batch_id with different bytes replaces every row of the earlier bytes, in every month they named, once the new bytes have ingested. A batch whose active rows hold token_verified rows belongs to one run and one attempt, and only a run token of that run, repository and attempt restates it. The same batch_id with the same bytes answers 200 and changes nothing. A batch ingests whole or fails whole. Every Tags key outside costroid/ is dropped before storage and counted in dropped_tag_keys. A refusal stores nothing. README.md, sections The export endpoint and What a row proves, states the rules.",
+        "parameters": [
+          { "$ref": "#/components/parameters/InstallationHeader" },
+          { "$ref": "#/components/parameters/ContentSha256" },
+          { "$ref": "#/components/parameters/FocusVersion" },
+          { "$ref": "#/components/parameters/RunTokenHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/csv": {
+              "schema": {
+                "type": "string",
+                "description": "UTF-8 CSV with one header row, as focus-row/v0.6 defines it. Tags is a JSON object in one cell. A row that states costroid/origin fails the batch ROW_ORIGIN_REFUSED."
+              },
+              "examples": {
+                "exportBody": {
+                  "summary": "Eleven rows of one GitHub Actions run on a gateway key, token_verified",
+                  "externalValue": "examples/FocusRow.export-body.csv"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "These bytes are already held under this batch_id.",
+            "headers": { "Costroid-Quota-State": { "$ref": "#/components/headers/QuotaState" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportBatch" },
+                "examples": {
+                  "ingested": {
+                    "summary": "The batch has ingested",
+                    "externalValue": "examples/ExportBatch.ingested.json"
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The batch is accepted for ingest. Read its verdict from GET /exports/{batch_id}.",
+            "headers": { "Costroid-Quota-State": { "$ref": "#/components/headers/QuotaState" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportBatch" },
+                "examples": {
+                  "accepted": {
+                    "summary": "Accepted for ingest",
+                    "externalValue": "examples/ExportBatch.accepted.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: the batch id in the path is malformed, or a header is missing or malformed. The message names each fault the platform found, such as Not an installation id.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "AUTH_TOKEN_SCOPE: the token lacks rows:write. RUN_TOKEN_INVALID: the run token fails verification, or its event_name or ref is absent or not a string. RUN_TOKEN_OWNER_MISMATCH: the run token names another owner than the installation.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportRefusal" },
+                "examples": {
+                  "AUTH_TOKEN_SCOPE": {
+                    "summary": "The token cannot write rows",
+                    "externalValue": "examples/ExportRefusal.AUTH_TOKEN_SCOPE.json"
+                  },
+                  "RUN_TOKEN_INVALID": {
+                    "summary": "The run token fails verification",
+                    "externalValue": "examples/ExportRefusal.RUN_TOKEN_INVALID.json"
+                  },
+                  "RUN_TOKEN_OWNER_MISMATCH": {
+                    "summary": "The run belongs to another owner",
+                    "externalValue": "examples/ExportRefusal.RUN_TOKEN_OWNER_MISMATCH.json"
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_NOT_BOUND: this tenant holds no active binding of the installation, including a revoked or displaced one. EXPORT_BATCH_BUSY: other bytes of this batch are ingesting. EXPORT_BATCH_RUN_BOUND: the batch's active rows hold token_verified rows, and the run token is absent or names another run, repository or attempt. A later attempt sends a batch of its own.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportRefusal" },
+                "examples": {
+                  "INSTALLATION_NOT_BOUND": {
+                    "summary": "The installation is not bound to this tenant",
+                    "externalValue": "examples/ExportRefusal.INSTALLATION_NOT_BOUND.json"
+                  },
+                  "EXPORT_BATCH_BUSY": {
+                    "summary": "Other bytes of this batch are ingesting",
+                    "externalValue": "examples/ExportRefusal.EXPORT_BATCH_BUSY.json"
+                  },
+                  "EXPORT_BATCH_RUN_BOUND": {
+                    "summary": "This batch's rows are bound to another run or attempt. The message stands in until the platform words this version's sentence",
+                    "externalValue": "examples/ExportRefusal.EXPORT_BATCH_RUN_BOUND.json"
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "FILE_TOO_LARGE: the body exceeds max_batch_bytes.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportRefusal" },
+                "examples": {
+                  "FILE_TOO_LARGE": {
+                    "summary": "The body is too large",
+                    "externalValue": "examples/ExportRefusal.FILE_TOO_LARGE.json"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "HASH_MISMATCH: the body does not hash to Costroid-Content-SHA256.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportRefusal" },
+                "examples": {
+                  "HASH_MISMATCH": {
+                    "summary": "The body is not the bytes the header names",
+                    "externalValue": "examples/ExportRefusal.HASH_MISMATCH.json"
+                  }
+                }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/QuotaExhausted" },
+          "503": {
+            "description": "INSTALLATION_PROOF_KEYS_UNAVAILABLE: GitHub's key set cannot be read. Retry inside the run token's window. Retry-After is 60 seconds. Nothing was judged.",
+            "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_KEYS_UNAVAILABLE": {
+                    "summary": "GitHub's key set cannot be read",
+                    "externalValue": "examples/ExportRefusal.INSTALLATION_PROOF_KEYS_UNAVAILABLE.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getExportBatch",
+        "tags": ["Exports"],
+        "summary": "Read one batch's verdict",
+        "description": "Requires the rows:write scope. A failed batch carries its code in failure. A client treats a code it does not know as a failed batch.",
+        "responses": {
+          "200": {
+            "description": "The batch.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ExportBatch" },
+                "examples": {
+                  "ingested": {
+                    "summary": "Ingested",
+                    "externalValue": "examples/ExportBatch.ingested.json"
+                  },
+                  "droppedTagKeys": {
+                    "summary": "Ingested, two free-form tag entries dropped",
+                    "externalValue": "examples/ExportBatch.ingested-with-dropped-keys.json"
+                  },
+                  "failed": {
+                    "summary": "Failed on a value the store cannot hold",
+                    "externalValue": "examples/ExportBatch.failed.json"
+                  },
+                  "RUN_TOKEN_MISSING": {
+                    "summary": "A token_verified row arrived without a run token",
+                    "externalValue": "examples/ExportBatch.failed-run-token-missing.json"
+                  },
+                  "ROW_IDENTITY_MISMATCH": {
+                    "summary": "A row names another run than the run token",
+                    "externalValue": "examples/ExportBatch.failed-row-identity-mismatch.json"
+                  },
+                  "pullRequestMismatch": {
+                    "summary": "A row names another pull request than its pull_request run token",
+                    "externalValue": "examples/ExportBatch.failed-row-pull-request-mismatch.json"
+                  },
+                  "ROW_ORIGIN_REFUSED": {
+                    "summary": "A row states costroid/origin",
+                    "externalValue": "examples/ExportBatch.failed-row-origin.json"
+                  },
+                  "ROW_COST_INCONSISTENT": {
+                    "summary": "A row's cost is not its unit price times its quantity",
+                    "externalValue": "examples/ExportBatch.failed-row-cost-inconsistent.json"
+                  },
+                  "ROW_PROFILE_STRICT": {
+                    "summary": "A row is in the strict profile",
+                    "externalValue": "examples/ExportBatch.failed-row-profile-strict.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: the batch id in the path is malformed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "EXPORT_BATCH_NOT_FOUND: this tenant holds no such batch. NOT_FOUND: the platform does not mount this version.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+            }
+          }
+        }
+      }
+    },
+    "/merges/{merge_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/MergeId" }],
+      "put": {
+        "operationId": "putMergeFact",
+        "tags": ["Merges"],
+        "summary": "Send the fact that one pull request merged",
+        "description": "Requires the merges:write scope. The body states that this pull request of this repository merged at this instant as this commit, and holds no other key. The tenant comes from the token and never from the body. A run token whose sha is merge_commit_sha, whose ref_type is branch, whose ref begins refs/heads/ and whose ref_protected is the string true stores the fact as token_verified, with the token's ref; any other verified run token, or none, stores it as unverified, with ref null. A pull request holds one fact: a token_verified document replaces an unverified one under the same merge_id, whether or not the two differ; any other request that repeats the held document answers 200 and changes nothing; and every other second document answers 409 MERGE_FACT_CONFLICT. The platform compares parsed values, never bytes. A refusal stores nothing. README.md, section The merge fact, states the rules.",
+        "parameters": [
+          { "$ref": "#/components/parameters/MergeInstallationHeader" },
+          { "$ref": "#/components/parameters/MergeRunTokenHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MergeDocument" },
+              "examples": {
+                "merge": {
+                  "summary": "Pull request 1482 merged as one commit",
+                  "externalValue": "examples/MergeDocument.json"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "This document is already held under this merge_id. Nothing changed. The answer is the stored fact, with its run_identity and ref.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeFact" },
+                "examples": {
+                  "unchanged": {
+                    "summary": "The fact was already held",
+                    "externalValue": "examples/MergeFact.protected-branch.json"
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The fact is stored: a new fact, or a token_verified fact in place of an unverified one. The answer carries its run_identity and ref.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeFact" },
+                "examples": {
+                  "tokenVerified": {
+                    "summary": "Sent by a push run on a protected branch whose sha is the merge commit",
+                    "externalValue": "examples/MergeFact.protected-branch.json"
+                  },
+                  "unprotectedBranch": {
+                    "summary": "Sent by a push run on a branch that is not protected, so unverified with ref null",
+                    "externalValue": "examples/MergeFact.unprotected-branch.json"
+                  },
+                  "replacesUnverified": {
+                    "summary": "The fact from the protected branch, in place of examples/MergeFact.unprotected-branch.json under the same merge_id",
+                    "externalValue": "examples/MergeFact.protected-branch.json"
+                  },
+                  "unverified": {
+                    "summary": "Sent without a run token",
+                    "externalValue": "examples/MergeFact.unverified.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: the merge id in the path is malformed, or Costroid-Installation-Id is missing or malformed, including when a Costroid-Run-Token is sent without it.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "TOOL_INPUT_INVALID": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/Error.merge-write-input.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "AUTH_TOKEN_SCOPE: the token lacks merges:write. RUN_TOKEN_INVALID: the run token fails verification, or a claim this path reads is not a string. RUN_TOKEN_OWNER_MISMATCH: the run token names another owner than the installation.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeRefusal" },
+                "examples": {
+                  "AUTH_TOKEN_SCOPE": {
+                    "summary": "The token cannot write merge facts",
+                    "externalValue": "examples/MergeRefusal.AUTH_TOKEN_SCOPE.json"
+                  },
+                  "RUN_TOKEN_INVALID": {
+                    "summary": "The run token fails verification",
+                    "externalValue": "examples/MergeRefusal.RUN_TOKEN_INVALID.json"
+                  },
+                  "RUN_TOKEN_OWNER_MISMATCH": {
+                    "summary": "The run belongs to another owner",
+                    "externalValue": "examples/MergeRefusal.RUN_TOKEN_OWNER_MISMATCH.json"
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_NOT_BOUND: this tenant holds no active binding of the installation, including a revoked or displaced one. MERGE_FACT_CONFLICT: the merge id, or the pull request, holds a different document. A token_verified document over an unverified one under the same merge_id is not a conflict: it replaces it.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeRefusal" },
+                "examples": {
+                  "INSTALLATION_NOT_BOUND": {
+                    "summary": "The installation is not bound to this tenant",
+                    "externalValue": "examples/MergeRefusal.INSTALLATION_NOT_BOUND.json"
+                  },
+                  "MERGE_FACT_CONFLICT": {
+                    "summary": "The pull request already holds another fact",
+                    "externalValue": "examples/MergeRefusal.MERGE_FACT_CONFLICT.json"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "MERGE_FACT_INVALID: a key is missing, unknown or of the wrong form, or the body is too large, not UTF-8 or not a JSON object. ref is an unknown key, and a repo with an upper-case letter is of the wrong form. MERGE_FACT_IDENTITY_MISMATCH: a verified run token names another repository than repo, compared in lower case. README.md, section Letter case, states the comparison.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeRefusal" },
+                "examples": {
+                  "MERGE_FACT_INVALID": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/MergeRefusal.MERGE_FACT_INVALID.wrong-form.json"
+                  },
+                  "unknownKey": {
+                    "summary": "The body holds a key this version does not read",
+                    "externalValue": "examples/MergeRefusal.MERGE_FACT_INVALID.json"
+                  },
+                  "upperCaseRepo": {
+                    "summary": "The body's repo holds an upper-case letter",
+                    "externalValue": "examples/MergeRefusal.MERGE_FACT_INVALID.upper-case-repo.json"
+                  },
+                  "MERGE_FACT_IDENTITY_MISMATCH": {
+                    "summary": "The run token names another repository",
+                    "externalValue": "examples/MergeRefusal.MERGE_FACT_IDENTITY_MISMATCH.json"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INSTALLATION_PROOF_KEYS_UNAVAILABLE: GitHub's key set cannot be read. Retry inside the run token's window. Retry-After is 60 seconds. Nothing was judged.",
+            "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_KEYS_UNAVAILABLE": {
+                    "summary": "GitHub's key set cannot be read",
+                    "externalValue": "examples/MergeRefusal.INSTALLATION_PROOF_KEYS_UNAVAILABLE.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getMergeFact",
+        "tags": ["Merges"],
+        "summary": "Read one merge fact",
+        "description": "Requires the merges:write scope. The answer is the stored document with its run_identity and ref.",
+        "responses": {
+          "200": {
+            "description": "The fact.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MergeFact" },
+                "examples": {
+                  "tokenVerified": {
+                    "summary": "A token_verified fact, with the protected branch it came from",
+                    "externalValue": "examples/MergeFact.protected-branch.json"
+                  },
+                  "mergeQueue": {
+                    "summary": "A fact of a merge queue's group whose commit is not the push's tip",
+                    "externalValue": "examples/MergeFact.merge-queue-group.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: the merge id in the path is malformed.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "TOOL_INPUT_INVALID": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/Error.merge-read-input.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": {
+            "description": "MERGE_FACT_NOT_FOUND: this tenant holds no such merge_id, on GET. NOT_FOUND: the platform does not mount this version.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "MERGE_FACT_NOT_FOUND": {
+                    "summary": "This tenant holds no such merge_id",
+                    "externalValue": "examples/MergeRefusal.MERGE_FACT_NOT_FOUND.json"
+                  },
+                  "notMounted": {
+                    "summary": "The platform does not mount this version",
+                    "externalValue": "examples/Error.not-mounted.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/credentials/{key_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/KeyId" }],
+      "put": {
+        "operationId": "attestCredential",
+        "tags": ["Credentials"],
+        "summary": "Attest which run a gateway key is for",
+        "description": "Requires the credentials:write scope. The attesting run, a run of a protected branch that workflow_run started, binds the gateway key key_id to the run it is for: the repository, the run and the attempt the body names, at the head commit the body names. The repository is the token's. The platform checks a request in one order, and the first failure answers: the bearer token, a token with no scope of this version, the input, the scope this path needs, the installation's binding, the run token, then the store, which decides in one statement so that two racing sends cannot both pass. At the store, the same attestation again, the same key id from the same attesting repository, run and attempt with the same body, is answered as the first was. An attesting repository, run and attempt that holds another key, or this key with another head, answers 409 CREDENTIAL_ATTESTING_RUN_USED, and a key another attesting run holds answers 409 CREDENTIAL_ATTESTED_ELSEWHERE; where both apply, CREDENTIAL_ATTESTING_RUN_USED answers. Both rules hold within one tenant. A refusal stores nothing. README.md, section The credential attestation, states the rules.",
+        "parameters": [
+          { "$ref": "#/components/parameters/CredentialInstallationHeader" },
+          { "$ref": "#/components/parameters/CredentialRunTokenHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CredentialAttestationBody" },
+              "examples": {
+                "attestation": {
+                  "summary": "The key is for run 16873409921, attempt 1",
+                  "externalValue": "examples/CredentialAttestationBody.json"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The same key id from the same attesting repository, run and attempt, with the same body, is already held. Nothing changed. The answer is the attestation first stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialAttestation" },
+                "examples": {
+                  "unchanged": {
+                    "summary": "A repeat, answered as the first was",
+                    "externalValue": "examples/CredentialAttestation.json"
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Stored. attested_by is read from the attesting run's token.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialAttestation" },
+                "examples": {
+                  "stored": {
+                    "summary": "Stated by a run of refs/heads/main",
+                    "externalValue": "examples/CredentialAttestation.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: the key id in the path is malformed, a header is missing or malformed, or the body is not of this version's form. Costroid-Run-Token and Costroid-Installation-Id are both required, and a body that is not UTF-8, not a JSON object, over 16384 bytes, or that holds an unknown key is not of this form. It answers \"The key id in the path is malformed, a header is missing or malformed, or the body is not an attestation of this version.\"",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "TOOL_INPUT_INVALID": {
+                    "summary": "The sentence for an attestation",
+                    "externalValue": "examples/CredentialRefusal.TOOL_INPUT_INVALID.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "AUTH_TOKEN_SCOPE: the token holds no scope of this version, judged before the input. AUTH_TOKEN_SCOPE: the token lacks credentials:write, judged after the input. RUN_TOKEN_INVALID: no issuer of the run token is trusted. RUN_TOKEN_OWNER_MISMATCH: the installation is not a GitHub one, judged by its kind before any token is read. RUN_TOKEN_INVALID: the run token's form or signature fails, its claims' form, issuer or audience is not this write's, or it is outside its window. RUN_TOKEN_OWNER_MISMATCH: the run token names another owner than the installation. CREDENTIAL_RUN_UNPROTECTED: the run token is well signed and is not a protected workflow_run run's. The owner claim is compared after the signature, the window and the audience, because a check ahead of them would let an unsigned token learn which owner an installation is bound to.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "AUTH_TOKEN_SCOPE": {
+                    "summary": "The token cannot attest credentials",
+                    "externalValue": "examples/CredentialRefusal.AUTH_TOKEN_SCOPE.json"
+                  },
+                  "RUN_TOKEN_INVALID": {
+                    "summary": "The run token is not valid for this write's audience",
+                    "externalValue": "examples/CredentialRefusal.RUN_TOKEN_INVALID.json"
+                  },
+                  "RUN_TOKEN_OWNER_MISMATCH": {
+                    "summary": "The run belongs to another owner",
+                    "externalValue": "examples/CredentialRefusal.RUN_TOKEN_OWNER_MISMATCH.json"
+                  },
+                  "CREDENTIAL_RUN_UNPROTECTED": {
+                    "summary": "The run token is not a protected workflow_run run's",
+                    "externalValue": "examples/CredentialRefusal.CREDENTIAL_RUN_UNPROTECTED.json"
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_NOT_BOUND: this tenant holds no active binding of the installation, including a revoked or displaced one. CREDENTIAL_ATTESTING_RUN_USED: this attesting repository, run and attempt holds another key, or this key with another run, attempt or head. CREDENTIAL_ATTESTED_ELSEWHERE: the key is held by another attesting run. The first one stands. Where both apply, the answer is CREDENTIAL_ATTESTING_RUN_USED. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "INSTALLATION_NOT_BOUND": {
+                    "summary": "The installation is not bound to this tenant",
+                    "externalValue": "examples/CredentialRefusal.INSTALLATION_NOT_BOUND.json"
+                  },
+                  "CREDENTIAL_ATTESTING_RUN_USED": {
+                    "summary": "The attesting run holds another key",
+                    "externalValue": "examples/CredentialRefusal.CREDENTIAL_ATTESTING_RUN_USED.json"
+                  },
+                  "CREDENTIAL_ATTESTED_ELSEWHERE": {
+                    "summary": "Another attesting run holds the key",
+                    "externalValue": "examples/CredentialRefusal.CREDENTIAL_ATTESTED_ELSEWHERE.json"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INSTALLATION_PROOF_KEYS_UNAVAILABLE: GitHub's key set cannot be read. Retry inside the run token's window. Retry-After is 60 seconds. Nothing was judged.",
+            "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_KEYS_UNAVAILABLE": {
+                    "summary": "GitHub's key set cannot be read",
+                    "externalValue": "examples/CredentialRefusal.INSTALLATION_PROOF_KEYS_UNAVAILABLE.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/credentials/{key_id}/spend": {
+      "parameters": [{ "$ref": "#/components/parameters/KeyId" }],
+      "put": {
+        "operationId": "putCredentialSpend",
+        "tags": ["Credentials"],
+        "summary": "State the gateway's count of an attested key's spend",
+        "description": "Requires the credentials:write scope. A closing run, a run of a protected branch that workflow_run started when the run the key is for completed, states the gateway's own count of spend on the key, once. The closing run is not the attesting run. The run token is held to the rules of PUT /credentials/{key_id}, under an audience that ends in /spend. The platform checks a request in one order, and the first failure answers: the bearer token, a token with no scope of this version, the input, the scope this path needs, the installation's binding, the run token, then the store, which decides in one statement so that two racing sends cannot both pass. At the store, a key that holds no attestation for the repository, run and attempt the spend names answers 409 CREDENTIAL_NOT_ATTESTED, decided first, and a spend never creates an attestation. The same decimal string again, for the same key and the same run and attempt, is answered as the first was, whichever closing run sends it; a different one answers 409 CREDENTIAL_SPEND_HELD, and a second figure is never added and never taken as the larger of two. Both rules hold within one tenant. The figure is the gateway's, in the gateway's own prices, and a reader shows it beside the rows' figure, never as it. A refusal stores nothing. README.md, section The credential attestation, states the rules.",
+        "parameters": [
+          { "$ref": "#/components/parameters/CredentialInstallationHeader" },
+          { "$ref": "#/components/parameters/CredentialRunTokenHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CredentialSpendBody" },
+              "examples": {
+                "spend": {
+                  "summary": "The key spent USD 0.412 by the gateway's count",
+                  "externalValue": "examples/CredentialSpendBody.json"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The key holds this decimal string for this run and attempt already, whichever closing run sent it. Nothing changed. The answer is the spend first stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialSpend" },
+                "examples": {
+                  "unchanged": {
+                    "summary": "A repeat, answered as the first was",
+                    "externalValue": "examples/CredentialSpend.json"
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Stored. attested_by is read from the closing run's token.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialSpend" },
+                "examples": {
+                  "stored": {
+                    "summary": "Stated by a run of refs/heads/main",
+                    "externalValue": "examples/CredentialSpend.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: the key id in the path is malformed, a header is missing or malformed, or the body is not of this version's form. Costroid-Run-Token and Costroid-Installation-Id are both required, and a body that is not UTF-8, not a JSON object, over 16384 bytes, or that holds an unknown key is not of this form. It answers \"The key id in the path is malformed, a header is missing or malformed, or the body is not a spend of this version.\"",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "TOOL_INPUT_INVALID": {
+                    "summary": "The sentence for a spend",
+                    "externalValue": "examples/CredentialRefusal.TOOL_INPUT_INVALID.spend.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "AUTH_TOKEN_SCOPE: the token holds no scope of this version, judged before the input. AUTH_TOKEN_SCOPE: the token lacks credentials:write, judged after the input. RUN_TOKEN_INVALID: no issuer of the run token is trusted. RUN_TOKEN_OWNER_MISMATCH: the installation is not a GitHub one, judged by its kind before any token is read. RUN_TOKEN_INVALID: the run token's form or signature fails, its claims' form, issuer or audience is not this write's, or it is outside its window. RUN_TOKEN_OWNER_MISMATCH: the run token names another owner than the installation. CREDENTIAL_RUN_UNPROTECTED: the run token is well signed and is not a protected workflow_run run's. The owner claim is compared after the signature, the window and the audience, because a check ahead of them would let an unsigned token learn which owner an installation is bound to.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "AUTH_TOKEN_SCOPE": {
+                    "summary": "The token cannot attest credentials",
+                    "externalValue": "examples/CredentialRefusal.AUTH_TOKEN_SCOPE.json"
+                  },
+                  "RUN_TOKEN_INVALID": {
+                    "summary": "The run token is not valid for this write's audience",
+                    "externalValue": "examples/CredentialRefusal.RUN_TOKEN_INVALID.spend.json"
+                  },
+                  "RUN_TOKEN_OWNER_MISMATCH": {
+                    "summary": "The run belongs to another owner",
+                    "externalValue": "examples/CredentialRefusal.RUN_TOKEN_OWNER_MISMATCH.json"
+                  },
+                  "CREDENTIAL_RUN_UNPROTECTED": {
+                    "summary": "The run token is not a protected workflow_run run's",
+                    "externalValue": "examples/CredentialRefusal.CREDENTIAL_RUN_UNPROTECTED.json"
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_NOT_BOUND: this tenant holds no active binding of the installation, including a revoked or displaced one. CREDENTIAL_NOT_ATTESTED: a spend for a key that holds no attestation for the run and attempt the spend names. CREDENTIAL_SPEND_HELD: the key holds another decimal string. CREDENTIAL_NOT_ATTESTED is decided first. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "INSTALLATION_NOT_BOUND": {
+                    "summary": "The installation is not bound to this tenant",
+                    "externalValue": "examples/CredentialRefusal.INSTALLATION_NOT_BOUND.json"
+                  },
+                  "CREDENTIAL_NOT_ATTESTED": {
+                    "summary": "The key holds no attestation for this run and attempt",
+                    "externalValue": "examples/CredentialRefusal.CREDENTIAL_NOT_ATTESTED.json"
+                  },
+                  "CREDENTIAL_SPEND_HELD": {
+                    "summary": "The key holds a spend already",
+                    "externalValue": "examples/CredentialRefusal.CREDENTIAL_SPEND_HELD.json"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INSTALLATION_PROOF_KEYS_UNAVAILABLE: GitHub's key set cannot be read. Retry inside the run token's window. Retry-After is 60 seconds. Nothing was judged.",
+            "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CredentialRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_KEYS_UNAVAILABLE": {
+                    "summary": "GitHub's key set cannot be read",
+                    "externalValue": "examples/CredentialRefusal.INSTALLATION_PROOF_KEYS_UNAVAILABLE.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reconciliations": {
+      "put": {
+        "operationId": "putReconciliations",
+        "tags": ["Reconciliations"],
+        "summary": "Send reconciliation rows",
+        "description": "Requires the reconciliations:write scope. The body is newline-delimited JSON, one ReconciliationRow per line. A row's key is source, credential and day. A row replaces the stored row of its key, except that a final row is never replaced by one that is not final, and a row whose data_refreshed_at is earlier than the stored row's is ignored. The whole body is validated before the first write, and one bad line refuses it with that line's number. A body is stored whole or not at all, for a storage failure as for a bad line. On a 5xx the sender sends the same body again. The platform shows each row as the sender's statement, never as its own measurement. README.md, section The reconciliation result, states the rules.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ReconciliationInstallationHeader" },
+          { "$ref": "#/components/parameters/ReconciliationRunTokenHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-ndjson": {
+              "schema": {
+                "type": "string",
+                "description": "UTF-8, one ReconciliationRow per line, each line ended by a line feed. At most max_reconciliation_lines lines, max_reconciliation_bytes bytes and max_reconciliation_line_bytes bytes a line, as GET /quotas states them."
+              },
+              "examples": {
+                "body": {
+                  "summary": "Eight rows of two providers",
+                  "externalValue": "examples/ReconciliationRow.body.jsonl"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The body is stored. The answer counts its rows by what each did.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationReceipt" },
+                "examples": {
+                  "stored": {
+                    "summary": "Six rows stored, one unchanged and one ignored",
+                    "externalValue": "examples/ReconciliationReceipt.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: a header is missing or malformed, including a Costroid-Run-Token sent without Costroid-Installation-Id. This sentence is this path's alone.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "TOOL_INPUT_INVALID": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/Error.reconciliation-headers.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "AUTH_TOKEN_SCOPE: the token lacks reconciliations:write. RUN_TOKEN_INVALID: the run token fails verification. RUN_TOKEN_OWNER_MISMATCH: the run token names another owner than the installation.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationRefusal" },
+                "examples": {
+                  "AUTH_TOKEN_SCOPE": {
+                    "summary": "The token cannot write reconciliations",
+                    "externalValue": "examples/ReconciliationRefusal.AUTH_TOKEN_SCOPE.json"
+                  },
+                  "RUN_TOKEN_INVALID": {
+                    "summary": "The run token fails verification",
+                    "externalValue": "examples/ReconciliationRefusal.RUN_TOKEN_INVALID.json"
+                  },
+                  "RUN_TOKEN_OWNER_MISMATCH": {
+                    "summary": "The run belongs to another owner",
+                    "externalValue": "examples/ReconciliationRefusal.RUN_TOKEN_OWNER_MISMATCH.json"
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotMounted" },
+          "409": {
+            "description": "INSTALLATION_NOT_BOUND: this tenant holds no active binding of the installation, including a revoked or displaced one.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationRefusal" },
+                "examples": {
+                  "INSTALLATION_NOT_BOUND": {
+                    "summary": "The installation is not bound to this tenant",
+                    "externalValue": "examples/ReconciliationRefusal.INSTALLATION_NOT_BOUND.json"
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "RECONCILIATION_TOO_LARGE: the body is past a limit the platform states in GET /quotas. The limits are max_reconciliation_bytes and max_reconciliation_lines for the body, and max_reconciliation_line_bytes for a line. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationRefusal" },
+                "examples": {
+                  "RECONCILIATION_TOO_LARGE": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/ReconciliationRefusal.RECONCILIATION_TOO_LARGE.bytes.json"
+                  },
+                  "tooManyLines": {
+                    "summary": "The body holds more lines than the limit",
+                    "externalValue": "examples/ReconciliationRefusal.RECONCILIATION_TOO_LARGE.json"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "RECONCILIATION_INVALID: a line is not a row of this version, or repeats the key of an earlier line. The answer names the line. It names the first such line in error.line. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationRefusal" },
+                "examples": {
+                  "RECONCILIATION_INVALID": {
+                    "summary": "The sentence the platform answers for a line that is not a row",
+                    "externalValue": "examples/ReconciliationRefusal.RECONCILIATION_INVALID.not-a-row.json"
+                  },
+                  "repeatedKey": {
+                    "summary": "The sentence the platform answers for a repeated key",
+                    "externalValue": "examples/ReconciliationRefusal.RECONCILIATION_INVALID.repeated-key.json"
+                  },
+                  "amountAsANumber": {
+                    "summary": "Line 3 states an amount as a number",
+                    "externalValue": "examples/ReconciliationRefusal.RECONCILIATION_INVALID.json"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "QUOTA_RECONCILIATIONS_PER_DAY: the body would pass reconciliations_per_day. Nothing was stored.",
+            "headers": {
+              "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+              "Costroid-Quota-State": { "$ref": "#/components/headers/QuotaState" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationRefusal" },
+                "examples": {
+                  "QUOTA_RECONCILIATIONS_PER_DAY": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/ReconciliationRefusal.QUOTA_RECONCILIATIONS_PER_DAY.json"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INSTALLATION_PROOF_KEYS_UNAVAILABLE: GitHub's key set cannot be read. Retry inside the run token's window. Retry-After is 60 seconds. Nothing was judged.",
+            "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationRefusal" },
+                "examples": {
+                  "INSTALLATION_PROOF_KEYS_UNAVAILABLE": {
+                    "summary": "GitHub's key set cannot be read",
+                    "externalValue": "examples/ReconciliationRefusal.INSTALLATION_PROOF_KEYS_UNAVAILABLE.json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getReconciliations",
+        "tags": ["Reconciliations"],
+        "summary": "Read the stored rows of one credential over a range of days",
+        "description": "Requires the reconciliations:write scope. The answer holds the stored row of each day from from to to, both included, that has one, in order of day, each with who sent it and when. A day with no stored row is absent. The range spans at most max_reconciliation_range_days days, as GET /quotas states it.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/ReconciliationSource" }
+          },
+          {
+            "name": "credential",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/Credential" }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "The first UTC day, included.",
+            "schema": { "$ref": "#/components/schemas/Day" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "The last UTC day, included. Not before from.",
+            "schema": { "$ref": "#/components/schemas/Day" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored rows.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReconciliationList" },
+                "examples": {
+                  "rows": {
+                    "summary": "Two days of one credential",
+                    "externalValue": "examples/ReconciliationList.json"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "TOOL_INPUT_INVALID: a query parameter is missing or malformed, to is before from, or the range spans more than max_reconciliation_range_days days.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "TOOL_INPUT_INVALID": {
+                    "summary": "The sentence the platform answers",
+                    "externalValue": "examples/Error.reconciliation-query.json"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotMounted" }
+        }
+      }
+    },
+    "/quotas": {
+      "get": {
+        "operationId": "getQuotas",
+        "tags": ["Quotas"],
+        "summary": "Read every quota signal for the tenant",
+        "description": "Requires the quotas:read scope.",
+        "responses": {
+          "200": {
+            "description": "The signals.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/QuotaReport" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotMounted" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "integrationToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An integration token. See README.md, section Tokens."
+      }
+    },
+    "parameters": {
+      "InstallationId": {
+        "name": "installation_id",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/InstallationId" }
+      },
+      "BatchId": {
+        "name": "batch_id",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/BatchId" }
+      },
+      "InstallationHeader": {
+        "name": "Costroid-Installation-Id",
+        "in": "header",
+        "required": true,
+        "description": "The installation these rows came through, held active by this tenant.",
+        "schema": { "$ref": "#/components/schemas/InstallationId" }
+      },
+      "ContentSha256": {
+        "name": "Costroid-Content-SHA256",
+        "in": "header",
+        "required": true,
+        "description": "The SHA-256 of the body in lower-case hexadecimal.",
+        "schema": { "$ref": "#/components/schemas/Sha256" }
+      },
+      "FocusVersion": {
+        "name": "Costroid-Focus-Version",
+        "in": "header",
+        "required": true,
+        "description": "The FOCUS version the rows declare.",
+        "schema": { "const": "1.4" }
+      },
+      "RunTokenHeader": {
+        "name": "Costroid-Run-Token",
+        "in": "header",
+        "required": false,
+        "description": "The sending job's own GitHub Actions ID token, minted with this tenant's rows audience. It names the run that sent the batch, and on a pull_request run the pull request. A batch that holds a token_verified row needs it. The platform never stores or logs it. README.md, section The run token, states the rules.",
+        "schema": { "$ref": "#/components/schemas/CompactJws" }
+      },
+      "MergeId": {
+        "name": "merge_id",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/MergeId" }
+      },
+      "MergeInstallationHeader": {
+        "name": "Costroid-Installation-Id",
+        "in": "header",
+        "required": true,
+        "description": "The installation the fact came through, held active by this tenant. A run token's owner is checked against it.",
+        "schema": { "$ref": "#/components/schemas/InstallationId" }
+      },
+      "MergeRunTokenHeader": {
+        "name": "Costroid-Run-Token",
+        "in": "header",
+        "required": false,
+        "description": "The sending job's own GitHub Actions ID token, minted with this tenant's rows audience, as on an export. The platform also reads its sha, ref, ref_type and ref_protected. Without it the fact is stored as unverified. The platform never stores or logs it. README.md, section The merge fact, states the rules.",
+        "schema": { "$ref": "#/components/schemas/CompactJws" }
+      },
+      "ReconciliationInstallationHeader": {
+        "name": "Costroid-Installation-Id",
+        "in": "header",
+        "required": false,
+        "description": "The installation the body came through, held active by this tenant. Required with Costroid-Run-Token, whose owner is checked against it.",
+        "schema": { "$ref": "#/components/schemas/InstallationId" }
+      },
+      "KeyId": {
+        "name": "key_id",
+        "in": "path",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/KeyId" }
+      },
+      "CredentialInstallationHeader": {
+        "name": "Costroid-Installation-Id",
+        "in": "header",
+        "required": true,
+        "description": "The installation the statement came through, held active by this tenant, as on an export. The run token's owner is checked against it. A request without it, or with one of another form, answers 400 TOOL_INPUT_INVALID.",
+        "schema": { "$ref": "#/components/schemas/InstallationId" }
+      },
+      "CredentialRunTokenHeader": {
+        "name": "Costroid-Run-Token",
+        "in": "header",
+        "required": true,
+        "description": "The attesting job's own GitHub Actions ID token, minted with this write's own audience, under CredentialAudience. A request without it answers 400 TOOL_INPUT_INVALID. The platform never stores or logs it. README.md, section The credential attestation, states the rules.",
+        "schema": { "$ref": "#/components/schemas/CompactJws" }
+      },
+      "ReconciliationRunTokenHeader": {
+        "name": "Costroid-Run-Token",
+        "in": "header",
+        "required": false,
+        "description": "The sending job's own GitHub Actions ID token, minted with this tenant's rows audience, as on an export. It proves only which run sent the body. The platform never stores or logs it.",
+        "schema": { "$ref": "#/components/schemas/CompactJws" }
+      }
+    },
+    "headers": {
+      "QuotaState": {
+        "description": "The most urgent state across the tenant's quotas after this request.",
+        "schema": { "$ref": "#/components/schemas/QuotaState" }
+      },
+      "NoStore": {
+        "description": "The answer holds a secret and is never cached.",
+        "schema": { "const": "no-store" }
+      },
+      "RetryAfter": {
+        "description": "Seconds until the refused request can succeed.",
+        "schema": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "AUTH_TOKEN_INVALID: the token is absent, unknown, expired or revoked. The four cases answer alike.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "AUTH_TOKEN_SCOPE: the token lacks the scope this operation names.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NotMounted": {
+        "description": "NOT_FOUND: the platform does not mount this version. It does not speak the version, or its integration paths are shut. The answer is the same for every path under /api/integration/ and every method, and its body is always examples/Error.not-mounted.json. A sender warns and goes on, and never fails a check on this answer. README.md, section Versions, states the rule.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "examples": {
+              "notMounted": {
+                "summary": "The one answer for a path the platform does not mount",
+                "externalValue": "examples/Error.not-mounted.json"
+              }
+            }
+          }
+        }
+      },
+      "QuotaExhausted": {
+        "description": "The request would pass a quota's limit. The error code is the quota's name in upper case, prefixed QUOTA_. Nothing was stored.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "Costroid-Quota-State": { "$ref": "#/components/headers/QuotaState" }
+        },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "TagSet": {
+        "description": "The tag set, by reference. Rows carry it in their Tags column.",
+        "$ref": "../../tags/v0.5/tags.schema.json"
+      },
+      "FocusRow": {
+        "description": "One record of an export body: a row of focus-row/v0.6 that does not state costroid/origin. A row from a developer's machine is not a run's row, and a batch that holds one fails ROW_ORIGIN_REFUSED.",
+        "allOf": [{ "$ref": "../../focus-row/v0.6/row.schema.json" }],
+        "type": "object",
+        "properties": {
+          "Tags": {
+            "type": "object",
+            "not": { "required": ["costroid/origin"] }
+          }
+        }
+      },
+      "Timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+      },
+      "Sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+      "ResourceId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+      "BatchId": {
+        "description": "Chosen by the sender and unique within the tenant. A retry of one batch reuses its id. From GitHub Actions it is repository_id, run_id and run_attempt joined by hyphens, so a retry of one run's send restates its batch and a re-run attempt adds a batch.",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]{1,128}$"
+      },
+      "InstallationId": {
+        "description": "The kind, a colon and the SCM's numeric id. github is a GitHub App installation. github-owner is the repository_owner_id of an account that runs only the Action. gitlab-namespace is a GitLab.com namespace_id. A name is never an id.",
+        "type": "string",
+        "pattern": "^(github|github-owner|gitlab-namespace):[1-9][0-9]{0,19}$"
+      },
+      "NumericId": {
+        "description": "An SCM's id for an owner, repository or project. Both SCMs state it as a string of digits.",
+        "type": "string",
+        "pattern": "^[1-9][0-9]{0,19}$"
+      },
+      "UnixTime": { "type": "integer", "minimum": 0 },
+      "CompactJws": {
+        "description": "Three base64url segments. RS256 only.",
+        "type": "string",
+        "maxLength": 16384,
+        "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+      },
+      "ProofAudience": {
+        "description": "The tenant the proof is for, as https://app.costroid.com/tenants/ and the tenant id. It must equal the audience of the tenant behind the bearer. One string, never a list.",
+        "type": "string",
+        "pattern": "^https://app\\.costroid\\.com/tenants/[A-Za-z0-9_-]{1,64}$"
+      },
+      "RunAudience": {
+        "description": "The audience of a run token: https://app.costroid.com/tenants/, the tenant id, then /rows. It must equal the rows audience of the tenant behind the bearer. One string, never a list. A proof's audience never matches it, and it never matches a proof's.",
+        "type": "string",
+        "pattern": "^https://app\\.costroid\\.com/tenants/[A-Za-z0-9_-]{1,64}/rows$"
+      },
+      "RunTokenClaims": {
+        "description": "The decoded payload of a run token from GitHub Actions. Other claims are ignored and not stored. repository is the name GitHub signed for this run, and the rows' costroid/repo is checked against github.com/ and repository, lower-cased whole, under README.md, section Letter case. An export does not read sha: on a pull_request run it names the merge commit, not the pull request's head. PUT /exports/{batch_id} reads event_name and ref too, under ExportRunTokenClaims, and PUT /merges/{merge_id} reads sha, ref, ref_type and ref_protected, under MergeRunTokenClaims. PUT /reconciliations reads the five alone.",
+        "type": "object",
+        "required": [
+          "iss",
+          "aud",
+          "iat",
+          "exp",
+          "repository",
+          "repository_id",
+          "repository_owner_id",
+          "run_id",
+          "run_attempt"
+        ],
+        "properties": {
+          "iss": { "const": "https://token.actions.githubusercontent.com" },
+          "aud": { "$ref": "#/components/schemas/RunAudience" },
+          "iat": { "$ref": "#/components/schemas/UnixTime" },
+          "exp": { "$ref": "#/components/schemas/UnixTime" },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+            "maxLength": 256
+          },
+          "repository_id": { "$ref": "#/components/schemas/NumericId" },
+          "repository_owner_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" }
+        }
+      },
+      "ExportRunTokenClaims": {
+        "description": "The decoded payload of a run token on PUT /exports/{batch_id}: the claims of RunTokenClaims, and two more the platform reads on this path, each a string. The token names pull request n only when event_name is pull_request and ref is refs/pull/n/merge, and then a token_verified row whose costroid/pr is not n fails its batch ROW_IDENTITY_MISMATCH. Under any other token a row's costroid/pr is the sender's statement, stored as sent, and the batch is not refused. A token that lacks either claim, or holds one of another type, fails verification.",
+        "type": "object",
+        "allOf": [{ "$ref": "#/components/schemas/RunTokenClaims" }],
+        "required": ["event_name", "ref"],
+        "properties": {
+          "event_name": { "description": "The event that started the run.", "type": "string" },
+          "ref": {
+            "description": "The ref the run is for. refs/pull/n/merge on a pull_request run.",
+            "type": "string"
+          }
+        }
+      },
+      "ProofHeader": {
+        "description": "The decoded JOSE header of a proof. One algorithm, so a verifier has one path.",
+        "type": "object",
+        "required": ["alg", "kid"],
+        "properties": {
+          "alg": { "const": "RS256" },
+          "kid": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      },
+      "GitHubCiClaims": {
+        "description": "The decoded payload of a CI proof from GitHub Actions. Other claims are ignored and not stored. repository_owner and repository are names, and they prove nothing.",
+        "type": "object",
+        "required": [
+          "iss",
+          "aud",
+          "iat",
+          "exp",
+          "repository_owner_id",
+          "repository_id",
+          "event_name"
+        ],
+        "properties": {
+          "iss": { "const": "https://token.actions.githubusercontent.com" },
+          "aud": { "$ref": "#/components/schemas/ProofAudience" },
+          "iat": { "$ref": "#/components/schemas/UnixTime" },
+          "exp": { "$ref": "#/components/schemas/UnixTime" },
+          "repository_owner_id": { "$ref": "#/components/schemas/NumericId" },
+          "repository_id": { "$ref": "#/components/schemas/NumericId" },
+          "event_name": {
+            "description": "A schedule runs only on the default branch. A push counts only on a protected ref. Every other event is refused.",
+            "enum": ["schedule", "push"]
+          },
+          "ref_protected": {
+            "description": "Read only for a push. A string, the true or false a recorded GitHub Actions run 44907953360 and run 45109326900 read.",
+            "type": "string"
+          }
+        },
+        "if": { "properties": { "event_name": { "const": "push" } } },
+        "then": {
+          "required": ["ref_protected"],
+          "properties": { "ref_protected": { "const": "true" } }
+        }
+      },
+      "GitLabCiClaims": {
+        "description": "The decoded payload of a CI proof from GitLab.com. Other claims are ignored and not stored. namespace_path and project_path are names, and they prove nothing.",
+        "type": "object",
+        "required": [
+          "iss",
+          "aud",
+          "iat",
+          "exp",
+          "namespace_id",
+          "project_id",
+          "ref_protected",
+          "pipeline_source"
+        ],
+        "properties": {
+          "iss": { "const": "https://gitlab.com" },
+          "aud": { "$ref": "#/components/schemas/ProofAudience" },
+          "iat": { "$ref": "#/components/schemas/UnixTime" },
+          "exp": { "$ref": "#/components/schemas/UnixTime" },
+          "namespace_id": { "$ref": "#/components/schemas/NumericId" },
+          "project_id": { "$ref": "#/components/schemas/NumericId" },
+          "ref_protected": { "const": "true" },
+          "pipeline_source": { "enum": ["push", "web", "schedule"] }
+        }
+      },
+      "AttestationClaims": {
+        "description": "The decoded payload of an App attestation, signed by Costroid's hosted service.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["iss", "aud", "sub", "owner_id", "delivery", "iat", "exp"],
+        "properties": {
+          "iss": { "const": "https://app.costroid.com/installation-attestation" },
+          "aud": { "$ref": "#/components/schemas/ProofAudience" },
+          "sub": {
+            "description": "The installation.",
+            "type": "string",
+            "pattern": "^github:[1-9][0-9]{0,19}$"
+          },
+          "owner_id": {
+            "description": "The id of the account the App is installed on.",
+            "$ref": "#/components/schemas/NumericId"
+          },
+          "delivery": {
+            "description": "The id of the signed GitHub delivery behind this attestation.",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{1,64}$"
+          },
+          "iat": { "$ref": "#/components/schemas/UnixTime" },
+          "exp": { "$ref": "#/components/schemas/UnixTime" }
+        }
+      },
+      "InstallationBinding": {
+        "description": "The body of PUT /installations/{installation_id}. The proof's signed claims name the installation and the tenant. The proof is never stored and never logged.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["proof"],
+        "properties": {
+          "proof": { "$ref": "#/components/schemas/CompactJws" }
+        }
+      },
+      "ProofKind": { "enum": ["app_attestation", "ci_oidc"] },
+      "InstallationStatus": {
+        "description": "active: this tenant holds the owner. revoked: the binding was given up, or the App was uninstalled or suspended. displaced: a stated rule gave the owner to another tenant.",
+        "enum": ["active", "revoked", "displaced"]
+      },
+      "Scope": {
+        "enum": [
+          "identity:read",
+          "installations:write",
+          "rows:write",
+          "merges:write",
+          "credentials:write",
+          "reconciliations:write",
+          "quotas:read"
+        ]
+      },
+      "Tenant": {
+        "description": "An organization. Costroid and Costroid Platform share it.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "region"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ResourceId" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "region": {
+            "description": "Fixed at sign-up.",
+            "type": "string",
+            "pattern": "^[a-z]{2}$"
+          }
+        }
+      },
+      "Account": {
+        "description": "The person who issued the token, by id. No address leaves through this contract.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ResourceId" },
+          "role": { "enum": ["admin", "member"] }
+        }
+      },
+      "Token": {
+        "description": "A token's metadata. Never the secret.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "scopes", "created_at", "expires_at", "last_used_at"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ResourceId" },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/components/schemas/Scope" }
+          },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "last_used_at": {
+            "oneOf": [{ "$ref": "#/components/schemas/Timestamp" }, { "type": "null" }]
+          }
+        }
+      },
+      "TokenRotation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["secret", "token", "previous_token_expires_at"],
+        "properties": {
+          "secret": {
+            "description": "Shown once.",
+            "type": "string",
+            "pattern": "^costroid_it_[A-Za-z0-9_-]{43}$"
+          },
+          "token": { "$ref": "#/components/schemas/Token" },
+          "previous_token_expires_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "Installation": {
+        "description": "One binding. An ended binding stays listed, because the tenant's rows still name it.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "tenant_id",
+          "owner_id",
+          "status",
+          "proof_kind",
+          "bound_at",
+          "proven_at",
+          "ended_at"
+        ],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/InstallationId" },
+          "tenant_id": { "$ref": "#/components/schemas/ResourceId" },
+          "owner_id": {
+            "description": "The SCM's id for the owner. One owner belongs to one tenant at a time, across every kind of id.",
+            "$ref": "#/components/schemas/NumericId"
+          },
+          "status": { "$ref": "#/components/schemas/InstallationStatus" },
+          "proof_kind": { "$ref": "#/components/schemas/ProofKind" },
+          "bound_at": { "$ref": "#/components/schemas/Timestamp" },
+          "proven_at": {
+            "description": "The issue time of the newest proof accepted for this binding.",
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "ended_at": {
+            "description": "Null while the binding is active.",
+            "oneOf": [{ "$ref": "#/components/schemas/Timestamp" }, { "type": "null" }]
+          }
+        },
+        "if": { "properties": { "status": { "const": "active" } } },
+        "then": { "properties": { "ended_at": { "type": "null" } } },
+        "else": { "properties": { "ended_at": { "type": "string" } } }
+      },
+      "Contract": {
+        "description": "The versions this server speaks.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "tag_set", "focus_row"],
+        "properties": {
+          "version": { "const": "0.7" },
+          "tag_set": { "const": "tags/v0.5" },
+          "focus_row": { "const": "focus-row/v0.6" }
+        }
+      },
+      "Identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["contract", "tenant", "account", "token", "installations"],
+        "properties": {
+          "contract": { "$ref": "#/components/schemas/Contract" },
+          "tenant": { "$ref": "#/components/schemas/Tenant" },
+          "account": { "$ref": "#/components/schemas/Account" },
+          "token": { "$ref": "#/components/schemas/Token" },
+          "installations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Installation" }
+          }
+        }
+      },
+      "ExportStatus": {
+        "enum": ["accepted", "ingesting", "ingested", "failed"]
+      },
+      "ExportFailure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": {
+            "description": "Stable. README.md, section The export endpoint, lists the codes. A client treats a code it does not know as a failed batch.",
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "message": { "type": "string" }
+        },
+        "allOf": [
+          {
+            "description": "The platform's sentence for a row whose cost is not its unit price times its quantity, with the count of such rows.",
+            "if": { "properties": { "code": { "const": "ROW_COST_INCONSISTENT" } } },
+            "then": {
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]* row\\(s\\) carry a ListCost or ContractedCost that is not its unit price times PricingQuantity\\.$"
+                }
+              }
+            }
+          },
+          {
+            "description": "The platform's sentence for a CSV value past 12 fractional digits.",
+            "if": { "properties": { "code": { "const": "EXCESS_NUMERIC_PRECISION" } } },
+            "then": {
+              "properties": {
+                "message": {
+                  "const": "FOCUS numeric columns are stored as DECIMAL(38,12), which holds 12 fractional digits exactly. These cells need more, and storing them would mean keeping a different number from the one this file states. Round them to 12 fractional digits yourself and upload again, so the rounding is yours rather than ours."
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ExportBatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "batch_id",
+          "installation_id",
+          "status",
+          "sha256",
+          "focus_version",
+          "received_at",
+          "rows",
+          "dropped_tag_keys",
+          "failure"
+        ],
+        "properties": {
+          "batch_id": { "$ref": "#/components/schemas/BatchId" },
+          "installation_id": { "$ref": "#/components/schemas/InstallationId" },
+          "status": { "$ref": "#/components/schemas/ExportStatus" },
+          "sha256": { "$ref": "#/components/schemas/Sha256" },
+          "focus_version": { "const": "1.4" },
+          "received_at": { "$ref": "#/components/schemas/Timestamp" },
+          "rows": {
+            "description": "Null until the batch has ingested.",
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "dropped_tag_keys": {
+            "description": "How many Tags entries outside costroid/ were dropped before storage, across the batch's rows. Null until the batch has ingested. Names and values are never kept.",
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "failure": {
+            "description": "Null unless status is failed.",
+            "oneOf": [{ "$ref": "#/components/schemas/ExportFailure" }, { "type": "null" }]
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "ingested" } } },
+            "then": {
+              "properties": {
+                "rows": { "type": "integer" },
+                "dropped_tag_keys": { "type": "integer" },
+                "failure": { "type": "null" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "status": { "const": "failed" } } },
+            "then": {
+              "properties": {
+                "rows": { "type": "null" },
+                "dropped_tag_keys": { "type": "null" },
+                "failure": { "type": "object" }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "status": { "enum": ["accepted", "ingesting"] } } },
+            "then": {
+              "properties": {
+                "rows": { "type": "null" },
+                "dropped_tag_keys": { "type": "null" },
+                "failure": { "type": "null" }
+              }
+            }
+          }
+        ]
+      },
+      "QuotaName": {
+        "description": "exports_per_day counts the batches accepted for ingest in a UTC day, restatements included. A repeat of bytes already held is not counted. export_bytes_per_day sums the bodies of those batches in bytes. max_batch_bytes bounds one body in bytes and has no window. reconciliations_per_day counts the PUT /reconciliations bodies stored in a UTC day. max_reconciliation_lines bounds the lines of one such body, max_reconciliation_bytes its size in bytes and max_reconciliation_line_bytes one line in bytes. max_reconciliation_range_days bounds the days one GET /reconciliations spans. The four max_reconciliation_ limits have no window. reconciliations_per_day, max_reconciliation_lines, max_reconciliation_bytes and max_reconciliation_line_bytes can only rise.",
+        "enum": [
+          "exports_per_day",
+          "export_bytes_per_day",
+          "max_batch_bytes",
+          "reconciliations_per_day",
+          "max_reconciliation_lines",
+          "max_reconciliation_bytes",
+          "max_reconciliation_line_bytes",
+          "max_reconciliation_range_days"
+        ]
+      },
+      "QuotaState": {
+        "description": "ok, approaching at 80% of the limit, or exhausted.",
+        "enum": ["ok", "approaching", "exhausted"]
+      },
+      "QuotaSignal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "limit", "used", "state", "window_resets_at"],
+        "properties": {
+          "name": { "$ref": "#/components/schemas/QuotaName" },
+          "limit": {
+            "description": "Null means no limit applies to this tenant.",
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "used": { "type": "integer", "minimum": 0 },
+          "state": { "$ref": "#/components/schemas/QuotaState" },
+          "window_resets_at": {
+            "description": "Null for a limit with no window.",
+            "oneOf": [{ "$ref": "#/components/schemas/Timestamp" }, { "type": "null" }]
+          }
+        }
+      },
+      "QuotaReport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["as_of", "quotas"],
+        "properties": {
+          "as_of": { "$ref": "#/components/schemas/Timestamp" },
+          "quotas": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/QuotaSignal" }
+          }
+        }
+      },
+      "Error": {
+        "description": "Every refusal. The code is the contract, the message is for people.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      },
+      "ExportRefusalCode": {
+        "description": "Every synchronous refusal of PUT /exports/{batch_id} that is not about the bearer or a quota. Each stores nothing.",
+        "enum": [
+          "AUTH_TOKEN_SCOPE",
+          "INSTALLATION_NOT_BOUND",
+          "RUN_TOKEN_INVALID",
+          "RUN_TOKEN_OWNER_MISMATCH",
+          "EXPORT_BATCH_BUSY",
+          "EXPORT_BATCH_RUN_BOUND",
+          "FILE_TOO_LARGE",
+          "HASH_MISMATCH",
+          "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
+        ]
+      },
+      "ExportRefusal": {
+        "description": "A refused export. Nothing was stored. AUTH_TOKEN_SCOPE answers the platform's one sentence for it.",
+        "type": "object",
+        "allOf": [{ "$ref": "#/components/schemas/Error" }],
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "$ref": "#/components/schemas/ExportRefusalCode" }
+            },
+            "if": { "properties": { "code": { "const": "AUTH_TOKEN_SCOPE" } } },
+            "then": {
+              "properties": {
+                "message": {
+                  "const": "The integration token does not carry the scope this request needs."
+                }
+              }
+            }
+          }
+        }
+      },
+      "InstallationRefusalCode": {
+        "enum": [
+          "INSTALLATION_PROOF_MISSING",
+          "INSTALLATION_PROOF_ISSUER_UNTRUSTED",
+          "INSTALLATION_PROOF_SIGNATURE_INVALID",
+          "INSTALLATION_PROOF_AUDIENCE_MISMATCH",
+          "INSTALLATION_PROOF_EXPIRED",
+          "INSTALLATION_PROOF_CLAIMS_INVALID",
+          "INSTALLATION_PROOF_UNPROTECTED_RUN",
+          "INSTALLATION_PROOF_SUBJECT_MISMATCH",
+          "INSTALLATION_PROOF_KEYS_UNAVAILABLE",
+          "INSTALLATION_BOUND_ELSEWHERE"
+        ]
+      },
+      "InstallationRefusal": {
+        "description": "Every refusal of a proof or a binding.",
+        "type": "object",
+        "allOf": [{ "$ref": "#/components/schemas/Error" }],
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "$ref": "#/components/schemas/InstallationRefusalCode" }
+            }
+          }
+        }
+      },
+      "BindingHolder": {
+        "description": "The binding of this owner that the platform holds when the request arrives.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "tenant_id", "proof_kind", "status", "changed_at"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/InstallationId" },
+          "tenant_id": { "$ref": "#/components/schemas/ResourceId" },
+          "proof_kind": { "$ref": "#/components/schemas/ProofKind" },
+          "status": { "$ref": "#/components/schemas/InstallationStatus" },
+          "changed_at": {
+            "description": "proven_at for an active binding, ended_at for one that ended.",
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "BindingCase": {
+        "description": "A test vector, never a wire shape: what one PUT /installations/{installation_id} sees once its proof has decoded, and what it must answer. It assumes a proof whose signature verifies. An implementation runs these files.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tenant_id",
+          "installation_id",
+          "at",
+          "keys_available",
+          "claims",
+          "holder",
+          "refusal",
+          "effect"
+        ],
+        "properties": {
+          "tenant_id": { "$ref": "#/components/schemas/ResourceId" },
+          "installation_id": { "$ref": "#/components/schemas/InstallationId" },
+          "at": { "$ref": "#/components/schemas/Timestamp" },
+          "keys_available": { "type": "boolean" },
+          "claims": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/GitHubCiClaims" },
+              { "$ref": "#/components/schemas/GitLabCiClaims" },
+              { "$ref": "#/components/schemas/AttestationClaims" }
+            ]
+          },
+          "holder": {
+            "oneOf": [{ "$ref": "#/components/schemas/BindingHolder" }, { "type": "null" }]
+          },
+          "refusal": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/InstallationRefusalCode" },
+              { "type": "null" }
+            ]
+          },
+          "effect": { "enum": ["bound", "renewed", "unchanged", "displaced", null] }
+        }
+      },
+      "MergeId": {
+        "description": "Chosen by the sender and unique within the tenant. From GitHub Actions it is repository_id and the pull request's number joined by a hyphen, in the form a batch id has.",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]{1,128}$"
+      },
+      "Repo": {
+        "description": "The repository: host and path, no scheme, as tags/v0.5 writes costroid/repo, in lower case, the whole string with its host. An upper-case letter refuses the body, because two spellings of one repository would read as two. README.md, section Letter case, states the rule.",
+        "type": "string",
+        "pattern": "^[a-z0-9.-]+(/[a-z0-9._~%-]+){1,8}$",
+        "maxLength": 256
+      },
+      "CommitSha": {
+        "description": "40 hexadecimal characters for SHA-1, 64 for SHA-256, lower case.",
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "PullRequestNumber": {
+        "description": "The pull request's number, the number costroid/pr carries, as a JSON integer.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "MergeDocument": {
+        "description": "The body of PUT /merges/{merge_id}: this pull request of this repository merged at this instant as this commit. No other key is read in this version, and an unknown key refuses the body.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "pull_request", "merged_at", "merge_commit_sha"],
+        "properties": {
+          "repo": { "$ref": "#/components/schemas/Repo" },
+          "pull_request": { "$ref": "#/components/schemas/PullRequestNumber" },
+          "merged_at": {
+            "description": "The instant the pull request merged, in UTC, to the second.",
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "merge_commit_sha": {
+            "description": "The commit the merge put on the base branch.",
+            "$ref": "#/components/schemas/CommitSha"
+          }
+        }
+      },
+      "RunIdentity": {
+        "description": "token_verified: a run token verified, its sha is merge_commit_sha, its ref_type is branch, its ref begins refs/heads/ and its ref_protected is the string true. unverified: any other request.",
+        "enum": ["token_verified", "unverified"]
+      },
+      "BranchRef": {
+        "description": "A branch as the run token's ref claim names it: refs/heads/ and the branch's name.",
+        "type": "string",
+        "pattern": "^refs/heads/.+$"
+      },
+      "MergeFact": {
+        "description": "A stored merge fact: the document as stored, its id, its grade and the branch the run token named.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "merge_id",
+          "repo",
+          "pull_request",
+          "merged_at",
+          "merge_commit_sha",
+          "run_identity",
+          "ref"
+        ],
+        "properties": {
+          "merge_id": { "$ref": "#/components/schemas/MergeId" },
+          "repo": { "$ref": "#/components/schemas/Repo" },
+          "pull_request": { "$ref": "#/components/schemas/PullRequestNumber" },
+          "merged_at": { "$ref": "#/components/schemas/Timestamp" },
+          "merge_commit_sha": { "$ref": "#/components/schemas/CommitSha" },
+          "run_identity": { "$ref": "#/components/schemas/RunIdentity" },
+          "ref": {
+            "description": "The branch from the run token's ref claim, never from the document. Null on an unverified fact.",
+            "oneOf": [{ "$ref": "#/components/schemas/BranchRef" }, { "type": "null" }]
+          }
+        },
+        "if": { "properties": { "run_identity": { "const": "token_verified" } } },
+        "then": { "properties": { "ref": { "$ref": "#/components/schemas/BranchRef" } } },
+        "else": { "properties": { "ref": { "type": "null" } } }
+      },
+      "MergeRunTokenClaims": {
+        "description": "The decoded payload of a run token on PUT /merges/{merge_id}: the claims of RunTokenClaims, and four more the platform reads on this path, each a string. A token whose sha is not merge_commit_sha, whose ref_type is not branch, whose ref does not begin refs/heads/, or whose ref_protected is not the string true, or that lacks any of the four, stores the fact as unverified. A claim of another type fails verification.",
+        "type": "object",
+        "allOf": [{ "$ref": "#/components/schemas/RunTokenClaims" }],
+        "properties": {
+          "sha": { "description": "The commit the run is for.", "type": "string" },
+          "ref": {
+            "description": "The ref the run is for. A token_verified fact stores it.",
+            "type": "string"
+          },
+          "ref_type": { "description": "branch or tag.", "type": "string" },
+          "ref_protected": {
+            "description": "Whether the ref is protected, as the string true or false, the form the installation proofs read for a push.",
+            "type": "string"
+          }
+        }
+      },
+      "MergeRefusalCode": {
+        "description": "Every refusal of PUT and GET /merges/{merge_id} that is not about the bearer or the path's form. Each stores nothing.",
+        "enum": [
+          "AUTH_TOKEN_SCOPE",
+          "INSTALLATION_NOT_BOUND",
+          "RUN_TOKEN_INVALID",
+          "RUN_TOKEN_OWNER_MISMATCH",
+          "MERGE_FACT_CONFLICT",
+          "MERGE_FACT_IDENTITY_MISMATCH",
+          "MERGE_FACT_INVALID",
+          "MERGE_FACT_NOT_FOUND",
+          "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
+        ]
+      },
+      "MergeRefusal": {
+        "description": "A refused merge fact. Nothing was stored.",
+        "type": "object",
+        "allOf": [{ "$ref": "#/components/schemas/Error" }],
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "$ref": "#/components/schemas/MergeRefusalCode" }
+            }
+          }
+        }
+      },
+      "KeyId": {
+        "description": "A gateway key's id: 64 lower-case hexadecimal characters, the value the key's rows carry in SubAccountId. A session id is never a key id.",
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "CredentialAudience": {
+        "description": "The audience of a run token on a credential write: https://app.costroid.com/tenants/, the tenant id, /credentials/, the key id, the run id and the run attempt, each after a slash, and /spend after them on the spend path. It must equal the audience the platform builds from the bearer's tenant, the path and the body, compared whole and never by prefix. One string, never a list. A token fits one write and no other path.",
+        "type": "string",
+        "pattern": "^https://app\\.costroid\\.com/tenants/[A-Za-z0-9_-]{1,64}/credentials/[0-9a-f]{64}/[1-9][0-9]{0,19}/[1-9][0-9]{0,19}(/spend)?$"
+      },
+      "CredentialVerifiedClaims": {
+        "description": "The claims a credential path verifies before it asks whether the run is protected: the issuer, the audience, the window and the five claims of RunTokenClaims, under a credential audience. A token whose issuer is not GitHub Actions, or that fails its signature, its window or its audience, answers RUN_TOKEN_INVALID. Its repository_owner_id is compared with the bound installation's owner after the signature, the window and the audience, and another owner answers RUN_TOKEN_OWNER_MISMATCH: a check ahead of them would let an unsigned token learn which owner an installation is bound to.",
+        "type": "object",
+        "required": [
+          "iss",
+          "aud",
+          "iat",
+          "exp",
+          "repository",
+          "repository_id",
+          "repository_owner_id",
+          "run_id",
+          "run_attempt"
+        ],
+        "properties": {
+          "iss": { "const": "https://token.actions.githubusercontent.com" },
+          "aud": { "$ref": "#/components/schemas/CredentialAudience" },
+          "iat": { "$ref": "#/components/schemas/UnixTime" },
+          "exp": { "$ref": "#/components/schemas/UnixTime" },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+            "maxLength": 256
+          },
+          "repository_id": { "$ref": "#/components/schemas/NumericId" },
+          "repository_owner_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_id": {
+            "description": "The attesting run or the closing run, never the run a key is for.",
+            "$ref": "#/components/schemas/NumericId"
+          },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" }
+        }
+      },
+      "WorkflowRunEvent": {
+        "description": "The event a credential path takes: event_name is workflow_run, judged apart from the branch. A pull_request_target, push, workflow_dispatch or schedule run can sit on a protected default branch, so its ref and ref_protected pass ProtectedBranchClaims, and its event alone refuses it. A pull_request_target run sits on the default branch and states it protected, though a pull request starts it.",
+        "type": "object",
+        "required": ["event_name"],
+        "properties": {
+          "event_name": {
+            "description": "A run that workflow_run started runs the workflow file of the default branch, so a pull request cannot change what it executes.",
+            "const": "workflow_run"
+          }
+        }
+      },
+      "ProtectedBranchClaims": {
+        "description": "The branch a credential path takes: ref begins refs/heads/ and ref_protected is the string true.",
+        "type": "object",
+        "required": ["ref", "ref_protected"],
+        "properties": {
+          "ref": {
+            "description": "The branch the run is on: the default branch, for a run that workflow_run started.",
+            "$ref": "#/components/schemas/BranchRef"
+          },
+          "ref_protected": {
+            "description": "The string true. A branch that cannot be protected, as on a private repository on a plan with no branch protection, states false, and its run never states a credential.",
+            "const": "true"
+          }
+        }
+      },
+      "ProtectedRunClaims": {
+        "description": "The claims that make a well-signed run token a protected workflow_run run's: WorkflowRunEvent and ProtectedBranchClaims, each judged on its own. A token whose claim is absent, holds another value, or holds a value of another type answers CREDENTIAL_RUN_UNPROTECTED, after RUN_TOKEN_INVALID is ruled out. A pull request's own run never passes, nor a run of a branch that is not protected, nor a run of another event on a protected branch.",
+        "type": "object",
+        "allOf": [
+          { "$ref": "#/components/schemas/WorkflowRunEvent" },
+          { "$ref": "#/components/schemas/ProtectedBranchClaims" }
+        ]
+      },
+      "CredentialRunTokenClaims": {
+        "description": "The decoded payload of a run token that PUT /credentials/{key_id} and PUT /credentials/{key_id}/spend take: CredentialVerifiedClaims and ProtectedRunClaims both. Other claims are ignored and not stored.",
+        "type": "object",
+        "allOf": [
+          { "$ref": "#/components/schemas/CredentialVerifiedClaims" },
+          { "$ref": "#/components/schemas/ProtectedRunClaims" }
+        ]
+      },
+      "Spend": {
+        "description": "The gateway's count of a key's spend: a decimal string of zero or more, digits with no leading zero, and an optional point followed by 1 to 12 digits, at most 64 characters in all. No sign and no exponent. Never a JSON number. The same figure is the same string: 0.412 and 0.4120 are two figures.",
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+      },
+      "CredentialAttestationBody": {
+        "description": "The body of PUT /credentials/{key_id}: the run a key is for, and that run's head commit as GitHub's workflow_run event states it. No other key is read. An unknown key, a body that is not UTF-8 or not a JSON object, and a body over 16384 bytes answer 400 TOOL_INPUT_INVALID. The body names no pull request: a row is filed under the pull request its own run token names.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "run_attempt", "head_sha"],
+        "properties": {
+          "run_id": {
+            "description": "The run a key is for: the workflow_run event's workflow_run.id.",
+            "$ref": "#/components/schemas/NumericId"
+          },
+          "run_attempt": {
+            "description": "The attempt of that run: the event's workflow_run.run_attempt.",
+            "$ref": "#/components/schemas/NumericId"
+          },
+          "head_sha": {
+            "description": "The head commit of that run: the event's workflow_run.head_sha.",
+            "$ref": "#/components/schemas/CommitSha"
+          }
+        }
+      },
+      "CredentialSpendBody": {
+        "description": "The body of PUT /credentials/{key_id}/spend: the run a key is for, and the gateway's own count of the key's spend in USD, read once it has settled. No other key is read. An unknown key, a body that is not UTF-8 or not a JSON object, and a body over 16384 bytes answer 400 TOOL_INPUT_INVALID.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "run_attempt", "currency", "spend"],
+        "properties": {
+          "run_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" },
+          "currency": {
+            "description": "The gateway counts in USD alone in this version.",
+            "const": "USD"
+          },
+          "spend": { "$ref": "#/components/schemas/Spend" }
+        }
+      },
+      "AttestingRun": {
+        "description": "The run that made a credential statement, read from its run token: its run, its attempt and its branch.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "run_attempt", "ref"],
+        "properties": {
+          "run_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" },
+          "ref": { "$ref": "#/components/schemas/BranchRef" }
+        }
+      },
+      "CredentialAttestation": {
+        "description": "A stored attestation: the key, the repository from the run token, the run and head from the body, and the attesting run from the run token.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key_id", "repo", "run_id", "run_attempt", "head_sha", "attested_by"],
+        "properties": {
+          "key_id": { "$ref": "#/components/schemas/KeyId" },
+          "repo": {
+            "description": "github.com/ and the run token's repository, lower-cased whole, under README.md, section Letter case.",
+            "$ref": "#/components/schemas/Repo"
+          },
+          "run_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" },
+          "head_sha": { "$ref": "#/components/schemas/CommitSha" },
+          "attested_by": { "$ref": "#/components/schemas/AttestingRun" }
+        }
+      },
+      "CredentialSpend": {
+        "description": "A stored spend: the key, the repository from the run token, the run a key is for from the body, the gateway's figure, and the closing run from the run token. The figure is the gateway's, in the gateway's own prices, and a reader shows it beside the rows' figure, never as it and never added to it.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key_id", "repo", "run_id", "run_attempt", "currency", "spend", "attested_by"],
+        "properties": {
+          "key_id": { "$ref": "#/components/schemas/KeyId" },
+          "repo": { "$ref": "#/components/schemas/Repo" },
+          "run_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" },
+          "currency": { "const": "USD" },
+          "spend": { "$ref": "#/components/schemas/Spend" },
+          "attested_by": { "$ref": "#/components/schemas/AttestingRun" }
+        }
+      },
+      "CredentialRefusalCode": {
+        "description": "Every refusal of PUT /credentials/{key_id} and PUT /credentials/{key_id}/spend but the bearer's own, in the order the platform checks them: a token with no scope of this version, the input, the scope the path needs, the installation's binding, the run token's issuer, the installation's kind, GitHub's key set, the token's form and signature, its claims' form, issuer and audience, its window, its owner, whether its run is protected, then the store. Each stores nothing.",
+        "enum": [
+          "AUTH_TOKEN_SCOPE",
+          "TOOL_INPUT_INVALID",
+          "INSTALLATION_NOT_BOUND",
+          "RUN_TOKEN_INVALID",
+          "RUN_TOKEN_OWNER_MISMATCH",
+          "INSTALLATION_PROOF_KEYS_UNAVAILABLE",
+          "CREDENTIAL_RUN_UNPROTECTED",
+          "CREDENTIAL_ATTESTING_RUN_USED",
+          "CREDENTIAL_ATTESTED_ELSEWHERE",
+          "CREDENTIAL_NOT_ATTESTED",
+          "CREDENTIAL_SPEND_HELD"
+        ]
+      },
+      "CredentialRefusal": {
+        "description": "A refused credential statement. Nothing was stored.",
+        "type": "object",
+        "allOf": [{ "$ref": "#/components/schemas/Error" }],
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "$ref": "#/components/schemas/CredentialRefusalCode" }
+            }
+          }
+        }
+      },
+      "CredentialCase": {
+        "description": "A test vector, never a wire shape: what one PUT /credentials/{key_id} or PUT /credentials/{key_id}/spend sees once its bearer token is valid, and what it must answer. The checks run in the order of README.md, section The order of checks, and the first failure answers. scopes, key_id, body and claims are as sent, so a vector can fail more than one check. held lists the attestations and spends this tenant holds. An implementation runs these files.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tenant_id",
+          "at",
+          "scopes",
+          "installation",
+          "keys_available",
+          "signature_verifies",
+          "write",
+          "key_id",
+          "body",
+          "claims",
+          "held",
+          "refusal",
+          "effect"
+        ],
+        "properties": {
+          "tenant_id": { "$ref": "#/components/schemas/ResourceId" },
+          "at": { "$ref": "#/components/schemas/Timestamp" },
+          "scopes": {
+            "description": "The scopes of the bearer's integration token, as stored. A scope this version does not define may stand here.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+          },
+          "installation": {
+            "description": "The installation in Costroid-Installation-Id: its owner, and whether this tenant holds an active binding of it.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "owner_id", "bound"],
+            "properties": {
+              "id": { "$ref": "#/components/schemas/InstallationId" },
+              "owner_id": { "$ref": "#/components/schemas/NumericId" },
+              "bound": { "type": "boolean" }
+            }
+          },
+          "keys_available": {
+            "description": "Whether GitHub's key set can be read.",
+            "type": "boolean"
+          },
+          "signature_verifies": {
+            "description": "Whether the run token is a compact JWS whose RS256 signature verifies against GitHub's key set.",
+            "type": "boolean"
+          },
+          "write": {
+            "description": "attestation is PUT /credentials/{key_id}, spend is PUT /credentials/{key_id}/spend.",
+            "enum": ["attestation", "spend"]
+          },
+          "key_id": {
+            "description": "The key id in the path as sent, checked against KeyId.",
+            "type": "string"
+          },
+          "body": {
+            "description": "The body as sent, any JSON value, checked against CredentialAttestationBody or CredentialSpendBody and against 16384 bytes."
+          },
+          "claims": {
+            "description": "The run token's decoded payload as sent, checked against CredentialVerifiedClaims and ProtectedRunClaims.",
+            "type": "object"
+          },
+          "held": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attestations", "spends"],
+            "properties": {
+              "attestations": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/CredentialAttestation" }
+              },
+              "spends": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/CredentialSpend" }
+              }
+            }
+          },
+          "refusal": {
+            "oneOf": [{ "$ref": "#/components/schemas/CredentialRefusalCode" }, { "type": "null" }]
+          },
+          "effect": { "enum": ["stored", "unchanged", null] }
+        }
+      },
+      "IngestCase": {
+        "description": "A test vector, never a wire shape: the run token a batch came with, the Tags of its rows, and the failure the batch must end with, or null when it ingests. The checks run in order, and the first failure answers: a row that states costroid/origin, ROW_ORIGIN_REFUSED; a Tags cell that names one costroid/ key twice, UNPARSEABLE_FILE; a token_verified row in a batch without a run token, RUN_TOKEN_MISSING; a token_verified row whose run, repository or pull request is not the run token's, ROW_IDENTITY_MISMATCH; then the cost check and the profile check, as in version 0.6. An implementation runs these files.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run", "rows", "refusal", "effect"],
+        "properties": {
+          "run": {
+            "oneOf": [{ "$ref": "#/components/schemas/ExportRunTokenClaims" }, { "type": "null" }]
+          },
+          "rows": {
+            "description": "Each row's Tags: the parsed object, or the cell's text where the cell names a key twice, which a parsed object cannot show.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "oneOf": [
+                { "$ref": "#/components/schemas/TagSet" },
+                { "type": "string", "minLength": 2, "maxLength": 8192 }
+              ]
+            }
+          },
+          "refusal": {
+            "enum": [
+              "ROW_ORIGIN_REFUSED",
+              "UNPARSEABLE_FILE",
+              "RUN_TOKEN_MISSING",
+              "ROW_IDENTITY_MISMATCH",
+              null
+            ]
+          },
+          "effect": { "enum": ["ingested", null] }
+        }
+      },
+      "RestatementCase": {
+        "description": "A test vector, never a wire shape: a PUT /exports/{batch_id} whose batch_id is held and whose bytes differ, once its run token, if any, has verified, and what it must answer. held states whether the batch's active rows hold token_verified rows, and the run whose token sent them. An implementation runs these files.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["batch_id", "held", "run", "refusal", "effect"],
+        "properties": {
+          "batch_id": { "$ref": "#/components/schemas/BatchId" },
+          "held": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["token_verified", "run"],
+            "properties": {
+              "token_verified": { "type": "boolean" },
+              "run": {
+                "oneOf": [{ "$ref": "#/components/schemas/RunReference" }, { "type": "null" }]
+              }
+            },
+            "if": { "properties": { "token_verified": { "const": true } } },
+            "then": { "properties": { "run": { "type": "object" } } }
+          },
+          "run": {
+            "description": "The run the request's verified run token names. Null when the request carries none.",
+            "oneOf": [{ "$ref": "#/components/schemas/RunReference" }, { "type": "null" }]
+          },
+          "refusal": { "enum": ["EXPORT_BATCH_RUN_BOUND", null] },
+          "effect": { "enum": ["restated", null] }
+        }
+      },
+      "Day": {
+        "description": "A UTC day.",
+        "type": "string",
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+      },
+      "Decimal": {
+        "description": "An amount: an optional leading minus, digits, and an optional point followed by 1 to 30 digits, at most 64 characters in all. No exponent and no leading plus. Never a JSON number. A provider's figure is carried as the provider states it, and a derived figure inherits its scale.",
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^-?[0-9]+(\\.[0-9]{1,30})?$"
+      },
+      "NonNegativeDecimal": {
+        "description": "An amount that is never negative: digits, and an optional point followed by 1 to 30 digits, at most 64 characters in all. No exponent and no sign. Never a JSON number.",
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[0-9]+(\\.[0-9]{1,30})?$"
+      },
+      "TokenCount": {
+        "description": "A whole number of tokens: digits only, at most 20. Never a JSON number.",
+        "type": "string",
+        "pattern": "^[0-9]{1,20}$"
+      },
+      "TokenDelta": {
+        "description": "A difference of two token counts: an optional leading minus and digits only, at most 20 digits.",
+        "type": "string",
+        "pattern": "^-?[0-9]{1,20}$"
+      },
+      "Currency": {
+        "description": "An ISO 4217 code.",
+        "type": "string",
+        "pattern": "^[A-Z]{3}$"
+      },
+      "ReconciliationSource": {
+        "description": "The provider whose report the row was compared with, as the sender names it: anthropic or openai from Costroid.",
+        "type": "string",
+        "pattern": "^[a-z0-9_-]{1,64}$"
+      },
+      "Credential": {
+        "description": "The rows' SubAccountId: the key, workspace, project or service account the rows spent on.",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
+      "ReconciliationState": {
+        "description": "The verdict on tokens and prices. matched: every class landed within 1% and every price matched. tokens_miss: a class missed 1%, a defect. price_miss: every class matched and a price missed the catalog, a defect. pending: the provider has not finished reporting the day, or a run on the credential crossed midnight UTC into a day outside the compared range or not yet reported. The list is closed.",
+        "enum": ["matched", "tokens_miss", "price_miss", "pending"]
+      },
+      "DollarVerdict": {
+        "description": "within: list-price dollars landed within 10% of the cost report for the day. outside: they did not. no_bill: every ledger row is list-equivalent, so no bill exists to compare with. The list is closed.",
+        "enum": ["within", "outside", "no_bill"]
+      },
+      "CauseName": {
+        "description": "A named cause of a dollar residual. shared_key: traffic on the credential the rows never saw. tier: a service tier's premium. residency: a region's premium. contract_rate: the billed figure against the list figure. run_spans_days: tokens a run moved across midnight UTC. The list is closed.",
+        "enum": ["shared_key", "tier", "residency", "contract_rate", "run_spans_days"]
+      },
+      "ComparedClass": {
+        "description": "A token class as a comparison names it. cache_write is the cache writes of every lifetime, compared as one figure where the rows cannot see a write's lifetime.",
+        "enum": [
+          "input_uncached",
+          "cache_read",
+          "cache_write",
+          "cache_write_5m",
+          "cache_write_1h",
+          "cache_write_30m",
+          "cache_write_12h",
+          "output"
+        ]
+      },
+      "TokenCheck": {
+        "description": "One token class compared. delta is provider minus ledger. within holds when delta is at most 1% of provider, inclusive.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "ledger", "provider", "delta", "within"],
+        "properties": {
+          "class": { "$ref": "#/components/schemas/ComparedClass" },
+          "ledger": { "$ref": "#/components/schemas/TokenCount" },
+          "provider": { "$ref": "#/components/schemas/TokenCount" },
+          "delta": { "$ref": "#/components/schemas/TokenDelta" },
+          "within": { "type": "boolean" }
+        }
+      },
+      "PriceCheck": {
+        "description": "One price proved: the cost report's list figure for one model's class on the day, over the usage report's tokens for the same model and class. Amounts are in the row's currency, and unit prices are per million tokens. match holds when tokens at catalog_unit_price land within one unit of the last digit the report states.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model",
+          "tier",
+          "region",
+          "class",
+          "tokens",
+          "provider_list",
+          "implied_unit_price",
+          "catalog_unit_price",
+          "sku_price_id",
+          "match"
+        ],
+        "properties": {
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "tier": { "type": "string", "maxLength": 64 },
+          "region": { "type": "string", "maxLength": 64 },
+          "class": {
+            "description": "Prices are proved per lifetime, so cache_write does not appear here.",
+            "$ref": "#/components/schemas/ComparedClass",
+            "not": { "const": "cache_write" }
+          },
+          "tokens": { "$ref": "#/components/schemas/TokenCount" },
+          "provider_list": { "$ref": "#/components/schemas/Decimal" },
+          "implied_unit_price": {
+            "description": "provider_list over tokens, per million tokens, rounded to six places. Null when tokens is zero. No verdict reads it.",
+            "oneOf": [{ "$ref": "#/components/schemas/Decimal" }, { "type": "null" }]
+          },
+          "catalog_unit_price": { "$ref": "#/components/schemas/NonNegativeDecimal" },
+          "sku_price_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "match": { "type": "boolean" }
+        }
+      },
+      "ClassDollars": {
+        "description": "One token class at list price on both sides. delta is provider minus ledger. within holds when delta is at most 1% of provider, inclusive.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class", "ledger", "provider", "delta", "within"],
+        "properties": {
+          "class": { "$ref": "#/components/schemas/ComparedClass" },
+          "ledger": { "$ref": "#/components/schemas/NonNegativeDecimal" },
+          "provider": { "$ref": "#/components/schemas/Decimal" },
+          "delta": { "$ref": "#/components/schemas/Decimal" },
+          "within": { "type": "boolean" }
+        }
+      },
+      "Cause": {
+        "description": "The part of a residual one named cause accounts for.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "amount"],
+        "properties": {
+          "name": { "$ref": "#/components/schemas/CauseName" },
+          "amount": { "$ref": "#/components/schemas/Decimal" }
+        }
+      },
+      "RoundingCheck": {
+        "description": "FOCUS 1.4's rounding variance tolerance applied to provider_list against the ledger's list cost. currency equals the row's currency. variance is provider_list minus ledger. within holds when the variance is inside MAX(100 × Subunit, SQRT(rows) × 0.5 × Subunit), inclusive.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency", "rows", "variance", "within"],
+        "properties": {
+          "currency": { "$ref": "#/components/schemas/Currency" },
+          "rows": {
+            "description": "The number of ledger rows summed.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "variance": { "$ref": "#/components/schemas/Decimal" },
+          "within": { "type": "boolean" }
+        }
+      },
+      "DollarCheck": {
+        "description": "List-price ledger cost against the cost report: for the day, or on a span's first day for every day of the span together. residual is provider minus ledger, and it equals the sum of causes and unattributed. Every amount is in the row's currency.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "classes",
+          "verdict",
+          "ledger",
+          "provider",
+          "provider_effective",
+          "provider_list",
+          "other_cost",
+          "residual",
+          "causes",
+          "unattributed",
+          "rounding"
+        ],
+        "properties": {
+          "classes": {
+            "description": "Each class at list price. Null when the report does not split token cost by class, and on a no_bill day.",
+            "oneOf": [
+              { "type": "array", "items": { "$ref": "#/components/schemas/ClassDollars" } },
+              { "type": "null" }
+            ]
+          },
+          "verdict": { "$ref": "#/components/schemas/DollarVerdict" },
+          "ledger": {
+            "description": "The ledger's list cost for the day.",
+            "$ref": "#/components/schemas/NonNegativeDecimal"
+          },
+          "provider": {
+            "description": "What the report bills for tokens. Equal to provider_effective.",
+            "$ref": "#/components/schemas/Decimal"
+          },
+          "provider_effective": {
+            "description": "What the report bills for tokens, after any discount.",
+            "$ref": "#/components/schemas/Decimal"
+          },
+          "provider_list": {
+            "description": "The same charges at list price. Null when the report does not state a list figure on every token line.",
+            "oneOf": [{ "$ref": "#/components/schemas/Decimal" }, { "type": "null" }]
+          },
+          "other_cost": {
+            "description": "What the report bills for anything but tokens, which the comparison leaves out.",
+            "$ref": "#/components/schemas/Decimal"
+          },
+          "residual": { "$ref": "#/components/schemas/Decimal" },
+          "causes": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Cause" }
+          },
+          "unattributed": { "$ref": "#/components/schemas/Decimal" },
+          "rounding": {
+            "description": "Null when provider_list is null, and on a no_bill day.",
+            "oneOf": [{ "$ref": "#/components/schemas/RoundingCheck" }, { "type": "null" }]
+          }
+        }
+      },
+      "Span": {
+        "description": "The days a run crossed midnight UTC over, compared as one because a day of them missed on its own and together they matched. They are compared as one for dollars as for tokens. The row of from holds the joined token comparison and the joined dollar comparison. Each later day's row carries the span and the span's state, with tokens and dollars null, and reads by the row of from.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cause", "from", "to"],
+        "properties": {
+          "cause": { "const": "run_spans_days" },
+          "from": { "$ref": "#/components/schemas/Day" },
+          "to": { "$ref": "#/components/schemas/Day" }
+        }
+      },
+      "ReconciliationRow": {
+        "description": "One reconciliation of one credential on one UTC day, as costroid reconcile --out writes it, with currency. source, credential and day are its key. Every amount is a decimal string. A pending row carries no figure, and a later day of a span carries no tokens or dollars of its own.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "credential",
+          "day",
+          "state",
+          "final",
+          "data_refreshed_at",
+          "currency",
+          "tokens",
+          "prices",
+          "dollars",
+          "span",
+          "notes"
+        ],
+        "properties": {
+          "source": { "$ref": "#/components/schemas/ReconciliationSource" },
+          "credential": { "$ref": "#/components/schemas/Credential" },
+          "day": { "$ref": "#/components/schemas/Day" },
+          "state": { "$ref": "#/components/schemas/ReconciliationState" },
+          "final": {
+            "description": "False while the provider can still restate the day: through the eighth day after the day's month ends.",
+            "type": "boolean"
+          },
+          "data_refreshed_at": {
+            "description": "The provider's freshness stamp on the reports that carried the day, the earliest when several did. Null when the provider stamps none.",
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+              },
+              { "type": "null" }
+            ]
+          },
+          "currency": {
+            "description": "The currency of every amount in the row, prices included. Where dollars.rounding is present, its currency equals this one.",
+            "$ref": "#/components/schemas/Currency"
+          },
+          "tokens": {
+            "description": "One check per class either side holds. Null on a pending row, on a later day of a span, and on a day neither side holds tokens.",
+            "oneOf": [
+              { "type": "array", "items": { "$ref": "#/components/schemas/TokenCheck" } },
+              { "type": "null" }
+            ]
+          },
+          "prices": {
+            "description": "One check per model, tier, region and class the report proves a price for. Null on a pending row.",
+            "oneOf": [
+              { "type": "array", "items": { "$ref": "#/components/schemas/PriceCheck" } },
+              { "type": "null" }
+            ]
+          },
+          "dollars": {
+            "description": "Null when the row holds no dollar comparison: on a pending row, and on a later day of a span.",
+            "oneOf": [{ "$ref": "#/components/schemas/DollarCheck" }, { "type": "null" }]
+          },
+          "span": {
+            "oneOf": [{ "$ref": "#/components/schemas/Span" }, { "type": "null" }]
+          },
+          "notes": {
+            "description": "Sentences for people.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "allOf": [
+          {
+            "description": "A pending row carries no figure.",
+            "if": { "properties": { "state": { "const": "pending" } } },
+            "then": {
+              "properties": {
+                "tokens": { "type": "null" },
+                "prices": { "type": "null" },
+                "dollars": { "type": "null" },
+                "span": { "type": "null" }
+              }
+            }
+          },
+          {
+            "description": "A row with a span is its first day, with the joined tokens and dollars, or a later day, with neither.",
+            "if": {
+              "required": ["span"],
+              "properties": { "span": { "type": "object" } }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "tokens": { "type": "array" },
+                    "dollars": { "type": "object" }
+                  }
+                },
+                {
+                  "properties": {
+                    "tokens": { "type": "null" },
+                    "dollars": { "type": "null" }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ReconciliationReceipt": {
+        "description": "What a stored body did, line by line. stored: the row is new, or replaced the stored row of its key. unchanged: the stored row of its key is equal to it. ignored: the stored row is final and this one is not, or this row's data_refreshed_at is earlier than the stored row's.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stored", "unchanged", "ignored"],
+        "properties": {
+          "stored": { "type": "integer", "minimum": 0 },
+          "unchanged": { "type": "integer", "minimum": 0 },
+          "ignored": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "RunReference": {
+        "description": "The run a verified run token named.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "run_id", "run_attempt"],
+        "properties": {
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+            "maxLength": 256
+          },
+          "run_id": { "$ref": "#/components/schemas/NumericId" },
+          "run_attempt": { "$ref": "#/components/schemas/NumericId" }
+        }
+      },
+      "StoredReconciliation": {
+        "description": "A stored row with who sent it and when. The row is the sender's statement, never the platform's measurement.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["row", "received_at", "token_id", "run"],
+        "properties": {
+          "row": { "$ref": "#/components/schemas/ReconciliationRow" },
+          "received_at": { "$ref": "#/components/schemas/Timestamp" },
+          "token_id": {
+            "description": "The integration token that sent the row.",
+            "$ref": "#/components/schemas/ResourceId"
+          },
+          "run": {
+            "description": "Null when the body came without a run token.",
+            "oneOf": [{ "$ref": "#/components/schemas/RunReference" }, { "type": "null" }]
+          }
+        }
+      },
+      "ReconciliationList": {
+        "description": "The answer of GET /reconciliations, in order of day.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rows"],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/StoredReconciliation" }
+          }
+        }
+      },
+      "ReconciliationRefusalCode": {
+        "description": "Every refusal of PUT /reconciliations that is not about the bearer or a header. Each stores nothing.",
+        "enum": [
+          "AUTH_TOKEN_SCOPE",
+          "INSTALLATION_NOT_BOUND",
+          "RUN_TOKEN_INVALID",
+          "RUN_TOKEN_OWNER_MISMATCH",
+          "RECONCILIATION_INVALID",
+          "RECONCILIATION_TOO_LARGE",
+          "QUOTA_RECONCILIATIONS_PER_DAY",
+          "INSTALLATION_PROOF_KEYS_UNAVAILABLE"
+        ]
+      },
+      "ReconciliationRefusal": {
+        "description": "A refused body. Nothing was stored. RECONCILIATION_INVALID names the first line that is not a row of this version in line, counted from 1. No other code carries line.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "$ref": "#/components/schemas/ReconciliationRefusalCode" },
+              "message": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 }
+            },
+            "if": { "properties": { "code": { "const": "RECONCILIATION_INVALID" } } },
+            "then": { "required": ["line"] },
+            "else": { "not": { "required": ["line"] } }
+          }
+        }
+      }
+    }
+  }
+}
