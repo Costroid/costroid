@@ -50,7 +50,7 @@ func capLineOf(t *testing.T, input Input) string {
 
 func TestCapLineStatesTheCodexOvershootInUSDAndTokens(t *testing.T) {
 	input := capInput(codexStoppedLedger(t), "0.001")
-	want := "Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens."
+	want := "Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136 at list (Measured), USD 0.0273136 and 16960 tokens over the cap."
 	if line := capLineOf(t, input); line != want {
 		t.Errorf("cap line\n%s\nwant\n%s", line, want)
 	}
@@ -67,7 +67,7 @@ func TestCapLineStatesTheCodexOvershootInUSDAndTokens(t *testing.T) {
 
 func TestCapLineSaysAnAgentFlagCapIsAClientSideEstimate(t *testing.T) {
 	line := capLineOf(t, realInput(t))
-	want := "Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275."
+	want := "Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725 at list (List-equivalent, not billed), USD 4.998380275 under the cap."
 	if line != want {
 		t.Errorf("cap line\n%s\nwant\n%s", line, want)
 	}
@@ -79,7 +79,7 @@ func TestCapLineSaysAnAgentFlagCapIsAClientSideEstimate(t *testing.T) {
 // with 3501 tokens, and two more follow with 6701 and 7255.
 func TestCapLineCountsTheTokensFromTheRequestThatCrossedTheCap(t *testing.T) {
 	line := capLineOf(t, capInput(realLedger(t), "0.001"))
-	if want := "Over the cap by USD 0.000619725 and 17457 tokens."; !strings.HasSuffix(line, want) {
+	if want := ", USD 0.000619725 and 17457 tokens over the cap."; !strings.HasSuffix(line, want) {
 		t.Errorf("cap line\n%s\nwant it to end\n%s", line, want)
 	}
 }
@@ -97,7 +97,7 @@ func TestCapLineNeverShowsAGradeStrongerThanTheWeakest(t *testing.T) {
 	watched, flagged := sampleFields(), sampleFields()
 	flagged.enforcement = "agent-flag"
 	line := capLineOf(t, capInput(ledgerOf(t, watched, flagged), "5"))
-	if !strings.HasPrefix(line, "Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.20, Measured.") {
+	if !strings.HasPrefix(line, "Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.20 at list (Measured), ") {
 		t.Errorf("cap line %q", line)
 	}
 }

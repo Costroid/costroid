@@ -12,7 +12,9 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Basis | Enforcement |
 | --- | --- |
-| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | no cap held the run |
+| List-equivalent, not billed, subscription | no cap held the run |
+
+This run signed in on a subscription: list-equivalent, no provider report to reconcile.
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 

@@ -130,7 +130,7 @@ func (b telling) sentenceAt(said cut) string {
 	case packDecides:
 		return b.packClaim(pack, said).text(said, withheld)
 	case ruled && decided.Demoted != nil && policy.Demotable(decided.Rule) && !b.forkRows:
-		return b.demotedClaim(decided).text(whole, withheld)
+		return b.demotedClaim(decided, said).text(said, withheld)
 	case ruled && overRule(decided):
 		return b.overClaim(decided, said).text(said, withheld)
 	case ruled && broken(decided):
@@ -291,32 +291,17 @@ func (b telling) overClaim(result policy.Result, said cut) claim {
 	return over
 }
 
-// whole is a sentence said in full.
-var whole = cut{figures: 1, limit: true, closing: true}
-
-// demotedOver says which limit a demoted rule's figure passed, by rule, in
-// words that name no amount.
-var demotedOver = map[string]string{
-	policy.RuleRunBudget:          "is over its run budget",
-	policy.RuleRunCostThreshold:   "is over its run cost limit",
-	policy.RuleRunIncrease:        "is over its allowed increase",
-	policy.RuleRunIncreasePercent: "is over its allowed increase",
-	policy.RuleRunP95:             "is over its P95 limit",
-}
-
 // demotedClaim is the sentence for a rule a ledger demoted by its override
-// record: that its limit was passed, that it is demoted to a warning by the
-// record, and that the check is neutral. It names no amount, so it is said
-// whole whatever the figures: the amounts follow in the rule's own line, and
-// the record in the line under the sentence.
-func (b telling) demotedClaim(result policy.Result) claim {
+// record. It takes the form of a rule the warn-only period holds: the figure
+// against the limit it passed, so a reader of the checks list alone learns
+// both, and then the instant the demotion ends and the rule fails again. The
+// record that demoted it stands in the line under the sentence. Past the
+// status limit it is cut as every sentence is, and its state keeps the words
+// that say it is demoted.
+func (b telling) demotedClaim(result policy.Result, said cut) claim {
 	demoted := claim{state: "Over " + leadNouns[result.Rule] + ", demoted to a warning"}
-	demoted.figure = b.subject() + " " + demotedOver[result.Rule]
-	if result.Rule == policy.RulePullRequestBudget {
-		demoted.figure = "this " + b.request + "'s runs are over the " + ruleNoun(result.Rule, b.request)
-	}
-	demoted.closing = fmt.Sprintf("Reviewers approved %d of the last %d %ss it failed, so it warns until %s and the check is neutral.",
-		result.Demoted.Approved, result.Demoted.Failing, b.request, demotedUntil(*result.Demoted))
+	demoted.figure, demoted.limit = b.against(result, said, true)
+	demoted.closing = "After " + demotedUntil(*result.Demoted) + " this fails the check."
 	return demoted
 }
 
@@ -398,10 +383,19 @@ func (b Block) warnOnlyEnd() string {
 	return "the warn-only period"
 }
 
+// The clauses that close the sentence of a rule nothing broke. Each says who
+// vouched for the figures, so the line under the sentence does not say it
+// again: uncheckedClosing of a rule that only the agent's own rows kept from
+// passing, and checkedClosing of one that passed.
+const (
+	uncheckedClosing = "Nothing outside the job checked the figures, so the check is neutral."
+	checkedClosing   = "A ledger checked the rows against the job's OIDC token."
+)
+
 // keptClaim is the sentence for a rule nothing broke: one that passed, one
 // the agent's own rows kept from passing, or one that could not be checked.
 func (b telling) keptClaim(result policy.Result, said cut) claim {
-	kept := claim{closing: "A ledger checked the rows."}
+	kept := claim{closing: checkedClosing}
 	switch {
 	case result.Outcome == policy.Pass && result.Rule == policy.RuleModelAllowlist:
 		kept.state, kept.figure = "Models on the list", b.runCost(said)
@@ -410,7 +404,7 @@ func (b telling) keptClaim(result policy.Result, said cut) claim {
 		kept.state = "Within " + leadNouns[result.Rule]
 	case result.Reason == policy.ReasonUnverifiedRows && leadNouns[result.Rule] != "":
 		kept.state = "Within " + leadNouns[result.Rule] + ", by the job's own figures"
-		kept.closing = "Nothing outside the job checked the figures, so the check is neutral."
+		kept.closing = uncheckedClosing
 	case result.Rule == policy.RuleRunP95 && result.Reason == policy.ReasonNoBaseline:
 		return b.undecided(fmt.Sprintf("the P95 limit needs %d earlier runs of this agent and %d reached the check, so the rule did not run", policy.MinP95Runs, baselineRuns(result)), said)
 	case result.Rule == policy.RuleCustomerPack:
@@ -456,7 +450,7 @@ func (b telling) against(result policy.Result, said cut, over bool) (figure, lim
 		case result.BaselineUSD == "":
 			return b.runCost(said), ", " + reach + "median of earlier runs"
 		}
-		return b.runCost(said), ", " + reach + Money(budgetCurrency, result.BaselineUSD) + " median of earlier runs"
+		return b.runCost(said), ", " + reach + baselineFigure(result.BaselineUSD) + " median of earlier runs"
 	case policy.RuleRunP95:
 		held := standingWord(over) + " " + p95Limit(result, shown)
 		if !shown {
@@ -467,7 +461,7 @@ func (b telling) against(result policy.Result, said cut, over bool) (figure, lim
 		if !shown || result.CostUSD == "" || result.LimitUSD == "" {
 			return "this " + b.request + "'s runs are " + standingWord(over) + " the " + noun + ", priced at list", ""
 		}
-		return "this " + b.request + "'s runs cost " + Money(budgetCurrency, result.CostUSD) + " at list" + b.totalBases(), heldTo(result.LimitUSD, noun, over)
+		return "this " + b.request + "'s runs cost " + Money(budgetCurrency, result.CostUSD) + atList(b.totalBases()), heldTo(result.LimitUSD, noun, over)
 	}
 	switch {
 	case !shown:
@@ -484,9 +478,17 @@ func (b telling) against(result policy.Result, said cut, over bool) (figure, lim
 func p95Limit(result policy.Result, shown bool) string {
 	p95 := "P95"
 	if shown && result.P95USD != "" {
-		p95 = Money(budgetCurrency, result.P95USD) + " P95"
+		p95 = baselineFigure(result.P95USD) + " P95"
 	}
 	return fmt.Sprintf("%s times the %s of this agent's latest %d runs", result.LimitFactor, p95, policy.MinP95Runs)
+}
+
+// baselineFigure draws a baseline's median or P95. Each earlier run's cost is
+// its figures added up at list, over every basis, so the amount has no one
+// basis to name: it says at list, and the words after it say which runs it is
+// the median or the P95 of.
+func baselineFigure(exact string) string {
+	return Money(budgetCurrency, exact) + " at list"
 }
 
 // baselineRuns is how many earlier runs run_p95's baseline held, 0 when the
@@ -525,29 +527,37 @@ func allowedIncrease(result policy.Result, shown bool) string {
 	return "the allowed increase"
 }
 
-// totalBases names the bases a pull request's total adds, as a figure names
-// its one basis: after "at list", in brackets.
-func (b Block) totalBases() string {
-	var labels []string
+// totalBases are the bases a pull request's total adds, in basisOrder. Empty
+// when the object states no total.
+func (b Block) totalBases() []string {
+	var bases []string
 	if b.Lifetime != nil {
 		for _, basis := range basisOrder {
 			if slices.ContainsFunc(b.Lifetime.Figures, func(figure BlockLifetimeFigure) bool {
 				return figure.Currency == budgetCurrency && figure.CostBasis == basis
 			}) {
-				labels = append(labels, basisLabels[basis])
+				bases = append(bases, basis)
 			}
 		}
 	}
-	switch len(labels) {
+	return bases
+}
+
+// atList follows an amount that adds the bases named, as a figure names its
+// one basis: at list, then the basis in brackets. Over several bases it names
+// each by its first word, and over bases it was not told it says so.
+func atList(bases []string) string {
+	switch len(bases) {
 	case 0:
-		return " (every basis together)"
+		return " at list (every basis together)"
 	case 1:
-		return " (" + labels[0] + ")"
+		return " at list (" + basisLabels[bases[0]] + ")"
 	}
-	for index, label := range labels {
-		labels[index], _, _ = strings.Cut(label, ",")
+	labels := make([]string, len(bases))
+	for index, basis := range bases {
+		labels[index], _, _ = strings.Cut(basisLabels[basis], ",")
 	}
-	return " (" + listed(labels, 0) + " together)"
+	return " at list (" + listed(labels, 0) + " together)"
 }
 
 // runCost says what the run cost, figure by figure, each with its currency

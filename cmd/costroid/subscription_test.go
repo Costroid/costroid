@@ -60,7 +60,7 @@ func TestASubscriptionLoginSaysSoBesideItsFigure(t *testing.T) {
 			}
 			row := "| " + tc.figure + " | "
 			if tc.marked {
-				row = "| " + tc.figure + "; " + subscriptionLine + " | List-equivalent, not billed | "
+				row = "| " + tc.figure + ", subscription | List-equivalent, not billed | "
 			}
 			if !strings.Contains(comment, row) {
 				t.Errorf("no row %q:\n%s", row, comment)

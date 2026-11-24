@@ -30,7 +30,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.00329423 was computed</summary>
+<summary>How USD 0.00329423 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

@@ -4,18 +4,22 @@ Unchecked: the agent's own job wrote these figures, and nothing outside it check
 
 ### Costroid
 
-| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| USD 0.0302309; subscription: list-equivalent, no provider report to reconcile | List-equivalent, not billed | `0.3.0` | no cap held the run | 1204 | 28899 | 6341 | 202 |
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.0302309, subscription | List-equivalent, not billed | no cap held the run |
+
+This run signed in on a subscription: list-equivalent, no provider report to reconcile.
 
 <details>
-<summary>Cap, policy, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models, catalog and tokens</summary>
 
 No cap held this run.
 
 No policy ran on this change.
 
 Agents: `claude-code`. Models: `claude-haiku-5-5`, `claude-sonnet-5-5`. 12 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+Tokens: 1204 uncached input, 28899 cache read, 6341 cache write and 202 output.
 
 Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic API key, and this run is not that, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report.
 

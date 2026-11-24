@@ -33,9 +33,9 @@ func TestTheRecordedSubscriptionLoginSaysSoBesideItsUnchangedFigure(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := "| USD 0.0302309; " + subscriptionLine + " | List-equivalent, not billed | no cap held the run |"
+	row := "| USD 0.0302309, subscription | List-equivalent, not billed | no cap held the run |\n\nThis run signed in on a " + subscriptionLine + ".\n"
 	if !strings.Contains(body, row) {
-		t.Errorf("the comment holds no row %q:\n%s", row, body)
+		t.Errorf("the comment does not mark the row and say under the table what the mark means, %q:\n%s", row, body)
 	}
 	if !strings.Contains(body, "**No budget set: this run cost USD 0.0302309 at list (List-equivalent, not billed). No rule decides this check.**") {
 		t.Error("the first line changed")

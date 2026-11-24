@@ -37,8 +37,9 @@ func demoComment(t *testing.T, state string) string {
 }
 
 // TestDemoRendersForATerminal reads the demo as a terminal shows it: the
-// verdict sentence, its reason, the cost table and how the cost was computed,
-// in plain text with aligned columns, and no machine block.
+// verdict sentence, which says who vouched for the figures, the cost table
+// and how the cost was computed, in plain text with aligned columns, and no
+// machine block.
 func TestDemoRendersForATerminal(t *testing.T) {
 	code, stdout, stderr := execute(t, "demo")
 	if code != 0 || stderr != "\n"+nextAfterDemo+"\n" {
@@ -53,17 +54,16 @@ func TestDemoRendersForATerminal(t *testing.T) {
 	if len(lines) > 55 {
 		t.Errorf("the demo prints %d lines", len(lines))
 	}
-	want := "Within budget, by the job's own figures: this run cost USD " + demoTotal + " at list\n(Measured) of the USD 5.00 run budget. Nothing outside the job checked the\nfigures, so the check is neutral.\n\n" +
-		"Unchecked: the agent's own job wrote these figures, and nothing outside it\nchecked them.\n\nCostroid\n\n"
-	if !strings.HasPrefix(stdout, want) {
-		t.Errorf("the demo does not open on the verdict sentence and its reason:\n%s", stdout)
+	want := "Within budget, by the job's own figures: this run cost USD " + demoTotal + " at list\n(Measured) of the USD 5.00 run budget. Nothing outside the job checked the\nfigures, so the check is neutral.\n\nCostroid\n\n"
+	if !strings.HasPrefix(stdout, want) || strings.Contains(stdout, "Unchecked:") {
+		t.Errorf("the demo does not open on the verdict sentence, or says twice who vouched for the figures:\n%s", stdout)
 	}
 	header := "Cost           Basis     Enforcement"
 	row := "USD " + demoTotal + "  Measured  no cap held the run"
 	if !strings.Contains(stdout, "\n"+header+"\n"+row+"\n") {
 		t.Errorf("no aligned cost table in\n%s", stdout)
 	}
-	computed := strings.Index(stdout, "\nHow USD "+demoTotal+" was computed:\n\nCatalog  Token class  ")
+	computed := strings.Index(stdout, "\nHow USD "+demoTotal+" at list (Measured) was computed:\n\nCatalog  Token class  ")
 	if computed < 0 {
 		t.Fatalf("no computation in\n%s", stdout)
 	}
@@ -175,14 +175,49 @@ func TestPreviewEndsOnTheVerdictSentenceOnStandardError(t *testing.T) {
 	}
 }
 
+// TestDemoStateOpensOnWhatItsNameAsksFor holds each state's first line, the
+// sentence a check's title carries, to the state a reader asked for by name.
+// The capped state is a run stopped at its cap, so its line states the cost,
+// how far past the cap it went and the cap. Its costroid.yml sets no budget:
+// a cap and a budget are two amounts, and under a budget the run was within
+// the line would open on the budget and leave the cap to the lines below.
+func TestDemoStateOpensOnWhatItsNameAsksFor(t *testing.T) {
+	for state, want := range map[string]string{
+		demoNeutral: "Within budget, by the job's own figures: this run cost USD " + demoTotal + " at list (Measured) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
+		demoCapped:  "No budget set: this run cost USD 0.0283136 at list (Measured), USD 0.0273136 over its USD 0.001 cap. No rule decides this check.",
+		demoFailure: "Over budget: this run cost USD " + demoTotal + " at list (Measured), over the USD 0.01 run budget.",
+		demoSkipped: "No agent run: the workflow skipped the agent's job on this pull request, so there is no cost to report.",
+	} {
+		body := demoComment(t, state)
+		if !strings.HasPrefix(body, comment.Marker+"\n**"+want+"**\n") {
+			t.Errorf("--state %s opens on\n%s\nwant\n%s", state, lineWith(body, "**"), want)
+		}
+		_, plain, _ := execute(t, "demo", "--state", state)
+		first, _, _ := strings.Cut(plain, "\n\n")
+		if strings.ReplaceAll(first, "\n", " ") != want {
+			t.Errorf("--state %s opens on a terminal with\n%s", state, first)
+		}
+	}
+	capped, err := demoStateInput(context.Background(), demoCapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capped.Verdict.Results) != 0 || capped.Budget == nil || capped.Budget.String() != demoCap {
+		t.Errorf("the capped state holds the rules %+v and the cap %v, want no rule and a cap of %s", capped.Verdict.Results, capped.Budget, demoCap)
+	}
+	if body := demoComment(t, demoCapped); strings.Contains(strings.ToLower(body), "run budget") || !strings.Contains(body, "Set `policy.run_budget_usd` to hold each run to a budget.") {
+		t.Errorf("the capped state names a budget the example does not set, or does not say how to set one:\n%s", body)
+	}
+}
+
 // TestDemoStateShowsEachState reads each state the comment can be in, as a
 // terminal shows it and as the check run's object states it.
 func TestDemoStateShowsEachState(t *testing.T) {
 	for state, want := range map[string][]string{
 		demoNeutral: {"so the check is neutral.", "no cap held the run", "No cap held this run.", `"conclusion": "neutral"`},
 		demoCapped: {
-			"this run cost USD 0.0283136 at list\n(Measured) of the USD 5.00 run budget.",
-			"Enforcement\nUSD 0.0283136  Measured  the wrapper stops the process at the cap\n\nCap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136,\nMeasured. Over the cap by USD 0.0273136 and 16960 tokens.",
+			"No budget set: this run cost USD 0.0283136 at list (Measured), USD 0.0273136\nover its USD 0.001 cap. No rule decides this check.",
+			"Enforcement\nUSD 0.0283136  Measured  the wrapper stops the process at the cap\n\nCap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136\nat list (Measured), USD 0.0273136 and 16960 tokens over the cap.",
 			`"overshoot": "0.0273136"`,
 		},
 		demoFailure: {"Over budget: this run cost USD " + demoTotal + " at list (Measured), over the USD 0.01\nrun budget.", `"conclusion": "failure"`},
@@ -366,8 +401,8 @@ func TestPreviewShowsTheOvershoot(t *testing.T) {
 	rows := absolute(t, demoRowsFile)
 	t.Chdir(t.TempDir())
 	for budget, want := range map[string]string{
-		"0.01": "No cap held this run. Cap: USD 0.01, which nothing enforced. Cost: USD " + demoTotal + ", Measured. Over the cap by USD 0.0291529 and 36120 tokens.\n",
-		"5":    "No cap held this run. Cap: USD 5.00, which nothing enforced. Cost: USD " + demoTotal + ", Measured. Under the cap by USD 4.9608471.\n",
+		"0.01": "No cap held this run. Cap: USD 0.01, which nothing enforced. Cost: USD " + demoTotal + " at list (Measured), USD 0.0291529 and 36120 tokens over the cap.\n",
+		"5":    "No cap held this run. Cap: USD 5.00, which nothing enforced. Cost: USD " + demoTotal + " at list (Measured), USD 4.9608471 under the cap.\n",
 	} {
 		code, stdout, stderr := execute(t, "report", "--preview", "--rows", rows, "--budget-usd", budget)
 		if code != 0 {
@@ -387,7 +422,7 @@ func TestPreviewShowsTheOvershoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := execute(t, "report", "--preview", "--rows", capped, "--budget-usd", demoCap)
-	if code != 0 || !strings.Contains(stdout, "\nCap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.\n") || strings.Contains(stdout, "nothing enforced") {
+	if code != 0 || !strings.Contains(stdout, "\nCap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136 at list (Measured), USD 0.0273136 and 16960 tokens over the cap.\n") || strings.Contains(stdout, "nothing enforced") {
 		t.Errorf("a held run's cap line changed: exit %d:\n%s%s", code, stdout, stderr)
 	}
 }

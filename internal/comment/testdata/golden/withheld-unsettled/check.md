@@ -6,8 +6,6 @@ Within budget, by the job's own figures: this run is within its run budget, pric
 
 **Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Basis | Enforcement |

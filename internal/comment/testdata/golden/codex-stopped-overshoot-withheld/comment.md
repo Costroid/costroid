@@ -38,6 +38,8 @@ Token counts are withheld with the amounts. The rows carry them, and the check r
 
 </details>
 
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
+
 [Costroid Platform (not open yet)](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>

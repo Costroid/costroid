@@ -33,7 +33,7 @@ Five rules read figures from outside the run. One that is set and lacks its figu
 
 `pr_budget` runs when `costroid report` posts on a GitHub pull request. The report reads the `costroid` check runs on every commit of the pull request, adds up the figures in USD of every basis, and adds this run's rows. A figure in another currency is left out of the total, and the rule then cannot pass. An earlier report with this run's `rows_sha256` is this run reported again and is left out, and a repeated `rows_sha256` counts once. The comment states the same total under the figures, per currency and basis.
 
-The rule's line names the bases its total adds, because a Measured figure and a List-equivalent one are different claims. Over two bases it reads `The total adds Measured and List-equivalent together, at list.`, and over one `The total is at list (Measured).`
+The rule's line names the bases its total adds, because a Measured figure and a List-equivalent one are different claims. They stand beside the amount: over two bases `at list (Measured and List-equivalent together)`, and over one `at list (Measured)`. Where amounts are withheld the line ends `The total adds Measured and List-equivalent together, at list.` or `The total is at list (Measured).`
 
 `pr_budget` treats a total that may count one report twice as no proof either way: the rule concludes `unproven` with reason `repeat_possible`. That happens when an earlier report states no `rows_sha256`, as every result object before `result/v0.6` does, and when this run's rows name no row ids.
 
@@ -46,7 +46,7 @@ Any job of the repository can post a check run named `costroid`, so the total is
 - The report reads the baseline only when `costroid.yml` at the base sets `max_increase_usd`, `max_increase_percent` or `max_p95_factor`. It asks GitHub in one request for the 100 closed pull requests into the base branch that were updated last, and keeps the latest 30 merges among them. A merge updates its pull request, so from an answer of 100 it keeps only the merges after the answer's oldest update, and never skips a later merge for an earlier one. It then reads the check runs on each head in one request: 31 requests at most. It reads them beside the pull request's own check runs, inside the same 6 seconds.
 - A run is one earlier report on rows that name one agent, the agent this run's rows name. A run that names no agent or several joins no baseline, and when this run's rows name no agent or several, there is no baseline.
 - Every run on a merged head counts, not only its last: the window is the agent's latest runs, so a pull request whose agent ran three times adds three runs. The runs on a merged pull request's earlier commits are not read.
-- A run's cost is its figures added up at list, over every basis, as the run rules read this run. A run whose figures span two currencies has no single cost and joins no baseline. Each currency has its own baseline, and the rules read the one in USD.
+- A run's cost is its figures added up at list, over every basis, as the run rules read this run. So a median or a P95 has no one basis, and the comment gives its amount as `at list`. A run whose figures span two currencies has no single cost and joins no baseline. Each currency has its own baseline, and the rules read the one in USD.
 - A run counts once, at the first check run that reported its `rows_sha256`, so an approval that posts the report again adds nothing. A report that states no `rows_sha256` may repeat another, and is left out. So is this run's own report.
 - The window is the latest 20 runs with a cost in the currency, by check run id, the order in which GitHub creates check runs. Twenty runs is the count that ends the warn-only period.
 - With fewer than 10 runs there is no baseline, and both rules conclude `unproven` with reason `no_baseline`. Below 10, one run moves the median.
@@ -225,8 +225,8 @@ One sentence says what is true of the run. It is the check's title, the first li
 ```text
 Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 Over budget: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget.
-Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.
-Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.
+Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 at list P95 of this agent's latest 20 runs.
+Over budget, demoted to a warning: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. After 2026-12-12 09:00 UTC this fails the check.
 No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
 No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran.
 ```

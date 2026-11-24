@@ -25,13 +25,15 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.10 was computed</summary>
+<summary>How USD 0.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
 | `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

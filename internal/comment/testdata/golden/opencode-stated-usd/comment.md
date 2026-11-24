@@ -27,7 +27,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.00153317 was computed</summary>
+<summary>How USD 0.00153317 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -37,6 +37,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 | `0.3.0` | `output` | `anthropic:claude-haiku-5-5:global:standard:to-100000:output` | USD 0.50 per million tokens | 153 | USD 0.0000765 |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

@@ -1,12 +1,10 @@
 # Title
 
-Within limit: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.
+Within limit: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (Measured). A ledger checked the rows against the job's OIDC token. Amounts are withheld here.
 
 # Summary
 
-**Within limit: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.**
-
-Checked: a ledger checked the rows the verdict read against the job's OIDC token.
+**Within limit: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (Measured). A ledger checked the rows against the job's OIDC token. Amounts are withheld here.**
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 

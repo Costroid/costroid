@@ -12,7 +12,9 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Cost | Basis | Enforcement |
 | --- | --- | --- |
-| USD 0.0302309; subscription: list-equivalent, no provider report to reconcile | List-equivalent, not billed | no cap held the run |
+| USD 0.0302309, subscription | List-equivalent, not billed | no cap held the run |
+
+This run signed in on a subscription: list-equivalent, no provider report to reconcile.
 
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
@@ -28,7 +30,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.0302309 was computed</summary>
+<summary>How USD 0.0302309 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

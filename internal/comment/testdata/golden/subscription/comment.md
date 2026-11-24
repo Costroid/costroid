@@ -9,7 +9,9 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Cost | Basis | Enforcement |
 | --- | --- | --- |
-| USD 0.0302309; subscription: list-equivalent, no provider report to reconcile | List-equivalent, not billed | no cap held the run |
+| USD 0.0302309, subscription | List-equivalent, not billed | no cap held the run |
+
+This run signed in on a subscription: list-equivalent, no provider report to reconcile.
 
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
@@ -25,7 +27,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.0302309 was computed</summary>
+<summary>How USD 0.0302309 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -38,6 +40,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 | `0.3.0` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28899 | No amount: not priced |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

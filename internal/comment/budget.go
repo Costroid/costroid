@@ -142,23 +142,25 @@ func (c *capCheck) held() string {
 	return "Cap: " + Money(budgetCurrency, c.amount.String()) + " (" + enforcementNotes[c.grade] + ")."
 }
 
-// spent states the cost and how far under or over the cap it is.
+// spent states the cost with its basis and, in the same sentence, how far
+// under or over the cap it is, so the difference never stands apart from the
+// basis of the cost it was taken from.
 func (c *capCheck) spent() string {
-	spent := " Cost: " + Money(budgetCurrency, c.cost.String()) + ", " + basisLabels[c.basis] + "."
+	spent := " Cost: " + Money(budgetCurrency, c.cost.String()) + atList([]string{c.basis}) + ", "
 	if c.overshoot.Sign() == 0 {
-		return spent + " Under the cap by " + Money(budgetCurrency, c.remainder.String()) + "."
+		return spent + Money(budgetCurrency, c.remainder.String()) + " under the cap."
 	}
-	return spent + " " + c.over()
+	return spent + c.over()
 }
 
 // over states how far the run went over the cap, in its currency and, when
 // the rows tell, in tokens.
 func (c *capCheck) over() string {
-	over := "Over the cap by " + Money(budgetCurrency, c.overshoot.String())
+	over := Money(budgetCurrency, c.overshoot.String())
 	if c.overshootTokens != nil {
 		over += fmt.Sprintf(" and %s tokens", c.overshootTokens)
 	}
-	return over + "."
+	return over + " over the cap."
 }
 
 // Reconciliation is the last reconciliation of one credential's day.

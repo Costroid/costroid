@@ -14,7 +14,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | --- | --- | --- |
 | USD 0.0283136 | Measured | the wrapper stops the process at the cap |
 
-Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.
+Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136 at list (Measured), USD 0.0273136 and 16960 tokens over the cap.
 
 <details>
 <summary>Policy, agents, models and catalog</summary>
@@ -28,7 +28,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.0283136 was computed</summary>
+<summary>How USD 0.0283136 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

@@ -61,10 +61,10 @@ The line appears on the first report after the comment is posted: push a commit,
 
 ## What the line says
 
-The comment, the check run's summary and the job summary carry the same line under the run's figures:
+The comment, the check run's summary and the job summary carry the same line under the run's figures, in a folded section labelled `Developer-machine sessions`:
 
 ```text
-Developer-machine sessions, unchecked: USD 11.4619213 at list, 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's.
+Developer-machine sessions, unchecked: USD 11.4619213 at list (List-equivalent, not billed), 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's.
 ```
 
 Every figure, login, day and link in that line is an example.

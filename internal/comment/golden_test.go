@@ -576,9 +576,11 @@ func (r rendered) files() map[string]string {
 // goldenProblems lists every invariant a state's rendering breaks: the comment
 // opens with the one marker and no other text holds it, the check's title is
 // plain text inside the status limit and opens the comment and the job
-// summary, each text GitHub takes stays inside its limit, no output holds a
-// line break, and a withheld comment or summary holds no amount after a
-// currency code.
+// summary, the comment says once, in the open, what Costroid is and links the
+// page on how the check decides, a check that fails names the next step in
+// one sentence with the one link that stands above the heading, each text
+// GitHub takes stays inside its limit, no output holds a line break, and a
+// withheld comment or summary holds no amount after a currency code.
 func goldenProblems(input Input, r rendered) []string {
 	var problems []string
 	if strings.Count(r.comment, Marker) != 1 || !strings.HasPrefix(r.comment, Marker+"\n") {
@@ -595,6 +597,14 @@ func goldenProblems(input Input, r rendered) []string {
 	}
 	if opening := "**" + title + "**\n"; !strings.HasPrefix(r.comment, Marker+"\n"+opening) || !strings.HasPrefix(r.summary, opening) {
 		problems = append(problems, "the comment or the job summary does not open on the check's title")
+	}
+	if purpose := "\n" + purposeLine(input.request()) + "\n"; strings.Count(r.comment, purpose) != 1 || !strings.Contains(visiblePart(r.comment), purpose) {
+		problems = append(problems, "the comment does not say once, in the open, what Costroid is and where the check's rule is explained")
+	}
+	if input.Conclusion() == policy.Failure {
+		if step, links := nextStepOf(r.comment); !oneSentence(step) || links != 1 || strings.Count(step, "](") != 1 {
+			problems = append(problems, fmt.Sprintf("the check fails, and the comment's next step is not one sentence with the one link above the heading: %q, %d links", step, links))
+		}
 	}
 	for name, text := range map[string]string{goldenComment: r.comment, goldenSummary: r.summary, goldenCheck: r.check} {
 		if len(text) > githubLimit {
@@ -615,6 +625,23 @@ func goldenProblems(input Input, r rendered) []string {
 	}
 	slices.Sort(problems)
 	return problems
+}
+
+// nextStepOf is the last paragraph a surface holds above its evidence, where
+// the next step stands, and how many links stand there in all. The evidence
+// opens at the heading, or in the check's summary, which has none, at the
+// line that names the run.
+func nextStepOf(text string) (step string, links int) {
+	above, _, _ := strings.Cut(text, "\n### Costroid\n")
+	above, _, _ = strings.Cut(above, "\nThis is one run")
+	paragraphs := strings.Split(strings.TrimSpace(above), "\n\n")
+	return paragraphs[len(paragraphs)-1], strings.Count(above, "](")
+}
+
+// oneSentence reports a paragraph that is one sentence: it ends on a full
+// stop and holds no other sentence's end.
+func oneSentence(paragraph string) bool {
+	return strings.HasSuffix(paragraph, ".") && !strings.Contains(paragraph, ". ") && !strings.Contains(paragraph, "\n")
 }
 
 // TestGolden renders every comment state and holds each of its four files to
@@ -677,6 +704,10 @@ func TestGoldenInvariantsBite(t *testing.T) {
 	if problems := goldenProblems(input, good); len(problems) != 0 {
 		t.Fatalf("a good rendering breaks %q", problems)
 	}
+	failing := withVerdict(t, goldenVerdict(t, overBudget, policy.Unverified, afterPeriod))
+	if problems := goldenProblems(failing, renderState(t, failing)); failing.Conclusion() != policy.Failure || len(problems) != 0 {
+		t.Fatalf("a good rendering of a failing check concludes %s and breaks %q", failing.Conclusion(), problems)
+	}
 	broken := []struct {
 		name  string
 		input Input
@@ -696,6 +727,26 @@ func TestGoldenInvariantsBite(t *testing.T) {
 			r.comment = Marker + "\n### Costroid\n" + strings.TrimPrefix(r.comment, Marker+"\n")
 		}},
 		{"a job summary that opens on another line", input, func(r *rendered) { r.summary = "### Costroid\n\n" + r.summary }},
+		{"a comment that does not say what Costroid is", input, func(r *rendered) {
+			r.comment = strings.Replace(r.comment, purposeLine(input.request())+"\n", "", 1)
+		}},
+		{"a comment that says what Costroid is only under a fold", input, func(r *rendered) {
+			purpose := purposeLine(input.request())
+			r.comment = strings.Replace(r.comment, purpose, "<details>\n<summary>About</summary>\n\n"+purpose+"\n\n</details>", 1)
+		}},
+		{"a comment that says what Costroid is twice", input, func(r *rendered) { r.comment += "\n" + purposeLine(input.request()) + "\n" }},
+		{"a failing check with no next step", failing, func(r *rendered) {
+			r.comment = strings.Replace(r.comment, "[The approval page]("+approvalPage+") says how a reviewer approves a failed check.\n\n", "", 1)
+		}},
+		{"a failing check whose next step holds no link", failing, func(r *rendered) {
+			r.comment = strings.Replace(r.comment, "[The approval page]("+approvalPage+")", "The approval page", 1)
+		}},
+		{"a failing check with a second link above the heading", failing, func(r *rendered) {
+			r.comment = strings.Replace(r.comment, uncheckedLine, uncheckedLine+" [The policy page]("+policyPage+")", 1)
+		}},
+		{"a failing check whose next step is two sentences", failing, func(r *rendered) {
+			r.comment = strings.Replace(r.comment, "approves a failed check.\n", "approves a failed check. It is one page.\n", 1)
+		}},
 		{"a comment over the limit", input, func(r *rendered) { r.comment += strings.Repeat("x", githubLimit) }},
 		{"a check over the limit", input, func(r *rendered) { r.check += strings.Repeat("x", githubLimit) }},
 		{"a line break in an output", input, func(r *rendered) { r.outputs[0].Value += "\nx" }},

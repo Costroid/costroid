@@ -8,6 +8,8 @@ No figure (artifact_refused): the rows artifact held files besides the rows and 
 
 The `costroid-rows` artifact held 2 entries besides the rows and the run object: `notes.txt` and `extra/rows.jsonl`.
 
+An approval does not change this check: find the step in the agent's job that wrote those entries, as [the troubleshooting page](https://docs.costroid.com/troubleshooting#installing-the-binary) says.
+
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 # Text

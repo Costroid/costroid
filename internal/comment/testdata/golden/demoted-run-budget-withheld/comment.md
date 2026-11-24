@@ -1,11 +1,9 @@
 <!-- costroid:comment -->
-**Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.**
+**Over budget, demoted to a warning: this run is over its run budget, priced at list (List-equivalent, not billed). After 2026-12-12 09:00 UTC this fails the check. Amounts are withheld here.**
 
 Run budget demoted to a warning: by the ledger's own record, reviewers from at least 2 accounts approved 7 of the last 20 pull requests it failed, more than one in five. It warns until 2026-12-12 09:00 UTC, then fails again. Add `auto_demote: false` under `policy` in `costroid.yml` to keep every rule as written.
 
 Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
-Run budget: the run is over the budget.
 
 ### Costroid
 
@@ -44,6 +42,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

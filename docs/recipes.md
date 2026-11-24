@@ -250,7 +250,7 @@ The diff and the repository are the agent's input, and anyone who opens a pull r
 
 The recipes give the agent no write token, so its edits stay in the job's checkout until you add a step that pushes them. Adding that step makes them part of the pull request.
 
-The agent's job writes the rows, so an injected agent can forge them. The comment prints them as sent, and says so: "Unchecked: the agent's own job wrote these figures, and nothing outside it checked them." A tag inside the file cannot remove that sentence. A ledger reprices the rows from raw token counts and holds them to the job's identity.
+The agent's job writes the rows, so an injected agent can forge them. The comment prints them as sent, and says so once. Under a budget its first line ends "Nothing outside the job checked the figures, so the check is neutral." Everywhere else a line under the first reads "Unchecked: the agent's own job wrote these figures, and nothing outside it checked them." A tag inside the file cannot remove either sentence. A ledger reprices the rows from raw token counts and holds them to the job's identity.
 
 The guard lives in the workflow file, and `pull_request` reads that file from the branch. Someone who can push a branch can edit it there. To stop that, keep the key in an environment with required reviewers. On GitHub Free, Pro and Team that rule exists only for public repositories; on a private repository there, nothing stops it, and [the gateway's page](gateway.md#keep-the-admin-key-and-the-sealing-key-behind-an-environment) says what an attestation is then worth.
 

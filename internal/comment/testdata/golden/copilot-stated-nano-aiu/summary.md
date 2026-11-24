@@ -4,18 +4,20 @@ Unchecked: the agent's own job wrote these figures, and nothing outside it check
 
 ### Costroid
 
-| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| USD 0.00329423 | Measured | `0.3.0` | the wrapper stops the process at the cap | 8 | 43418 | 21958 | 229 |
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
+| USD 0.00329423 | Measured | the wrapper stops the process at the cap |
 
 <details>
-<summary>Cap, policy, agents, models and catalog</summary>
+<summary>Cap, policy, agents, models, catalog and tokens</summary>
 
 Cap: the wrapper stops the process at the cap. The rows do not record its amount, and the report was not given it.
 
 No policy ran on this change.
 
 Agents: `copilot`. Models: `claude-haiku-5-5`. 13 rows, catalog `0.3.0`, prices read 2026-11-08.
+
+Tokens: 8 uncached input, 43418 cache read, 21958 cache write and 229 output.
 
 Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic API key, and this run is not that, so no day on [the accuracy page](https://docs.costroid.com/accuracy) speaks for these figures. Nothing has compared this run with a provider's report.
 

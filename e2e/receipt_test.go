@@ -55,7 +55,7 @@ func TestAReceiptCommentIsShownApartFromTheRunsCost(t *testing.T) {
 
 	plain := job.reportWith(t, false, "")
 	read := job.reportWith(t, true, printed)
-	line := "Developer-machine sessions, unchecked: " + comment.Money("USD", figure.Cost.String()) + " at list, 1 session of Claude Code on " + stated.Sessions[0].FirstDay +
+	line := "Developer-machine sessions, unchecked: " + comment.Money("USD", figure.Cost.String()) + " at list (List-equivalent, not billed), 1 session of Claude Code on " + stated.Sessions[0].FirstDay +
 		" (UTC), as `octocat` stated them in [a comment](https://" + repository + "/pull/" + pull + "#issuecomment-40) on "
 	for name, text := range map[string]string{"comment": read.comment, "check summary": read.summary, "job summary": read.jobSummary} {
 		if !strings.Contains(text, line) || !strings.Contains(text, "USD "+recordedTotal) {

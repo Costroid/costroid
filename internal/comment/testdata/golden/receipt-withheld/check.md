@@ -6,17 +6,20 @@ Within budget, by the job's own figures: this run is within its run budget, pric
 
 **Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Basis | Enforcement |
 | --- | --- |
 | List-equivalent, not billed | client-side estimate, can pass the cap |
 
-Developer-machine sessions, unchecked: 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), priced at list, as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's. Amounts are withheld here.
-
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
+
+<details>
+<summary>Developer-machine sessions</summary>
+
+Developer-machine sessions, unchecked: 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), priced at list (List-equivalent, not billed), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's. Amounts are withheld here.
+
+</details>
 
 <details>
 <summary>Policy, agents, models and catalog</summary>

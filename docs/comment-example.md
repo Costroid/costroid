@@ -1,8 +1,6 @@
 <!-- costroid:comment -->
 **Within budget, by the job's own figures: this run cost USD 0.0391529 at list (Measured) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 ### Costroid
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
@@ -27,7 +25,7 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 7 o
 </details>
 
 <details>
-<summary>How USD 0.0391529 was computed</summary>
+<summary>How USD 0.0391529 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -40,6 +38,8 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 7 o
 | `0.4.3` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 28767 | No amount: not priced |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

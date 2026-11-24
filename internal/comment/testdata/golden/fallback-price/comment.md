@@ -11,7 +11,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | --- | --- | --- |
 | USD 180.10, fallback price | Measured | the wrapper stops the process at the cap |
 
-Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 180.10, Measured. Over the cap by USD 175.10 and 1000000 tokens.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 180.10 at list (Measured), USD 175.10 and 1000000 tokens over the cap.
 
 Fallback price: `gpt-9-preview` is not in catalog `0.1.0` for the tier and token class used, so `openai:fallback:output` priced it.
 
@@ -27,7 +27,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 180.10 was computed</summary>
+<summary>How USD 180.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -35,6 +35,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 | `0.1.0` | `output` | `openai:gpt-5.5:global:standard:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

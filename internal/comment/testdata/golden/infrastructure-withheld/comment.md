@@ -1,8 +1,6 @@
 <!-- costroid:comment -->
 **Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 ### Costroid
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
@@ -10,6 +8,11 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | Basis | Enforcement |
 | --- | --- |
 | List-equivalent, not billed | client-side estimate, can pass the cap |
+
+Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
+
+<details>
+<summary>Infrastructure figures</summary>
 
 Infrastructure, estimated, in EUR for 2026-12, from `infrastructure`.
 
@@ -27,7 +30,7 @@ The agent figure and these infrastructure figures are not added together, and no
 
 </details>
 
-Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
+</details>
 
 <details>
 <summary>Policy, agents, models and catalog</summary>
@@ -56,6 +59,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

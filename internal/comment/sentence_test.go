@@ -68,17 +68,23 @@ func TestVerdictSentenceIsOneStringOnEverySurface(t *testing.T) {
 		}
 	}
 	states := goldenStates(t)
-	// A rule a ledger demoted says so in the state, then that its limit was
-	// passed, the record, when the demotion ends and that the check is
-	// neutral, whole and with no amount, shown and withheld.
+	// A rule a ledger demoted says so in the state, then states the figure
+	// against the budget it passed, as a rule the warn-only period holds
+	// does, and when the demotion ends. Withheld, it names no amount.
 	for name, want := range map[string]string{
-		"demoted-run-budget":              "Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.",
-		"demoted-run-budget-withheld":     "Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.",
-		"demoted-request-budget":          "Over budget, demoted to a warning: this pull request's runs are over the pull request budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.",
-		"demoted-request-budget-withheld": "Over budget, demoted to a warning: this pull request's runs are over the pull request budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.",
+		"demoted-run-budget":              "Over budget, demoted to a warning: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget. After 2026-12-12 09:00 UTC this fails the check.",
+		"demoted-run-budget-withheld":     "Over budget, demoted to a warning: this run is over its run budget, priced at list (List-equivalent, not billed). After 2026-12-12 09:00 UTC this fails the check. Amounts are withheld here.",
+		"demoted-request-budget":          "Over budget, demoted to a warning: this pull request's runs cost USD 0.001619725 at list (every basis together), over the USD 0.001 pull request budget. After 2026-12-12 09:00 UTC this fails the check.",
+		"demoted-request-budget-withheld": "Over budget, demoted to a warning: this pull request's runs are over the pull request budget, priced at list. After 2026-12-12 09:00 UTC this fails the check. Amounts are withheld here.",
 	} {
 		if got := VerdictSentence(states[name]); got != want {
 			t.Errorf("%s: the sentence is\n%q\nwant\n%q", name, got, want)
+		}
+		// The sentence states the rule in full, so no line under it repeats
+		// the rule, and the record that demoted it stands there.
+		above, _, _ := strings.Cut(commentOf(t, states[name]), "### Costroid")
+		if strings.Contains(above, "budget: ") || !strings.Contains(above, " budget demoted to a warning: by the ledger's own record, reviewers from at least 2 accounts approved 7 of the last 20 pull requests it failed") {
+			t.Errorf("%s: the lines under the sentence repeat the rule, or lost the record:\n%s", name, above)
 		}
 	}
 	object, err := Result(states["fail-shown"])
@@ -151,7 +157,10 @@ func worstCase(t *testing.T, figures int, result policy.Result) Input {
 // holds, with the longest amounts, limits and login, on GitHub, on GitLab
 // with its longer noun, and held at neutral on a fork's rows. A sentence past
 // the limit is cut in a fixed order, and no cut drops the state or the first
-// figure with its currency and basis.
+// figure with its currency and basis. No golden state's title is a cut
+// sentence. A demoted rule's sentence carries its figure and its limit, and
+// is said whole while every amount it names is at most 16 characters: past
+// that it is cut as any other, and keeps the words that say it is demoted.
 func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 	for name, input := range goldenStates(t) {
 		if length := utf8.RuneCountInString(VerdictSentence(input)); length > StatusLimit {
@@ -197,11 +206,10 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 				for _, input := range []Input{shown, withheld(shown), onGitLab, withheld(onGitLab), onFork, withheld(onFork)} {
 					sentence := VerdictSentence(input)
 					checked++
-					demoted := outcome.demoted != nil && policy.Demotable(rule) && !input.forkRows
-					// A demoted rule's sentence is said whole, never cut, and
-					// names no amount: the rule's own line gives them.
-					if whole := input.telling().sentenceAt(cuts[0]); demoted && sentence != whole {
-						t.Errorf("%s demoted over %d figures, amounts %d: the sentence is cut:\n%s\nwhole, it is\n%s", rule, figures, input.Amounts, sentence, whole)
+					// A demoted rule's sentence is cut as any other, and keeps the
+					// words that say it is demoted.
+					if demoted := outcome.demoted != nil && policy.Demotable(rule) && !input.forkRows; demoted != strings.Contains(sentence, ", demoted to a warning: ") {
+						t.Errorf("%s over %d figures, amounts %d, demoted %t: the state says otherwise: %s", rule, figures, input.Amounts, demoted, sentence)
 					}
 					if length := utf8.RuneCountInString(sentence); length > StatusLimit {
 						t.Errorf("%s %s over %d figures, amounts %d: %d characters: %s", rule, outcome.outcome, figures, input.Amounts, length, sentence)
@@ -214,11 +222,7 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 						first, basis = "USD "+sum+" at list (every basis together)", "priced at list"
 					}
 					names := strings.Contains(sentence, first)
-					switch {
-					case demoted:
-						names = strings.Contains(sentence, ", demoted to a warning: ") && !amountInWords.MatchString(sentence) &&
-							strings.Contains(sentence, " and the check is neutral.")
-					case input.Amounts != AmountsShown:
+					if input.Amounts != AmountsShown {
 						names = strings.Contains(sentence, basis) && strings.HasSuffix(sentence, " Amounts are withheld here.") && !amountInWords.MatchString(sentence)
 					}
 					if !names {
@@ -232,6 +236,7 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 		t.Fatalf("%d worst cases were built", checked)
 	}
 	checkPackWorstCases(t)
+	checkDemotedFitsWhole(t, demotion)
 
 	// The order of the cuts, on one report: three figures and the closing
 	// clause fit, a longer budget counts the later figures, and the longest
@@ -275,6 +280,49 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 	}
 }
 
+// checkDemotedFitsWhole holds a demoted rule's sentence to its whole form:
+// the state, the figure with its basis, the limit and the instant the
+// demotion ends. It fits whole for every rule that can be demoted, on GitHub
+// and on GitLab, while each amount it names is at most 16 characters, such as
+// three digits and the 12 decimal places a row holds, under the longest
+// factor a P95 limit takes. The two rules that hold one figure to an amount a
+// person set fit whole at the longest amount a ledger holds too, 26 digits
+// before the point and 12 after.
+func checkDemotedFitsWhole(t *testing.T, demotion *policy.Demoted) {
+	t.Helper()
+	sixteen, ledgerLongest := "999."+strings.Repeat("9", 12), strings.Repeat("9", 26)+"."+strings.Repeat("9", 12)
+	runs := policy.MinP95Runs
+	for _, tc := range []struct {
+		amount string
+		rules  []string
+	}{
+		{sixteen, []string{policy.RuleRunBudget, policy.RuleRunCostThreshold, policy.RuleRunIncrease, policy.RuleRunIncreasePercent, policy.RuleRunP95, policy.RulePullRequestBudget}},
+		{ledgerLongest, []string{policy.RuleRunBudget, policy.RuleRunCostThreshold}},
+	} {
+		for _, rule := range tc.rules {
+			if !policy.Demotable(rule) {
+				t.Fatalf("%s cannot be demoted", rule)
+			}
+			result := policy.Result{
+				Rule: rule, Outcome: policy.Warn, Reason: policy.ReasonOverLimit, LimitUSD: tc.amount, CostUSD: tc.amount, BaselineUSD: tc.amount,
+				LimitPercent: "999", P95USD: tc.amount, LimitFactor: "9999.999999999999", BaselineRuns: &runs, Demoted: demotion,
+			}
+			fields := sampleFields()
+			fields.basis, fields.cost = "list_equivalent", tc.amount
+			shown := worstCase(t, 1, result)
+			shown.Ledger = ledgerOf(t, fields)
+			for _, input := range []Input{shown, asGitLab(shown)} {
+				sentence, whole := VerdictSentence(input), input.telling().sentenceAt(cuts[0])
+				// The figure, and after it the limit or the baseline it is held to.
+				figure, amounts := "USD "+tc.amount+" at list (", strings.Count(sentence, "USD "+tc.amount)
+				if sentence != whole || !strings.Contains(sentence, figure) || amounts < 2 || !strings.HasSuffix(sentence, " After 2026-12-31 23:59 UTC this fails the check.") {
+					t.Errorf("%s demoted, each amount %d characters: the sentence is cut, or lost its figure, its limit or its closing:\n%s\nwhole, it is\n%s", rule, len(tc.amount), sentence, whole)
+				}
+			}
+		}
+	}
+}
+
 // TestVerdictSentenceNamesTheRuleThatDecides holds the sentence to one rule
 // when several ran: the first, in the order the pack lists its rules, of the
 // worst outcome the verdict holds. A rule that fails decides before one the
@@ -309,15 +357,15 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 		{"a rule that fails decides before one that could not pass", policy.Failure,
 			[]policy.Result{budget(policy.Unproven, policy.ReasonUnverifiedRows), limit(policy.Fail, policy.ReasonOverLimit)},
 			"Over limit: " + figure + ", over the USD 0.001 run cost limit.",
-			[]string{"Run budget: unchecked rows cannot satisfy a budget. The run cost USD " + realTotal + " of the USD 5.00 budget."}, []string{"Run cost limit: "}},
+			[]string{"Run budget: unchecked rows cannot satisfy a budget. The run cost USD " + realTotal + " at list (List-equivalent, not billed) of the USD 5.00 budget."}, []string{"Run cost limit: "}},
 		{"of two rules that fail, the first the pack lists", policy.Failure,
 			[]policy.Result{budget(policy.Fail, policy.ReasonOverLimit), limit(policy.Fail, policy.ReasonOverLimit), models(policy.Fail, policy.ReasonOutsideAllowlist)},
 			"Over budget: " + figure + ", over the USD 5.00 run budget.",
-			[]string{"Run cost limit: USD " + realTotal + " is over the USD 0.001 limit.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, []string{"Run budget: "}},
+			[]string{"Run cost limit: USD " + realTotal + " at list (List-equivalent, not billed) is over the USD 0.001 limit.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, []string{"Run budget: "}},
 		{"a rule that fails decides before one the warn-only period holds", policy.Failure,
 			[]policy.Result{limit(policy.Warn, policy.ReasonOverLimit), models(policy.Fail, policy.ReasonOutsideAllowlist)},
 			"Model not on the list: " + figure + " and used a model that is not on the list.",
-			[]string{"Run cost limit: USD " + realTotal + " is over the USD 0.001 limit.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, nil},
+			[]string{"Run cost limit: USD " + realTotal + " at list (List-equivalent, not billed) is over the USD 0.001 limit.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, nil},
 		{"a rule the warn-only period holds decides before one that could not pass", policy.Neutral,
 			[]policy.Result{budget(policy.Unproven, policy.ReasonUnverifiedRows), limit(policy.Warn, policy.ReasonOverLimit)},
 			"Over limit, warn-only: " + figure + ", over the USD 0.001 run cost limit. After the warn-only period this fails the check.",
@@ -325,23 +373,23 @@ func TestVerdictSentenceNamesTheRuleThatDecides(t *testing.T) {
 		{"a rule that could not pass decides before one that passed", policy.Neutral,
 			[]policy.Result{budget(policy.Pass, policy.ReasonWithinLimit), total},
 			"Not decided: the pull request budget could not be checked. This run cost USD " + realTotal + " at list (List-equivalent, not billed).",
-			[]string{"Run budget: USD " + realTotal + " is within the USD 5.00 budget.", "Pull request budget: this check read no total for the pull request's earlier runs, so the rule did not run."}, nil},
+			[]string{"Run budget: USD " + realTotal + " at list (List-equivalent, not billed) is within the USD 5.00 budget.", "Pull request budget: this check read no total for the pull request's earlier runs, so the rule did not run."}, nil},
 		{"of two rules that could not pass, the first the pack lists", policy.Neutral,
 			[]policy.Result{budget(policy.Unproven, policy.ReasonUnverifiedRows), total, attribution},
 			"Within budget, by the job's own figures: " + figure + " of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.",
 			[]string{"Pull request budget: this check read no total"}, []string{"Run budget: ", "Attribution: "}},
 		{"of rules that fail, the P95 limit follows the increase rules", policy.Failure,
 			[]policy.Result{increase, p95},
-			"Over limit: " + figure + ", more than USD 0.0001 over the USD 0.001 median of earlier runs.",
-			[]string{"P95 limit: USD " + realTotal + " is over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs."}, []string{"Increase over baseline: "}},
+			"Over limit: " + figure + ", more than USD 0.0001 over the USD 0.001 at list median of earlier runs.",
+			[]string{"P95 limit: USD " + realTotal + " at list (List-equivalent, not billed) is over 1.5 times the USD 0.0006 at list P95 of this agent's latest 20 runs."}, []string{"Increase over baseline: "}},
 		{"of rules that fail, the P95 limit comes before the pull request budget and the model list", policy.Failure,
 			[]policy.Result{p95, overTotal, models(policy.Fail, policy.ReasonOutsideAllowlist)},
-			"Over limit: " + figure + ", over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.",
-			[]string{"Pull request budget: USD " + realTotal + " over this pull request's runs is over the USD 0.001 budget.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, []string{"P95 limit: "}},
+			"Over limit: " + figure + ", over 1.5 times the USD 0.0006 at list P95 of this agent's latest 20 runs.",
+			[]string{"Pull request budget: USD " + realTotal + " at list (every basis together) over this pull request's runs is over the USD 0.001 budget.", "Model allowlist: the run used `claude-haiku-5-5`, which is not on the list."}, []string{"P95 limit: "}},
 		{"a P95 limit that did not run decides only after every rule that fails or warns", policy.Neutral,
 			[]policy.Result{budget(policy.Pass, policy.ReasonWithinLimit), {Rule: policy.RuleRunP95, Outcome: policy.Unproven, Reason: policy.ReasonNoBaseline, LimitFactor: "1.5", BaselineRuns: new(7)}},
 			"Not decided: the P95 limit needs 20 earlier runs of this agent and 7 reached the check, so the rule did not run. This run cost USD " + realTotal + " at list (List-equivalent, not billed).",
-			[]string{"Run budget: USD " + realTotal + " is within the USD 5.00 budget."}, []string{"P95 limit: "}},
+			[]string{"Run budget: USD " + realTotal + " at list (List-equivalent, not billed) is within the USD 5.00 budget."}, []string{"P95 limit: "}},
 		{"the attribution rule never decides alone", policy.Neutral,
 			[]policy.Result{attribution},
 			"No budget set: " + figure + ". No rule decides this check.",

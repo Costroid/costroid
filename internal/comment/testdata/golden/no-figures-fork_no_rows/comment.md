@@ -7,6 +7,8 @@ The recipes run no agent on a fork's pull request. A neutral check does not bloc
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
+
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 
 <details>

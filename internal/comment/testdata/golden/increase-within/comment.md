@@ -1,7 +1,5 @@
 <!-- costroid:comment -->
-**Within limit, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed), at most USD 0.01 over the USD 0.0012 median of earlier runs. Nothing outside the job checked the figures, so the check is neutral.**
-
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
+**Within limit, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed), at most USD 0.01 over the USD 0.0012 at list median of earlier runs. Nothing outside the job checked the figures, so the check is neutral.**
 
 ### Costroid
 
@@ -14,7 +12,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725 at list (List-equivalent, not billed), USD 4.998380275 under the cap.
 
 [The policy page](https://docs.costroid.com/policy) says what lets a rule pass. A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
@@ -25,7 +23,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.001619725 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -38,6 +36,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 | `0.4.3` | `cached_input_reported` | `anthropic:informational:cached_input_reported` | informational, not priced | 15605 | No amount: not priced |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

@@ -8,6 +8,9 @@ No figure (empty_rows_file): the rows file holds no agent rows. Either the agent
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
+<details>
+<summary>Infrastructure figures</summary>
+
 Infrastructure, estimated: EUR 35.008 for 2026-12, from `infrastructure`.
 
 The agent figure and these infrastructure figures are not added together.
@@ -15,10 +18,12 @@ The agent figure and these infrastructure figures are not added together.
 <details>
 <summary>Infrastructure rows</summary>
 
-| Resource | Service | Period | Amount |
-| --- | --- | --- | --- |
-| `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 |
-| `aws_ebs_volume.data` | `Amazon EBS` | 2026-12 | EUR 9.52 |
+| Resource | Service | Period | Amount | Basis |
+| --- | --- | --- | --- | --- |
+| `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 | Estimated |
+| `aws_ebs_volume.data` | `Amazon EBS` | 2026-12 | EUR 9.52 | Estimated |
+
+</details>
 
 </details>
 

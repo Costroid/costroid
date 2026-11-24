@@ -311,7 +311,7 @@ func TestAReportStatesTheAuthorsReceiptApartFromTheRun(t *testing.T) {
 	postReceipt(t, stub, 41, "mallory", stranger)
 	postReceipt(t, stub, 40, "octocat", receiptOnBranch())
 	check, body, outputs := reportOutputs(t, stub)
-	line := "Developer-machine sessions, unchecked: USD 3.00 at list, 2 sessions of Claude Code on 2026-11-21 (UTC), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-40) on 2026-11-22. No budget reads this figure, and it is not added to the run's."
+	line := "Developer-machine sessions, unchecked: USD 3.00 at list (List-equivalent, not billed), 2 sessions of Claude Code on 2026-11-21 (UTC), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-40) on 2026-11-22. No budget reads this figure, and it is not added to the run's."
 	if !strings.Contains(body, line) || !strings.Contains(check.Summary, line) {
 		t.Errorf("the comment or the check lacks the receipt's line:\n%s", body)
 	}

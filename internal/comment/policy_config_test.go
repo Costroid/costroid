@@ -78,17 +78,17 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 		shown, held string
 	}{
 		{policy.Result{Rule: policy.RuleRunIncrease, Reason: policy.ReasonOverBaseline, LimitUSD: "0.5", CostUSD: "3", BaselineUSD: "2"},
-			"Increase over baseline: USD 3.00 is more than USD 0.50 over the USD 2.00 median of earlier runs.",
+			"Increase over baseline: USD 3.00 at list (every basis together) is more than USD 0.50 over the USD 2.00 at list median of earlier runs.",
 			"Increase over baseline: the run is more than the allowed increase over the median of earlier runs."},
 		{policy.Result{Rule: policy.RuleRunIncreasePercent, Reason: policy.ReasonWithinLimit, LimitPercent: "12.5", CostUSD: "2.2", BaselineUSD: "2"},
-			"Percent increase over baseline: USD 2.20 is at most 12.5% over the USD 2.00 median of earlier runs.",
+			"Percent increase over baseline: USD 2.20 at list (every basis together) is at most 12.5% over the USD 2.00 at list median of earlier runs.",
 			"Percent increase over baseline: the run is at most 12.5% over the median of earlier runs."},
 		{policy.Result{Rule: policy.RuleRunIncrease, Reason: policy.ReasonNoBaseline, LimitUSD: "0.5"},
 			"Increase over baseline: no baseline of 10 or more earlier runs reached this check, so the rule did not run.", ""},
 		{policy.Result{Rule: policy.RuleRunIncrease, Reason: policy.ReasonUnverifiedRows, LimitUSD: "0.5", CostUSD: "1", BaselineUSD: "2"},
 			"Increase over baseline: unchecked rows cannot satisfy a budget.", ""},
 		{policy.Result{Rule: policy.RulePullRequestBudget, Reason: policy.ReasonOverLimit, LimitUSD: "10", CostUSD: "10.5"},
-			"Pull request budget: USD 10.50 over this pull request's runs is over the USD 10.00 budget. The total adds every basis together, at list.",
+			"Pull request budget: USD 10.50 at list (every basis together) over this pull request's runs is over the USD 10.00 budget.",
 			"Pull request budget: this pull request's runs are over the budget. The total adds every basis together, at list."},
 		{policy.Result{Rule: policy.RulePullRequestBudget, Reason: policy.ReasonNoLifetime, LimitUSD: "10"},
 			"Pull request budget: this check read no total for the pull request's earlier runs, so the rule did not run.", ""},
@@ -115,10 +115,10 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 			withheld = tc.shown
 		}
 		verdict := policy.Verdict{Results: []policy.Result{tc.result}}
-		if got := resultSentence(tc.result, 0, true, nil, RequestNoun(AccountGitHub)); got != tc.shown {
+		if got := resultSentence(tc.result, 0, true, addedBases{}, RequestNoun(AccountGitHub)); got != tc.shown {
 			t.Errorf("shown:\n got %s\nwant %s", got, tc.shown)
 		}
-		if got := resultSentence(verdict.WithoutAmounts().Results[0], 0, false, nil, RequestNoun(AccountGitHub)); got != withheld {
+		if got := resultSentence(verdict.WithoutAmounts().Results[0], 0, false, addedBases{}, RequestNoun(AccountGitHub)); got != withheld {
 			t.Errorf("withheld:\n got %s\nwant %s", got, withheld)
 		}
 	}

@@ -3,8 +3,6 @@
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 ### Costroid
 
 This is one run, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
@@ -42,6 +40,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

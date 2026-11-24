@@ -14,7 +14,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10 at list (Measured), USD 4.90 under the cap.
 
 No policy ran on this change.
 
@@ -25,13 +25,15 @@ Costroid's own test, not this run: `claude-code` 2.1.316 on Anthropic passed 7 o
 </details>
 
 <details>
-<summary>How USD 0.10 was computed</summary>
+<summary>How USD 0.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
 | `0.1.0` | `output` | `anthropic:claude-sonnet-5:global:standard:all:output` | USD 0.10 per million tokens | 1000000 | USD 0.10 |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

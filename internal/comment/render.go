@@ -516,9 +516,12 @@ type figureLine struct {
 	// Mark is the visible flag on a figure with a row at the fallback tier,
 	// or whose rows all note a subscription login.
 	Mark string
-	// Catalogs and the token columns are the job summary's.
-	Catalogs                                     string
-	InputUncached, CacheRead, CacheWrite, Output string
+	// Catalogs names the figure's catalogs in the table of a job summary that
+	// withholds amounts, which folds no details to name them in.
+	Catalogs string
+	// Tokens are the figure's token counts, in words, which the job summary
+	// folds with its details.
+	Tokens string
 }
 
 // traceBlock is one figure's collapsed arithmetic.
@@ -571,26 +574,38 @@ type view struct {
 	Lines           []figureLine
 	FiguresOmitted  int
 	Fallback        string
+	// Subscription says a figure's rows all note a subscription login, and
+	// what that means for the figure. The figure's cell carries the mark.
+	Subscription string
 	// Details are the lines folded under the table: the cap against the
 	// cost, each limit the policy checked and where it is set, what the
 	// policy read, and the run's agents, models, rows and catalogs.
 	// DetailsSummary names what they hold.
 	Details        []string
 	DetailsSummary string
+	detailsHolds   []string
 	Traces         []traceBlock
 	// Infrastructure states the figures that are not an agent's, nil when the
-	// rows hold none.
+	// rows hold none. It opens the section Beside folds.
 	Infrastructure *infrastructureView
-	// EstimateUnavailable says an estimate the workflow named was not there,
-	// empty when none is missing.
-	EstimateUnavailable string
+	// Beside are the figures that are not this run's, and the notes on them,
+	// a paragraph each: an estimate that was not there, the receipt's line
+	// and the change's total. No rule reads one, and none qualifies the
+	// table, so with Infrastructure they are folded into one section, and
+	// besideHolds names what it holds.
+	Beside      []string
+	besideHolds []string
 	// Receipt is the receipt's one line, empty where the workflow did not
-	// ask for receipts.
+	// ask for receipts. Of the lines in Beside the job summary holds this one
+	// alone, folded under its own name.
 	Receipt string
 	// Accuracy is the accuracy line, empty without a record or a figure. It
 	// is the last of the Details, and on a job summary that folds none, the
 	// summary's last line.
-	Accuracy   string
+	Accuracy string
+	// Purpose says what Costroid is and links the page on how the check
+	// decides. It stands in the open in every comment.
+	Purpose    string
 	AccountURL string
 	ExportURL  string
 	CheckRunID *int64
@@ -601,16 +616,24 @@ type view struct {
 // part, and the fallback sentence opens with the same words.
 const fallbackMark = ", fallback price"
 
-// subscriptionMark sits beside a figure whose rows all note a subscription
-// login.
-const subscriptionMark = "; " + focus.NoteSubscription
+// subscriptionMark sits in the cell of a figure whose rows all note a
+// subscription login, and the sentence under the table says what it means,
+// in the words the rows' own note uses.
+const subscriptionMark = ", subscription"
+
+// subscriptionSentence stands under the table of a report that marks a
+// figure. subject names the run the figures are.
+func subscriptionSentence(subject string) string {
+	return capital(subject) + " signed in on a " + focus.NoteSubscription + "."
+}
 
 func (i Input) view() view {
 	shown := i.Amounts == AmountsShown
+	sentence := VerdictSentence(i)
 	result := view{
 		Marker:         Marker,
-		Sentence:       VerdictSentence(i),
-		Reading:        i.reading(shown),
+		Sentence:       sentence,
+		Reading:        i.reading(sentence, shown),
 		RunLine:        runLine(i.runCommit(), i.RunURL),
 		NoFigures:      i.State != Reported,
 		AgentError:     i.agentErrorBesideFigures(),
@@ -619,18 +642,27 @@ func (i Input) view() view {
 		AmountsOff:     i.Amounts == AmountsOff,
 		FiguresOmitted: i.Ledger.FiguresOmitted,
 		Fallback:       fallbackSentence(i.Ledger),
+		Purpose:        purposeLine(i.request()),
 		AccountURL:     i.accountLink(),
 		CheckRuns:      i.AccountHost != AccountGitLab,
 		ExportURL:      exportURL,
 		CheckRunID:     i.CheckRunID,
 	}
 	result.Infrastructure = i.Ledger.Infrastructure.view(shown, result.CheckRuns)
-	result.EstimateUnavailable = i.estimateUnavailable()
+	// An estimate that was not there is named in the label only when no
+	// infrastructure figure stands beside it.
+	estimate := "infrastructure estimate"
+	if result.Infrastructure != nil {
+		result.besideHolds, estimate = append(result.besideHolds, "infrastructure figures"), ""
+	}
+	result.setBeside(estimate, i.estimateUnavailable())
 	result.Receipt = i.receiptLine(shown)
+	result.setBeside(receiptHolds, result.Receipt)
 	if shown && i.capCheck().passed() {
 		result.PastCap = i.capLine()
 	}
-	result.Details, result.DetailsSummary = i.details(shown, result.PastCap == "")
+	result.Details, result.detailsHolds = i.details(shown, result.PastCap == "")
+	result.DetailsSummary = capital(listed(result.detailsHolds, 0))
 	if result.Accuracy = i.accuracyLine(); result.Accuracy != "" {
 		result.Details = append(result.Details, result.Accuracy)
 	}
@@ -646,15 +678,52 @@ func (i Input) view() view {
 		}
 		if figure.Subscription {
 			line.Mark += subscriptionMark
+			result.Subscription = subscriptionSentence(Block{Recorded: i.blockRecorded()}.subject())
 		}
 		line.Catalogs = spans(figure.Catalogs)
 		columns := tokenColumns(figure.Tokens)
-		line.InputUncached, line.CacheRead = columns["tokens_input_uncached"], columns["tokens_cache_read"]
-		line.CacheWrite, line.Output = columns["tokens_cache_write"], columns["tokens_output"]
+		line.Tokens = listed([]string{
+			columns["tokens_input_uncached"] + " uncached input", columns["tokens_cache_read"] + " cache read",
+			columns["tokens_cache_write"] + " cache write", columns["tokens_output"] + " output",
+		}, 0)
 		result.Lines = append(result.Lines, line)
 		result.Traces = append(result.Traces, traceOf(figure, index+1, shown, result.CheckRuns))
 	}
 	return result
+}
+
+// setBeside folds paragraphs into the section of figures that are not this
+// run's, and names what they are in its label, once. An empty paragraph is
+// left out, and an empty name adds nothing to the label.
+func (v *view) setBeside(holds string, paragraphs ...string) {
+	for _, paragraph := range paragraphs {
+		if paragraph == "" {
+			continue
+		}
+		v.Beside = append(v.Beside, paragraph)
+		if holds != "" && !slices.Contains(v.besideHolds, holds) {
+			v.besideHolds = append(v.besideHolds, holds)
+		}
+	}
+}
+
+// receiptHolds names a receipt's line in the label of the section that folds
+// it.
+const receiptHolds = "developer-machine sessions"
+
+// ReceiptSummary labels the section the job summary folds a receipt's line
+// in.
+func (view) ReceiptSummary() string {
+	return capital(receiptHolds)
+}
+
+// BesideSummary labels the folded section by what it holds, and is empty when
+// it holds nothing.
+func (v view) BesideSummary() string {
+	if len(v.besideHolds) == 0 {
+		return ""
+	}
+	return capital(listed(v.besideHolds, 0))
 }
 
 // traceOf lays out one figure's arithmetic. Withheld, it keeps only the
@@ -664,7 +733,7 @@ func traceOf(figure Figure, number int, shown, checkRuns bool) traceBlock {
 	if !shown {
 		return withheldTrace(figure, number, checkRuns)
 	}
-	block := traceBlock{Shown: true, Summary: "How " + Money(figure.Currency, figure.Cost.String()) + " was computed", Omitted: figure.TraceOmitted}
+	block := traceBlock{Shown: true, Summary: "How " + Money(figure.Currency, figure.Cost.String()) + atList([]string{figure.Basis}) + " was computed", Omitted: figure.TraceOmitted}
 	for _, trace := range figure.Trace {
 		block.Lines = append(block.Lines, traceLine{
 			Catalog:   catalogCell(trace.Catalog),
@@ -737,11 +806,16 @@ func unitWords(unit string) string {
 // The lines that say who vouched for the rows, and so how firmly each is tied
 // to its run. Rows a ledger checked against the job's token read checked only
 // when the verdict says so: a tag inside the rows file proves nothing, because
-// the agent's job wrote it.
+// the agent's job wrote it. Each line stands under every sentence but one
+// that closes on its clause of trustClosings, which says the same.
 const (
 	uncheckedLine = "Unchecked: the agent's own job wrote these figures, and nothing outside it checked them."
 	checkedLine   = "Checked: a ledger checked the rows the verdict read against the job's OIDC token."
 )
+
+// trustClosings is the closing clause of a sentence that says what each line
+// says.
+var trustClosings = map[string]string{uncheckedLine: uncheckedClosing, checkedLine: checkedClosing}
 
 // trustLine reads the trust the verdict, and so the machine block's
 // policy.trust, states. With no verdict the rows are the rows file's, which
@@ -758,8 +832,7 @@ func (i Input) trustLine() string {
 // models, rows and catalogs. Each repeats a cell of the table or explains the
 // verdict, so they are folded. The summary names what they hold. withCap is
 // false when the cap line stands above the fold.
-func (i Input) details(shown, withCap bool) ([]string, string) {
-	var lines, holds []string
+func (i Input) details(shown, withCap bool) (lines, holds []string) {
 	if capLine := i.capLine(); shown && withCap && capLine != "" {
 		lines, holds = append(lines, capLine), append(holds, "cap")
 	}
@@ -790,7 +863,7 @@ func (i Input) details(shown, withCap bool) ([]string, string) {
 	if len(holds) == 0 {
 		holds = append(holds, "rows")
 	}
-	return lines, capital(listed(holds, 0))
+	return lines, holds
 }
 
 // catalogPhrase names the rows' catalogs, each with the day its prices were
@@ -940,6 +1013,13 @@ func spans(names []Data) string {
 		rendered[index] = name.Code()
 	}
 	return strings.Join(rendered, ", ")
+}
+
+// purposeLine says what posted the comment and links the page on how the
+// check decides, for a reader who never installed Costroid. request is the
+// host's word for a change.
+func purposeLine(request string) string {
+	return "Costroid is the cost check for " + request + "s. [How the check decides](" + policyPage + ")"
 }
 
 // accountLink opens the pull request on Costroid Platform when the report

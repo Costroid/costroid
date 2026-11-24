@@ -8,8 +8,6 @@ Within budget, by the job's own figures: the recorded run is within its run budg
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 This is one run, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Basis | Enforcement |

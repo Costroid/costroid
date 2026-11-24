@@ -471,8 +471,8 @@ func TestEveryVersionAReleaseWritesIsRead(t *testing.T) {
 func TestTheReceiptLineSaysWhoStatedItAndThatNothingCheckedIt(t *testing.T) {
 	states := receiptStates(goldenStates(t)["neutral-shown"])
 	want := map[string]string{
-		"receipt":          "Developer-machine sessions, unchecked: USD 11.4619213 at list, 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's.",
-		"receipt-withheld": "Developer-machine sessions, unchecked: 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), priced at list, as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's. Amounts are withheld here.",
+		"receipt":          "Developer-machine sessions, unchecked: USD 11.4619213 at list (List-equivalent, not billed), 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's.",
+		"receipt-withheld": "Developer-machine sessions, unchecked: 2 sessions of Claude Code from 2026-11-18 to 2026-11-20 (UTC), priced at list (List-equivalent, not billed), as `octocat` stated them in [a comment](https://github.com/example/widgets/pull/7#issuecomment-2471000001) on 2026-11-20. No budget reads this figure, and it is not added to the run's. Amounts are withheld here.",
 		"receipt-refused":  "No developer-machine figure (receipt_edited): the receipt `octocat` posted was edited after it was posted, so its sessions were not read. A new count is a new comment. The verdict reads no receipt.",
 		"receipt-none":     "No developer-machine sessions stated for this pull request. The figures here are the CI run's alone.",
 	}

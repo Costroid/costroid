@@ -6,8 +6,6 @@ Within budget, by the job's own figures: this run cost USD 0.001619725 at list (
 
 **Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Cost | Basis | Enforcement |
@@ -30,7 +28,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.001619725 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

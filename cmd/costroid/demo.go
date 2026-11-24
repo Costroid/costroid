@@ -44,6 +44,12 @@ const (
 	demoConfig       = "policy:\n  run_budget_usd: \"5\"\n"
 	// demoFailingConfig sets a run budget under the recorded run's cost.
 	demoFailingConfig = "policy:\n  run_budget_usd: \"0.01\"\n"
+	// demoCappedConfig sets no budget and no limit, as the costroid.yml that
+	// init writes does. A cap and a budget are two amounts: the workflow gives
+	// the run its cap, and costroid.yml gives the check its budget. The capped
+	// state shows the first alone, so its first line is the run past its cap
+	// and never a budget the run was within.
+	demoCappedConfig = ""
 	// demoCap is the cap the recorded Codex run was stopped at.
 	demoCap = "0.001"
 )
@@ -128,7 +134,7 @@ func demoStateInput(ctx context.Context, state string) (comment.Input, error) {
 	rows, config, at := demoRows, demoConfig, demoCheckedAt
 	switch state {
 	case demoCapped:
-		rows = demoCappedRows
+		rows, config = demoCappedRows, demoCappedConfig
 	case demoFailure:
 		config, at = demoFailingConfig, demoEnforcedAt
 	case demoSkipped:

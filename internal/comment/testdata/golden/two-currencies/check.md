@@ -18,7 +18,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10 at list (Measured), USD 4.90 under the cap.
 
 No policy ran on this change.
 
@@ -29,7 +29,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How EUR 0.10 was computed</summary>
+<summary>How EUR 0.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -38,7 +38,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.10 was computed</summary>
+<summary>How USD 0.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

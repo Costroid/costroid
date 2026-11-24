@@ -3,9 +3,13 @@
 
 The `costroid-rows` artifact held 2 entries besides the rows and the run object: `notes.txt` and `extra/rows.jsonl`.
 
+An approval does not change this check: find the step in the agent's job that wrote those entries, as [the troubleshooting page](https://docs.costroid.com/troubleshooting#installing-the-binary) says.
+
 ### Costroid
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

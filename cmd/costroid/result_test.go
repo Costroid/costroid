@@ -241,13 +241,16 @@ func TestStepSummaryWithholdsNothingWhereAmountsAreShown(t *testing.T) {
 	execute(t, "report", "--rows", realRows, "--budget-usd", "5")
 	summary := readFile(t, summaryPath)
 	sentence := "**No budget set: this run cost USD " + realTotal + " at list (List-equivalent, not billed). No rule decides this check.**\n\n"
-	table := "| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n" +
-		"| USD " + realTotal + " | List-equivalent, not billed | `0.4.3` | client-side estimate, can pass the cap | 8 | 15605 | 7945 | 272 |\n"
+	table := "| Cost | Basis | Enforcement |\n| --- | --- | --- |\n" +
+		"| USD " + realTotal + " | List-equivalent, not billed | client-side estimate, can pass the cap |\n"
 	if !strings.HasPrefix(summary, sentence) || !strings.Contains(summary, "\n### Costroid\n\n"+table) {
 		t.Errorf("the summary does not open on the sentence, or the table does not follow the reason:\n%s", summary)
 	}
 	if !strings.Contains(summary, "Cap: USD 5.00 (client-side estimate, can pass the cap).") {
 		t.Errorf("no cap line in\n%s", summary)
+	}
+	if !strings.Contains(summary, "catalog `0.4.3`") || !strings.Contains(summary, "\nTokens: 8 uncached input, 15605 cache read, 7945 cache write and 272 output.\n") {
+		t.Errorf("the fold lost the catalog or the token counts:\n%s", summary)
 	}
 }
 

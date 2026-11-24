@@ -1,10 +1,10 @@
 # Title
 
-Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.
+Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 at list P95 of this agent's latest 20 runs.
 
 # Summary
 
-**Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.**
+**Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 at list P95 of this agent's latest 20 runs.**
 
 Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
 
@@ -19,7 +19,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725 at list (List-equivalent, not billed), USD 4.998380275 under the cap.
 
 A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
@@ -30,7 +30,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.001619725 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

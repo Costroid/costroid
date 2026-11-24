@@ -1,6 +1,4 @@
-**Within budget: this run is within its run budget, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.**
-
-Checked: a ledger checked the rows the verdict read against the job's OIDC token.
+**Within budget: this run is within its run budget, priced at list (Measured). A ledger checked the rows against the job's OIDC token. Amounts are withheld here.**
 
 ### Costroid
 

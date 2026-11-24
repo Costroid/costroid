@@ -17,7 +17,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-No cap held this run. Cap: USD 0.05, which nothing enforced. Cost: USD 0.10, Measured. Over the cap by USD 0.05 and 1000000 tokens.
+No cap held this run. Cap: USD 0.05, which nothing enforced. Cost: USD 0.10 at list (Measured), USD 0.05 and 1000000 tokens over the cap.
 
 No rule applied: `costroid.yml` in this directory sets no budget and no limit. Set `policy.run_budget_usd` to hold each run to a budget.
 
@@ -28,7 +28,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.10 was computed</summary>
+<summary>How USD 0.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

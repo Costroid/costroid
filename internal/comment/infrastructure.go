@@ -43,8 +43,10 @@ type InfrastructureRow struct {
 	Resource Data
 	Service  Data
 	Currency string
-	Period   Period
-	Cost     decimal.Decimal
+	// Basis is the row's cost basis, which stands beside its amount.
+	Basis  string
+	Period Period
+	Cost   decimal.Decimal
 }
 
 // Period is a row's charge period, as the row states it. The end is
@@ -128,6 +130,7 @@ func (t *infrastructureTally) add(parsed row) error {
 			Resource: cleanWords(focusfile.Resource(parsed.ChargeDescription)),
 			Service:  cleanWords(parsed.ServiceName),
 			Currency: parsed.BillingCurrency,
+			Basis:    basis,
 			Period:   period,
 			Cost:     cost,
 		})
@@ -214,7 +217,7 @@ type infrastructureView struct {
 }
 
 type infrastructureRowView struct {
-	Resource, Service, Period, Amount string
+	Resource, Service, Period, Amount, Basis string
 }
 
 // apart says, once, that the section's figures are not added to the agent's,
@@ -268,7 +271,7 @@ func (i Infrastructure) view(shown, checkRuns bool) *infrastructureView {
 			cells.Service = row.Service.Code()
 		}
 		if shown {
-			cells.Amount = Money(row.Currency, row.Cost.String())
+			cells.Amount, cells.Basis = Money(row.Currency, row.Cost.String()), capital(basisWords[row.Basis])
 		}
 		section.Rows = append(section.Rows, cells)
 	}

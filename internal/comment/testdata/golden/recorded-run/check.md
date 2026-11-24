@@ -8,8 +8,6 @@ Within budget, by the job's own figures: the recorded run cost USD 0.001619725 a
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 This is one run, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Cost | Basis | Enforcement |
@@ -19,7 +17,7 @@ This is one run, not a total across runs. [CI run](https://github.com/example/wi
 <details>
 <summary>Cap, budget, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725 at list (List-equivalent, not billed), USD 4.998380275 under the cap.
 
 Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
 
@@ -32,7 +30,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.001619725 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

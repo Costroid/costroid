@@ -191,11 +191,11 @@ func (i Input) receiptLine(shown bool) string {
 	if shown {
 		amounts := make([]string, len(r.Figures))
 		for index, figure := range r.Figures {
-			amounts[index] = Money(figure.Currency, figure.Cost.String()) + " at list"
+			amounts[index] = Money(figure.Currency, figure.Cost.String()) + atList([]string{receiptBasis})
 		}
 		line += listed(amounts, 0) + ", " + sessions + ", " + stated + "."
 	} else {
-		line += sessions + ", priced at list, " + stated + "."
+		line += sessions + ", priced" + atList([]string{receiptBasis}) + ", " + stated + "."
 	}
 	line += " No budget reads this figure, and it is not added to the run's."
 	if r.Held > 0 {

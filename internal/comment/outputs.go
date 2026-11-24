@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -119,8 +120,36 @@ func only(names []Data) string {
 }
 
 // Summary renders the job summary. It opens on the verdict sentence and reads
-// in the comment's order, with each figure's catalog and token counts in its
-// table. Withheld, it shows no amount and no token count.
+// in the comment's order, with the comment's table. It holds no arithmetic,
+// so its folded details also state each figure's token counts. Withheld, it
+// shows no amount and no token count.
 func Summary(input Input) (string, error) {
-	return render("summary", input.view())
+	data := input.view()
+	data.foldTokens()
+	return render("summary", data)
+}
+
+// foldTokens adds each figure's token counts to the folded details, before
+// the accuracy line that ends them, and names them in the fold's label. One
+// figure's counts need no name. Several are named by their line of the table.
+func (v *view) foldTokens() {
+	if !v.ShowAmounts || len(v.Lines) == 0 {
+		return
+	}
+	details := v.Details
+	if v.Accuracy != "" {
+		details = details[:len(details)-1]
+	}
+	details = slices.Clone(details)
+	for index, line := range v.Lines {
+		if len(v.Lines) == 1 {
+			details = append(details, "Tokens: "+line.Tokens+".")
+			break
+		}
+		details = append(details, fmt.Sprintf("Tokens behind line %d: %s.", index+1, line.Tokens))
+	}
+	if v.Accuracy != "" {
+		details = append(details, v.Accuracy)
+	}
+	v.Details, v.DetailsSummary = details, capital(listed(append(slices.Clone(v.detailsHolds), "tokens"), 0))
 }

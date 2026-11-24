@@ -9,7 +9,9 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 
 | Basis | Enforcement |
 | --- | --- |
-| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | no cap held the run |
+| List-equivalent, not billed, subscription | no cap held the run |
+
+This run signed in on a subscription: list-equivalent, no provider report to reconcile.
 
 Amounts are off on this public repository (`comment.show_cost: false`). The rows and the check run's machine block carry them.
 
@@ -38,6 +40,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

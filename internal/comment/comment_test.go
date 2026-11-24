@@ -191,12 +191,36 @@ func commentOf(t *testing.T, input Input) string {
 	return body
 }
 
-var collapsed = regexp.MustCompile(`(?s)<details>\s*<summary>(.*?)</summary>.*?</details>`)
-
 // visiblePart is what a reader sees before opening anything: every collapsed
-// block is cut to its summary.
+// block is cut to its summary, with whatever it folds inside it.
 func visiblePart(body string) string {
-	return collapsed.ReplaceAllString(body, "$1")
+	return unfolded(body, true)
+}
+
+// openPart is what stands outside every collapsed block, without the blocks'
+// summaries.
+func openPart(body string) string {
+	return unfolded(body, false)
+}
+
+// unfolded drops every collapsed block, a block inside another included, and
+// keeps the outermost blocks' summaries when labels is true.
+func unfolded(body string, labels bool) string {
+	var kept []string
+	depth := 0
+	for line := range strings.SplitSeq(body, "\n") {
+		switch {
+		case line == "<details>":
+			depth++
+		case line == "</details>":
+			depth--
+		case depth == 0:
+			kept = append(kept, line)
+		case depth == 1 && labels && strings.HasPrefix(line, "<summary>"):
+			kept = append(kept, strings.TrimSuffix(strings.TrimPrefix(line, "<summary>"), "</summary>"))
+		}
+	}
+	return strings.Join(kept, "\n")
 }
 
 func TestDocsExampleIsTheRenderedCommentForARealRowsFile(t *testing.T) {
@@ -615,6 +639,228 @@ func TestThousandsOfDistinctStringsStayInsideGitHubsLimit(t *testing.T) {
 	}
 }
 
+// The most that stands open on any surface of a golden state, outside every
+// fold and outside the table: paragraphs, the comment's heading and its two
+// closing lines among them, and words. Both are what the goldens reach today,
+// in the state of a demoted rule beside a failing one with amounts withheld,
+// so a paragraph added in the open there fails the count.
+const (
+	maxOpenParagraphs = 10
+	maxOpenWords      = 203
+	// defaultOpenParagraphs is what the default comment holds in the open, a
+	// run within its budget on rows the agent's job wrote: the sentence, the
+	// heading, the line that names the run, and the two closing lines.
+	defaultOpenParagraphs = 5
+)
+
+// besideLines open the lines of a figure that is not this run's, or of a note
+// on one, by kind.
+var besideLines = map[string]*regexp.Regexp{
+	"an infrastructure figure":       regexp.MustCompile(`(?m)^Infrastructure, [a-z, -]+(: |, in )`),
+	"an estimate that was not there": regexp.MustCompile(`(?m)^Infrastructure estimate: not available`),
+	"a receipt's line":               regexp.MustCompile(`(?m)^(Developer-machine sessions, unchecked: |No developer-machine )`),
+	"the change's total":             regexp.MustCompile(`(?m)^Across this (pull|merge) request: `),
+}
+
+// besideLabel is the label of the section that folds them.
+var besideLabel = regexp.MustCompile(`(?m)^<summary>((?:Infrastructure (?:figures|estimate)|Developer-machine sessions|This (?:pull|merge) request's totals?).*)</summary>$`)
+
+// TestWhatStandsOpenIsCountedInEveryGoldenState holds every golden state, in
+// its comment, its check's summary and its job summary, to what a reader
+// meets before opening anything. Outside the folds stand the verdict, its
+// reason, the next step, the table with the lines that qualify its figures,
+// and in the comment its heading and two closing lines: at most
+// maxOpenParagraphs paragraphs and maxOpenWords words, the table apart. A
+// figure that is not this run's stands in one folded section whose label
+// names what it holds, never in the open: an infrastructure figure, a
+// receipt's sessions and the change's total.
+func TestWhatStandsOpenIsCountedInEveryGoldenState(t *testing.T) {
+	folded := map[string]int{}
+	labels := map[string]string{}
+	for name, input := range goldenStates(t) {
+		r := renderState(t, input)
+		check, err := Check(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for surface, text := range map[string]string{"comment": readable(r.comment), "check's summary": check.Summary, "job summary": r.summary} {
+			open := openPart(text)
+			var prose []string
+			for line := range strings.SplitSeq(open, "\n") {
+				if !strings.HasPrefix(line, "|") && line != Marker {
+					prose = append(prose, line)
+				}
+			}
+			paragraphs := 0
+			for paragraph := range strings.SplitSeq(strings.Join(prose, "\n"), "\n\n") {
+				if strings.TrimSpace(paragraph) != "" {
+					paragraphs++
+				}
+			}
+			if words := len(strings.Fields(strings.Join(prose, " "))); paragraphs > maxOpenParagraphs || words > maxOpenWords {
+				t.Errorf("%s: %d paragraphs and %d words stand open in the %s, past %d and %d:\n%s", name, paragraphs, words, surface, maxOpenParagraphs, maxOpenWords, open)
+			}
+			if name == "neutral-shown" && surface == "comment" && paragraphs != defaultOpenParagraphs {
+				t.Errorf("the default comment holds %d paragraphs in the open, not %d:\n%s", paragraphs, defaultOpenParagraphs, open)
+			}
+			for kind, line := range besideLines {
+				if line.MatchString(open) {
+					t.Errorf("%s: %s stands open in the %s:\n%s", name, kind, surface, open)
+				}
+				if surface == "comment" && line.MatchString(text) {
+					folded[kind]++
+				}
+			}
+			if sections := besideLabel.FindAllStringSubmatch(text, -1); len(sections) > 1 {
+				t.Errorf("%s: %d sections of the %s fold figures that are not this run's", name, len(sections), surface)
+			} else if len(sections) == 1 && surface == "comment" {
+				labels[name] = sections[0][1]
+			}
+		}
+	}
+	for kind := range besideLines {
+		if folded[kind] == 0 {
+			t.Errorf("no golden state folds %s", kind)
+		}
+	}
+	for name, want := range map[string]string{
+		"infrastructure":                    "Infrastructure figures",
+		"infrastructure-without-agent-rows": "Infrastructure figures",
+		"infrastructure-not-available":      "Infrastructure estimate",
+		"receipt":                           "Developer-machine sessions",
+		"receipt-refused":                   "Developer-machine sessions",
+		"lifetime":                          "This pull request's totals",
+		"pull-request-budget-over":          "This pull request's total",
+		"neutral-shown":                     "",
+	} {
+		if labels[name] != want {
+			t.Errorf("%s: the section of figures that are not this run's is labelled %q, want %q", name, labels[name], want)
+		}
+	}
+	// One section holds every kind at once, each named in its label in the
+	// order the section states them.
+	every := withEstimate(t, withReceipt(goldenStates(t)["lifetime"], readReceipt()), twoCurrencies)
+	body, err := CommentWithLifetime(every, every.Lifetime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := "<summary>Infrastructure figures, developer-machine sessions and this pull request's totals</summary>"
+	if strings.Count(body, label) != 1 || strings.Count(body, "<details>") != strings.Count(body, "</details>") {
+		t.Errorf("a report with every figure that is not its run's does not fold them under one label:\n%s", visiblePart(readable(body)))
+	}
+	for kind, line := range besideLines {
+		if kind != "an estimate that was not there" && (!line.MatchString(body) || line.MatchString(openPart(body))) {
+			t.Errorf("a report with every figure that is not its run's leaves %s out, or in the open:\n%s", kind, openPart(readable(body)))
+		}
+	}
+}
+
+// TestPagesNameTheFoldsAndQuoteWhoVouchedForTheRows holds the sentences of
+// the documentation that describe where a line stands to what the report
+// renders: the label of the folded section each page names is the label its
+// golden state carries, and the two sentences docs/recipes.md quotes on rows
+// the agent's job wrote are the sentence's closing clause and the line under
+// it, word for word.
+func TestPagesNameTheFoldsAndQuoteWhoVouchedForTheRows(t *testing.T) {
+	states := goldenStates(t)
+	for _, named := range []struct{ page, state, label string }{
+		{"docs/infrastructure.md", "infrastructure", "Infrastructure figures"},
+		{"docs/infrastructure.md", "infrastructure-not-available", "Infrastructure estimate"},
+		{"docs/receipt.md", "receipt", "Developer-machine sessions"},
+	} {
+		page, err := os.ReadFile(filepath.Join("..", "..", named.page))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := renderState(t, states[named.state]).comment
+		if !strings.Contains(string(page), "in a folded section labelled `"+named.label+"`") && !strings.Contains(string(page), "folds a section labelled `"+named.label+"`") {
+			t.Errorf("%s does not name the folded section %q", named.page, named.label)
+		}
+		if !strings.Contains(body, "<summary>"+named.label+"</summary>") {
+			t.Errorf("the state %s folds no section labelled %q, which %s names", named.state, named.label, named.page)
+		}
+	}
+	page, err := os.ReadFile(filepath.Join("..", "..", "docs", "recipes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, quoted := range []string{`its first line ends "` + uncheckedClosing + `"`, `a line under the first reads "` + uncheckedLine + `"`} {
+		if !strings.Contains(string(page), quoted) {
+			t.Errorf("docs/recipes.md does not say that %s", quoted)
+		}
+	}
+}
+
+// longCell is the one cell of an open table past maxOpenCell: the cap gh-aw
+// checks, in the words of the note its rows carry.
+var longCell = regexp.MustCompile(`^a cap of [0-9.]+ AI credits that gh-aw checks, priced by gh-aw, not by Costroid`)
+
+// The most columns an open table has, and the longest a cell of one is.
+const (
+	maxOpenColumns = 3
+	maxOpenCell    = 60
+)
+
+// TestEveryOpenTableIsNarrow holds every table that stands outside a fold, on
+// every surface of every golden state, to maxOpenColumns columns and to
+// cells of at most maxOpenCell characters, so it reads on a narrow screen.
+// The job summary takes the comment's table. What its wider table held is in
+// its folded details: the catalog, and each figure's token counts, which are
+// the counts the step's outputs state.
+func TestEveryOpenTableIsNarrow(t *testing.T) {
+	tables, counted := 0, 0
+	for name, input := range goldenStates(t) {
+		r := renderState(t, input)
+		check, err := Check(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for surface, text := range map[string]string{"comment": readable(r.comment), "check's summary": check.Summary, "job summary": r.summary} {
+			for line := range strings.SplitSeq(openPart(text), "\n") {
+				if !strings.HasPrefix(line, "|") {
+					continue
+				}
+				tables++
+				cells := strings.Split(strings.Trim(line, "| "), " | ")
+				if len(cells) > maxOpenColumns {
+					t.Errorf("%s: an open table of the %s has %d columns: %s", name, surface, len(cells), line)
+				}
+				for _, cell := range cells {
+					if len(cell) > maxOpenCell && !longCell.MatchString(cell) {
+						t.Errorf("%s: a cell of an open table of the %s is %d characters: %q", name, surface, len(cell), cell)
+					}
+				}
+			}
+		}
+		if input.Amounts != AmountsShown || len(input.Ledger.Figures) != 1 {
+			continue
+		}
+		outputs := map[string]string{}
+		for _, output := range r.outputs {
+			outputs[output.Name] = output.Value
+		}
+		tokens := fmt.Sprintf("\n\nTokens: %s uncached input, %s cache read, %s cache write and %s output.\n\n",
+			outputs["tokens_input_uncached"], outputs["tokens_cache_read"], outputs["tokens_cache_write"], outputs["tokens_output"])
+		_, fold, folded := strings.Cut(r.summary, " and tokens</summary>")
+		if !folded || !strings.Contains(fold, tokens) || strings.Contains(openPart(r.summary), "Tokens: ") || !strings.Contains(fold, "catalog `") {
+			t.Errorf("%s: the job summary's fold does not hold the catalog and the token counts the outputs state:%s%s", name, tokens, r.summary)
+		}
+		counted++
+	}
+	if tables == 0 || counted < 40 {
+		t.Fatalf("%d rows of open tables and %d job summaries with one figure were read", tables, counted)
+	}
+	several, err := Summary(goldenStates(t)["two-currencies"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"Tokens behind line 1: 0 uncached input, 0 cache read, 0 cache write and 1000000 output.", "Tokens behind line 2: 0 uncached input, 0 cache read, 0 cache write and 1000000 output."} {
+		if strings.Count(several, "\n"+line+"\n") != 1 {
+			t.Errorf("a job summary of two figures does not name each figure's counts by its line, %q:\n%s", line, several)
+		}
+	}
+}
+
 // TestVisiblePartStaysShort counts every word a reader sees before opening a
 // block, summaries included. The comment held 67 such words before it named
 // its run and traced its figure, 86 before its budget line stated the cap,
@@ -797,6 +1043,37 @@ func TestPlatformURLLinksThePullRequest(t *testing.T) {
 		if body := commentOf(t, input); !strings.Contains(body, installationLink) || strings.Contains(body, "costroid.example") {
 			t.Errorf("%s: the link is not the installation's:\n%s", name, body)
 		}
+	}
+}
+
+// TestEveryCommentSaysWhatCostroidIsAndLinksHowTheCheckDecides holds every
+// golden state's comment to one line for a reader who never installed
+// Costroid: what it is, in the host's word for a change, and one link to the
+// page on how the check decides. The line stands once, in the open, above the
+// line that links the account, in the states whose check fails as in every
+// other.
+func TestEveryCommentSaysWhatCostroidIsAndLinksHowTheCheckDecides(t *testing.T) {
+	failing, onGitLab := 0, 0
+	for name, input := range goldenStates(t) {
+		changes := "pull requests"
+		if input.AccountHost == AccountGitLab {
+			changes = "merge requests"
+			onGitLab++
+		}
+		if input.Conclusion() == policy.Failure {
+			failing++
+		}
+		want := "\n\nCostroid is the cost check for " + changes + ". [How the check decides](https://docs.costroid.com/policy)\n\n[Costroid Platform (not open yet)]("
+		body := renderState(t, input).comment
+		if strings.Count(body, want) != 1 || !strings.Contains(visiblePart(body), want) {
+			t.Errorf("%s: the comment does not hold this once, in the open:%s\n%s", name, want, visiblePart(readable(body)))
+		}
+		if links := strings.Count(visiblePart(readable(body)), "](https://docs.costroid.com/policy)"); links != 1 {
+			t.Errorf("%s: %d links to the policy page stand in the open", name, links)
+		}
+	}
+	if failing == 0 || onGitLab == 0 {
+		t.Fatalf("%d golden states fail their check and %d are GitLab's", failing, onGitLab)
 	}
 }
 
@@ -1100,7 +1377,7 @@ func TestTheTraceRecomputesTheFigureByHand(t *testing.T) {
 		}
 		total = total.Add(amount)
 	}
-	if total.String() != realTotal || !strings.Contains(body, "<summary>How USD "+realTotal+" was computed</summary>") {
+	if total.String() != realTotal || !strings.Contains(body, "<summary>How USD "+realTotal+" at list (List-equivalent, not billed) was computed</summary>") {
 		t.Errorf("the trace sums to %s", total)
 	}
 }

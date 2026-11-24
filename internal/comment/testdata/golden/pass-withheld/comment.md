@@ -1,7 +1,5 @@
 <!-- costroid:comment -->
-**Within budget: this run is within its run budget, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.**
-
-Checked: a ledger checked the rows the verdict read against the job's OIDC token.
+**Within budget: this run is within its run budget, priced at list (Measured). A ledger checked the rows against the job's OIDC token. Amounts are withheld here.**
 
 ### Costroid
 
@@ -34,6 +32,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 Token counts are withheld with the amounts. The rows carry them, and the check run's machine block carries the amounts.
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

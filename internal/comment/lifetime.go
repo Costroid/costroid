@@ -1,7 +1,6 @@
 package comment
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/Costroid/costroid/internal/decimal"
@@ -91,38 +90,20 @@ func plural(count int, one, many string) string {
 	return many
 }
 
-// Lifetime is empty on a comment rendered without the pull request's
-// history. lifetimeView's own method replaces it.
-func (view) Lifetime() []string {
-	return nil
-}
-
-// lifetimeView is the comment's view with the lifetime's sentences.
-type lifetimeView struct {
-	view
-	lines []string
-}
-
-func (v lifetimeView) Lifetime() []string {
-	return v.lines
-}
-
 // CommentWithLifetime renders the sticky comment with the pull request's
-// lifetime after this run's figures. The lifetime is withheld with the
-// amounts, and a nil lifetime renders the comment Comment does.
+// lifetime, which closes the folded section of figures that are not this
+// run's. The lifetime is withheld with the amounts, and a nil lifetime
+// renders the comment Comment does.
 func CommentWithLifetime(input Input, lifetime *Lifetime) (string, error) {
 	block, err := input.block()
 	if err != nil {
 		return "", err
 	}
-	data := lifetimeView{view: input.view()}
+	data := input.view()
 	data.Block = fenced(block)
 	if lifetime != nil && input.Amounts == AmountsShown {
-		data.lines = lifetime.sentences(input.request())
+		totals := plural(min(len(lifetime.Figures), maxLifetimeFigures), "total", "totals")
+		data.setBeside("this "+input.request()+"'s "+totals, lifetime.sentences(input.request())...)
 	}
-	var out bytes.Buffer
-	if err := templates.ExecuteTemplate(&out, "comment", data); err != nil {
-		return "", fmt.Errorf("comment: render comment: %w", err)
-	}
-	return out.String(), nil
+	return render("comment", data)
 }

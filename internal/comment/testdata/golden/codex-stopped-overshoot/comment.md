@@ -11,7 +11,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | --- | --- | --- |
 | USD 0.0283136 | Measured | the wrapper stops the process at the cap |
 
-Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136, Measured. Over the cap by USD 0.0273136 and 16960 tokens.
+Cap: USD 0.001 (the wrapper stops the process at the cap). Cost: USD 0.0283136 at list (Measured), USD 0.0273136 and 16960 tokens over the cap.
 
 <details>
 <summary>Policy, agents, models and catalog</summary>
@@ -25,7 +25,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.0283136 was computed</summary>
+<summary>How USD 0.0283136 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -35,6 +35,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 | `0.1.0` | `cached_input_reported` | `openai/gpt-5.6-sol/cached_input_reported/informational` | informational, not priced | 11264 | No amount: not priced |
 
 </details>
+
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://costroid.com/account/) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

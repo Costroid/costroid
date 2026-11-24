@@ -15,17 +15,9 @@
 {{- define "evidence" -}}
 {{.RunLine}}
 {{- if .NoFigures}}
-{{- if .Infrastructure}}
+{{- if .BesideSummary}}
 
-{{template "infrastructure" .Infrastructure}}
-{{- end}}
-{{- if .EstimateUnavailable}}
-
-{{.EstimateUnavailable}}
-{{- end}}
-{{- if .Receipt}}
-
-{{.Receipt}}
+{{template "beside" .}}
 {{- end}}
 {{- else}}
 
@@ -46,17 +38,12 @@
 {{.PastCap}}
 
 {{end -}}
-{{if .Infrastructure}}{{template "infrastructure" .Infrastructure}}
-
-{{end -}}
-{{if .EstimateUnavailable}}{{.EstimateUnavailable}}
-
-{{end -}}
-{{if .Receipt}}{{.Receipt}}
-
-{{end -}}
 {{if .Fallback -}}
 {{.Fallback}}
+
+{{end -}}
+{{if .Subscription -}}
+{{.Subscription}}
 
 {{end -}}
 {{if .AgentError -}}
@@ -82,12 +69,37 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.}}
 
 {{end -}}
+{{if .BesideSummary -}}
+{{template "beside" .}}
+
+{{end -}}
 {{template "details" .}}
 {{- range .Traces}}
 
 {{template "trace" .}}
 {{- end}}
 {{- end}}
+{{- end -}}
+
+{{- define "receipt" -}}
+<details>
+<summary>{{.ReceiptSummary}}</summary>
+
+{{.Receipt}}
+
+</details>
+{{- end -}}
+
+{{- define "beside" -}}
+<details>
+<summary>{{.BesideSummary}}</summary>
+{{if .Infrastructure}}
+{{template "infrastructure" .Infrastructure}}
+{{end -}}
+{{range .Beside}}
+{{.}}
+{{end}}
+</details>
 {{- end -}}
 
 {{- define "details" -}}
@@ -112,10 +124,10 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 <summary>Infrastructure rows</summary>
 
 {{if .ShowAmounts -}}
-| Resource | Service | Period | Amount |
-| --- | --- | --- | --- |
+| Resource | Service | Period | Amount | Basis |
+| --- | --- | --- | --- | --- |
 {{range .Rows -}}
-| {{.Resource}} | {{.Service}} | {{.Period}} | {{.Amount}} |
+| {{.Resource}} | {{.Service}} | {{.Period}} | {{.Amount}} | {{.Basis}} |
 {{end}}
 {{- else -}}
 | Resource | Service | Period |
@@ -165,7 +177,8 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 
 {{template "evidence" .}}
 
-{{range .Lifetime}}{{.}}{{"\n\n"}}{{end -}}
+{{.Purpose}}
+
 [Costroid Platform (not open yet)]({{.AccountURL}}) · [Export to your FinOps platform or warehouse]({{.ExportURL}})
 
 <details>
@@ -182,10 +195,10 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 ### Costroid
 
 {{if .ShowAmounts -}}
-| Cost | Basis | Catalog | Enforcement | Input, uncached | Cache read | Cache write | Output |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Cost | Basis | Enforcement |
+| --- | --- | --- |
 {{range .Lines -}}
-| {{.Cost}}{{.Mark}} | {{.Basis}} | {{.Catalogs}} | {{.Note}} | {{.InputUncached}} | {{.CacheRead}} | {{.CacheWrite}} | {{.Output}} |
+| {{.Cost}}{{.Mark}} | {{.Basis}} | {{.Note}} |
 {{end}}
 {{- else -}}
 | Basis | Catalog | Enforcement |
@@ -202,6 +215,10 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 {{.Fallback}}
 
 {{end -}}
+{{if .Subscription -}}
+{{.Subscription}}
+
+{{end -}}
 {{if .AgentError -}}
 {{.AgentError}}
 
@@ -211,7 +228,7 @@ Amounts are withheld, because `comment.show_cost` or the repository's visibility
 
 {{end -}}
 {{if .Receipt -}}
-{{.Receipt}}
+{{template "receipt" .}}
 
 {{end -}}
 {{if .ShowAmounts -}}
@@ -226,6 +243,6 @@ Amounts and token counts are withheld, because `comment.show_cost` or the reposi
 {{.Accuracy}}
 {{- end}}
 {{else if .Receipt}}
-{{.Receipt}}
+{{template "receipt" .}}
 {{end -}}
 {{end -}}

@@ -93,7 +93,7 @@ The comment never restates a figure to another period. A file that holds two mon
 
 ## What the comment shows
 
-Under the agent's figure and its table, the comment adds one line per currency, basis, source and period, then says once that the figures are not added together, then folds the rows into a table of at most 20 rows:
+Under the agent's figure and its table, the comment folds a section labelled `Infrastructure figures`. In it stand one line per currency, basis, source and period, then one sentence that the figures are not added together, then the rows, folded again into a table of at most 20 rows, each with its amount and its basis:
 
 ```markdown
 Infrastructure, estimated: EUR 25.488 for 2026-12, from `infrastructure`.
@@ -105,10 +105,10 @@ The agent figure and these infrastructure figures are not added together, and no
 <details>
 <summary>Infrastructure rows</summary>
 
-| Resource | Service | Period | Amount |
-| --- | --- | --- | --- |
-| `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 |
-| `google_compute_instance.batch` | `Compute Engine` | 2026-12 | USD 1000.00 |
+| Resource | Service | Period | Amount | Basis |
+| --- | --- | --- | --- | --- |
+| `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 | Estimated |
+| `google_compute_instance.batch` | `Compute Engine` | 2026-12 | USD 1000.00 | Estimated |
 
 </details>
 ```
@@ -188,7 +188,7 @@ When the estimator step does not run, as on a fork's pull request whose workflow
 costroid: the infrastructure estimate is not available: there is no file at infrastructure.csv. The step that writes it did not run or wrote nothing, as on a fork's pull request that gets no secret. No rows were added to costroid-rows.jsonl
 ```
 
-The command leaves a note beside the rows file, `costroid-rows.infrastructure.json` beside `costroid-rows.jsonl`, and the action keeps it in the artifact with the rows. The report reads it, and the comment prints one line under the agent's figures:
+The command leaves a note beside the rows file, `costroid-rows.infrastructure.json` beside `costroid-rows.jsonl`, and the action keeps it in the artifact with the rows. The report reads it, and the comment prints one line under the agent's figures, in a folded section labelled `Infrastructure estimate`:
 
 ```markdown
 Infrastructure estimate: not available (the step that writes it did not run or wrote nothing, as on a fork's pull request that gets no secret).

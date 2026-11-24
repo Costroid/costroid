@@ -1,12 +1,10 @@
 # Title
 
-Within limit: this run cost USD 0.10 at list (Measured), within 1.5 times the USD 0.10 P95 of this agent's latest 20 runs. A ledger checked the rows.
+Within limit: this run cost USD 0.10 at list (Measured), within 1.5 times the USD 0.10 at list P95 of this agent's latest 20 runs. A ledger checked the rows against the job's OIDC token.
 
 # Summary
 
-**Within limit: this run cost USD 0.10 at list (Measured), within 1.5 times the USD 0.10 P95 of this agent's latest 20 runs. A ledger checked the rows.**
-
-Checked: a ledger checked the rows the verdict read against the job's OIDC token.
+**Within limit: this run cost USD 0.10 at list (Measured), within 1.5 times the USD 0.10 at list P95 of this agent's latest 20 runs. A ledger checked the rows against the job's OIDC token.**
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
@@ -17,7 +15,7 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 <details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10, Measured. Under the cap by USD 4.90.
+Cap: USD 5.00 (the wrapper stops the process at the cap). Cost: USD 0.10 at list (Measured), USD 4.90 under the cap.
 
 A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
@@ -28,7 +26,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.10 was computed</summary>
+<summary>How USD 0.10 at list (Measured) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

@@ -6,7 +6,9 @@ Unchecked: the agent's own job wrote these figures, and nothing outside it check
 
 | Basis | Catalog | Enforcement |
 | --- | --- | --- |
-| List-equivalent, not billed; subscription: list-equivalent, no provider report to reconcile | `0.3.0` | no cap held the run |
+| List-equivalent, not billed, subscription | `0.3.0` | no cap held the run |
+
+This run signed in on a subscription: list-equivalent, no provider report to reconcile.
 
 Amounts and token counts are off on this public repository (`comment.show_cost: false`). The step's outputs and the check run's machine block carry them.
 

@@ -1,8 +1,6 @@
 <!-- costroid:comment -->
 **Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 ### Costroid
 
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
@@ -40,6 +38,8 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 Token counts are withheld with the amounts. The rows carry them.
 
 </details>
+
+Costroid is the cost check for merge requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

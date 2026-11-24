@@ -75,7 +75,9 @@ func (i Input) configRead() string {
 // rules the sentence does not name, and a next step only when the reader must
 // act. The reason is the approval when one turned the check neutral, then who
 // vouched for the rows, or what a report with no figures leaves unsaid.
-func (i Input) reading(shown bool) []string {
+// sentence is the verdict sentence as it is said: where it closes on who
+// vouched for the rows, no paragraph says so a second time.
+func (i Input) reading(sentence string, shown bool) []string {
 	var paragraphs []string
 	add := func(paragraph string) {
 		if paragraph != "" {
@@ -93,7 +95,9 @@ func (i Input) reading(shown bool) []string {
 		add(forkHeldLine(i.request()))
 	}
 	if i.State == Reported {
-		add(i.trustLine())
+		if trust := i.trustLine(); !strings.Contains(sentence, trustClosings[trust]) {
+			add(trust)
+		}
 	} else {
 		add(i.why())
 	}
@@ -134,9 +138,6 @@ func named(result policy.Result) bool {
 	switch {
 	case result.Rule == policy.RuleCustomerPack:
 		return true
-	case result.Demoted != nil:
-		// A demoted rule's sentence names no amount, so its own line follows.
-		return false
 	case leadNouns[result.Rule] == "":
 		return false
 	case broken(result) || result.Outcome == policy.Pass:
@@ -164,7 +165,7 @@ func (i Input) otherRules(shown, attribution bool) []string {
 		case stated && result.Rule == decided.Rule:
 		case result.Rule == policy.RuleAttribution && !attribution && result.Rule != decided.Rule:
 		default:
-			lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.lifetimeBases(), i.request()))
+			lines = append(lines, resultSentence(result, i.Verdict.JoinableRows, shown, i.addedBases(), i.request()))
 		}
 	}
 	return lines
@@ -176,7 +177,7 @@ func (i Input) attributionNote() string {
 	decided, _ := deciding(i.Verdict)
 	for _, result := range i.Verdict.Results {
 		if result.Rule == policy.RuleAttribution && result.Rule != decided.Rule {
-			return resultSentence(result, i.Verdict.JoinableRows, false, nil, i.request())
+			return resultSentence(result, i.Verdict.JoinableRows, false, addedBases{}, i.request())
 		}
 	}
 	return ""
@@ -185,13 +186,25 @@ func (i Input) attributionNote() string {
 // approvalPage says how a reviewer approves a failed check.
 const approvalPage = "https://docs.costroid.com/approval"
 
-// nextStep is the one sentence for a reader who must act: the file to fix
-// when costroid.yml kept every rule from running, how a failure is approved,
-// or when the warn-only period ends. It is empty for any other verdict. Only
-// GitHub's check takes an approval. A fork's own rows leave nothing to act
-// on: their check is neutral whether or not the period runs.
+// refusedPage is the section of the troubleshooting page that holds a refused
+// artifact's line and its fix.
+const refusedPage = "https://docs.costroid.com/troubleshooting#installing-the-binary"
+
+// refusedStep is the next step after a refused artifact. No approval turns
+// that check neutral, so the sentence says so and sends the reader to the
+// workflow: a step of the agent's job wrote what the artifact held.
+const refusedStep = "An approval does not change this check: find the step in the agent's job that wrote those entries, as [the troubleshooting page](" + refusedPage + ") says."
+
+// nextStep is the one sentence for a reader who must act: where to look
+// after a refused artifact, the file to fix when costroid.yml kept every rule
+// from running, how a failure is approved, or when the warn-only period ends.
+// It is empty for any other verdict. Only GitHub's check takes an approval. A
+// fork's own rows leave nothing to act on: their check is neutral whether or
+// not the period runs.
 func (i Input) nextStep() string {
 	switch {
+	case i.refused():
+		return refusedStep
 	case i.Verdict == nil:
 		return ""
 	case configSentence(*i.Verdict, i.configRead()) != "":
@@ -361,9 +374,39 @@ func noRuleApplied(config string) string {
 	return "No rule applied: " + config + " sets no budget and no limit. " + setBudget
 }
 
+// addedBases are the bases a rule's USD cost adds, which its line names beside
+// the amount: the run's own figures for a rule on the run, and the change's
+// total for the budget on it.
+type addedBases struct {
+	run, total []string
+}
+
+// addedBases are the bases of this report's run and of its change's total.
+func (i Input) addedBases() addedBases {
+	return addedBases{run: i.runBases(), total: i.lifetimeBases()}
+}
+
+// runBases are the bases of the run's USD figures, which a rule on the run
+// adds together, in basisOrder. Empty when the table leaves a figure out,
+// whose basis the report then does not name.
+func (i Input) runBases() []string {
+	if i.Ledger.FiguresOmitted > 0 {
+		return nil
+	}
+	var bases []string
+	for _, basis := range basisOrder {
+		if slices.ContainsFunc(i.Ledger.Figures, func(figure Figure) bool {
+			return figure.Currency == budgetCurrency && figure.Basis == basis
+		}) {
+			bases = append(bases, basis)
+		}
+	}
+	return bases
+}
+
 // resultSentence is a rule's own line. request is the host's word for a
-// change, and bases are the bases the change's total adds.
-func resultSentence(result policy.Result, joinable int, shown bool, bases []string, request string) string {
+// change, and bases are the bases each amount it names adds.
+func resultSentence(result policy.Result, joinable int, shown bool, bases addedBases, request string) string {
 	label, noun := ruleLabel(result.Rule, request), limitNouns[result.Rule]
 	switch {
 	case result.Rule == policy.RuleCustomerPack:
@@ -371,28 +414,29 @@ func resultSentence(result policy.Result, joinable int, shown bool, bases []stri
 	case result.Rule == policy.RuleModelAllowlist:
 		return label + ": " + allowlistSentence(result)
 	case result.Rule == policy.RuleRunIncrease || result.Rule == policy.RuleRunIncreasePercent:
-		if sentence := increaseSentence(result, shown); sentence != "" {
+		if sentence := increaseSentence(result, shown, bases.run); sentence != "" {
 			return label + ": " + sentence
 		}
 	case result.Rule == policy.RuleRunP95:
-		if sentence := p95Sentence(result, shown); sentence != "" {
+		if sentence := p95Sentence(result, shown, bases.run); sentence != "" {
 			return label + ": " + sentence
 		}
 	case result.Rule == policy.RulePullRequestBudget:
-		if sentence := pullRequestSentence(result, shown, bases, request); sentence != "" {
+		if sentence := pullRequestSentence(result, shown, bases.total, request); sentence != "" {
 			return label + ": " + sentence
 		}
 	}
 	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
+	cost := Money(budgetCurrency, result.CostUSD) + atList(bases.run)
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("%s: %s is over the %s %s.", label, Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), noun)
+			return fmt.Sprintf("%s: %s is over the %s %s.", label, cost, Money(budgetCurrency, result.LimitUSD), noun)
 		}
 		return fmt.Sprintf("%s: the run is over the %s.", label, noun)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s: %s is within the %s %s.", label, Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), noun)
+			return fmt.Sprintf("%s: %s is within the %s %s.", label, cost, Money(budgetCurrency, result.LimitUSD), noun)
 		}
 		return fmt.Sprintf("%s: the run is within the %s.", label, noun)
 	case policy.ReasonUnverifiedRows:
@@ -441,18 +485,18 @@ var budgetRules = []string{policy.RuleRunBudget, policy.RuleRunCostThreshold, po
 // the rows kept the rule from passing although the figure was within it. It
 // is empty for any other rule, and for a rule that held no figure. The pack
 // reaches these reasons only after it found the figure not over the limit.
-func standing(result policy.Result, shown bool, bases []string, request string) string {
+func standing(result policy.Result, shown bool, bases addedBases, request string) string {
 	if !slices.Contains(budgetRules, result.Rule) || result.CostUSD == "" || result.LimitUSD == "" {
 		return ""
 	}
 	noun := limitNouns[result.Rule]
 	switch {
 	case result.Rule == policy.RulePullRequestBudget && shown:
-		return fmt.Sprintf(" This %s's runs cost %s of the %s budget. %s", request, Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), totalBases(bases))
+		return fmt.Sprintf(" This %s's runs cost %s%s of the %s budget.", request, Money(budgetCurrency, result.CostUSD), atList(bases.total), Money(budgetCurrency, result.LimitUSD))
 	case result.Rule == policy.RulePullRequestBudget:
-		return " This " + request + "'s runs are within the budget. " + totalBases(bases)
+		return " This " + request + "'s runs are within the budget. " + totalBases(bases.total)
 	case shown:
-		return fmt.Sprintf(" The run cost %s of the %s %s.", Money(budgetCurrency, result.CostUSD), Money(budgetCurrency, result.LimitUSD), noun)
+		return fmt.Sprintf(" The run cost %s%s of the %s %s.", Money(budgetCurrency, result.CostUSD), atList(bases.run), Money(budgetCurrency, result.LimitUSD), noun)
 	}
 	return fmt.Sprintf(" The run is within the %s.", noun)
 }
@@ -539,8 +583,9 @@ func allowlistSentence(result policy.Result) string {
 }
 
 // increaseSentence states a run against the median of earlier runs, or is
-// empty for a reason every rule states alike.
-func increaseSentence(result policy.Result, shown bool) string {
+// empty for a reason every rule states alike. run are the bases the run's
+// cost adds.
+func increaseSentence(result policy.Result, shown bool, run []string) string {
 	allowed := "the allowed increase"
 	if result.LimitPercent != "" {
 		allowed = result.LimitPercent + "%"
@@ -552,12 +597,12 @@ func increaseSentence(result policy.Result, shown bool) string {
 	switch result.Reason {
 	case policy.ReasonOverBaseline:
 		if amounts {
-			return fmt.Sprintf("%s is more than %s over the %s median of earlier runs.", Money(budgetCurrency, result.CostUSD), allowed, Money(budgetCurrency, result.BaselineUSD))
+			return fmt.Sprintf("%s%s is more than %s over the %s median of earlier runs.", Money(budgetCurrency, result.CostUSD), atList(run), allowed, baselineFigure(result.BaselineUSD))
 		}
 		return fmt.Sprintf("the run is more than %s over the median of earlier runs.", allowed)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s is at most %s over the %s median of earlier runs.", Money(budgetCurrency, result.CostUSD), allowed, Money(budgetCurrency, result.BaselineUSD))
+			return fmt.Sprintf("%s%s is at most %s over the %s median of earlier runs.", Money(budgetCurrency, result.CostUSD), atList(run), allowed, baselineFigure(result.BaselineUSD))
 		}
 		return fmt.Sprintf("the run is at most %s over the median of earlier runs.", allowed)
 	case policy.ReasonNoBaseline:
@@ -567,17 +612,17 @@ func increaseSentence(result policy.Result, shown bool) string {
 }
 
 // p95Sentence states a run against its P95 limit, or is empty for a reason
-// every rule states alike.
-func p95Sentence(result policy.Result, shown bool) string {
-	run := "the run"
+// every rule states alike. run are the bases the run's cost adds.
+func p95Sentence(result policy.Result, shown bool, run []string) string {
+	cost := "the run"
 	if shown && result.CostUSD != "" && result.P95USD != "" {
-		run = Money(budgetCurrency, result.CostUSD)
+		cost = Money(budgetCurrency, result.CostUSD) + atList(run)
 	}
 	switch result.Reason {
 	case policy.ReasonOverBaseline:
-		return run + " is over " + p95Limit(result, shown) + "."
+		return cost + " is over " + p95Limit(result, shown) + "."
 	case policy.ReasonWithinLimit:
-		return run + " is within " + p95Limit(result, shown) + "."
+		return cost + " is within " + p95Limit(result, shown) + "."
 	case policy.ReasonNoBaseline:
 		return fmt.Sprintf("%d earlier runs of this agent reached this check, and the rule needs %d, so it did not run.", baselineRuns(result), policy.MinP95Runs)
 	}
@@ -585,18 +630,21 @@ func p95Sentence(result policy.Result, shown bool) string {
 }
 
 // pullRequestSentence states the pull request's total against its budget, or
-// is empty for a reason every rule states alike.
+// is empty for a reason every rule states alike. The total names the bases it
+// adds beside its amount, and in a sentence of their own where the amount is
+// withheld.
 func pullRequestSentence(result policy.Result, shown bool, bases []string, request string) string {
 	amounts := shown && result.CostUSD != "" && result.LimitUSD != ""
+	total := Money(budgetCurrency, result.CostUSD) + atList(bases)
 	switch result.Reason {
 	case policy.ReasonOverLimit:
 		if amounts {
-			return fmt.Sprintf("%s over this %s's runs is over the %s budget. %s", Money(budgetCurrency, result.CostUSD), request, Money(budgetCurrency, result.LimitUSD), totalBases(bases))
+			return fmt.Sprintf("%s over this %s's runs is over the %s budget.", total, request, Money(budgetCurrency, result.LimitUSD))
 		}
 		return "this " + request + "'s runs are over the budget. " + totalBases(bases)
 	case policy.ReasonWithinLimit:
 		if amounts {
-			return fmt.Sprintf("%s over this %s's runs is within the %s budget. %s", Money(budgetCurrency, result.CostUSD), request, Money(budgetCurrency, result.LimitUSD), totalBases(bases))
+			return fmt.Sprintf("%s over this %s's runs is within the %s budget.", total, request, Money(budgetCurrency, result.LimitUSD))
 		}
 		return "this " + request + "'s runs are within the budget. " + totalBases(bases)
 	case policy.ReasonNoLifetime:
@@ -629,8 +677,9 @@ func (i Input) lifetimeBases() []string {
 	return bases
 }
 
-// totalBases says which bases the pull request's total adds, so the total
-// never reads as one basis when it holds several.
+// totalBases says which bases the pull request's total adds where its amount
+// is withheld, so the total never reads as one basis when it holds several.
+// Beside an amount, atList names them.
 func totalBases(bases []string) string {
 	switch len(bases) {
 	case 0:

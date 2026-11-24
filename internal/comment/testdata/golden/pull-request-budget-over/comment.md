@@ -14,9 +14,16 @@ This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://g
 | USD 0.001619725 | List-equivalent, not billed | client-side estimate, can pass the cap |
 
 <details>
+<summary>This pull request's total</summary>
+
+Across this pull request: USD 0.00323945 at list (List-equivalent, not billed), from 2 reports.
+
+</details>
+
+<details>
 <summary>Cap, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725 at list (List-equivalent, not billed), USD 4.998380275 under the cap.
 
 A change to `costroid.yml` in this pull request applies after the merge, because the verdict reads the base branch's file.
 
@@ -27,7 +34,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.001619725 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |
@@ -41,7 +48,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 
 </details>
 
-Across this pull request: USD 0.00323945 at list (List-equivalent, not billed), from 2 reports.
+Costroid is the cost check for pull requests. [How the check decides](https://docs.costroid.com/policy)
 
 [Costroid Platform (not open yet)](https://app.costroid.com/?installation=github%3A58120394) · [Export to your FinOps platform or warehouse](https://docs.costroid.com/export)
 

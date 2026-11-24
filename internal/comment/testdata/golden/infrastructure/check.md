@@ -6,13 +6,14 @@ Within budget, by the job's own figures: this run cost USD 0.001619725 at list (
 
 **Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.**
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 This is one run at commit `9f2c6e1`, not a total across runs. [CI run](https://github.com/example/widgets/actions/runs/19203384756)
 
 | Cost | Basis | Enforcement |
 | --- | --- | --- |
 | USD 0.001619725 | List-equivalent, not billed | client-side estimate, can pass the cap |
+
+<details>
+<summary>Infrastructure figures</summary>
 
 Infrastructure, estimated: EUR 25.488 for 2026-12, from `infrastructure`.
 
@@ -23,17 +24,19 @@ The agent figure and these infrastructure figures are not added together, and no
 <details>
 <summary>Infrastructure rows</summary>
 
-| Resource | Service | Period | Amount |
-| --- | --- | --- | --- |
-| `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 |
-| `google_compute_instance.batch` | `Compute Engine` | 2026-12 | USD 1000.00 |
+| Resource | Service | Period | Amount | Basis |
+| --- | --- | --- | --- | --- |
+| `aws_instance.web` | `Amazon EC2` | 2026-12 | EUR 25.488 | Estimated |
+| `google_compute_instance.batch` | `Compute Engine` | 2026-12 | USD 1000.00 | Estimated |
+
+</details>
 
 </details>
 
 <details>
 <summary>Cap, budget, policy, agents, models and catalog</summary>
 
-Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725, List-equivalent, not billed. Under the cap by USD 4.998380275.
+Cap: USD 5.00 (client-side estimate, can pass the cap). Cost: USD 0.001619725 at list (List-equivalent, not billed), USD 4.998380275 under the cap.
 
 Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`. The verdict checks this budget, never the cap.
 
@@ -46,7 +49,7 @@ Costroid's own test, not this run: it runs `claude-code` alone on an Anthropic A
 </details>
 
 <details>
-<summary>How USD 0.001619725 was computed</summary>
+<summary>How USD 0.001619725 at list (List-equivalent, not billed) was computed</summary>
 
 | Catalog | Token class | Price id | Unit price | Tokens | Amount |
 | --- | --- | --- | --- | --- | --- |

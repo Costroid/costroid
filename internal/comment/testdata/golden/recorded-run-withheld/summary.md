@@ -2,8 +2,6 @@
 
 These figures are a recorded run's, workflow run 42368537950 on 2026-11-07, not this pull request's.
 
-Unchecked: the agent's own job wrote these figures, and nothing outside it checked them.
-
 ### Costroid
 
 | Basis | Catalog | Enforcement |
