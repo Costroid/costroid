@@ -2,6 +2,46 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.34 (2026-11-24)
+
+### Read this if you ask `costroid serve` for a verdict
+
+Two faults were found in the verdict `costroid serve` answers at `POST /v1/pulls/{pr}/verdict`, each by a test written to look for it. Both are closed in this release. Neither reached the check or the comment the report job posts, which do not ask the service.
+
+**A budget passed on part of what the gateway counted.** The service summed a pull request's gateway figure only over the keys its rows name. A run whose rows were not on the pull request took its key's count with it: left out by the pull request's own workflow, or lost by a failed ingest job. In the test, two runs with USD 0.5 and USD 10 counted against a budget of USD 5 read `success`, with `pr_budget` `pass` at USD 0.5. Now the attesting run, which a pull request cannot edit, names the pull requests GitHub lists for the run a key is for, and the ledger sums the count of every key attested for a pull request, whether its rows arrived or not. A key with no count yet keeps the budget from passing, and a count over the limit fails `pr_budget` with no rows at all.
+
+**A verdict concluded `success` on settings the caller chose.** The service read `costroid.yml` at the commit the request names, or took the file the request states where it has no GitHub App. A pull request's own job could name its own head, whose file holds a looser budget or names no policy pack, and be answered `success` where the base's file answers `failure`. Now the service concludes `success` only on settings it read itself at the head of the pull request's base branch. Anything else is `neutral` at best, a `failure` stays a `failure`, and `override_record` says why.
+
+What to do, in this order:
+
+1. Upgrade `costroid serve`. It applies migration 0013 when it starts.
+2. Then move the gateway recipe's pin to this release, so `costroid gateway mint` names the pull requests. A newer `mint` against an older ledger still attests, and warns that the ledger is older.
+3. Give the ledger its GitHub App, if a verdict's `success` matters to you. Without the App the service reads no file itself, so its verdict is `neutral` at best from this release on. [`docs/serve.md`](docs/serve.md) states the rule under "Success only at the base".
+
+Not closed in this release, and stated so you can weigh it:
+
+- An attestation that names no pull request reads as before, by its rows: one stored by an earlier release, and a run GitHub lists no pull request for. For such a key, a run whose rows do not arrive still takes its count with it.
+- The first statement of a row id stands whole, whoever sent it, so a sender of the same tenant who knows a run's row ids can state them first.
+- GitHub sends no `requested` event for a re-run of a run. [`recipes/github-gateway.yml`](recipes/github-gateway.yml) mints on that event, so a re-run of an agent's run gets no key.
+
+### Breaking changes
+
+- `costroid serve` concludes `success` only on settings it read at the head of the pull request's base branch through its GitHub App. A ledger with no App, a `config_ref` that is not the base's head, and a pull request the host did not answer conclude `neutral` at best. A base branch that moved during a run reads `not_base`; asking again cures it.
+- `pr_budget` in the service's verdict fails with `over_limit` when the gateway's counts for the pull request are over the limit, with no rows and while another key is uncounted. It read `unproven`. A sum within the limit never passes while a count is missing.
+- A customer's policy pack is read only at the base's head. A verdict off the base reads no pack and states `customer_pack` as a pack it did not read.
+- `costroid validate` compiles the policy pack beside `costroid.yml` and exits 1 on one that does not compile, where it said `valid`. Where the pack's file is not there to read, it says so and the file is still valid. Its `--json` object is `costroid.validate/0.2` and adds `pack`.
+- Migration `0013_credential_pulls.sql` adds the table `credential_pulls`. `costroid serve` applies it when it starts.
+
+### What you can now do
+
+- Install the chart without a crash loop. `costroid serve` waits for its database at start, every 2 s for up to 110 s, under the chart's startup probe of 120 s. With the bundled Postgres a first install restarted the service two to four times; it restarts none now. A wrong password, a missing role or a failed migration still end the start at once.
+- Trust the chart on a real cluster. On every pull request, CI installs it on a kind cluster in both shapes, fresh and as an upgrade from the last release's chart and published image, and reads each run's total back exactly. [`scripts/chart-install.sh`](scripts/chart-install.sh) runs the same walk on your machine.
+- Read under a policy pack that is not valid what to do next.
+
+### Fixed
+
+- Reinstalling the chart with its bundled Postgres locked the service out of its own database: `helm uninstall` removed the chart's Secret while Postgres kept its volume and its roles' passwords. The Secret is now kept on uninstall. A chart from an earlier release still removes it: run `helm upgrade` with this chart before you uninstall. [`docs/ledger.md`](docs/ledger.md) says how to start empty.
+
 ## 1.0.0-alpha.33 (2026-11-24)
 
 ### Read this if you run `costroid serve` with both telemetry and rows
