@@ -46,8 +46,8 @@ func memoryWorld(t *testing.T) (*world, *memoryLedger) {
 func (m *memoryLedger) stored(t *testing.T, tenant string) []store.Record {
 	t.Helper()
 	var records []store.Record
-	for _, record := range m.rows[tenantID(t, tenant)] {
-		records = append(records, record)
+	for _, statements := range m.rows[tenantID(t, tenant)] {
+		records = append(records, statements...)
 	}
 	return records
 }
@@ -638,7 +638,7 @@ func TestAGatewayGradeNeedsItsBound(t *testing.T) {
 	tags(r)[focus.TagEnforcementGrade] = "gateway-precheck"
 	r["x_CostroidOvershootBound"] = "4.5"
 	w.rows(w.token(), lines(t, r)).want(t, http.StatusOK)
-	stored := ledger.rows[tenantID(t, tenantA)][focus.RowIdentity("req-2", focus.Output)]
+	stored := ledger.rows[tenantID(t, tenantA)][focus.RowIdentity("req-2", focus.Output)][0]
 	if stored.Row.OvershootBound == nil || stored.Row.OvershootBound.String() != "4.5" {
 		t.Fatalf("%+v", stored.Row)
 	}

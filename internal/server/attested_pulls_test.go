@@ -88,11 +88,13 @@ func requireOverOnTheGatewaysCount(t *testing.T, answer verdictAnswer, usd strin
 // USD 0.5. The second run's key, attested for the pull request, holds USD 10.
 // Whatever becomes of the second run's row, a budget of USD 5 never passes.
 //
-// The cure reaches only a key whose attestation names the pull request. The
-// last case attests the second key naming none, as an earlier release did,
-// and holds what the ledger reads then: the second run's count reaches the
-// pull request only through its row, so each sender that keeps the row off
-// the pull request leaves the budget passing on the first run's USD 0.5.
+// The last case attests the second key naming no pull request, as an earlier
+// release did, so the second run's count reaches the pull request only
+// through its row. A sender that stated the row first no longer keeps it off:
+// the run's own statement stands on its pull request beside the sender's, and
+// the budget fails on USD 10.5. When the row never arrives there is no
+// statement to rank, so no rule of which statement stands reaches it, and the
+// budget still passes on the first run's USD 0.5.
 func TestARunsSpendStaysInItsPullRequestsBudget(t *testing.T) {
 	onBothSpendWorlds(t, aRunsSpendStaysInItsPullRequestsBudget)
 }
@@ -108,8 +110,13 @@ var secondRowSenders = map[string]func(t *testing.T, w *world, own string, r map
 		w.rows(w.tokenFor("acme", "gadgets"), lines(t, r)).want(t, http.StatusOK)
 		w.rows(own, lines(t, r)).want(t, http.StatusOK)
 	},
-	"its row never arrived": func(*testing.T, *world, string, map[string]any) {},
+	rowNeverArrived: func(*testing.T, *world, string, map[string]any) {},
 }
+
+// rowNeverArrived is the second run's row kept off every pull request: the
+// pull request's own workflow left it out, an ingest job failed, or the ledger
+// was down.
+const rowNeverArrived = "its row never arrived"
 
 // secondRunSent counts the first run at USD 0.5, attests the second run's
 // key naming pulls and counts USD 10 on it, lets send do what it does with
@@ -142,11 +149,15 @@ func aRunsSpendStaysInItsPullRequestsBudget(t *testing.T, open func(*testing.T) 
 		for name, send := range secondRowSenders {
 			t.Run(name, func(t *testing.T) {
 				answer := secondRunSent(t, open(t), send)
+				if name != rowNeverArrived {
+					requireOverOnTheGatewaysCount(t, answer, "10.5")
+					return
+				}
 				got := ruleOf(t, answer.Policy, policy.RulePullRequestBudget)
 				// The settings are the request's own, which the service did not
 				// read at the base, so the rule's pass concludes neutral.
 				if answer.Policy.Conclusion != policy.Neutral || got.Outcome != policy.Pass || got.CostUSD != "0.5" {
-					t.Fatalf("the ledger no longer reads the first run's count alone when the second key names no pull request: %s, %s at USD %s",
+					t.Fatalf("with the second run's row missing and its key naming no pull request, the ledger reads %s, %s at USD %s, want the first run's count alone",
 						answer.Policy.Conclusion, got.Outcome, got.CostUSD)
 				}
 			})

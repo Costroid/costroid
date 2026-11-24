@@ -63,11 +63,36 @@ func (m *spendLedger) AttestSpend(_ context.Context, tenant store.TenantID, atte
 	return nil
 }
 
-func (m *spendLedger) records(tenant store.TenantID, repo, pr string) []store.Record {
-	var found []store.Record
-	for _, record := range m.rows[tenant] {
-		if record.Row.Tags[store.TagRepo] == repo && record.Row.Tags[store.TagPR] == pr {
-			found = append(found, record)
+// standing is a row id's statements a reader reads, as ledger_rows holds
+// them: every verified statement, or the unverified one when no statement was
+// verified. A verified statement is contested when another run stated the id,
+// and outranked when an unverified statement of the id gave way to it.
+func standing(statements []store.Record) (stand []store.Record, contested, outranked bool) {
+	for _, statement := range statements {
+		if statement.Row.Tags[focus.TagRunIdentity] == identityToken {
+			stand = append(stand, statement)
+		}
+	}
+	if len(stand) == 0 {
+		return statements, false, false
+	}
+	return stand, len(stand) > 1, len(statements) > len(stand)
+}
+
+// statementOf is one statement that stands, and how it met another.
+type statementOf struct {
+	record               store.Record
+	contested, outranked bool
+}
+
+func (m *spendLedger) records(tenant store.TenantID, repo, pr string) []statementOf {
+	var found []statementOf
+	for _, statements := range m.rows[tenant] {
+		stand, contested, outranked := standing(statements)
+		for _, record := range stand {
+			if record.Row.Tags[store.TagRepo] == repo && record.Row.Tags[store.TagPR] == pr {
+				found = append(found, statementOf{record, contested, outranked})
+			}
 		}
 	}
 	return found
@@ -79,13 +104,20 @@ func eligible(row focus.Row) bool {
 
 func (m *spendLedger) PullRequest(_ context.Context, tenant store.TenantID, repo, pr string) ([]store.Line, error) {
 	var lines []store.Line
-	for _, record := range m.records(tenant, repo, pr) {
-		row := record.Row
-		lines = append(lines, store.Line{
+	for _, statement := range m.records(tenant, repo, pr) {
+		row := statement.record.Row
+		line := store.Line{
 			Currency: row.BillingCurrency, Model: row.Tags[focus.TagModel], CostSource: row.Tags[focus.TagCostSource],
 			AttributionGrade: row.Tags[focus.TagAttributionGrade], RunIdentity: row.Tags[focus.TagRunIdentity],
 			BudgetEligible: eligible(row), Rows: 1, ListCost: row.ListCost,
-		})
+		}
+		if statement.contested {
+			line.Contested = 1
+		}
+		if statement.outranked {
+			line.Outranked = 1
+		}
+		lines = append(lines, line)
 	}
 	return lines, nil
 }
@@ -97,9 +129,9 @@ func (m *spendLedger) PullRequest(_ context.Context, tenant store.TenantID, repo
 func (m *spendLedger) GatewaySpend(_ context.Context, tenant store.TenantID, repo, pr string) (int64, decimal.Decimal, error) {
 	var rows int64
 	keys := map[string]bool{}
-	for _, record := range m.records(tenant, repo, pr) {
-		row := record.Row
-		if !eligible(row) || record.CredentialBasis != store.CredentialMinted || row.SubAccountID == nil {
+	for _, statement := range m.records(tenant, repo, pr) {
+		row := statement.record.Row
+		if !eligible(row) || statement.record.CredentialBasis != store.CredentialMinted || row.SubAccountID == nil {
 			continue
 		}
 		if _, found := m.spend[tenant][*row.SubAccountID]; found {

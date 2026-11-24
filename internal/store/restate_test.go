@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/store"
@@ -354,53 +356,126 @@ func (l ledger) stored(t *testing.T, id string) stored {
 	return s
 }
 
-// TestWhichStatementOfARowStands holds the ledger to its rule: the first
-// statement of a row id stands whole. A later one changes nothing, whether it
-// states another amount, a higher or a lower grade, or another pull request,
-// and inside one batch the earlier line is the first statement.
+// standing is one statement of a row id that stands, as ledger_rows reads it.
+type standing struct {
+	stored
+	contested, outranked bool
+}
+
+// standing reads, as the service's role, every statement of id that stands,
+// in the order of their pull requests.
+func (l ledger) standing(t *testing.T, id string) []standing {
+	t.Helper()
+	var read []standing
+	err := inTenant(t, connect(t, l.db.AppURL), l.tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(context.Background(), `
+			SELECT list_cost::text, attribution_grade, run_identity, coalesce(pr, ''), coalesce(credential_basis, ''),
+				coalesce(document->>'SubAccountId', ''), budget_eligible, contested, outranked
+			FROM ledger_rows WHERE row_id = $1 ORDER BY pr`, id)
+		if err != nil {
+			return err
+		}
+		var s standing
+		_, err = pgx.ForEachRow(rows, []any{&s.list, &s.grade, &s.identity, &s.pr, &s.credential, &s.subAccount, &s.eligible, &s.contested, &s.outranked}, func() error {
+			read = append(read, s)
+			return nil
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return read
+}
+
+// TestWhichStatementOfARowStands holds the ledger to its rule. Within one run,
+// the first statement of a row id stands whole: a later one changes nothing,
+// whether it states another amount, a higher grade or another pull request,
+// and inside one batch the earlier line is the first statement. Every
+// statement the ledger did not verify has one owner, so the first of them
+// stands. A statement the ledger did not verify never stands beside a run's:
+// before it, it gives way to the run's, and after it, it is a duplicate. Either
+// way the receipt counts it outranked, and so does the run's row once both are
+// kept. A statement of another run never displaces a run's own: both stand,
+// each on its own pull request, and each is contested.
 func TestWhichStatementOfARowStands(t *testing.T) {
+	exact := func(l ledger) stored {
+		return stored{"0.250000000000", "exact", "token_verified", prA, store.CredentialMinted, l.key, true}
+	}
 	for name, tc := range map[string]struct {
 		first, later func(l ledger) store.Record
 		together     bool
-		want         func(l ledger) stored
+		// receipt is what the later statement's batch answers, and kept the
+		// statements the ledger holds of the id.
+		receipt store.Receipt
+		kept    int
+		want    func(l ledger) []standing
 	}{
 		"a later amount": {
-			first: func(l ledger) store.Record { return runRow(rowID(31), "0.25", l.key, restatedRun, "1") },
-			later: func(l ledger) store.Record { return runRow(rowID(31), "9", l.key, restatedRun, "1") },
-			want: func(l ledger) stored {
-				return stored{"0.250000000000", "exact", "token_verified", prA, store.CredentialMinted, l.key, true}
-			},
+			first:   func(l ledger) store.Record { return runRow(rowID(31), "0.25", l.key, restatedRun, "1") },
+			later:   func(l ledger) store.Record { return runRow(rowID(31), "9", l.key, restatedRun, "1") },
+			receipt: store.Receipt{Duplicates: 1}, kept: 1,
+			want: func(l ledger) []standing { return []standing{{stored: exact(l)}} },
 		},
 		"a later, higher grade": {
-			first: func(ledger) store.Record { return record(rowID(32), "1", "windowed", "token_verified") },
-			later: func(l ledger) store.Record { return runRow(rowID(32), "1", l.key, restatedRun, "1") },
-			want: func(ledger) stored {
-				return stored{"1.000000000000", "windowed", "token_verified", prA, "", "", true}
+			first: func(ledger) store.Record {
+				r := record(rowID(32), "0.25", "windowed", "token_verified")
+				r.Row.Tags[store.TagWorkflowRunID] = restatedRun
+				return r
+			},
+			later:   func(l ledger) store.Record { return runRow(rowID(32), "0.25", l.key, restatedRun, "1") },
+			receipt: store.Receipt{Duplicates: 1}, kept: 1,
+			want: func(ledger) []standing {
+				return []standing{{stored: stored{"0.250000000000", "windowed", "token_verified", prA, "", "", true}}}
 			},
 		},
 		"a later, lower grade": {
-			first: func(l ledger) store.Record { return runRow(rowID(33), "1", l.key, restatedRun, "1") },
-			later: func(ledger) store.Record { return record(rowID(33), "1", "unattributed", "unverified") },
-			want: func(l ledger) stored {
-				return stored{"1.000000000000", "exact", "token_verified", prA, store.CredentialMinted, l.key, true}
-			},
+			first:   func(l ledger) store.Record { return runRow(rowID(33), "0.25", l.key, restatedRun, "1") },
+			later:   func(ledger) store.Record { return record(rowID(33), "9", "unattributed", "unverified") },
+			receipt: store.Receipt{Duplicates: 1, Outranked: 1}, kept: 1,
+			want: func(l ledger) []standing { return []standing{{stored: exact(l)}} },
 		},
 		"a later pull request": {
-			first: func(l ledger) store.Record { return runRow(rowID(34), "1", l.key, restatedRun, "1") },
+			first: func(l ledger) store.Record { return runRow(rowID(34), "0.25", l.key, restatedRun, "1") },
 			later: func(l ledger) store.Record {
-				r := runRow(rowID(34), "1", l.key, restatedRun, "1")
+				r := runRow(rowID(34), "0.25", l.key, restatedRun, "1")
 				r.Row.Tags[store.TagPR] = "13"
 				return r
 			},
-			want: func(l ledger) stored {
-				return stored{"1.000000000000", "exact", "token_verified", prA, store.CredentialMinted, l.key, true}
+			receipt: store.Receipt{Duplicates: 1}, kept: 1,
+			want: func(l ledger) []standing { return []standing{{stored: exact(l)}} },
+		},
+		"a later unverified statement over an unverified one": {
+			first: func(ledger) store.Record { return record(rowID(38), "0.25", "unattributed", "unverified") },
+			later: func(ledger) store.Record {
+				r := record(rowID(38), "9", "unattributed", "unverified")
+				r.Row.Tags[store.TagWorkflowRunID] = restatedRun
+				return r
+			},
+			receipt: store.Receipt{Duplicates: 1}, kept: 1,
+			want: func(ledger) []standing {
+				return []standing{{stored: stored{"0.250000000000", "unattributed", "unverified", prA, "", "", false}}}
 			},
 		},
-		"an earlier, weaker statement": {
-			first: func(ledger) store.Record { return record(rowID(35), "1", "unattributed", "unverified") },
-			later: func(l ledger) store.Record { return runRow(rowID(35), "1", l.key, restatedRun, "1") },
-			want: func(ledger) stored {
-				return stored{"1.000000000000", "unattributed", "unverified", prA, "", "", false}
+		"an earlier, unverified statement": {
+			first:   func(ledger) store.Record { return record(rowID(35), "9", "unattributed", "unverified") },
+			later:   func(l ledger) store.Record { return runRow(rowID(35), "0.25", l.key, restatedRun, "1") },
+			receipt: store.Receipt{Inserted: 1, Outranked: 1}, kept: 2,
+			want: func(l ledger) []standing { return []standing{{stored: exact(l), outranked: true}} },
+		},
+		"an earlier run of another pull request": {
+			first: func(ledger) store.Record {
+				r := record(rowID(37), "9", "windowed", "token_verified")
+				r.Row.Tags[store.TagWorkflowRunID], r.Row.Tags[store.TagPR] = "8", "13"
+				return r
+			},
+			later:   func(l ledger) store.Record { return runRow(rowID(37), "0.25", l.key, restatedRun, "1") },
+			receipt: store.Receipt{Inserted: 1, Contested: 1}, kept: 2,
+			want: func(l ledger) []standing {
+				return []standing{
+					{stored: exact(l), contested: true},
+					{stored: stored{"9.000000000000", "windowed", "token_verified", "13", "", "", true}, contested: true},
+				}
 			},
 		},
 		"two statements in one batch": {
@@ -411,34 +486,28 @@ func TestWhichStatementOfARowStands(t *testing.T) {
 				return r
 			},
 			together: true,
-			want: func(l ledger) stored {
-				return stored{"0.250000000000", "exact", "token_verified", prA, store.CredentialMinted, l.key, true}
-			},
+			receipt:  store.Receipt{Inserted: 1, Duplicates: 1}, kept: 1,
+			want: func(l ledger) []standing { return []standing{{stored: exact(l)}} },
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := newLedger(t)
 			first, later := tc.first(l), tc.later(l)
+			var receipt store.Receipt
 			if tc.together {
-				ingest(t, l.s, l.tenant, []store.Record{first, later})
+				receipt = ingest(t, l.s, l.tenant, []store.Record{first, later})
 			} else {
 				ingest(t, l.s, l.tenant, []store.Record{first})
-				if receipt := ingest(t, l.s, l.tenant, []store.Record{later}); receipt.Inserted != 0 || receipt.Duplicates != 1 {
-					t.Fatalf("the later statement: %+v, want one duplicate", receipt)
-				}
+				receipt = ingest(t, l.s, l.tenant, []store.Record{later})
 			}
-			if _, _, rows := l.totals(t); rows != 1 {
-				t.Fatalf("%d rows hold one charge", rows)
+			if receipt != tc.receipt {
+				t.Fatalf("the later statement's batch: %+v, want %+v", receipt, tc.receipt)
 			}
-			if got, want := l.stored(t, first.Row.RowID), tc.want(l); got != want {
-				t.Fatalf("stored %+v, want %+v", got, want)
+			if _, _, rows := l.totals(t); rows != tc.kept {
+				t.Fatalf("the ledger holds %d statements of the row, want %d", rows, tc.kept)
 			}
-			moved, err := l.s.PullRequest(context.Background(), l.tenant, repoA, "13")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(moved) != 0 {
-				t.Fatalf("a later statement moved the charge to another pull request: %+v", moved)
+			if got, want := l.standing(t, first.Row.RowID), tc.want(l); !slices.Equal(got, want) {
+				t.Fatalf("stands %+v, want %+v", got, want)
 			}
 		})
 	}

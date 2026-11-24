@@ -50,7 +50,7 @@ WHERE attesting_repo = $1 AND attesting_run_id = $2 AND attesting_run_attempt = 
 	pullRequestSpend = `
 WITH counted AS (
 	SELECT m.key_sha256
-	FROM focus_rows f
+	FROM ledger_rows f
 	JOIN credential_attestations m ON m.key_sha256 = f.document->>'SubAccountId'
 		AND m.repo = f.repo AND m.workflow_run_id = f.workflow_run_id AND m.run_attempt = f.run_attempt
 	JOIN credential_spend g ON g.key_sha256 = m.key_sha256

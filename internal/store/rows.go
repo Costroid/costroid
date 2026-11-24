@@ -57,10 +57,17 @@ type Batch struct {
 	Day   time.Time
 }
 
-// Receipt says what a batch changed.
+// Receipt says what a batch changed. Contested counts the verified records
+// whose row id another run's verified statement also holds. Outranked counts
+// the records whose charge, by the row id or by another lifetime of a
+// request's cache writes, a statement of the other rank also holds: the
+// verified one outranks the other. Each counts a record whether it was kept
+// or not.
 type Receipt struct {
 	Inserted   int
 	Duplicates int
+	Contested  int
+	Outranked  int
 }
 
 // columns holds one array per inserted column, in insertRows' order.
@@ -71,8 +78,7 @@ type columns struct {
 	tokenCommits, headBases, accounts, credentialBases                                []string
 }
 
-// insertFrom selects a batch's rows. Its one source is a function scan, so a
-// statement after it may name the rows as t.
+// insertFrom inserts a batch's rows, read from one array per column.
 const insertFrom = `
 INSERT INTO focus_rows (
 	tenant_id, row_id, billing_currency, service_category, sku_meter, consumed_unit,
@@ -96,17 +102,15 @@ FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text
 	     token_commit, head_basis, account, credential_basis)`
 
 // A batch holds no stored row in the common case, and ON CONFLICT pays for a
-// speculative insert on every row of it. So the first attempt reads the primary
-// key instead. A repeat inside the batch never reaches it: laterStatements
-// leaves it out. Another sender writing the same row at this moment then fails
-// the unique index, and the second attempt takes ON CONFLICT. The index is the
-// authority on that race.
-const (
-	insertNewRows = insertFrom + `
-WHERE NOT EXISTS (SELECT FROM focus_rows f WHERE f.row_id = t.id)`
-	insertRows = insertFrom + `
-ON CONFLICT (tenant_id, row_id) DO NOTHING`
-)
+// speculative insert on every row of it. So the first attempt inserts every
+// record the stored statements read before it leave in. A repeat inside the
+// batch never reaches the index: laterStatements leaves it out. A sender of
+// the same owner writing the same row at this moment then fails the unique
+// index, and the second attempt takes ON CONFLICT: the index is the authority
+// on that race. An unverified statement that races a verified one of its id is
+// kept beside it, and ledger_rows reads the verified one.
+const insertRows = insertFrom + `
+ON CONFLICT DO NOTHING`
 
 // uniqueViolation is Postgres's error code for a broken unique index.
 const uniqueViolation = "23505"
@@ -123,14 +127,18 @@ ON CONFLICT (tenant_id, day, field) DO UPDATE SET count = ingest_drops.count + e
 
 const dayLayout = "2006-01-02"
 
-// Ingest writes a batch whole or not at all. A row id already stored for this
-// tenant is a duplicate and changes nothing.
+// Ingest writes a batch whole or not at all. A record whose owner already
+// stated its row id in this tenant is a duplicate and changes nothing, and so
+// is an unverified record of an id any owner stated. A verified record is
+// never kept out by another owner's statement: both are kept, and the receipt
+// counts the record as contested when the other is a run's, and as outranked
+// when the ledger did not verify the other.
 func (s *Store) Ingest(ctx context.Context, tenant TenantID, batch Batch) (Receipt, error) {
 	cols, err := columnsOf(batch.Records)
 	if err != nil {
 		return Receipt{}, err
 	}
-	receipt, err := s.writeBatch(ctx, tenant, batch, cols, insertNewRows)
+	receipt, err := s.writeBatch(ctx, tenant, batch, cols, insertFrom)
 	var refused *pgconn.PgError
 	if errors.As(err, &refused) && refused.Code == uniqueViolation {
 		return s.writeBatch(ctx, tenant, batch, cols, insertRows)
@@ -145,9 +153,21 @@ func (s *Store) writeBatch(ctx context.Context, tenant TenantID, batch Batch, co
 			return fmt.Errorf("store: set work_mem: %w", err)
 		}
 		writes := writesOf(batch.Records)
-		skip, err := writes.stored(ctx, tx, tenant, batch.Records)
+		if err := writes.lock(ctx, tx, tenant); err != nil {
+			return err
+		}
+		held, err := heldStatements(ctx, tx, writes.readIDs(batch.Records))
 		if err != nil {
 			return err
+		}
+		skip, met := map[int]bool{}, newMeetings()
+		held.judge(batch.Records, skip, met)
+		if err := writes.leaveOutStored(ctx, tx, held, batch.Records, skip, met); err != nil {
+			return err
+		}
+		receipt.Contested, receipt.Outranked = len(met.contested), len(met.outranked)
+		if s.beforeInsert != nil {
+			s.beforeInsert()
 		}
 		tag, err := tx.Exec(ctx, statement, cols.without(laterStatements(batch.Records, skip)).args()...)
 		if err != nil {
@@ -177,9 +197,6 @@ func laterStatements(records []Record, skip map[int]bool) map[int]bool {
 		if !seen[id] {
 			seen[id] = true
 			continue
-		}
-		if skip == nil {
-			skip = map[int]bool{}
 		}
 		skip[i] = true
 	}

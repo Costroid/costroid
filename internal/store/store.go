@@ -49,6 +49,10 @@ func (t TenantID) String() string {
 // Store is the application role's handle on the ledger.
 type Store struct {
 	pool *pgxpool.Pool
+	// beforeInsert runs between a batch's read of the stored statements and
+	// its insert, when a test sets it, so a test can commit another sender's
+	// rows inside that window.
+	beforeInsert func()
 }
 
 // Open connects as the application role and refuses a role that could read

@@ -27,6 +27,12 @@ type Line struct {
 	RunIdentity      string
 	BudgetEligible   bool
 	Rows             int64
+	// Contested counts the line's rows whose id another run also stated, the
+	// ledger verifying both. Each counts here all the same.
+	Contested int64
+	// Outranked counts the line's rows whose charge a statement the ledger did
+	// not verify also held, which gave way to the row and counts nowhere.
+	Outranked        int64
 	ConsumedQuantity decimal.Decimal
 	ListCost         decimal.Decimal
 	EffectiveCost    decimal.Decimal
@@ -34,12 +40,13 @@ type Line struct {
 	LastCharge       time.Time
 }
 
+// pullRequestLines reads ledger_rows, which holds the statements that stand.
 const pullRequestLines = `
 SELECT billing_currency, billing_account_id, service_category, coalesce(agent, ''), coalesce(model, ''), sku_meter,
 	consumed_unit, cost_basis, cost_source, attribution_grade, run_identity, budget_eligible,
-	count(*), sum(consumed_quantity)::text, sum(list_cost)::text, sum(effective_cost)::text,
+	count(*), count(*) FILTER (WHERE contested), count(*) FILTER (WHERE outranked), sum(consumed_quantity)::text, sum(list_cost)::text, sum(effective_cost)::text,
 	min(charge_period_start), max(charge_period_end)
-FROM focus_rows
+FROM ledger_rows
 WHERE repo = $1 AND pr = $2
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
 ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12`
@@ -66,7 +73,7 @@ func scanLine(row pgx.CollectableRow) (Line, error) {
 	var quantity, list, effective string
 	err := row.Scan(&line.Currency, &line.BillingAccountID, &line.ServiceCategory, &line.Agent, &line.Model, &line.SkuMeter,
 		&line.ConsumedUnit, &line.CostBasis, &line.CostSource, &line.AttributionGrade, &line.RunIdentity,
-		&line.BudgetEligible, &line.Rows, &quantity, &list, &effective, &line.FirstCharge, &line.LastCharge)
+		&line.BudgetEligible, &line.Rows, &line.Contested, &line.Outranked, &quantity, &list, &effective, &line.FirstCharge, &line.LastCharge)
 	if err != nil {
 		return Line{}, err
 	}

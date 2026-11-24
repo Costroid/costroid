@@ -92,12 +92,18 @@ type measuredSpend struct {
 	usd  decimal.Decimal
 }
 
+// pullRequestView is one pull request's answer. ContestedRows counts its rows
+// whose id another run also stated, the ledger verifying both: each counts
+// here all the same. OutrankedRows counts its rows whose charge a row sent
+// with an ingest key also held, which gave way and counts nowhere.
 type pullRequestView struct {
-	Repository  string       `json:"repository"`
-	PullRequest string       `json:"pull_request"`
-	Totals      []basisTotal `json:"totals"`
-	Budget      budgetView   `json:"budget"`
-	Lines       []viewLine   `json:"lines"`
+	Repository    string       `json:"repository"`
+	PullRequest   string       `json:"pull_request"`
+	Totals        []basisTotal `json:"totals"`
+	Budget        budgetView   `json:"budget"`
+	ContestedRows int64        `json:"contested_rows"`
+	OutrankedRows int64        `json:"outranked_rows"`
+	Lines         []viewLine   `json:"lines"`
 }
 
 func (s *Server) pullRequest(ctx context.Context, tenant store.TenantID, repo, pr string) (pullRequestView, error) {
@@ -112,6 +118,8 @@ func (s *Server) pullRequest(ctx context.Context, tenant store.TenantID, repo, p
 	view := pullRequestView{Repository: repo, PullRequest: pr, Lines: make([]viewLine, 0, len(lines)), Totals: totalsOf(lines), Budget: budgetOf(lines, measured)}
 	for i := range lines {
 		view.Lines = append(view.Lines, viewLineOf(&lines[i]))
+		view.ContestedRows += lines[i].Contested
+		view.OutrankedRows += lines[i].Outranked
 	}
 	return view, nil
 }

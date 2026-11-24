@@ -69,11 +69,12 @@ func tenantID(t testing.TB, text string) store.TenantID {
 }
 
 // memoryLedger is the store's contract without Postgres, so the edge's rules
-// run in the short suite too.
+// run in the short suite too. rows holds each row id's statements in the order
+// they arrived, one per owner.
 type memoryLedger struct {
 	owners map[string]store.TenantID
 	keys   map[string]store.TenantID
-	rows   map[store.TenantID]map[string]store.Record
+	rows   map[store.TenantID]map[string][]store.Record
 	drops  map[store.TenantID]map[string]int64
 	minted map[store.TenantID]map[string]store.MintedCredential
 }
@@ -81,7 +82,7 @@ type memoryLedger struct {
 func newMemoryLedger() *memoryLedger {
 	return &memoryLedger{
 		owners: map[string]store.TenantID{}, keys: map[string]store.TenantID{},
-		rows: map[store.TenantID]map[string]store.Record{}, drops: map[store.TenantID]map[string]int64{},
+		rows: map[store.TenantID]map[string][]store.Record{}, drops: map[store.TenantID]map[string]int64{},
 		minted: map[store.TenantID]map[string]store.MintedCredential{},
 	}
 }
@@ -130,18 +131,52 @@ func (m *memoryLedger) TenantForKey(_ context.Context, sum string) (store.Tenant
 	return store.TenantID{}, store.ErrNotFound
 }
 
+// statementOwner is who a statement speaks for, as the store reads it: the
+// repository and run of a statement a CI token verified, and one owner, the
+// empty one, for every other.
+func statementOwner(record *store.Record) string {
+	tags := record.Row.Tags
+	if tags[focus.TagRunIdentity] != identityToken {
+		return ""
+	}
+	return tags[store.TagRepo] + " " + tags[store.TagWorkflowRunID]
+}
+
+// Ingest holds the store's rule: within one owner the first statement of a
+// row id stands, an unverified statement only where none is held, and a
+// verified one beside any other owner's. Two runs' statements contest the id;
+// a verified and an unverified one meet by rank. Inside one batch the earlier
+// line is the first statement.
 func (m *memoryLedger) Ingest(_ context.Context, tenant store.TenantID, batch store.Batch) (store.Receipt, error) {
 	if m.rows[tenant] == nil {
-		m.rows[tenant] = map[string]store.Record{}
+		m.rows[tenant] = map[string][]store.Record{}
 		m.drops[tenant] = map[string]int64{}
 	}
 	var receipt store.Receipt
+	earlier := map[string]bool{}
+	held := maps.Clone(m.rows[tenant])
 	for _, record := range batch.Records {
-		if _, seen := m.rows[tenant][record.Row.RowID]; seen {
+		id, mine := record.Row.RowID, statementOwner(&record)
+		keep := !earlier[record.Row.RowID]
+		contested, outranked := false, false
+		for _, statement := range held[id] {
+			theirs := statementOwner(&statement)
+			keep = keep && mine != "" && theirs != mine
+			contested = contested || mine != "" && theirs != "" && theirs != mine
+			outranked = outranked || (mine == "") != (theirs == "")
+		}
+		earlier[id] = true
+		if contested {
+			receipt.Contested++
+		}
+		if outranked {
+			receipt.Outranked++
+		}
+		if !keep {
 			receipt.Duplicates++
 			continue
 		}
-		m.rows[tenant][record.Row.RowID] = record
+		m.rows[tenant][id] = append(m.rows[tenant][id], record)
 		receipt.Inserted++
 	}
 	for field, count := range batch.Drops {

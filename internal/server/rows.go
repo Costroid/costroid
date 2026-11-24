@@ -524,9 +524,16 @@ func (f rowFields) readOvershoot(c *charge) error {
 	return nil
 }
 
+// ingestAnswer says what a request's rows did. Contested counts the rows a
+// CI token verified whose id another run's verified row also holds. Outranked
+// counts the rows whose charge a row of the other rank also holds: a run's
+// row outranks one sent with an ingest key. Each counts a row whether it was
+// accepted or a duplicate.
 type ingestAnswer struct {
 	Accepted   int              `json:"accepted"`
 	Duplicates int              `json:"duplicates"`
+	Contested  int              `json:"contested"`
+	Outranked  int              `json:"outranked"`
 	Dropped    map[string]int64 `json:"dropped,omitempty"`
 }
 
@@ -552,5 +559,5 @@ func (s *Server) handleRows(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ingestAnswer{Accepted: receipt.Inserted, Duplicates: receipt.Duplicates, Dropped: drops})
+	writeJSON(w, http.StatusOK, ingestAnswer{Accepted: receipt.Inserted, Duplicates: receipt.Duplicates, Contested: receipt.Contested, Outranked: receipt.Outranked, Dropped: drops})
 }

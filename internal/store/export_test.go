@@ -12,3 +12,9 @@ func (s *Store) SessionTenant(ctx context.Context) (string, error) {
 	err := s.pool.QueryRow(ctx, `SELECT coalesce(current_setting('costroid.tenant_id', true), '')`).Scan(&value)
 	return value, err
 }
+
+// SetBeforeInsert has fn run in each batch's transaction after the stored
+// statements are read and before the rows are inserted.
+func (s *Store) SetBeforeInsert(fn func()) {
+	s.beforeInsert = fn
+}

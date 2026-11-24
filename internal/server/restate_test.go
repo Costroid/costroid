@@ -310,12 +310,15 @@ func TestARestatedRowNeverCountsTwice(t *testing.T) {
 	}
 }
 
-// storedRow is what the ledger keeps of one row.
+// storedRow is one statement of a row that stands, as ledger_rows reads it.
 type storedRow struct {
 	quantity, grade, identity, pr, credential string
+	contested, outranked                      bool
 }
 
-func (w restateWorld) stored(t *testing.T, id string) storedRow {
+// standing reads every statement of id that stands, in the order of their pull
+// requests.
+func (w restateWorld) standing(t *testing.T, id string) []storedRow {
 	t.Helper()
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, w.db.SuperURL)
@@ -323,15 +326,22 @@ func (w restateWorld) stored(t *testing.T, id string) storedRow {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(ctx) }()
-	var r storedRow
-	err = conn.QueryRow(ctx, `
-		SELECT consumed_quantity::text, attribution_grade, run_identity, coalesce(pr, ''), coalesce(credential_basis, '')
-		FROM focus_rows WHERE row_id = $1`, id).
-		Scan(&r.quantity, &r.grade, &r.identity, &r.pr, &r.credential)
+	rows, err := conn.Query(ctx, `
+		SELECT consumed_quantity::text, attribution_grade, run_identity, coalesce(pr, ''), coalesce(credential_basis, ''), contested, outranked
+		FROM ledger_rows WHERE row_id = $1 ORDER BY pr`, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r
+	var read []storedRow
+	var r storedRow
+	_, err = pgx.ForEachRow(rows, []any{&r.quantity, &r.grade, &r.identity, &r.pr, &r.credential, &r.contested, &r.outranked}, func() error {
+		read = append(read, r)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return read
 }
 
 // listCost reads one row's list cost.
@@ -419,18 +429,41 @@ func TestADifferentChargeStillCounts(t *testing.T) {
 	}
 }
 
-// TestWhichStatementOfARowStands holds the entrance to the ledger's rule: the
-// first statement of a row id stands whole, and a later one is answered as a
-// duplicate. A later token count, a later token that would grade the row
-// higher or lower, and a later run of another pull request change nothing,
-// and the first statement keeps the charge even when it came from another
-// pull request's run or with an ingest key. Inside one request the earlier
-// line is the first statement.
+// claimingThePull is r with the fixtures' repository and pull request stated
+// as claims, as an ingest key's sender can state them.
+func claimingThePull(r map[string]any) map[string]any {
+	tags(r)[store.TagRepo], tags(r)[store.TagPR] = acmeRepo, acmePull
+	return r
+}
+
+// TestWhichStatementOfARowStands holds the entrance to the ledger's rule.
+// Within one run the first statement of a row id stands whole, and a later
+// one is answered as a duplicate: a later token count, and two statements in
+// one request, where the earlier line is the first. A statement sent with an
+// ingest key never stands beside a run's, whichever came first, even when it
+// claims the run's pull request: the pull request reads the run's statement,
+// and the answer counts the row outranked, never contested. A run of another
+// pull request never displaces the run's statement, whichever came first:
+// each stands on its own pull request, and the answer and both views count it
+// contested.
 func TestWhichStatementOfARowStands(t *testing.T) {
-	exact := storedRow{"1000.000000000000", gradeExact, identityToken, acmePull, store.CredentialMinted}
+	exact := storedRow{"1000.000000000000", gradeExact, identityToken, acmePull, store.CredentialMinted, false, false}
+	contested := func(r storedRow) storedRow {
+		r.contested = true
+		return r
+	}
+	outranked := func(r storedRow) storedRow {
+		r.outranked = true
+		return r
+	}
+	otherPull := storedRow{"1000.000000000000", gradeWindowed, identityToken, anotherPull, store.CredentialStated, true, false}
 	for name, tc := range map[string]struct {
 		first, later func(t *testing.T, w restateWorld, r map[string]any) answer
-		want         storedRow
+		// receipt is what the last request answers, and kept the statements
+		// the ledger holds of the row.
+		receipt ingestAnswer
+		kept    int
+		want    []storedRow
 	}{
 		"a later token count": {
 			first: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
@@ -438,31 +471,40 @@ func TestWhichStatementOfARowStands(t *testing.T) {
 				r["ConsumedQuantity"] = "9999"
 				return w.rows(w.token(), lines(t, r))
 			},
-			want: exact,
+			receipt: ingestAnswer{Duplicates: 1}, kept: 1,
+			want: []storedRow{exact},
 		},
 		"a later token that grades it lower": {
 			first: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
-			later: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(acmeKey, lines(t, r)) },
-			want:  exact,
+			later: func(t *testing.T, w restateWorld, r map[string]any) answer {
+				return w.rows(acmeKey, lines(t, claimingThePull(r)))
+			},
+			receipt: ingestAnswer{Duplicates: 1, Outranked: 1}, kept: 1,
+			want: []storedRow{exact},
 		},
 		"a later token that grades it higher": {
-			first: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(acmeKey, lines(t, r)) },
-			later: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
-			want:  storedRow{"1000.000000000000", gradeNone, identityNone, "", store.CredentialStated},
+			first: func(t *testing.T, w restateWorld, r map[string]any) answer {
+				return w.rows(acmeKey, lines(t, claimingThePull(r)))
+			},
+			later:   func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
+			receipt: ingestAnswer{Accepted: 1, Outranked: 1}, kept: 2,
+			want: []storedRow{outranked(exact)},
 		},
 		"a later run of another pull request": {
 			first: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
 			later: func(t *testing.T, w restateWorld, r map[string]any) answer {
 				return w.rows(w.otherPullToken(), lines(t, r))
 			},
-			want: exact,
+			receipt: ingestAnswer{Accepted: 1, Contested: 1}, kept: 2,
+			want: []storedRow{contested(exact), otherPull},
 		},
 		"an earlier run of another pull request": {
 			first: func(t *testing.T, w restateWorld, r map[string]any) answer {
 				return w.rows(w.otherPullToken(), lines(t, r))
 			},
-			later: func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
-			want:  storedRow{"1000.000000000000", gradeWindowed, identityToken, anotherPull, store.CredentialStated},
+			later:   func(t *testing.T, w restateWorld, r map[string]any) answer { return w.rows(w.token(), lines(t, r)) },
+			receipt: ingestAnswer{Accepted: 1, Contested: 1}, kept: 2,
+			want: []storedRow{contested(exact), otherPull},
 		},
 		"two statements in one request": {
 			first: func(t *testing.T, w restateWorld, r map[string]any) answer {
@@ -470,33 +512,42 @@ func TestWhichStatementOfARowStands(t *testing.T) {
 				later["ConsumedQuantity"] = "9999"
 				return w.rows(w.token(), lines(t, r, later))
 			},
-			want: exact,
+			receipt: ingestAnswer{Accepted: 1, Duplicates: 1}, kept: 1,
+			want: []storedRow{exact},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newRestateWorld(t)
 			r := credentialed(row("req-1", focus.Output, 1000))
 			id := r["x_CostroidRowId"].(string)
-			tc.first(t, w, clone(r)).want(t, http.StatusOK)
+			last := tc.first(t, w, clone(r)).want(t, http.StatusOK)
 			if tc.later != nil {
-				var receipt ingestAnswer
-				if err := json.Unmarshal(tc.later(t, w, clone(r)).want(t, http.StatusOK).body, &receipt); err != nil {
-					t.Fatal(err)
-				}
-				if receipt.Accepted != 0 || receipt.Duplicates != 1 {
-					t.Fatalf("the later statement: %+v, want one duplicate", receipt)
-				}
+				last = tc.later(t, w, clone(r)).want(t, http.StatusOK)
 			}
-			if rows := w.count(t); rows != 1 {
-				t.Fatalf("%d rows hold one charge", rows)
+			var receipt ingestAnswer
+			if err := json.Unmarshal(last.body, &receipt); err != nil {
+				t.Fatal(err)
 			}
-			if got := w.stored(t, id); got != tc.want {
-				t.Fatalf("stored %+v, want %+v", got, tc.want)
+			if receipt.Accepted != tc.receipt.Accepted || receipt.Duplicates != tc.receipt.Duplicates || receipt.Contested != tc.receipt.Contested ||
+				receipt.Outranked != tc.receipt.Outranked {
+				t.Fatalf("the last request: %+v, want %+v", receipt, tc.receipt)
+			}
+			if rows := w.count(t); rows != tc.kept {
+				t.Fatalf("the ledger holds %d statements of the row, want %d", rows, tc.kept)
+			}
+			if got := w.standing(t, id); !slices.Equal(got, tc.want) {
+				t.Fatalf("stands %+v, want %+v", got, tc.want)
 			}
 			for _, pull := range []string{acmePull, anotherPull} {
-				holds := len(w.view(t, acmeKey, acmeRepo, pull).Lines) == 1
-				if holds != (pull == tc.want.pr) {
-					t.Fatalf("pull request %s holds the charge: %t, want it on %q", pull, holds, tc.want.pr)
+				view := w.view(t, acmeKey, acmeRepo, pull)
+				i := slices.IndexFunc(tc.want, func(r storedRow) bool { return r.pr == pull })
+				if holds := len(view.Lines) == 1 && view.Lines[0].Rows == 1; holds != (i >= 0) {
+					t.Fatalf("pull request %s reads %+v, want the charge on it %t", pull, view.Lines, i >= 0)
+				}
+				if i >= 0 && (view.Lines[0].RunIdentity != tc.want[i].identity || (view.ContestedRows == 1) != tc.want[i].contested ||
+					(view.OutrankedRows == 1) != tc.want[i].outranked) {
+					t.Fatalf("pull request %s reads %+v with %d contested and %d outranked, want %+v",
+						pull, view.Lines, view.ContestedRows, view.OutrankedRows, tc.want[i])
 				}
 			}
 		})
