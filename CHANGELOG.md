@@ -2,6 +2,30 @@
 
 Each release is dated by its tag, in UTC. Every release so far is a pre-release. [`docs/verify.md`](docs/verify.md) checks one.
 
+## 1.0.0-alpha.33 (2026-11-24)
+
+### Read this if you run `costroid serve` with both telemetry and rows
+
+`costroid serve` counted one request's cache writes twice when telemetry stored them first at an assumed lifetime and `POST /v1/rows` then sent them at the stated one. The two rows take different ids, and a row sent to the rows entrance names no request, so the ledger could not match them. In the test that found it, one such request raised a month's total from 1.9375 to 2.9375 USD. This release closes it: the ledger records the row ids each request's cache writes take, and leaves out a later write that carries one of them in the same run.
+
+Rows stored before this release are matched as before, so a request whose first write was stored by an earlier release can still be counted twice by a later one. One case is not closed: two statements of one request's cache writes, both sent to `POST /v1/rows`, at different lifetimes. [`docs/serve.md`](docs/serve.md) states the rule a ledger keeps and that limit.
+
+### Breaking changes
+
+- Migration `0012_request_write_ids.sql` adds the table `request_write_ids`. `costroid serve` applies it when it starts.
+- A GitHub App registered with `costroid app` now asks for `pull_requests: read`, where it asked for `write`: nothing `costroid serve` does posts on a pull request. An App registered from an earlier release keeps `write` until its owner sets Pull requests to Read-only in the App's settings; its tokens ask for read either way. [`docs/github-app.md`](docs/github-app.md) gives the steps.
+
+### What you can now do
+
+- Read in one place what Costroid can read and change. [`permissions.json`](permissions.json) lists every call Costroid makes to GitHub and GitLab, every `gh` and `git` command it runs under your own sign-in, and every permission each recipe's job and the GitHub App ask, each marked read or write with its reason and its basis: the publisher's own page, or a recorded GitHub Actions run. [`docs/permissions.md`](docs/permissions.md) is the same list for a person. A test holds the file to the code in both directions, so a call cannot be added without it.
+- Give the merged job less. [`recipes/github-merged.yml`](recipes/github-merged.yml) no longer asks for `contents: read`: listing a commit's pull requests needs `pull-requests: read` alone, which a recorded run on a private repository showed. `costroid lint` still takes a copy of the recipe from an earlier release.
+
+### Fixed
+
+- Which of two statements of one row in a single batch stands is decided in the batch, the earlier one. It rested on the order the database inserts in.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) told a reader to give the `report` job `contents: read` when the repository's visibility could not be read. Every workflow token reads it, so no permission is missing: the rows now name the real causes and the cure for each.
+- `docs/github-app.md` said the App posts Costroid's comment on a pull request. It never did.
+
 ## 1.0.0-alpha.32 (2026-11-24)
 
 ### Read this if `costroid.yml` writes a switch with a capital letter
