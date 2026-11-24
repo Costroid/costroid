@@ -16,6 +16,7 @@ import (
 
 	"github.com/Costroid/costroid/internal/decimal"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/scm"
 	"github.com/Costroid/costroid/internal/store"
 	"github.com/Costroid/costroid/internal/vcs"
 )
@@ -152,8 +153,9 @@ type verdictRequest struct {
 	// MeasuredPullRequests can only end the warn-only period early.
 	MeasuredPullRequests int `json:"measured_pull_requests"`
 	// Installation is the GitHub App's installation serve reads the
-	// repository through. With it, serve reads costroid.yml and the policy
-	// pack at config_ref itself, and runs the pack. Without it, a pack the
+	// repository through. With it, serve reads costroid.yml at config_ref
+	// itself, and when config_ref is the head of the pull request's base
+	// branch, reads the policy pack there and runs it. Otherwise a pack the
 	// stated costroid.yml names is not read.
 	Installation int64 `json:"installation"`
 }
@@ -165,7 +167,9 @@ type verdictAnswer struct {
 	Policy      policy.Verdict `json:"policy"`
 	// OverrideRecord says whether the verdict reached the ledger's override
 	// record, and why not when it did not. Only a verdict that reached it
-	// records a failure or demotes a rule.
+	// records a failure or demotes a rule. A reason that config_ref is not
+	// the base's head, or was not read, is also why no pack was read and why
+	// the conclusion is neutral at best.
 	OverrideRecord overrideReach `json:"override_record"`
 }
 
@@ -176,7 +180,8 @@ type overrideReach string
 const (
 	// reachRecorded: the verdict read and wrote the record.
 	reachRecorded overrideReach = "recorded"
-	// reachNoRecord: this ledger keeps no override record.
+	// reachNoRecord: config_ref is the head of the pull request's base
+	// branch, and this ledger keeps no override record.
 	reachNoRecord overrideReach = "no_record"
 	// reachConfigUnread: the service did not read costroid.yml at config_ref
 	// itself, through the App's installation, or read other bytes than the
@@ -264,18 +269,17 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	budget := budgetOf(lines, measured)
-	base, read := s.readBase(r.Context(), repo, stated, config)
+	base, reach := s.readBase(r.Context(), repo, pr, stated, config)
 	request := policy.LedgerRequest{
 		Lines:                ledgerLines(lines),
 		Config:               config,
-		Pack:                 readPack(r.Context(), base, read),
+		Pack:                 readPack(r.Context(), base, reach),
 		Start:                start,
 		MeasuredPullRequests: stated.MeasuredPullRequests,
 		At:                   s.Now(),
 	}
-	reach := reachConfigUnread
-	if read {
-		request.Record, reach = s.verdictRecord(r.Context(), who.tenant, repo, pr, base)
+	if reach == reachRecorded {
+		request.Record, reach = s.verdictRecord(who.tenant, repo, pr, base)
 	}
 	request.Evidence, request.MeasuredUSD = evidenceOf(budget), measured.usd
 	if request.Pack.Read() {
@@ -292,7 +296,21 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, verdictAnswer{Repository: repo, PullRequest: pr, Budget: budget, Policy: verdict, OverrideRecord: reach})
+	writeJSON(w, http.StatusOK, verdictAnswer{Repository: repo, PullRequest: pr, Budget: budget, Policy: heldOffTheBase(verdict, reach), OverrideRecord: reach})
+}
+
+// heldOffTheBase holds a verdict to neutral at best unless its settings are
+// ones serve read itself at the head of the pull request's base branch.
+// Settings a caller states, or that serve read at another commit, are the
+// caller's to choose, a looser budget or no pack among them. A failure stays
+// a failure, every result stays as computed, and override_record says why.
+// A ledger that keeps no override record still read its settings at the
+// base, so no_record holds nothing.
+func heldOffTheBase(verdict policy.Verdict, reach overrideReach) policy.Verdict {
+	if verdict.Conclusion == policy.Success && reach != reachRecorded && reach != reachNoRecord {
+		verdict.Conclusion = policy.Neutral
+	}
+	return verdict
 }
 
 // admitPack takes a slot for one customer pack's child, waiting at most
@@ -312,47 +330,80 @@ func admitPack(ctx context.Context) (func(), bool) {
 }
 
 // baseRead is costroid.yml as serve read it itself, through a GitHub App's
-// installation, and the host it read it through.
+// installation, the host it read it through, and the pull request as that
+// host answered it.
 type baseRead struct {
 	host   ApprovalHost
 	config policy.ConfigFile
+	pull   scm.PullRequest
 }
 
 // readBase reads costroid.yml at config_ref through the GitHub App's
-// installation the request names, and is true only when it found the bytes
-// the caller stated. The installation must be held, not suspended, and reach
+// installation the request names, then the pull request and the head of its
+// base branch. It answers reachRecorded only when it found the bytes the
+// caller stated, at the head of the base branch as the host states it, and
+// otherwise why not. The installation must be held, not suspended, and reach
 // the repository. Only a verdict on a file serve read this way runs the pack
 // the file names and reaches the ledger's override record: a caller could
-// state a looser file than the base holds.
-func (s *Server) readBase(ctx context.Context, repo string, stated verdictRequest, config policy.ConfigFile) (baseRead, bool) {
+// state a looser file than the base holds, or name another commit whose file
+// or pack is looser.
+func (s *Server) readBase(ctx context.Context, repo, pr string, stated verdictRequest, config policy.ConfigFile) (baseRead, overrideReach) {
 	name, onGitHub := strings.CutPrefix(repo, "github.com/")
 	if stated.Installation <= 0 || !onGitHub || s.App == nil || s.App.Hosts == nil {
-		return baseRead{}, false
+		return baseRead{}, reachConfigUnread
 	}
 	held, err := s.App.Installations.Installation(ctx, stated.Installation)
 	if err != nil || held.Suspended {
-		return baseRead{}, false
+		return baseRead{}, reachConfigUnread
 	}
 	index := slices.IndexFunc(held.Repositories, func(repository store.Repository) bool { return strings.EqualFold(repository.FullName, name) })
 	if index < 0 {
-		return baseRead{}, false
+		return baseRead{}, reachConfigUnread
 	}
 	host, err := s.App.Hosts.Repository(stated.Installation, held.Repositories[index].FullName)
 	if err != nil {
-		return baseRead{}, false
+		return baseRead{}, reachConfigUnread
 	}
 	own := policy.ReadConfig(ctx, host, policy.Commits{Base: stated.ConfigRef, PullRequest: true})
 	if own.Unread != nil || own.Found != config.Found || !bytes.Equal(own.Data, config.Data) {
-		return baseRead{}, false
+		return baseRead{}, reachConfigUnread
 	}
-	return baseRead{host: host, config: own}, true
+	pull, reach := onBaseHead(ctx, host, pr, own.Ref)
+	if reach != reachRecorded {
+		return baseRead{}, reach
+	}
+	return baseRead{host: host, config: own, pull: pull}, reachRecorded
+}
+
+// onBaseHead reads the pull request through host, and answers reachRecorded
+// when ref is the head of its base branch as the host states it. Otherwise
+// it says why not: the host did not answer the pull request's head, its base
+// branch or that branch's head, or ref is another commit.
+func onBaseHead(ctx context.Context, host ApprovalHost, pr, ref string) (scm.PullRequest, overrideReach) {
+	number, err := strconv.Atoi(pr)
+	if err != nil {
+		return scm.PullRequest{}, reachPullUnread
+	}
+	pull, err := host.PullRequest(ctx, number)
+	if err != nil || !vcs.IsCommit(pull.HeadSHA) {
+		return scm.PullRequest{}, reachPullUnread
+	}
+	head, err := policy.BaseHead(ctx, host, pull.BaseBranch)
+	if err != nil {
+		return scm.PullRequest{}, reachPullUnread
+	}
+	if ref != head {
+		return scm.PullRequest{}, reachNotBase
+	}
+	return pull, reachRecorded
 }
 
 // readPack reads the customer pack the costroid.yml serve read names, at the
-// commit it read that file at, never one a caller states. A verdict on a file
-// serve did not read reads no pack, and states customer_pack pack_unread.
-func readPack(ctx context.Context, base baseRead, read bool) policy.Pack {
-	if !read || base.config.PackPath() == "" {
+// head of the pull request's base branch, never at a commit only a caller
+// states. A verdict on a file serve did not read there reads no pack, and
+// states customer_pack pack_unread.
+func readPack(ctx context.Context, base baseRead, reach overrideReach) policy.Pack {
+	if reach != reachRecorded || base.config.PackPath() == "" {
 		return policy.Pack{}
 	}
 	return policy.ReadPack(ctx, base.host, base.config)
@@ -430,33 +481,15 @@ func (s *Server) overrides() overrideStore {
 }
 
 // verdictRecord is the override record of the pull request a verdict judges,
-// on its head commit as the host answered it, and why the verdict reaches it
-// or not. It is nil unless the ledger keeps one and config_ref is the head of
-// the pull request's base branch as the host states it: a caller that named
-// another commit could name one whose costroid.yml is looser, and leave no
-// failure in the record. A verdict without one records nothing and demotes
-// nothing.
-func (s *Server) verdictRecord(ctx context.Context, tenant store.TenantID, repo, pr string, base baseRead) (policy.OverrideLedger, overrideReach) {
+// on its head commit as the host answered it, for a verdict readBase found at
+// the head of the base branch. It is nil when the ledger keeps none. A
+// verdict without one records nothing and demotes nothing.
+func (s *Server) verdictRecord(tenant store.TenantID, repo, pr string, base baseRead) (policy.OverrideLedger, overrideReach) {
 	keeper := s.overrides()
 	if keeper == nil {
 		return nil, reachNoRecord
 	}
-	number, err := strconv.Atoi(pr)
-	if err != nil {
-		return nil, reachPullUnread
-	}
-	pull, err := base.host.PullRequest(ctx, number)
-	if err != nil || !vcs.IsCommit(pull.HeadSHA) {
-		return nil, reachPullUnread
-	}
-	head, err := policy.BaseHead(ctx, base.host, pull.BaseBranch)
-	if err != nil {
-		return nil, reachPullUnread
-	}
-	if base.config.Ref != head {
-		return nil, reachNotBase
-	}
-	return judgedRecord{keeper: keeper, tenant: tenant, repo: repo, branch: pull.BaseBranch, pr: pr, head: pull.HeadSHA}, reachRecorded
+	return judgedRecord{keeper: keeper, tenant: tenant, repo: repo, branch: base.pull.BaseBranch, pr: pr, head: base.pull.HeadSHA}, reachRecorded
 }
 
 // judgedRecord reads and writes the override record for one pull request,

@@ -1,1 +1,1 @@
-{"schema": "costroid.validate/0.1", "file": "costroid.yml", "state": "invalid", "problems": [{"message": "x"}]}
+{"schema": "costroid.validate/0.2", "file": "costroid.yml", "state": "invalid", "problems": [{"message": "x"}], "pack": null}

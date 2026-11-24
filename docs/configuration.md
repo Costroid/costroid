@@ -58,3 +58,15 @@ costroid validate costroid.yml
 It prints `costroid.yml: valid` and exits 0, or names each problem and exits 1. A misspelled key is a problem. With no argument it reads `costroid.yml` in the current directory, and a missing file there is not an error. It exits 125 when it cannot read a file you named, and 2 when its command line is wrong.
 
 The schema is [`costroid.schema.json`](../costroid.schema.json), and the binary embeds the same file, so `validate` works offline.
+
+### A policy pack
+
+When a valid file names a pack with `policy_pack`, `validate` reads the pack from that path beside the file and compiles it as the check does: in a child process, under the same built-ins, the same 64 KiB and the same 2 seconds. A pack that compiles prints a second `valid` line. A pack that does not is a problem: `validate` prints the compiler's error, names the next step on standard error and exits 1.
+
+```text
+costroid.yml: valid
+.costroid/policy.rego: pack_invalid at line 3: bundle activation failed: 1 error occurred: pack.rego:3: rego_type_error: undefined function http.send
+Next: costroid policy --rows FILE --pack FILE runs the pack once corrected.
+```
+
+Where the file is not there, as in a directory that holds `costroid.yml` alone, or when the file comes on standard input, `validate` does not read the pack. A warning says so and names `costroid policy --rows FILE --pack FILE`, which reads it. The file is still valid, and `validate` exits 0.

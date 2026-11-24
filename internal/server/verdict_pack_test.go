@@ -29,10 +29,14 @@ const (
 
 // packWorld is a memory world whose service reaches example/widgets as the
 // App's installation 58, signing its token through the KMS key, with the
-// stub's files at every commit.
-func packWorld(t *testing.T, files map[string]string) *world {
+// stub's files at every commit. Pull request 7's head is acmeSHA, and its
+// base branch main is at approvalBase, the config_ref a verdict states unless
+// it says otherwise. The memory ledger keeps no override record.
+func packWorld(t *testing.T, files map[string]string) (*world, *scmtest.Stub) {
 	t.Helper()
 	stub := scmtest.New(t)
+	stub.Head, stub.BaseBranch = acmeSHA, "main"
+	stub.Branches["main"] = approvalBase
 	for path, body := range files {
 		stub.Files[path] = body
 	}
@@ -47,7 +51,7 @@ func packWorld(t *testing.T, files map[string]string) *world {
 	w.server = New(config)
 	w.http = httptest.NewServer(w.server.Handler())
 	t.Cleanup(w.http.Close)
-	return w
+	return w, stub
 }
 
 // askVerdict asks for pull request 7's verdict on example/widgets with the
@@ -59,11 +63,7 @@ func (w *world) askVerdict(t *testing.T, config string, fields map[string]any) a
 
 func verdictOfAnswer(t *testing.T, got answer) policy.Verdict {
 	t.Helper()
-	var verdict verdictAnswer
-	if got.status != http.StatusOK || json.Unmarshal(got.body, &verdict) != nil {
-		t.Fatalf("answered %d: %s", got.status, got.body)
-	}
-	return verdict.Policy
+	return readAnswer(t, got).Policy
 }
 
 // TestServeRunsAPackOnlyWhereItReadTheFileItself asks for a verdict under a
@@ -73,7 +73,7 @@ func verdictOfAnswer(t *testing.T, got answer) policy.Verdict {
 // with a costroid.yml that is not the one at config_ref, it reads no pack and
 // states customer_pack pack_unread.
 func TestServeRunsAPackOnlyWhereItReadTheFileItself(t *testing.T) {
-	w := packWorld(t, map[string]string{"costroid.yml": servedPackConfig, servedPackPath: servedPackSource})
+	w, _ := packWorld(t, map[string]string{"costroid.yml": servedPackConfig, servedPackPath: servedPackSource})
 	ran := verdictOfAnswer(t, w.askVerdict(t, servedPackConfig, map[string]any{"installation": installationID}))
 	if ran.Conclusion != policy.Failure || ran.Pack == nil || len(ran.Pack.Results) != 1 || ran.Pack.Results[0].Rule != "team_rule" {
 		t.Errorf("serve did not run the pack it read: %+v, %+v", ran.Conclusion, ran.Pack)
@@ -104,7 +104,7 @@ func TestServeCapsThePacksItRunsAtOnce(t *testing.T) {
 	previous := packWait
 	packWait = 200 * time.Millisecond
 	t.Cleanup(func() { packWait = previous })
-	w := packWorld(t, map[string]string{"costroid.yml": servedPackConfig, servedPackPath: servedPackSource})
+	w, _ := packWorld(t, map[string]string{"costroid.yml": servedPackConfig, servedPackPath: servedPackSource})
 	for range maxPackChildren - 1 {
 		packChildren <- struct{}{}
 	}
@@ -150,5 +150,73 @@ func TestServeCapsThePacksItRunsAtOnce(t *testing.T) {
 	}
 	if want := fmt.Sprintf("at most %d policy packs at once", maxPackChildren); !strings.Contains(string(page), want) {
 		t.Errorf("docs/serve.md does not say %q", want)
+	}
+}
+
+// TestAPackIsReadOnlyAtTheBase asks for pull request 7's verdict under a
+// costroid.yml that names a pack which fails every run, with the very bytes
+// the service reads at every commit, on a ledger that keeps an override
+// record and on one that keeps none. At the head of the pull request's base
+// branch, as GitHub states it, the pack runs. At any other commit, or where
+// GitHub does not answer the base branch, the service reads no pack: the
+// verdict states customer_pack pack_unread and concludes neutral, and
+// override_record says why. A caller that named another commit could name
+// one whose pack is looser or absent.
+func TestAPackIsReadOnlyAtTheBase(t *testing.T) {
+	files := map[string]string{"costroid.yml": servedPackConfig, servedPackPath: servedPackSource}
+	worlds := map[string]struct {
+		open   func(*testing.T) (*world, *scmtest.Stub)
+		atBase overrideReach
+	}{
+		"a ledger with an override record": {open: func(t *testing.T) (*world, *scmtest.Stub) {
+			w := memoryDemotionWorld(t)
+			for path, body := range files {
+				w.stub.Files[path] = body
+			}
+			return w.world, w.stub
+		}, atBase: reachRecorded},
+		"a ledger without one": {open: func(t *testing.T) (*world, *scmtest.Stub) { return packWorld(t, files) }, atBase: reachNoRecord},
+	}
+	for name, ledger := range worlds {
+		t.Run(name, func(t *testing.T) {
+			w, _ := ledger.open(t)
+			ran := readAnswer(t, w.askVerdict(t, servedPackConfig, map[string]any{"installation": installationID}))
+			if ran.Policy.Conclusion != policy.Failure || ran.Policy.Pack == nil || len(ran.Policy.Pack.Results) != 1 || ran.OverrideRecord != ledger.atBase {
+				t.Errorf("at the base's head: %s, %+v, saying %q", ran.Policy.Conclusion, ran.Policy.Pack, ran.OverrideRecord)
+			}
+			for commit, tc := range notBaseCommits() {
+				w, stub := ledger.open(t)
+				if tc.setup != nil {
+					tc.setup(stub)
+				}
+				requirePackUnread(t, commit, readAnswer(t, w.askVerdict(t, servedPackConfig, map[string]any{"installation": installationID, "config_ref": tc.ref})), reachNotBase)
+			}
+			w, stub := ledger.open(t)
+			stub.Fail["GET /repos/example/widgets/git/ref/heads/"] = http.StatusBadGateway
+			requirePackUnread(t, "a base branch GitHub does not answer", readAnswer(t, w.askVerdict(t, servedPackConfig, map[string]any{"installation": installationID})), reachPullUnread)
+		})
+	}
+}
+
+func readAnswer(t *testing.T, got answer) verdictAnswer {
+	t.Helper()
+	var read verdictAnswer
+	if got.status != http.StatusOK || json.Unmarshal(got.body, &read) != nil {
+		t.Fatalf("answered %d: %s", got.status, got.body)
+	}
+	return read
+}
+
+// requirePackUnread holds a verdict to no pack read, and its answer to the
+// reason.
+func requirePackUnread(t *testing.T, name string, got verdictAnswer, reason overrideReach) {
+	t.Helper()
+	var last policy.Result
+	if results := got.Policy.Results; len(results) > 0 {
+		last = results[len(results)-1]
+	}
+	if last.Rule != policy.RuleCustomerPack || last.Reason != policy.ReasonPackUnread || got.Policy.Pack == nil || len(got.Policy.Pack.Results) != 0 ||
+		got.Policy.Conclusion == policy.Failure || got.OverrideRecord != reason {
+		t.Errorf("%s: %s, %+v beside %+v, saying %q, want %q", name, got.Policy.Conclusion, got.Policy.Results, got.Policy.Pack, got.OverrideRecord, reason)
 	}
 }

@@ -126,11 +126,32 @@ type PackFault struct {
 	err  error
 }
 
+// NextAfterInvalidPack is the line under a pack that is not valid. A pull
+// request's check runs the base branch's pack, never the one it changes, so
+// a corrected pack runs first where its author runs it.
+const NextAfterInvalidPack = "Next: costroid policy --rows FILE --pack FILE runs the pack once corrected."
+
+// Error says what the fault is on its first line. A pack that is not valid
+// has the next step on a line under it.
 func (f *PackFault) Error() string {
-	if f.Line > 0 {
-		return fmt.Sprintf("policy: customer pack: %s at line %d: %v", f.reason, f.Line, f.err)
+	if f.reason == ReasonPackInvalid {
+		return f.statement() + "\n" + NextAfterInvalidPack
 	}
-	return fmt.Sprintf("policy: customer pack: %s: %v", f.reason, f.err)
+	return f.statement()
+}
+
+// statement is the fault's detail under the policy's name, on one line.
+func (f *PackFault) statement() string {
+	return "policy: customer pack: " + f.Detail()
+}
+
+// Detail is the fault's reason, its line when the compiler named one, and its
+// error, on one line.
+func (f *PackFault) Detail() string {
+	if f.Line > 0 {
+		return fmt.Sprintf("%s at line %d: %v", f.reason, f.Line, f.err)
+	}
+	return fmt.Sprintf("%s: %v", f.reason, f.err)
 }
 
 func (f *PackFault) Unwrap() error {
@@ -194,16 +215,50 @@ type packRunner struct {
 // Costroid's verdict was computed from, and joins its results to that
 // verdict. The conclusion it returns is never below the verdict's.
 func RunCustomerPack(ctx context.Context, source []byte, request Request, verdict Verdict) Composed {
+	runner, problem := newPackRunner()
+	if problem != nil {
+		return compose(verdict, nil, problem)
+	}
+	results, _, problem := runner.run(ctx, source, request, verdict.Results)
+	return compose(verdict, results, problem)
+}
+
+// newPackRunner is the runner of this executable's own child, under the
+// bounds every check applies.
+func newPackRunner() (packRunner, *PackFault) {
 	if !diverting.Load() {
-		return compose(verdict, nil, fault(ReasonPackBound, 0, errors.New("this executable did not call policy.PackChild as it started, so a child it starts would not run the pack")))
+		return packRunner{}, fault(ReasonPackBound, 0, errors.New("this executable did not call policy.PackChild as it started, so a child it starts would not run the pack"))
 	}
 	executable, err := selfExecutable()
 	if err != nil {
-		return compose(verdict, nil, fault(ReasonPackBound, 0, fmt.Errorf("find this executable: %w", err)))
+		return packRunner{}, fault(ReasonPackBound, 0, fmt.Errorf("find this executable: %w", err))
 	}
-	runner := packRunner{executable: executable, steps: maxPackSteps, time: maxPackTime}
-	results, _, problem := runner.run(ctx, source, request, verdict.Results)
-	return compose(verdict, results, problem)
+	return packRunner{executable: executable, steps: maxPackSteps, time: maxPackTime}, nil
+}
+
+// CheckPackFile reads the pack config names from file, and compiles it as a
+// check would before it reads a row: in a child of this executable, under
+// capabilities.pack.json and the same bounds of size and time. It answers
+// false when there is no such file. Otherwise it answers the fault a check
+// would state on any rows, a file over 64 KiB or a pack that is not valid,
+// and nil for a pack that compiles. A fault of a bound is the rows' and the
+// runner's, so it is left to the check.
+func CheckPackFile(ctx context.Context, file string, config ConfigFile) (bool, *PackFault) {
+	pack := PackFromFile(file, config)
+	if pack.absent {
+		return false, nil
+	}
+	if problem := pack.fault(config); problem != nil {
+		return true, problem
+	}
+	runner, problem := newPackRunner()
+	if problem != nil {
+		return true, problem
+	}
+	if problem := runner.compileAlone(ctx, pack.data); problem != nil && problem.reason == ReasonPackInvalid {
+		return true, problem
+	}
+	return true, nil
 }
 
 // run hands the pack and its input to a child, and reads the child's answer.
@@ -245,18 +300,29 @@ func (r packRunner) run(ctx context.Context, source []byte, request Request, res
 // compiles before it reads its input, so a pack that is not valid answers
 // alike both times.
 func (r packRunner) confirmInvalid(ctx context.Context, source []byte, claimed *PackFault) *PackFault {
+	again := r.compileAlone(ctx, source)
+	if again == nil {
+		return fault(ReasonPackResult, 0, fmt.Errorf("the pack's process stated it is not valid at line %d, and without this run's rows it answered with no fault", claimed.Line))
+	}
+	if again.reason != ReasonPackInvalid || again.Line != claimed.Line {
+		return fault(ReasonPackResult, 0, fmt.Errorf("the pack's process stated it is not valid at line %d, and without this run's rows it answered %s", claimed.Line, again.statement()))
+	}
+	return claimed
+}
+
+// compileAlone hands the pack to a child with no rows and one step, and
+// answers the fault it states. A child compiles before it reads its input, so
+// a pack that is not valid says so, and one that compiles stops at its step.
+func (r packRunner) compileAlone(ctx context.Context, source []byte) *PackFault {
 	frame, err := json.Marshal(childRequest{Source: source, Input: json.RawMessage("{}"), Steps: 1})
 	if err != nil {
 		return fault(ReasonPackResult, 0, fmt.Errorf("write the request: %w", err))
 	}
-	answer, again := r.exchange(ctx, frame)
-	if again == nil {
-		_, _, again = readAnswer(answer, source)
+	answer, problem := r.exchange(ctx, frame)
+	if problem == nil {
+		_, _, problem = readAnswer(answer, source)
 	}
-	if again == nil || again.reason != ReasonPackInvalid || again.Line != claimed.Line {
-		return fault(ReasonPackResult, 0, fmt.Errorf("the pack's process stated it is not valid at line %d, and without this run's rows it answered %v", claimed.Line, again))
-	}
-	return claimed
+	return problem
 }
 
 // PackRun is the customer pack a verdict ran, as result/0.12 states it.

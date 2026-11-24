@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -22,6 +23,7 @@ import (
 	"github.com/Costroid/costroid/internal/focus"
 	"github.com/Costroid/costroid/internal/gateway"
 	"github.com/Costroid/costroid/internal/policy"
+	"github.com/Costroid/costroid/internal/scm/scmtest"
 	"github.com/Costroid/costroid/internal/store"
 	"github.com/Costroid/costroid/internal/store/storetest"
 	"github.com/Costroid/costroid/migrations"
@@ -140,6 +142,28 @@ func spendWorld(t *testing.T, keeps bool) *world {
 	return w
 }
 
+// readsTheBase gives w's service the GitHub App's installation 58, which
+// reaches acme/widgets. Pull request 1423's base branch main is at the commit
+// verdictBody names, and holds config there, so a verdict asked through the
+// installation is on settings the service read itself at the base.
+func readsTheBase(t *testing.T, w *world, config string) {
+	t.Helper()
+	stub := scmtest.New(t)
+	stub.Head, stub.BaseBranch = acmeSHA, "main"
+	stub.Branches["main"] = approvalBase
+	stub.Files["costroid.yml"] = config
+	installations := newMemoryInstallations()
+	if err := installations.AddRepositories(context.Background(), installationID, "acme", []store.Repository{{ID: 102, FullName: "acme/widgets"}}); err != nil {
+		t.Fatal(err)
+	}
+	served := w.server.Config
+	served.App = &GitHubApp{Secret: []byte(webhookSecretText), Installations: installations, Hosts: newAppFront(t, stub).hosts(t)}
+	served.Logger = slog.New(slog.DiscardHandler)
+	w.server = New(served)
+	w.http = httptest.NewServer(w.server.Handler())
+	t.Cleanup(w.http.Close)
+}
+
 // closeToken is the token of the run that closed the fixtures' key once the
 // fixtures' run had completed: a run that workflow_run started on the
 // protected default branch, in the gateway's environment.
@@ -230,11 +254,12 @@ func TestServeSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T) {
 }
 
 func serveSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T, open func(*testing.T) *world) {
+	open = atTheBaseOf(open)
 	w := open(t)
 	keyID := gateway.KeyID(fixturesKey)
 	w.rows(w.token(), lines(t, credentialed(row("req-1", focus.Output, 1000)), credentialed(row("req-1", focus.InputUncached, 4000)))).
 		want(t, http.StatusOK)
-	body := verdictBody(t, prBudget, nil)
+	body := verdictBody(t, prBudget, map[string]any{"installation": installationID})
 
 	before := w.verdict(t, w.token(), body)
 	if before.Policy.Conclusion != policy.Neutral || before.Policy.Trust != policy.TokenVerified || before.Policy.Evidence != policy.AgentCounts {
@@ -278,6 +303,15 @@ func serveSucceedsOnlyOnGatewayMeasuredSpend(t *testing.T, open func(*testing.T)
 	partly := other.verdict(t, other.token(), body)
 	if partly.Policy.Conclusion != policy.Neutral || partly.Policy.Evidence != policy.AgentCounts || partly.Budget.Basis != budgetBasisAgent {
 		t.Fatalf("a row outside the gateway's count: %+v %+v", partly.Policy, partly.Budget)
+	}
+}
+
+// atTheBaseOf opens a world whose service reads prBudget at the base itself.
+func atTheBaseOf(open func(*testing.T) *world) func(*testing.T) *world {
+	return func(t *testing.T) *world {
+		w := open(t)
+		readsTheBase(t, w, prBudget)
+		return w
 	}
 }
 

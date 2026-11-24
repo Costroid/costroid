@@ -6,13 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 
 	"github.com/Costroid/costroid/internal/cli"
 	"github.com/Costroid/costroid/internal/config"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 // validateSchema names the object validate --json prints.
-const validateSchema = "costroid.validate/0.1"
+const validateSchema = "costroid.validate/0.2"
 
 // The states a file is in, as the object names them.
 const (
@@ -21,13 +23,36 @@ const (
 	fileAbsent  = "absent"
 )
 
-// validation is what validate found in one file: costroid.validate/0.1.
+// The states of the policy pack a valid file names, as the object names
+// them. unread says validate found no file to compile.
+const (
+	packCompiles = "valid"
+	packNotValid = "invalid"
+	packNotRead  = "unread"
+)
+
+// validation is what validate found in one file: costroid.validate/0.2.
 type validation struct {
 	Schema string `json:"schema"`
 	// File is the file as it was named, or standard input.
 	File     string          `json:"file"`
 	State    string          `json:"state"`
 	Problems []schemaProblem `json:"problems"`
+	// Pack is the policy pack a valid file names, nil when it names none.
+	Pack *packCheck `json:"pack"`
+}
+
+// packCheck is what validate found of the policy pack a file names.
+type packCheck struct {
+	// Path is the pack's path as policy_pack names it.
+	Path string `json:"path"`
+	// File is where validate looked for the pack, beside the file it
+	// validated, and empty when it had nowhere to look.
+	File  string `json:"file"`
+	State string `json:"state"`
+	// Message is the fault of a pack that is not valid, or why validate did
+	// not read it.
+	Message string `json:"message,omitempty"`
 }
 
 // schemaProblem is one place the file breaks the schema. Pointer is a JSON
@@ -43,7 +68,15 @@ func (v validation) lines() []string {
 	case fileAbsent:
 		return []string{v.File + ": no file, so the defaults apply"}
 	case fileValid:
-		return []string{v.File + ": valid"}
+		lines := []string{v.File + ": valid"}
+		switch {
+		case v.Pack == nil:
+		case v.Pack.State == packCompiles:
+			lines = append(lines, v.Pack.File+": valid")
+		case v.Pack.State == packNotValid:
+			lines = append(lines, v.Pack.File+": "+v.Pack.Message)
+		}
+		return lines
 	}
 	lines := make([]string, len(v.Problems))
 	for i, problem := range v.Problems {
@@ -55,7 +88,7 @@ func (v validation) lines() []string {
 // validateCommand checks one file. With no argument it reads costroid.yml here,
 // and a repository with no such file has nothing to break: zero configuration
 // is a supported state.
-func validateCommand(_ context.Context, args []string, std stdio) int {
+func validateCommand(ctx context.Context, args []string, std stdio) int {
 	stdout, stderr := std.stdout, std.stderr
 	set := flag.NewFlagSet("validate", flag.ContinueOnError)
 	asJSON := set.Bool("json", false, "print what validate found as one JSON object")
@@ -90,6 +123,9 @@ func validateCommand(_ context.Context, args []string, std stdio) int {
 			found.State = fileInvalid
 			found.Problems = append(found.Problems, schemaProblem{Pointer: problem.Path, Message: problem.Message})
 		}
+		if found.State == fileValid {
+			found.Pack = checkPack(ctx, set.NArg() == 1 && set.Arg(0) == standardInput, path, data)
+		}
 	}
 	if *asJSON {
 		if err := printObject(stdout, found); err != nil {
@@ -100,11 +136,45 @@ func validateCommand(_ context.Context, args []string, std stdio) int {
 			fmt.Fprintln(stdout, line)
 		}
 	}
-	switch found.State {
-	case fileInvalid:
+	switch {
+	case found.State == fileInvalid:
 		return exitRejected
-	case fileValid:
+	case found.Pack != nil && found.Pack.State == packNotValid:
+		cli.Say(stderr, "%s\n", policy.NextAfterInvalidPack)
+		return exitRejected
+	case found.Pack != nil && found.Pack.State == packNotRead:
+		fmt.Fprintf(stderr, "costroid: warning: validate did not read the policy pack %s: %s. costroid policy --rows FILE --pack FILE reads it\n", found.Pack.Path, found.Pack.Message)
+	}
+	if found.State == fileValid {
 		cli.Say(stderr, "%s\n", nextAfterValidate)
 	}
 	return 0
+}
+
+// checkPack compiles the policy pack a valid file names, from the path it
+// names beside that file, as the report reads it beside costroid.yml at the
+// base commit. Standard input has no directory, so its pack is not read, and
+// neither is a pack whose file is not there.
+func checkPack(ctx context.Context, fromStandardInput bool, named string, data []byte) *packCheck {
+	file := policy.ConfigFile{Data: data, Found: true}
+	path := file.PackPath()
+	if path == "" {
+		return nil
+	}
+	check := &packCheck{Path: path, State: packNotRead}
+	if fromStandardInput {
+		check.Message = "standard input has no directory to read it from"
+		return check
+	}
+	check.File = filepath.Join(filepath.Dir(named), filepath.FromSlash(path))
+	read, problem := policy.CheckPackFile(ctx, check.File, file)
+	switch {
+	case !read:
+		check.Message = "there is no " + check.File
+	case problem != nil:
+		check.State, check.Message = packNotValid, problem.Detail()
+	default:
+		check.State = packCompiles
+	}
+	return check
 }

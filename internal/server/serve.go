@@ -266,13 +266,24 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Under --quiet the log keeps its warnings and errors.
+	level := slog.LevelInfo
+	if cli.Quiet(stderr) {
+		level = slog.LevelWarn
+	}
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
+	wait := newDatabaseWait(logger)
 	ownerURL := os.Getenv(envMigration)
 	if ownerURL != "" {
-		if err := store.Migrate(ctx, ownerURL); err != nil {
+		if err := wait.until(ctx, ownerURL, func() error { return store.Migrate(ctx, ownerURL) }); err != nil {
 			return err
 		}
 	}
-	ledger, err := store.Open(ctx, databaseURL)
+	var ledger *store.Store
+	err = wait.until(ctx, databaseURL, func() (err error) {
+		ledger, err = store.Open(ctx, databaseURL)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -280,12 +291,6 @@ func run(ctx context.Context, options serveOptions, stderr io.Writer) error {
 	if err := bindOwners(ctx, ledger, ownerURL, options.bindings); err != nil {
 		return err
 	}
-	// Under --quiet the log keeps its warnings and errors.
-	level := slog.LevelInfo
-	if cli.Quiet(stderr) {
-		level = slog.LevelWarn
-	}
-	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
 	counters := egress.NewCounters(ledger, time.Now, logger)
 	gate := egress.New(options.egressAllow, counters)
 	issuers := issuersOf(options)

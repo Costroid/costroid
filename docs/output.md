@@ -126,12 +126,15 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
 
 `state` is `valid`, `invalid` or `absent`. `absent` means no file was named and the directory holds no `costroid.yml`, so the defaults apply. Each problem has a `pointer`, a JSON pointer into the file that is empty for the whole document, and a `message`.
 
+`pack` is null unless a valid file names a policy pack. Then it holds the `path` `policy_pack` names, the `file` validate looked for beside the file, empty for standard input, and a `state`: `valid` when the pack compiles as the check compiles it, `invalid` when it does not or is over 64 KiB, which exits 1, and `unread` when there was no file to compile. `message` gives the fault, or why validate did not read the pack.
+
 ```json
 {
-  "schema": "costroid.validate/0.1",
+  "schema": "costroid.validate/0.2",
   "file": "costroid.yml",
   "state": "invalid",
-  "problems": [{ "pointer": "/policy", "message": "additional properties 'no_such_key' not allowed" }]
+  "problems": [{ "pointer": "/policy", "message": "additional properties 'no_such_key' not allowed" }],
+  "pack": null
 }
 ```
 

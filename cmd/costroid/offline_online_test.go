@@ -400,7 +400,8 @@ func writeObjects(t *testing.T, path string, objects []string) string {
 // servePath asks serve for the verdict on pull request 7, whose rows in its
 // ledger are the recorded run's and the earlier runs', none checked against a
 // CI token. serve reaches the repository as the App's installation, and reads
-// costroid.yml and the pack at the base commit itself.
+// costroid.yml and the pack at the base commit itself, which the host states
+// is the head of the pull request's base branch.
 func servePath(t *testing.T, tc pathCase) policy.Verdict {
 	t.Helper()
 	earlier := decimal.MustParse(earlierRunCost).Mul(decimal.FromInt(int64(tc.earlier)))
@@ -409,6 +410,8 @@ func servePath(t *testing.T, tc pathCase) policy.Verdict {
 		ingestedLine(earlier, int64(tc.earlier)),
 	}}
 	repository := scmtest.New(t)
+	repository.Head, repository.BaseBranch = headCommit, "main"
+	repository.Branches["main"] = baseCommit
 	if tc.config != nil {
 		repository.Files[configFile] = *tc.config
 	}

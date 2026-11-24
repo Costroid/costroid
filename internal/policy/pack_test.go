@@ -585,7 +585,7 @@ func TestPackMessagesKeepOnlyWhatACommentPrints(t *testing.T) {
 
 func TestPackFaultNamesItsReasonAndLine(t *testing.T) {
 	problem := fault(ReasonPackInvalid, 4, errors.New("undefined function http.send"))
-	if problem.Error() != "policy: customer pack: pack_invalid at line 4: undefined function http.send" || problem.Unwrap() == nil {
+	if problem.Error() != "policy: customer pack: pack_invalid at line 4: undefined function http.send\n"+NextAfterInvalidPack || problem.Unwrap() == nil {
 		t.Errorf("the fault reads %q", problem.Error())
 	}
 	if unknown := fault("pack_unknown", 0, errors.New("x")).result(); unknown.Outcome != Fail {

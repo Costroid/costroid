@@ -653,13 +653,19 @@ here, it says the defaults apply.
 
 With - in place of a file, validate reads standard input.
 
+When a valid file names a policy pack, validate compiles the pack from the
+path it names beside the file, as the check does, and prints a line for it.
+A pack that is not valid is a problem. Where no such file is there, as for
+standard input, a warning says validate did not read it.
+
 --json prints one object on stdout in place of the lines,
-costroid.validate/0.1: the file, whether it is valid, invalid or absent, and
-each problem's pointer and message. docs/output.md describes the object.`)}},
+costroid.validate/0.2: the file, whether it is valid, invalid or absent, each
+problem's pointer and message, and the pack. docs/output.md describes the
+object.`)}},
 	},
 	Exits: []cli.Row{
 		{"0", "the file is valid, or there is none and the defaults apply"},
-		{"1", "the file breaks the schema"},
+		{"1", "the file breaks the schema, or its policy pack is not valid"},
 		cli.UsageExit,
 		{"125", "costroid could not read the file"},
 	},

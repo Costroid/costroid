@@ -17,6 +17,7 @@ import (
 
 	costroid "github.com/Costroid/costroid"
 	"github.com/Costroid/costroid/internal/cli"
+	"github.com/Costroid/costroid/internal/policy"
 )
 
 // nextSteps lists every line a command ends on that names what to do next,
@@ -34,15 +35,25 @@ var nextSteps = []struct {
 	{line: nextAfterDoctor, after: "doctor", left: []string{"gh", "pr", "create", "--fill"}},
 	{line: nextAfterDoctorOnGitLab, after: "doctor", page: "recipes#gitlab-ci"},
 	{line: nextAfterValidate, after: "validate", names: []string{"policy", "--rows", "FILE"}},
+	{line: policy.NextAfterInvalidPack, after: "policy and report, under a pack that is not valid", names: []string{"policy", "--rows", "FILE", "--pack", "FILE"}},
 }
 
-// nextLiterals reads every string the commands' source holds that opens a
-// next step.
+// nextSources are the directories whose source holds a next step: the
+// commands', and the policy's, whose fault on a pack that is not valid names
+// one under the warning policy and report print.
+var nextSources = []string{".", filepath.Join("..", "..", "internal", "policy")}
+
+// nextLiterals reads every string the source of nextSources holds that opens
+// a next step.
 func nextLiterals(t *testing.T) []string {
 	t.Helper()
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
+	var files []string
+	for _, dir := range nextSources {
+		found, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, found...)
 	}
 	var lines []string
 	for _, name := range files {
@@ -275,4 +286,26 @@ func TestDoctorNamesThePullRequestWhenNothingIsLeftToFix(t *testing.T) {
 		t.Errorf("on GitLab: exit %d, stderr %q, stdout:\n%s", code, stderr, stdout)
 	}
 	troubleshootingLists(t, nextAfterDoctor, nextAfterDoctorOnGitLab)
+}
+
+// TestAPackThatIsNotValidNamesTheCommandThatRunsItCorrected runs policy under
+// a costroid.yml whose pack calls a built-in a pack may not call. The warning
+// that names the compiler's error is followed on stderr by the next step, the
+// command that runs the pack once it is corrected, and the troubleshooting
+// page quotes that line.
+func TestAPackThatIsNotValidNamesTheCommandThatRunsItCorrected(t *testing.T) {
+	clearCI(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, configFile, "policy_pack: .costroid/policy.rego\n")
+	writeFile(t, filepath.Join(dir, ".costroid", "policy.rego"), "package costroid.pack\n\nresults contains x if { x := http.send({}) }\n")
+	code, stdout, stderr := execute(t, "policy", "--rows", recordedRows)
+	warning, next, _ := strings.Cut(stderr, "\n")
+	if code != 0 || !strings.HasPrefix(warning, "costroid: warning: policy: customer pack: pack_invalid at line 3: ") || next != policy.NextAfterInvalidPack+"\n" {
+		t.Errorf("exit %d, stderr:\n%s", code, stderr)
+	}
+	if !strings.HasPrefix(stdout, "Not decided: the policy pack is not valid at line 3") || strings.Contains(stdout, "Next:") {
+		t.Errorf("stdout:\n%s", stdout)
+	}
+	troubleshootingLists(t, policy.NextAfterInvalidPack)
 }

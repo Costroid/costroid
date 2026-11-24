@@ -1001,6 +1001,7 @@ type ledgerVerdict struct {
 			CostUSD string `json:"cost_usd"`
 		} `json:"results"`
 	} `json:"policy"`
+	OverrideRecord string `json:"override_record"`
 }
 
 // verdict asks the ledger, under the token of the attempt's agent job, for
@@ -1036,7 +1037,10 @@ func (v ledgerVerdict) outcomes() map[string]string {
 // holdTheBudgetToTheClosingJobsCount ingests the run's rows under the agent's
 // job's token. On their token counts alone the budget cannot pass. Once the
 // closing job has attested the gateway's count, it passes on that count, which
-// is the rows' total at the catalog's prices, the gateway's prices here.
+// is the rows' total at the catalog's prices, the gateway's prices here. This
+// ledger has no GitHub App, so it reads no costroid.yml itself, and the
+// verdict on the policy the request states concludes neutral at best,
+// config_unread.
 func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job *gatewayJob, total decimal.Decimal) {
 	t.Helper()
 	rows, err := os.ReadFile(job.rows)
@@ -1063,7 +1067,7 @@ func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job
 
 	after, data := ledger.verdict(1)
 	want = map[string]string{"pr_budget": "pass within_limit", "model_allowlist": "pass models_on_allowlist"}
-	if after.Policy.Conclusion != "success" || after.Policy.Evidence != "gateway_measured" || after.Budget.Basis != "gateway_measured" ||
+	if after.Policy.Conclusion != "neutral" || after.OverrideRecord != "config_unread" || after.Policy.Evidence != "gateway_measured" || after.Budget.Basis != "gateway_measured" ||
 		!after.Budget.Evidence || after.Budget.GatewayUSD != attested || !equalOutcomes(after.outcomes(), want) {
 		t.Fatalf("the verdict on the gateway's count of USD %s: %s", attested, data)
 	}

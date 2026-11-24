@@ -26,6 +26,8 @@ costroid serve --addr :8080 --bind github.com:example
 
 Migrations run forward only. The service refuses a migration edited after it was applied, and a database ahead of the binary.
 
+At start the service waits for Postgres while it does not answer yet: its name does not resolve, it refuses the connection, or it says it is starting. It tries every 2 seconds for up to 110 seconds, and logs each try as `the database does not answer yet`, with the role, host and database it tried and what answered, never the password. Any other error, such as a password or a role Postgres refuses, or a migration that fails, stops it at once. At 110 seconds it stops on the last try's error. The chart's startup probe allows 120 seconds.
+
 ## Paths
 
 | Path                     | Answers                                                               |
@@ -175,7 +177,7 @@ The gateway counts what passed through it, at its own prices. Spend on a credent
 {"config": "<costroid.yml at the base commit, in base64>", "config_ref": "<the base commit>", "workflow_added": "2026-11-01T10:00:00Z", "workflow_not_on_base": false, "measured_pull_requests": 4, "installation": 58}
 ```
 
-An absent `config` is a base commit with no `costroid.yml`. `installation` is optional, and only a `costroid.yml` that names a policy pack reads it, as [A repository's own pack](#a-repositorys-own-pack) says. An absent `workflow_added` is a start the caller could not read, and the warn-only period keeps running. `measured_pull_requests` counts the repository's pull requests with a measured cost. At 20 the warn-only period ends, whichever of that and its 7 days comes first, and `warn_only` then reads `ended` with no `ends`. A count can only end the period early, so a caller that overstates it holds its own pull requests to the policy sooner. A CI token asks for its own repository only, and the answer uses the service's clock.
+An absent `config` is a base commit with no `costroid.yml`. `installation` is optional. Without it the service reads no file itself, so the verdict concludes `neutral` at best, as [Success only at the base](#success-only-at-the-base) says, and runs no pack. An absent `workflow_added` is a start the caller could not read, and the warn-only period keeps running. `measured_pull_requests` counts the repository's pull requests with a measured cost. At 20 the warn-only period ends, whichever of that and its 7 days comes first, and `warn_only` then reads `ended` with no `ends`. A count can only end the period early, so a caller that overstates it holds its own pull requests to the policy sooner. A CI token asks for its own repository only, and the answer uses the service's clock.
 
 The answer holds `budget`, as the per-PR view has it, and the verdict under `policy`, in the shape [`docs/policy.md`](policy.md) gives:
 
@@ -187,6 +189,12 @@ The answer holds `budget`, as the per-PR view has it, and the verdict under `pol
 
 Over a limit, the agent's own counts are enough: a rule that fails on them fails here too.
 
+### Success only at the base
+
+The service concludes `success` only on settings it read itself: `costroid.yml` read through the GitHub App's installation the request names, at `config_ref`, with the bytes the request states, where `config_ref` is the head of the pull request's base branch as GitHub states it. On any other settings the verdict concludes `neutral` at best: a file the request states with no `installation`, or to a ledger without the App's id and KMS key; a file read at another commit, the pull request's own head among them; a pull request or a base branch GitHub does not answer. Each rule's result is answered as computed, a `failure` stays a `failure`, and `override_record` says why: `config_unread`, `not_base` or `pull_unread`.
+
+Settings a caller states are the caller's to choose, a looser budget or no pack among them. So the App is what makes a verdict's `success` mean that the repository's own policy passed, and a ledger with no GitHub App never answers `success`. A base branch that moves while a run is in flight leaves the request's `config_ref` behind: the verdict reads `not_base` and concludes `neutral` at best, and a request that names the new head reads the base again.
+
 ### The override record
 
 The ledger keeps its own record of the verdicts the service answered and the approvals it verified, and demotes a cost rule by it, as [`docs/policy.md`](policy.md#demotion-by-the-override-rate) says. Only the service writes the record, from what it read from GitHub itself. Nothing a request body states, and no check run, reaches it.
@@ -194,7 +202,7 @@ The ledger keeps its own record of the verdicts the service answered and the app
 - A failing verdict is recorded when one of the six cost rules fails, and only when the service read `costroid.yml` at `config_ref` through the installation the request names and found the bytes the request states, then read the pull request through the same installation: its head, which must be a commit, and its base branch, whose head must be `config_ref`. The record names the repository, the base branch, the pull request, that head, the rule, the limit it failed under and the time. A rule's window and its demotion are kept per base branch, so a pull request into one branch never counts toward, or re-arms, the rule at another. Any other verdict is answered as before, records nothing and demotes nothing: a caller that named another commit, its own head among them, could name a looser `costroid.yml`.
 - An approval is recorded when a press of the approve button counts: GitHub answered the pull request's head and the presser's write role. The record names the repository, the pull request, the head, the login and the time. A press that does not count records nothing.
 - A verdict that read the record answers each demoted rule as `warn` with `demoted`, and concludes `neutral` at best.
-- The answer's `override_record` says whether the verdict reached the record: `recorded`; `config_unread` when the service did not read `costroid.yml` at `config_ref` itself, or read other bytes than the request states; `pull_unread` when GitHub did not answer the pull request's head, its base branch or that branch's head; `not_base` when `config_ref` is not the head of the pull request's base branch; `no_record` when the ledger keeps no override record. Only `recorded` records a failure or demotes a rule.
+- The answer's `override_record` says whether the verdict reached the record: `recorded`; `config_unread` when the service did not read `costroid.yml` at `config_ref` itself, or read other bytes than the request states; `pull_unread` when GitHub did not answer the pull request's head, its base branch or that branch's head; `not_base` when `config_ref` is not the head of the pull request's base branch; `no_record` when `config_ref` is that head and the ledger keeps no override record. Only `recorded` records a failure or demotes a rule.
 - `policy.auto_demote: false` in the `costroid.yml` the service read turns demotion off and re-arms every rule. Failing verdicts are still recorded.
 
 The record is three tables: `failing_verdicts` and `pull_request_approvals`, which migration 0009 added, and `rule_demotions`, which migration 0011 adds. Migration 0011 also adds the base branch to `failing_verdicts`, which no release wrote to. `rule_demotions` holds where each rule's demotion stands at each base branch: the limit, when its window last started empty, and the verdict that started its term with the counts it read. A ledger applies 0011 on its next start. All three only grow: the service's role may read and insert, and holds no grant to update or delete a row. Postgres refuses a term whose counts do not demote.
@@ -203,13 +211,13 @@ A demotion shows only in the verdict this service answers, and in whatever reads
 
 ### A repository's own pack
 
-A `costroid.yml` that names a pack with `policy_pack` runs that pack only when the service read the file itself. A caller never states a pack: a stated pack could be one from the pull request's head. With `installation`, the id of a GitHub App installation the service's installations table holds, that is not suspended and that reaches the repository, the service reads `costroid.yml` at `config_ref` through that installation, as the App, and then the pack at the same commit:
+A `costroid.yml` that names a pack with `policy_pack` runs that pack only when the service read the file itself. A caller never states a pack: a stated pack could be one from the pull request's head. With `installation`, the id of a GitHub App installation the service's installations table holds, that is not suspended and that reaches the repository, the service reads `costroid.yml` at `config_ref` through that installation, as the App, and then the pack at the same commit when that commit is the head of the pull request's base branch:
 
 ```json
 {"config": "<costroid.yml at the base commit, in base64>", "config_ref": "<the base commit>", "installation": 58}
 ```
 
-The service runs the pack only when the `costroid.yml` it read is the one the request states, byte for byte. Without `installation`, without the App's id and KMS key, or when the file it read differs, it reads no pack, and the verdict holds `customer_pack` `unproven` with reason `pack_unread`, so the check concludes `neutral` at best. `config_ref` is the caller's to name, as it is for `costroid.yml`: a pack can only raise the conclusion, so a pack read at another commit can make the verdict stricter and never looser. [`docs/policy.md`](policy.md#a-repositorys-own-pack) says what a pack may do.
+The service runs the pack only when the `costroid.yml` it read is the one the request states, byte for byte, and `config_ref` is the head of the pull request's base branch as GitHub states it. Without `installation`, without the App's id and KMS key, when the file it read differs, at any other commit, or when GitHub does not answer the pull request or its base branch, it reads no pack, and the verdict holds `customer_pack` `unproven` with reason `pack_unread`, so the check concludes `neutral` at best. `override_record` says why: `config_unread`, `not_base` or `pull_unread`. A pack is the repository's own rules, and a caller that named another commit could name one whose pack is looser or absent. [`docs/policy.md`](policy.md#a-repositorys-own-pack) says what a pack may do.
 
 Each pack runs in a child process of the service, which can hold up to 1 GiB on Linux and is killed at 2 seconds. The service runs at most 4 policy packs at once. A verdict that would start a fifth waits up to 2 seconds, the deadline of a running pack, for one to end. If none ends, it answers `503 PACK_BUSY` with `Retry-After: 2` and runs nothing. It never answers without the pack, which could read looser than the repository's policy. A verdict that runs no pack never waits.
 

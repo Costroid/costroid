@@ -21,8 +21,8 @@
 # make e2e walks, priced by this tree's costroid run, sent through a
 # port-forward under a key the service issues. Every password and key is
 # generated here and lives only in the cluster and in a private temporary
-# directory. On a first install the service may restart while Postgres comes
-# up; a restart for any other reason fails the walk.
+# directory. On a first install this tree's service waits for Postgres at
+# start, so a restart of it fails the walk.
 #
 # Each shape then walks an upgrade in a namespace of its own. The chart as the
 # release that this tree's Chart.yaml names shipped it, read with git from the
@@ -181,25 +181,36 @@ await_rollout() {
 }
 
 # await_service waits for the service's rollout after a first install. The
-# service exits while Postgres does not answer yet, so on a first install it
-# may restart a few times, as long as the image is pulled and the data
-# directory initialised. Such a restart is allowed only when the service last
-# ended on Postgres not answering: a name that does not resolve while the
-# headless Service has no ready pod, which a resolver answers as no such host
-# or as a failure of its own, a refused connection, or a database still
-# starting.
+# service waits for Postgres at start, so this tree's service must not
+# restart: the walk prints how many times it found Postgres not answering
+# yet. With "released", the service is the image release $released published,
+# which exits while Postgres does not answer yet and may restart a few times,
+# as long as the image is pulled and the data directory initialised. Such a
+# restart is allowed only when it last ended on Postgres not answering: a name
+# that does not resolve while the headless Service has no ready pod, which a
+# resolver answers as no such host or as a failure of its own, a refused
+# connection, or a database still starting.
 await_service() {
-  local namespace=$1 pod restarts error
+  local namespace=$1 image=${2:-tree} pod restarts error tries
   await_rollout "$namespace" deployment "$service"
-  step="reading why the service restarted"
+  step="reading whether the service restarted"
   while read -r pod restarts; do
-    ((restarts > 0)) || continue
+    if ((restarts == 0)); then
+      if [[ $image == tree ]]; then
+        tries=$(kubectl logs --namespace "$namespace" "$pod" | grep --count '"msg":"the database does not answer yet"' || true)
+        echo "chart-install: $shape: $pod did not restart, and found Postgres not answering $tries times"
+      fi
+      continue
+    fi
     error=$(last_error "$namespace" "$pod")
+    if [[ $image == tree ]]; then
+      fail "$pod took $restarts restarts on a first install, and the service waits for Postgres: $error"
+    fi
     if [[ $error != *"failed to connect to"* ]] ||
       ! grep --quiet --extended-regexp 'no such host|hostname resolving error|connection refused|database system is (starting up|not yet accepting connections)' <<<"$error"; then
       fail "$pod took $restarts restarts on a first install, the last not on Postgres starting: $error"
     fi
-    echo "chart-install: $shape: $pod took $restarts restarts while Postgres came up, the last after: $error"
+    echo "chart-install: $shape: $pod of release $released took $restarts restarts while Postgres came up, the last after: $error"
   done < <(kubectl get pods --namespace "$namespace" --selector "app.kubernetes.io/name=costroid,app.kubernetes.io/instance=$release" \
     --output jsonpath='{range .items[*]}{.metadata.name} {.status.containerStatuses[0].restartCount}{"\n"}{end}')
 }
@@ -460,7 +471,7 @@ walk_bundled() {
   phase="release $released"
   helm_released "$namespace" --set "bindings={$owner}"
   await_rollout "$namespace" statefulset "$service-postgres"
-  await_service "$namespace"
+  await_service "$namespace" released
   ingest_and_read "$namespace" "release $released"
   upgrade_and_read "$namespace" --set "bindings={$owner}"
   uninstall "$namespace"
@@ -487,7 +498,7 @@ walk_external() {
   phase="release $released"
   start_external_postgres "$namespace"
   helm_released "$namespace" --values "$released_chart/ci/external-postgres-values.yaml"
-  await_service "$namespace"
+  await_service "$namespace" released
   ingest_and_read "$namespace" "release $released"
   upgrade_and_read "$namespace" --values "$chart/ci/external-postgres-values.yaml"
   uninstall "$namespace"

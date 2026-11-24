@@ -57,6 +57,7 @@ var documentedBlocks = map[place]held{
 	{"docs/approval.md", "What the check shows", "text"}:                          {test: "TestApprovalPageQuotesTheApprovedSentence", in: "internal/comment"},
 	{"docs/comment-example.md", "Costroid", "json"}:                               {test: "TestDocsExampleIsTheRenderedCommentForARealRowsFile", in: "internal/comment"},
 	{"docs/existing-workflow.md", "On `openai/codex-action`", "diff"}:             {test: "TestInitExistingMatchesTheCodexDocs", in: thisPackage},
+	{"docs/configuration.md", "A policy pack", "text"}:                            {test: thisTest, in: thisPackage},
 	{"docs/export.md", "Merge facts", "json"}:                                     {test: thisTest, in: thisPackage},
 	{"docs/export.md", "The grade needs a protected branch", "text"}:              {test: thisTest, in: thisPackage},
 	{"docs/export.md", "Cloudability", "text"}:                                    {shows: "the layout IBM Cloudability's page states"},
@@ -95,6 +96,7 @@ var printedHere = map[place]func(t *testing.T, shown string){
 	{"docs/output.md", "`costroid lint --json`", "json"}:                      lintObjectIsPrinted,
 	{"docs/output.md", "`costroid validate --json`", "json"}:                  validateObjectIsPrinted,
 	{"docs/output.md", "`costroid version --json`", "json"}:                   versionObjectIsPrinted,
+	{"docs/configuration.md", "A policy pack", "text"}:                        invalidPackIsPrinted,
 	{"docs/export.md", "Merge facts", "json"}:                                 mergeFactIsSent,
 	{"docs/export.md", "The grade needs a protected branch", "text"}:          mergedLineIsPrinted,
 	{"docs/export.md", "Cloudability", "json"}:                                manifestIsWritten,
@@ -265,6 +267,20 @@ func validateObjectIsPrinted(t *testing.T, shown string) {
 		t.Fatalf("validate --json exited %d: %s", code, stderr)
 	}
 	sameObject(t, shown, printed)
+}
+
+// invalidPackIsPrinted runs validate on a costroid.yml whose pack calls
+// http.send, a built-in a pack may not call, with stdout and stderr as one
+// stream, as a terminal shows them.
+func invalidPackIsPrinted(t *testing.T, shown string) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, configFile), "policy_pack: .costroid/policy.rego\n")
+	writeFile(t, filepath.Join(root, ".costroid", "policy.rego"), invalidPack)
+	t.Chdir(root)
+	code, printed := executeOnOneStream(t, "validate")
+	if code != exitRejected || printed != shown+"\n" {
+		t.Errorf("validate exited %d and printed\n%s\nthe page shows\n%s", code, printed, shown)
+	}
 }
 
 // versionObject is what version --json prints as the pinned release, in a

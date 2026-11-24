@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Costroid/costroid/main/cmd/costroid/testdata/objects/validate.schema.json",
-  "title": "What costroid validate --json prints, version 0.1",
-  "description": "What costroid validate found in one configuration file: whether it is valid, invalid or absent, and each place it breaks the schema.",
+  "title": "What costroid validate --json prints, version 0.2",
+  "description": "What costroid validate found in one configuration file: whether it is valid, invalid or absent, each place it breaks the schema, and the policy pack a valid file names.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": "costroid.validate/0.1"
+      "const": "costroid.validate/0.2"
     },
     "file": {
       "description": "The file as it was named, costroid.yml when none was, or standard input.",
@@ -26,13 +26,25 @@
       "items": {
         "$ref": "#/$defs/problem"
       }
+    },
+    "pack": {
+      "description": "The policy pack a valid file names, null when it names none or the file is not valid.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/pack"
+        }
+      ]
     }
   },
   "required": [
     "schema",
     "file",
     "state",
-    "problems"
+    "problems",
+    "pack"
   ],
   "additionalProperties": false,
   "allOf": [
@@ -61,6 +73,58 @@
     }
   ],
   "$defs": {
+    "pack": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The pack's path as policy_pack names it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "description": "Where validate looked for the pack, beside the file it validated. Empty when it had nowhere to look, as for standard input.",
+          "type": "string"
+        },
+        "state": {
+          "description": "valid: the pack compiles as a check compiles it. invalid: it does not, or it is over 64 KiB, and validate exits 1. unread: validate found no file to compile.",
+          "enum": [
+            "valid",
+            "invalid",
+            "unread"
+          ]
+        },
+        "message": {
+          "description": "The fault of a pack that is not valid, or why validate did not read it.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "path",
+        "file",
+        "state"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "state": {
+            "const": "valid"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "message"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "message"
+        ]
+      }
+    },
     "problem": {
       "type": "object",
       "properties": {

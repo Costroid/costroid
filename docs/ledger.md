@@ -32,7 +32,7 @@ The chart starts its own Postgres and makes one Secret, which it keeps across up
 
 A chart from an earlier release deletes the Secret on uninstall. Run `helm upgrade` with this chart before you uninstall, and the Secret is kept.
 
-On a first install the service restarts until Postgres answers, a few times while Postgres's image is pulled and its data directory created, and that is expected.
+On a first install the service waits for Postgres while its image is pulled and its data directory created, as [`docs/serve.md`](serve.md#run-it) says. It waits up to 110 seconds, and the chart's startup probe allows 120, so a probe set under 110 seconds restarts a service that is still waiting.
 
 To use your own Postgres, create the two roles [`docs/serve.md`](serve.md) lists, put three keys in a Secret and name it:
 

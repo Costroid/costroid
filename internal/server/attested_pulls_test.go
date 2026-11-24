@@ -143,7 +143,9 @@ func aRunsSpendStaysInItsPullRequestsBudget(t *testing.T, open func(*testing.T) 
 			t.Run(name, func(t *testing.T) {
 				answer := secondRunSent(t, open(t), send)
 				got := ruleOf(t, answer.Policy, policy.RulePullRequestBudget)
-				if answer.Policy.Conclusion != policy.Success || got.Outcome != policy.Pass || got.CostUSD != "0.5" {
+				// The settings are the request's own, which the service did not
+				// read at the base, so the rule's pass concludes neutral.
+				if answer.Policy.Conclusion != policy.Neutral || got.Outcome != policy.Pass || got.CostUSD != "0.5" {
 					t.Fatalf("the ledger no longer reads the first run's count alone when the second key names no pull request: %s, %s at USD %s",
 						answer.Policy.Conclusion, got.Outcome, got.CostUSD)
 				}
@@ -205,7 +207,7 @@ func TestAnAttestationNamingNoPullRequestReadsAsBefore(t *testing.T) {
 		w.attestSpend(w.protectedToken(secondClose, nil), second, runSpend(secondRun, "10")).want(t, http.StatusNoContent)
 
 		answer := w.verdict(t, w.token(), verdictBody(t, prBudget, nil))
-		if got := ruleOf(t, answer.Policy, policy.RulePullRequestBudget); answer.Policy.Conclusion != policy.Success || got.Outcome != policy.Pass ||
+		if got := ruleOf(t, answer.Policy, policy.RulePullRequestBudget); answer.Policy.Conclusion != policy.Neutral || got.Outcome != policy.Pass ||
 			got.CostUSD != "0.5" || answer.Budget.GatewayUSD != "0.5" {
 			t.Fatalf("a key attested for no pull request, with no row on it: %+v %+v", answer.Budget, answer.Policy)
 		}
@@ -245,7 +247,7 @@ func TestAnAttestedKeyWithNoSpendKeepsABudgetFromPassing(t *testing.T) {
 
 		w.attestSpend(w.protectedToken(secondClose, nil), second, runSpend(secondRun, "1")).want(t, http.StatusNoContent)
 		counted := w.verdict(t, w.token(), verdictBody(t, prBudget, nil))
-		if got := ruleOf(t, counted.Policy, policy.RulePullRequestBudget); counted.Policy.Conclusion != policy.Success || got.Outcome != policy.Pass ||
+		if got := ruleOf(t, counted.Policy, policy.RulePullRequestBudget); counted.Policy.Conclusion != policy.Neutral || got.Outcome != policy.Pass ||
 			got.CostUSD != "1.5" || counted.Budget.GatewayUSD != "1.5" {
 			t.Fatalf("once the key's count arrived: %+v %+v", counted.Budget, counted.Policy)
 		}

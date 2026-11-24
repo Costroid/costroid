@@ -127,7 +127,7 @@ Over the recorded run in [`internal/comment/testdata/rows.jsonl`](../internal/co
 - The report reads the pack at the commit it reads `costroid.yml` at, the head of the pull request's base branch, and never at the pull request's head. A pull request that changes the pack, or `policy_pack`, does not change its own verdict. When it changes either, the comment says the change applies after the merge. To say so, the report reads `costroid.yml` and the pack's path at the head, compares them with the base's, and runs nothing it read there.
 - A fork's follow-up reads it at the default branch's commit, as it reads `costroid.yml`, and reads nothing at the head.
 - `costroid policy` reads it from `--pack FILE`, or from the path `policy_pack` names in the directory that holds the `--config` file. `--pack` beside a `costroid.yml` that names no pack is refused.
-- `costroid serve` runs a pack only when it read the file itself, through the GitHub App's installation the request names. [`docs/serve.md`](serve.md#a-repositorys-own-pack) says when.
+- `costroid serve` runs a pack only when it read the file itself, through the GitHub App's installation the request names, at the head of the pull request's base branch. [`docs/serve.md`](serve.md#a-repositorys-own-pack) says when.
 - A file over 64 KiB does not run: it concludes `pack_unread`, as an absent file does.
 
 ### What a pack returns
@@ -178,6 +178,8 @@ A fault the base branch alone can cause concludes `unproven`, and a fault the pu
 
 Rows past the input's bound fail as `pack_bound` whether or not the pack would compile: the report judges the rows before a child starts. A child that says the pack is not valid is asked again with the pack and no rows. The same answer at the same line stands, since no row reached that child, and any other answer fails as `pack_result`. The job's log names each fault in a `costroid: warning:` line.
 
+Under the warning on a pack that is not valid, `costroid policy` and the report print `Next: costroid policy --rows FILE --pack FILE runs the pack once corrected.` A pull request's check runs the base branch's pack, never the one the pull request changes, so a correction first runs where its author runs that command, on a job's rows file. A verdict from `costroid serve` states `pack_invalid` alone, and the same command runs the corrected pack.
+
 ## The verdict on each trust path
 
 Who wrote the rows decides what a rule can conclude. A row whose run identity no one checked is `unattributed`, and an `unattributed` row never satisfies a rule.
@@ -202,6 +204,8 @@ The report stage reads a rows file that the agent's own job wrote. An agent that
 `costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts or the model names on it, which the agent's job wrote. So on the second column a budget or the model allowlist needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests from a run of the protected default branch, or a provider's report. Either can still fail on the agent's own counts.
 
 `serve` answers the second column at `POST /v1/pulls/{pr}/verdict`, over a pull request's rows in its ledger. Its answer covers the pull request, so the run rules conclude `unproven` there. [`docs/serve.md`](serve.md#the-verdict) gives the request and the answer. `costroid report` and `costroid policy` read a rows file, and do not ask `serve`. Only `serve` can demote a rule, as [Demotion by the override rate](#demotion-by-the-override-rate) says.
+
+`serve` concludes `success` only on a `costroid.yml` it read itself through the GitHub App's installation, at the head of the pull request's base branch. On settings a caller stated, or that it read at another commit, it concludes `neutral` at best, and its answer's `override_record` says why. A failure stays a failure. A ledger with no GitHub App therefore never answers `success`. [`docs/serve.md`](serve.md#success-only-at-the-base) says what each case reads.
 
 ## From the rules to the conclusion
 

@@ -1,8 +1,10 @@
 package deploy
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -49,5 +51,32 @@ func TestChartInstallRunsTheNodeImageItsKindReleasePublishes(t *testing.T) {
 	}
 	if note := "# kind " + version + " publishes this image for its nodes"; !strings.Contains(script, note) {
 		t.Errorf("scripts/chart-install.sh does not say %q", note)
+	}
+}
+
+// TestTheChartsStartupProbeOutlastsTheServicesWait holds the chart's startup
+// probe to more time than the service waits for Postgres at start, as
+// docs/serve.md states both, and docs/ledger.md to stating the pair. A probe that gave up first would restart a
+// service still waiting, which the chart install counts as a failure.
+func TestTheChartsStartupProbeOutlastsTheServicesWait(t *testing.T) {
+	deployment := string(read(t, filepath.Join(chart, "templates", "deployment.yaml")))
+	probe := regexp.MustCompile(`(?m)^ +startupProbe:\n(?: +[a-zA-Z].*\n)*? +periodSeconds: (\d+)\n +failureThreshold: (\d+)$`).FindStringSubmatch(deployment)
+	if probe == nil {
+		t.Fatal("the chart's deployment states no startupProbe with periodSeconds and failureThreshold")
+	}
+	period, _ := strconv.Atoi(probe[1])
+	failures, _ := strconv.Atoi(probe[2])
+	page := string(read(t, "../docs/serve.md"))
+	bound := regexp.MustCompile(`It tries every \d+ seconds for up to (\d+) seconds`).FindStringSubmatch(page)
+	allows := regexp.MustCompile(`The chart's startup probe allows (\d+) seconds`).FindStringSubmatch(page)
+	if bound == nil || allows == nil {
+		t.Fatal("docs/serve.md does not state the service's wait and the probe's")
+	}
+	waits, _ := strconv.Atoi(bound[1])
+	if allows[1] != strconv.Itoa(period*failures) || waits >= period*failures {
+		t.Errorf("the probe allows %d × %d seconds, docs/serve.md says %s, and the service waits %d", period, failures, allows[1], waits)
+	}
+	if pair := fmt.Sprintf("It waits up to %d seconds, and the chart's startup probe allows %d,", waits, period*failures); !strings.Contains(string(read(t, ledger)), pair) {
+		t.Errorf("docs/ledger.md does not say %q", pair)
 	}
 }
