@@ -9,21 +9,29 @@ on:
   workflow_run:
     # The name every agent recipe gives its workflow.
     workflows: [costroid]
-    types: [requested, completed]
+    types: [requested, in_progress, completed]
 
 permissions: {}
 
 # One run's close waits for its mint, so a key minted late is still deleted.
+# A run started by an event that mints nothing may wait here, or be cancelled
+# by the next, and nothing is lost.
 concurrency:
   group: costroid-gateway-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
   cancel-in-progress: false
 
 jobs:
   mint:
+    # Once for each attempt. GitHub sends requested for a run's first attempt
+    # alone, and in_progress for every attempt, so a re-run mints on
+    # in_progress: recorded GitHub Actions runs 45377273123 and 45377284448
+    # were started by a first attempt's requested and in_progress, and run
+    # 45377542436 by a second attempt's in_progress, with no requested.
     # A branch of this repository only. A fork's run gets no key, because this
     # workflow holds the repository's secrets.
     if: >-
-      github.event.action == 'requested'
+      (github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1
+      || github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1)
       && github.event.workflow_run.event == 'pull_request'
       && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -65,7 +73,8 @@ jobs:
             --max-request-tokens 1128000 --max-parallel-requests 1
 
   close:
-    # Deletes the key whatever became of the run, also when it failed.
+    # Deletes the key whatever became of the run, also when it failed. GitHub
+    # sends completed once for each attempt.
     if: >-
       github.event.action == 'completed'
       && github.event.workflow_run.event == 'pull_request'

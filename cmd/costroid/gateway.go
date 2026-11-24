@@ -106,7 +106,11 @@ budget per day, and --author-daily-cap-usd in a user for the pull request's
 author with that budget per day. The pull request, its head commit and its
 author come from the event file GITHUB_EVENT_PATH names. When mint cannot read
 it, it warns and names the file: the key then names none of the three, and no
-author's budget applies. mint refuses a key the gateway already holds.`)}},
+author's budget applies. When the gateway holds the request's key under the
+run's alias with the budget and limits mint sets, mint registers nothing,
+says so, and states the key again, so a mint whose statement failed can be
+run again. mint refuses any other key the gateway holds, and a second key
+under the run's alias.`)}},
 		{Heading: "mint and close for the triggering run", Body: []cli.Block{cli.Text(`With --for-triggering-run, mint and close run in a workflow that workflow_run
 starts, which runs the default branch's workflow file, so a pull request
 cannot edit them. Only a key such a run attests, from a protected branch, lets
@@ -444,11 +448,15 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		Budget: target.budget, Lifetime: flags.lifetime, MaxParallel: flags.parallel, MaxRequestTokens: flags.requestTokens,
 		PullRequest: target.pullRequest, Head: target.head, Author: target.author, Caps: flags.caps,
 	}
-	id, err := mint.Register(ctx)
+	registered, err := mint.Register(ctx)
 	if err != nil {
 		return err
 	}
+	id := registered.KeyID
 	fmt.Fprintln(stdout, id)
+	if registered.Held {
+		cli.Say(stderr, "the gateway holds this run's key already, as this mint registers it, so mint registers nothing and states the key again\n")
+	}
 	client := asking(&http.Client{Timeout: 30 * time.Second}, stderr)
 	attestation := gateway.AttestationFor(id, target.run, target.head)
 	attestation.PullRequests = target.pullRequests

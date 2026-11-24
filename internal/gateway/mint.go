@@ -45,36 +45,80 @@ type Mint struct {
 	Caps             DailyCaps
 }
 
+// Registered is what Register did: the key's id, and whether the gateway
+// held the key already, registered as this mint registers it.
+type Registered struct {
+	KeyID string
+	Held  bool
+}
+
+// heldExpirySkew is how far the gateway's clock may run ahead of the job's
+// when a held key's expiry is compared with the one a key registered now
+// would have.
+const heldExpirySkew = time.Minute
+
 // Register opens the request and registers its key with the run's budget,
-// expiry and metadata. It returns the key's id. A request sealed to the public
-// key earlier versions derived from the admin key is refused, and so is a key
-// the gateway already holds: the job that seals a request chooses its key, and
-// a key minted once, such as one every run shares, is never a run's own.
-func (m Mint) Register(ctx context.Context) (string, error) {
+// expiry and metadata. A request sealed to the public key earlier versions
+// derived from the admin key is refused. So is a key the gateway already
+// holds, unless the gateway holds it as this mint registers it: under the
+// run's alias, with the same budget, limits, metadata, team and user, no
+// budget window, and an expiry no later than a key registered now would
+// have. That key is a mint of this run and attempt run again, and Register
+// registers nothing and reports it held. Any other held key is refused: the
+// job that seals a request chooses its key, and a key minted once, such as
+// one every run shares, is never a run's own. A key under the run's alias
+// with another id is refused too, because a run has one key.
+func (m Mint) Register(ctx context.Context) (Registered, error) {
 	switch {
 	case m.Budget.Sign() <= 0:
-		return "", errors.New("gateway: the budget must be above 0")
+		return Registered{}, errors.New("gateway: the budget must be above 0")
 	case m.Lifetime < time.Minute:
-		return "", errors.New("gateway: the key must live at least one minute")
+		return Registered{}, errors.New("gateway: the key must live at least one minute")
 	case m.MaxParallel < 1:
-		return "", errors.New("gateway: the parallel-request limit must be at least 1")
+		return Registered{}, errors.New("gateway: the parallel-request limit must be at least 1")
 	case m.MaxRequestTokens < 1:
-		return "", errors.New("gateway: the largest request must be at least 1 token")
+		return Registered{}, errors.New("gateway: the largest request must be at least 1 token")
 	}
 	if m.Request.SealingKey == derivedPublicKey(m.AdminKey) {
-		return "", ErrDerivedSealingKey
+		return Registered{}, ErrDerivedSealingKey
 	}
 	key, err := m.Request.Open(m.SealingKey, m.Run)
 	if err != nil {
-		return "", err
+		return Registered{}, err
 	}
-	held, err := m.Client.Holds(ctx, m.AdminKey, KeyID(key))
+	spec := m.spec(key)
+	held, found, err := m.Client.Held(ctx, m.AdminKey, KeyID(key))
+	switch {
+	case err != nil:
+		return Registered{}, err
+	case found && !spec.registered(held, time.Now()):
+		return Registered{}, errors.New("gateway: the gateway holds the request's key already, under another alias or with other limits than this mint sets, and a run's key is one that only the run's own mint registered")
+	case found:
+		return Registered{KeyID: KeyID(key), Held: true}, nil
+	}
+	others, err := m.Client.HeldUnder(ctx, m.AdminKey, spec.Alias)
 	if err != nil {
-		return "", err
+		return Registered{}, err
 	}
-	if held {
-		return "", errors.New("gateway: the gateway holds the request's key already, and a run's key is one the gateway has never held")
+	if len(others) > 0 {
+		return Registered{}, fmt.Errorf("gateway: the gateway holds another key for run %s, attempt %s, already, and a run has one key", m.Run.Run, m.Run.Attempt)
 	}
+	if err := m.ensure(ctx, "team", spec.Team, m.Caps.Repository); err != nil {
+		return Registered{}, err
+	}
+	if err := m.ensure(ctx, "user", spec.User, m.Caps.Author); err != nil {
+		return Registered{}, err
+	}
+	if err := m.Client.Generate(ctx, m.AdminKey, spec); err != nil {
+		return Registered{}, err
+	}
+	return Registered{KeyID: KeyID(key)}, nil
+}
+
+// spec is the key as the gateway registers it for the run: its team when the
+// repository has a cap, and its user when the author has one and the event
+// names the author.
+func (m Mint) spec(key string) KeySpec {
 	spec := KeySpec{
 		Key:         key,
 		Alias:       m.Run.Alias(),
@@ -90,16 +134,53 @@ func (m Mint) Register(ctx context.Context) (string, error) {
 			MetaMaxRequestTokens: strconv.FormatInt(m.MaxRequestTokens, 10),
 		},
 	}
-	if spec.Team, err = m.ensure(ctx, "team", "costroid:"+m.Run.Repository, m.Caps.Repository); err != nil {
-		return "", err
+	if m.Caps.Repository != nil {
+		spec.Team = "costroid:" + m.Run.Repository
 	}
-	if spec.User, err = m.ensure(ctx, "user", m.authorID(), m.Caps.Author); err != nil {
-		return "", err
+	if m.Caps.Author != nil {
+		spec.User = m.authorID()
 	}
-	if err := m.Client.Generate(ctx, m.AdminKey, spec); err != nil {
-		return "", err
+	return spec
+}
+
+// registered reports whether the held key is the spec as the gateway
+// registered it, each fact compared both ways: the alias, the budget, the
+// parallel-request limit, the metadata, every value and no other, the team
+// and the user, each none where the spec sets none, and no budget window. The
+// expiry is the one fact compared one way: the gateway set it when the key
+// was registered, earlier than now, so it is no later than the spec's lifetime
+// from now.
+func (s KeySpec) registered(held HeldKey, now time.Time) bool {
+	if held.Alias != s.Alias || held.MaxBudget == nil || held.MaxParallel == nil || *held.MaxParallel != s.MaxParallel {
+		return false
 	}
-	return KeyID(key), nil
+	if held.BudgetDuration != nil && *held.BudgetDuration != "" {
+		return false
+	}
+	if budget, err := decimal.ParseNumber(held.MaxBudget.String()); err != nil || budget.Cmp(s.MaxBudget) != 0 {
+		return false
+	}
+	if len(held.Metadata) != len(s.Metadata) {
+		return false
+	}
+	for name, value := range s.Metadata {
+		if stated, ok := held.Metadata[name].(string); !ok || stated != value {
+			return false
+		}
+	}
+	if orNone(held.Team) != s.Team || orNone(held.User) != s.User {
+		return false
+	}
+	expires, set, err := held.ExpiresAt()
+	return err == nil && set && !expires.After(now.Add(s.Lifetime+heldExpirySkew))
+}
+
+// orNone is a field the gateway may leave null, with null read as none.
+func orNone(field *string) string {
+	if field == nil {
+		return ""
+	}
+	return *field
 }
 
 // authorID names the author on the repository's host, or nothing when the
@@ -112,14 +193,14 @@ func (m Mint) authorID() string {
 	return "costroid:" + host + "/" + m.Author
 }
 
-func (m Mint) ensure(ctx context.Context, kind, id string, limit *decimal.Decimal) (string, error) {
+func (m Mint) ensure(ctx context.Context, kind, id string, limit *decimal.Decimal) error {
 	if limit == nil || id == "" {
-		return "", nil
+		return nil
 	}
 	if err := m.Client.EnsureDailyBudget(ctx, m.AdminKey, kind, id, *limit); err != nil {
-		return "", fmt.Errorf("gateway: set the %s's daily cap: %w", kind, err)
+		return fmt.Errorf("gateway: set the %s's daily cap: %w", kind, err)
 	}
-	return id, nil
+	return nil
 }
 
 // Close deletes the run's key. It reports whether a key was there to delete.

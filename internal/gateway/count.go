@@ -66,26 +66,55 @@ func (c *Client) Count(ctx context.Context, adminKey, alias string) (Count, bool
 	return Count{}, false, fmt.Errorf("gateway: the gateway lists %d keys with the run's alias", len(found))
 }
 
-// Holds reports whether the gateway holds a key with the id given, as the
-// gateway's admin. LiteLLM v1.108.1 filters /key/list by key_hash, the id, and
-// lists a live key whatever its status when no status is asked for. A key is
-// held only when the list names its id.
-func (c *Client) Holds(ctx context.Context, adminKey, keyID string) (bool, error) {
+// HeldKey is a key the gateway holds, as /key/list states it in full: its id,
+// its alias, its budget window, and what /key/info states.
+type HeldKey struct {
+	KeyInfo
+	ID             string  `json:"token"`
+	Alias          string  `json:"key_alias"`
+	BudgetDuration *string `json:"budget_duration"`
+}
+
+// Held reads the key with the id given, as the gateway's admin. It answers
+// false when the gateway holds no such key. LiteLLM v1.108.1 filters
+// /key/list by key_hash, the id, and lists a live key whatever its status
+// when no status is asked for. A key is held only when the list names its id.
+func (c *Client) Held(ctx context.Context, adminKey, keyID string) (HeldKey, bool, error) {
 	var answer struct {
-		Keys []struct {
-			Token string `json:"token"`
-		} `json:"keys"`
+		Keys []HeldKey `json:"keys"`
 	}
 	route := "/key/list?return_full_object=true&key_hash=" + url.QueryEscape(keyID)
 	if err := c.call(ctx, http.MethodGet, route, adminKey, nil, &answer); err != nil {
-		return false, err
+		return HeldKey{}, false, err
 	}
 	for _, key := range answer.Keys {
-		if key.Token == keyID {
-			return true, nil
+		if key.ID == keyID {
+			return key, true, nil
 		}
 	}
-	return false, nil
+	return HeldKey{}, false, nil
+}
+
+// HeldUnder lists the ids of the keys the gateway holds with the alias, as the
+// gateway's admin.
+func (c *Client) HeldUnder(ctx context.Context, adminKey, alias string) ([]string, error) {
+	var answer struct {
+		Keys []struct {
+			Token string `json:"token"`
+			Alias string `json:"key_alias"`
+		} `json:"keys"`
+	}
+	route := "/key/list?return_full_object=true&key_alias=" + url.QueryEscape(alias)
+	if err := c.call(ctx, http.MethodGet, route, adminKey, nil, &answer); err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, key := range answer.Keys {
+		if key.Alias == alias {
+			ids = append(ids, key.Token)
+		}
+	}
+	return ids, nil
 }
 
 // spendOf reads a key's spend field exactly, as the number LiteLLM wrote.

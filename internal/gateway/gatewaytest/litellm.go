@@ -15,16 +15,18 @@ import (
 	"time"
 )
 
-// Key is a key as the stub registered it.
+// Key is a key as the stub registered it. BudgetDuration is a budget window,
+// which mint never sets.
 type Key struct {
-	Key         string            `json:"key"`
-	Alias       string            `json:"key_alias"`
-	MaxBudget   json.Number       `json:"max_budget"`
-	Duration    string            `json:"duration"`
-	MaxParallel int               `json:"max_parallel_requests"`
-	Metadata    map[string]string `json:"metadata"`
-	Team        string            `json:"team_id"`
-	User        string            `json:"user_id"`
+	Key            string            `json:"key"`
+	Alias          string            `json:"key_alias"`
+	MaxBudget      json.Number       `json:"max_budget"`
+	Duration       string            `json:"duration"`
+	MaxParallel    int               `json:"max_parallel_requests"`
+	Metadata       map[string]string `json:"metadata"`
+	Team           string            `json:"team_id"`
+	User           string            `json:"user_id"`
+	BudgetDuration string            `json:"budget_duration"`
 }
 
 // Budget is a team's or a user's budget.
@@ -44,17 +46,22 @@ type LiteLLM struct {
 	admin   string
 	mu      sync.Mutex
 	keys    map[string]Key
+	expires map[string]time.Time
 	spend   map[string]string
 	budgets map[string]Budget
 	deletes int
 	lists   int
 	refused int
+	// generated counts the calls to /key/generate, and budgetWrites those
+	// that create or set a team's or a user's budget.
+	generated    int
+	budgetWrites int
 }
 
 // New starts the stub for the admin key given and closes it when the test ends.
 func New(t testing.TB, admin string) *LiteLLM {
 	t.Helper()
-	l := &LiteLLM{admin: admin, keys: map[string]Key{}, spend: map[string]string{}, budgets: map[string]Budget{}}
+	l := &LiteLLM{admin: admin, keys: map[string]Key{}, expires: map[string]time.Time{}, spend: map[string]string{}, budgets: map[string]Budget{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /key/generate", l.adminOnly(l.generate))
 	mux.HandleFunc("GET /key/info", l.info)
@@ -74,11 +81,15 @@ func New(t testing.TB, admin string) *LiteLLM {
 	return l
 }
 
-// Add registers a key as if a mint had.
+// Add registers a key as if a mint had. A key with a duration expires that
+// long after it was added, as LiteLLM sets expires from duration.
 func (l *LiteLLM) Add(key Key) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.keys[key.Alias] = key
+	if lifetime, err := time.ParseDuration(key.Duration); err == nil {
+		l.expires[key.Alias] = time.Now().Add(lifetime)
+	}
 }
 
 // SetSpend sets what the stub counted on the key with the alias, as the JSON
@@ -112,6 +123,14 @@ func (l *LiteLLM) Budget(kind, id string) (Budget, bool) {
 	return budget, ok
 }
 
+// Registrations counts the calls to /key/generate, and BudgetWrites those
+// that create or set a team's or a user's budget.
+func (l *LiteLLM) Registrations() (generated, budgetWrites int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.generated, l.budgetWrites
+}
+
 // Refused counts the calls made with any bearer but the admin key or a key
 // the stub holds.
 func (l *LiteLLM) Refused() int {
@@ -143,6 +162,9 @@ func (l *LiteLLM) generate(w http.ResponseWriter, r *http.Request) {
 		answer(w, http.StatusBadRequest, `{"error":{"message":"Invalid key format.","code":"400"}}`)
 		return
 	}
+	l.mu.Lock()
+	l.generated++
+	l.mu.Unlock()
 	l.Add(key)
 	answer(w, http.StatusOK, `{}`)
 }
@@ -167,22 +189,33 @@ func (l *LiteLLM) info(w http.ResponseWriter, r *http.Request) {
 		l.refuse(w)
 		return
 	}
-	lifetime, _ := time.ParseDuration(found.Duration)
 	l.mu.Lock()
-	spend := l.spendOf(found.Alias)
+	body, _ := json.Marshal(map[string]any{"info": l.object(*found)})
 	l.mu.Unlock()
-	body, _ := json.Marshal(map[string]any{"info": map[string]any{
-		"spend": spend, "max_budget": found.MaxBudget, "max_parallel_requests": found.MaxParallel,
-		"expires": time.Now().Add(lifetime).UTC().Format("2006-01-02T15:04:05.000000+00:00"), "metadata": found.Metadata,
-		"team_id": found.Team, "user_id": found.User,
-	}})
 	answer(w, http.StatusOK, string(body))
 }
 
+// object is the key as LiteLLM states it in full: its id in token, its alias,
+// its spend, its limits, its metadata, its team, its user, its expiry and its
+// budget window. A key added with no duration has no expiry.
+func (l *LiteLLM) object(key Key) map[string]any {
+	expires, window := any(nil), any(nil)
+	if at, ok := l.expires[key.Alias]; ok {
+		expires = at.UTC().Format("2006-01-02T15:04:05.000000+00:00")
+	}
+	if key.BudgetDuration != "" {
+		window = key.BudgetDuration
+	}
+	return map[string]any{
+		"token": keyID(key.Key), "key_alias": key.Alias, "spend": l.spendOf(key.Alias),
+		"max_budget": key.MaxBudget, "max_parallel_requests": key.MaxParallel, "metadata": key.Metadata,
+		"team_id": key.Team, "user_id": key.User, "expires": expires, "budget_duration": window,
+	}
+}
+
 // list answers the keys with the alias or the id the query names, exactly,
-// as full objects: the key's id in token, its alias and its spend. Only a
-// list by alias, the one close reads the spend through, counts as a call to
-// BeforeList.
+// as full objects. Only a list by alias, the one close reads the spend
+// through, counts as a call to BeforeList.
 func (l *LiteLLM) list(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	hash := query.Get("key_hash")
@@ -200,7 +233,7 @@ func (l *LiteLLM) list(w http.ResponseWriter, r *http.Request) {
 	for alias, key := range l.keys {
 		named := hash == "" && alias == query.Get("key_alias") || hash != "" && keyID(key.Key) == hash
 		if named && query.Get("return_full_object") == "true" {
-			keys = append(keys, map[string]any{"token": keyID(key.Key), "key_alias": key.Alias, "spend": l.spendOf(alias)})
+			keys = append(keys, l.object(key))
 		}
 	}
 	l.mu.Unlock()
@@ -261,6 +294,7 @@ func (l *LiteLLM) budgetSet(kind string) http.HandlerFunc {
 		_ = json.Unmarshal(body["budget_duration"], &budget.Duration)
 		l.mu.Lock()
 		l.budgets[kind+":"+id] = budget
+		l.budgetWrites++
 		l.mu.Unlock()
 		answer(w, http.StatusOK, `{}`)
 	}

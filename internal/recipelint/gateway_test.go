@@ -118,12 +118,50 @@ func TestTheAdminKeyOnAPullRequestWorkflowIsRefused(t *testing.T) {
 	}
 	for _, change := range []edit{
 		{"a pull request beside workflow_run", "on:\n  workflow_run:\n", "on:\n  pull_request:\n  workflow_run:\n", RuleGatewayTrigger},
-		{"a push in place of workflow_run", "  workflow_run:\n    # The name every agent recipe gives its workflow.\n    workflows: [costroid]\n    types: [requested, completed]\n", "  push:\n", RuleGatewayTrigger},
+		{"a push in place of workflow_run", "  workflow_run:\n    # The name every agent recipe gives its workflow.\n    workflows: [costroid]\n    types: [requested, in_progress, completed]\n", "  push:\n", RuleGatewayTrigger},
 		{"events that cannot be read", "on:\n  workflow_run:\n", "on: {}\nx:\n  workflow_run:\n", RuleGatewayTrigger},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			expectRule(t, source, change)
 		})
+	}
+}
+
+// shippedTypes is the gateway recipe's trigger, and earlierTypes the one
+// releases wrote before a re-run's key was minted.
+const (
+	shippedTypes = "    types: [requested, in_progress, completed]\n"
+	earlierTypes = "    types: [requested, completed]\n"
+)
+
+// TestTheGatewayTriggerRuleTakesInProgress lints the gateway recipe with the
+// trigger it ships, which mints a re-run's key on in_progress, and as an
+// earlier release wrote it, without in_progress: neither is a finding. The
+// admin key and the sealing key are still refused in a workflow that any
+// event beside workflow_run starts, whichever of its types the workflow
+// takes.
+func TestTheGatewayTriggerRuleTakesInProgress(t *testing.T) {
+	source := read(t, filepath.Join(recipesDir, gatewayJobsRecipe))
+	if !strings.Contains(source, shippedTypes) {
+		t.Fatalf("the gateway recipe does not take %q", shippedTypes)
+	}
+	earlier := strings.Replace(source, shippedTypes, earlierTypes, 1)
+	for name, recipe := range map[string]string{"the shipped recipe": source, "an earlier release's recipe": earlier} {
+		if findings := LintBytes(gatewayJobsRecipe, []byte(recipe)).Findings; len(findings) != 0 {
+			t.Errorf("%s: %v", name, findings)
+		}
+	}
+	for _, types := range []string{shippedTypes, earlierTypes, "    types: [in_progress]\n"} {
+		recipe := strings.Replace(source, shippedTypes, types, 1)
+		for _, change := range []edit{
+			{"a pull request beside workflow_run", "on:\n  workflow_run:\n", "on:\n  pull_request:\n  workflow_run:\n", RuleGatewayTrigger},
+			{"a push beside workflow_run", "on:\n  workflow_run:\n", "on:\n  push:\n  workflow_run:\n", RuleGatewayTrigger},
+			{"a pull request target beside workflow_run", "on:\n  workflow_run:\n", "on:\n  pull_request_target:\n  workflow_run:\n", RuleGatewayTrigger},
+		} {
+			t.Run(strings.TrimSpace(types)+", "+change.name, func(t *testing.T) {
+				expectRule(t, recipe, change)
+			})
+		}
 	}
 }
 

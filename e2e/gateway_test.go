@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -593,9 +594,10 @@ func keyID(key string) string {
 // TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob runs each agent
 // that takes a gateway through one LiteLLM and one mock upstream: Claude Code
 // on the Messages API, Codex on the Responses API. The key is minted and
-// closed as the gateway recipe does, in runs that workflow_run starts. A last
-// journey mints and closes in the agent's own workflow, as the LiteLLM recipe
-// once did, and earns no more than windowed.
+// closed as the gateway recipe does, in runs that workflow_run starts, and
+// Claude Code's run is re-run once, on a key of its own. A last journey mints
+// and closes in the agent's own workflow, as the LiteLLM recipe once did, and
+// earns no more than windowed.
 func TestAGatewayKeyHoldsTheRunToItsBudgetAndIsGoneAfterTheJob(t *testing.T) {
 	mock := startMock(t)
 	stack := composeGateway(t, mock)
@@ -632,7 +634,7 @@ func holdClaudeCode(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
 		t.Errorf("the base URL in the checkout's .claude/settings.json received %d requests", sent)
 	}
 
-	holdTheBudgetToTheClosingJobsCount(t, ledger, job, total)
+	counted := holdTheBudgetToTheClosingJobsCount(t, ledger, job, total)
 	if status := stack.keyStatus(id); status != "deleted" {
 		t.Errorf("after close the gateway reads the key as %q", status)
 	}
@@ -640,6 +642,7 @@ func holdClaudeCode(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
 		t.Error("the key still authenticates after close")
 	}
 
+	holdAReRunToItsOwnKey(t, stack, ledger, job, mock, counted)
 	recordAStoreFailureAsNone(t, stack, job, mock)
 	if sent := elsewhere.requests.Load(); sent != 0 {
 		t.Errorf("the base URL in the checkout's .claude/settings.json received %d requests", sent)
@@ -660,11 +663,11 @@ func holdTheSettingsFile(t *testing.T, job *gatewayJob) {
 	}
 }
 
-// holdCodex runs Codex on the attempt after Claude Code's two. Its rows read
+// holdCodex runs Codex on the attempt after Claude Code's three. Its rows read
 // measured though costroid's own environment holds no CODEX_API_KEY, because
 // the agent runs on the gateway's key.
 func holdCodex(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
-	const attempt = 3
+	const attempt = 4
 	job := newGatewayJob(t, stack, codexExec)
 	id := job.open(attempt)
 	key := job.key()
@@ -762,10 +765,11 @@ func holdTheMintersKeyToItsRoutes(t *testing.T, stack *gatewayStack) {
 func recordAStoreFailureAsNone(t *testing.T, stack *gatewayStack, job *gatewayJob, mock *mockUpstream) {
 	t.Helper()
 	opened := time.Now()
-	id := job.open(2)
+	const attempt = 3
+	id := job.open(attempt)
 	before := mock.requests.Load()
 	resume := filepath.Join(job.directory, "resume")
-	command := job.run(2, "GATEWAY_AGENT_PAUSE="+resume)
+	command := job.run(attempt, "GATEWAY_AGENT_PAUSE="+resume)
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
@@ -805,9 +809,9 @@ func recordAStoreFailureAsNone(t *testing.T, stack *gatewayStack, job *gatewayJo
 		t.Fatalf("start the store: %v\n%s", err, out)
 	}
 	stack.awaitStore("connected")
-	job.close(2)
+	job.close(attempt)
 	if status := stack.keyStatus(id); status != "deleted" {
-		t.Errorf("after close the gateway reads the second key as %q", status)
+		t.Errorf("after close the gateway reads the third key as %q", status)
 	}
 }
 
@@ -885,7 +889,7 @@ func startLedger(t *testing.T) *gatewayLedger {
 			return
 		}
 		attempt, _ := strconv.Atoi(query.Get("attempt"))
-		_ = json.NewEncoder(w).Encode(map[string]string{"value": l.token(attempt, query.Get("job"))})
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": l.token(attempt, query.Get("job"), query.Get("run"), query.Get("run_attempt"))})
 	}))
 	t.Cleanup(l.tokens.Close)
 	return l
@@ -906,8 +910,10 @@ const (
 // token is the CI token of one job, for the agent run's attempt. The claims
 // of a protected run's job are the ones recorded GitHub Actions runs
 // 45109326900 and 45109345722 state: workflow_run, refs/heads/main, and
-// ref_protected as the string "true".
-func (l *gatewayLedger) token(attempt int, job string) string {
+// ref_protected as the string "true". Its run is run and its attempt
+// runAttempt, or when they are empty the first attempt of the run that
+// workflow_run started for the job.
+func (l *gatewayLedger) token(attempt int, job, run, runAttempt string) string {
 	claims := map[string]any{
 		"iss": l.issuer.URL(), "aud": ledgerAudience, "exp": time.Now().Add(5 * time.Minute).Unix(),
 		"repository": "acme/widgets", "repository_owner": "acme", "run_id": runID, "run_attempt": strconv.Itoa(attempt),
@@ -915,7 +921,7 @@ func (l *gatewayLedger) token(attempt int, job string) string {
 	}
 	switch job {
 	case mintJob, closeJob:
-		claims["run_id"], claims["run_attempt"] = map[string]string{mintJob: mintingRunID, closeJob: closingRunID}[job], "1"
+		claims["run_id"], claims["run_attempt"] = cmp.Or(run, map[string]string{mintJob: mintingRunID, closeJob: closingRunID}[job]), cmp.Or(runAttempt, "1")
 		claims["event_name"], claims["ref"], claims["ref_protected"], claims["sha"] = "workflow_run", "refs/heads/main", "true", base
 		claims["environment"] = gatewayEnvironment
 	case inWorkflowJob:
@@ -927,9 +933,20 @@ func (l *gatewayLedger) token(attempt int, job string) string {
 // jobEnv names the ledger to a job, as the recipe's variables and id-token:
 // write do, for the agent run's attempt.
 func (l *gatewayLedger) jobEnv(job string, attempt int) []string {
+	return l.runEnv(job, attempt, "", 0)
+}
+
+// runEnv names the ledger to a job of the gateway recipe in the run given, at
+// the run's attempt given, after the agent run's attempt. An empty run is the
+// job's first run, as jobEnv names it.
+func (l *gatewayLedger) runEnv(job string, attempt int, run string, runAttempt int) []string {
+	query := "/token?api-version=2.0&attempt=" + strconv.Itoa(attempt) + "&job=" + job
+	if run != "" {
+		query += "&run=" + run + "&run_attempt=" + strconv.Itoa(runAttempt)
+	}
 	return []string{
 		"COSTROID_INGEST_URL=" + l.server.URL + "/v1/rows", "COSTROID_INGEST_AUDIENCE=" + ledgerAudience,
-		"ACTIONS_ID_TOKEN_REQUEST_URL=" + l.tokens.URL + "/token?api-version=2.0&attempt=" + strconv.Itoa(attempt) + "&job=" + job,
+		"ACTIONS_ID_TOKEN_REQUEST_URL=" + l.tokens.URL + query,
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN=" + ledgerRequestToken, "SSL_CERT_FILE=" + l.certFile,
 	}
 }
@@ -948,7 +965,7 @@ func (l *gatewayLedger) send(method, path string, attempt int, body []byte) []by
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+l.token(attempt, agentJob))
+	request.Header.Set("Authorization", "Bearer "+l.token(attempt, agentJob, "", ""))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := l.server.Client().Do(request)
 	if err != nil {
@@ -1040,8 +1057,8 @@ func (v ledgerVerdict) outcomes() map[string]string {
 // is the rows' total at the catalog's prices, the gateway's prices here. This
 // ledger has no GitHub App, so it reads no costroid.yml itself, and the
 // verdict on the policy the request states concludes neutral at best,
-// config_unread.
-func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job *gatewayJob, total decimal.Decimal) {
+// config_unread. It returns the figure close attested.
+func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job *gatewayJob, total decimal.Decimal) decimal.Decimal {
 	t.Helper()
 	rows, err := os.ReadFile(job.rows)
 	if err != nil {
@@ -1077,20 +1094,105 @@ func holdTheBudgetToTheClosingJobsCount(t *testing.T, ledger *gatewayLedger, job
 			t.Errorf("a row of the key the protected run attested reads %s", grade)
 		}
 	}
+	return decimal.MustParse(attested)
 }
 
-// holdAKeyToOneMint mints the key the run drew a second time, as a minting
-// run started again would. Mint refuses it before it asks the gateway to
-// register it. The journey also logs what LiteLLM itself answers when it is
-// asked to register a key it holds.
+// heldKeyLine is what mint says when the gateway holds the run's key as mint
+// registers it.
+const heldKeyLine = "the gateway holds this run's key already, as this mint registers it, so mint registers nothing and states the key again\n"
+
+// holdAKeyToOneMint runs the mint job again for the run's key, as GitHub runs
+// a job again, at the minting run's second attempt. The gateway holds the key
+// as mint registered it, so mint registers nothing, says so, and goes on. A
+// mint of the same key with another parallel-request limit is refused before
+// it registers anything. The journey also logs what LiteLLM itself answers
+// when it is asked to register a key it holds.
 func holdAKeyToOneMint(t *testing.T, stack *gatewayStack, job *gatewayJob, key string) {
 	t.Helper()
-	code, _, stderr := job.mint(job.triggered(mintingRunID, 1), "--for-triggering-run")
+	code, stdout, stderr := job.mint(append(job.triggered(mintingRunID, 1), "GITHUB_RUN_ATTEMPT=2"), "--for-triggering-run")
+	if code != 0 || strings.TrimSpace(stdout) != keyID(key) || !strings.Contains(stderr, heldKeyLine) {
+		t.Errorf("the mint job run again: exit %d, %q, %s", code, stdout, stderr)
+	}
+	code, _, stderr = job.mint(job.triggered(mintingRunID, 1), "--for-triggering-run", "--max-parallel-requests", "2")
 	if code == 0 || !strings.Contains(stderr, "holds the request's key already") {
-		t.Errorf("a second mint of the run's key: exit %d, %s", code, stderr)
+		t.Errorf("a second mint of the run's key with another limit: exit %d, %s", code, stderr)
 	}
 	status, answer := stack.call(stack.admin, http.MethodPost, "/key/generate", map[string]any{"key": key})
 	t.Logf("LiteLLM answers %d to /key/generate with a key it holds: %.200s", status, strings.ReplaceAll(answer, key, "<key>"))
+}
+
+// The runs workflow_run started for the agent run's second attempt: the
+// minting run on its in_progress event, since GitHub sends no requested event
+// for a re-run, and the closing run on its completed event.
+const (
+	rerunMintingRunID = "16873410622"
+	rerunClosingRunID = "16873410777"
+)
+
+// holdAReRunToItsOwnKey re-runs the agent's run after its first attempt has
+// closed. The second attempt's agent job draws a key of its own, and a run of
+// its own mints it. That run's mint cannot reach the ledger: the key is
+// registered and not attested, and the step fails. The mint job run again
+// finds the key held as mint registered it, registers nothing, and attests it
+// from the minting run's second attempt. Run a third time, its attestation is
+// refused: the ledger takes one attestation of a key, and the same again only
+// from the attesting run and attempt that sent it. The agent runs on the
+// second attempt's key, the ledger grades the rows of both attempts exact,
+// and once the second closing run attests its count, the pull request's
+// gateway figure is the two attempts' counts together.
+func holdAReRunToItsOwnKey(t *testing.T, stack *gatewayStack, ledger *gatewayLedger, job *gatewayJob, mock *mockUpstream, first decimal.Decimal) {
+	t.Helper()
+	const attempt = 2
+	key := job.draw(attempt)
+	id := keyID(key)
+	minting := job.triggered(rerunMintingRunID, attempt)
+	unreachable := append(ledger.runEnv(mintJob, attempt, rerunMintingRunID, 1), "COSTROID_INGEST_URL=https://127.0.0.1:1/v1/rows")
+	code, stdout, stderr := job.mint(append(slices.Clone(minting), unreachable...), "--for-triggering-run")
+	if code != 125 || strings.TrimSpace(stdout) != id || strings.Contains(stderr, heldKeyLine) {
+		t.Fatalf("the re-run's mint with the ledger out of reach: exit %d, %q, %s", code, stdout, stderr)
+	}
+	again := append(append(slices.Clone(minting), "GITHUB_RUN_ATTEMPT=2"), ledger.runEnv(mintJob, attempt, rerunMintingRunID, 2)...)
+	code, stdout, stderr = job.mint(again, "--for-triggering-run")
+	held, attested := strings.Index(stderr, heldKeyLine), strings.Index(stderr, "attested to the ledger\n")
+	if code != 0 || strings.TrimSpace(stdout) != id || held < 0 || attested < held {
+		t.Fatalf("the re-run's mint job run again: exit %d, %q, %s", code, stdout, stderr)
+	}
+	third := append(append(slices.Clone(minting), "GITHUB_RUN_ATTEMPT=3"), ledger.runEnv(mintJob, attempt, rerunMintingRunID, 3)...)
+	code, _, stderr = job.mint(third, "--for-triggering-run")
+	if code != 1 || !strings.Contains(stderr, "409: CREDENTIAL_ATTESTED_ELSEWHERE") {
+		t.Errorf("the re-run's mint job run a third time: exit %d, %s", code, stderr)
+	}
+	t.Logf("the mint job run a third time said: %s", strings.TrimSpace(stderr))
+
+	second := runToTheRefusal(t, job, mock, attempt, id, gatewayBound)
+	rows, err := os.ReadFile(job.rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.call("/v1/rows", attempt, rows)
+	for _, grade := range ledger.grades() {
+		if grade != "exact" {
+			t.Errorf("a row of a key a protected run attested for its attempt reads %s", grade)
+		}
+	}
+
+	code, stdout, stderr = job.closeIn(append(job.triggered(rerunClosingRunID, attempt), ledger.runEnv(closeJob, attempt, rerunClosingRunID, 1)...), "--for-triggering-run")
+	figure, found := strings.CutPrefix(strings.TrimSpace(stderr), "attested the gateway's count of USD ")
+	figure, ended := strings.CutSuffix(figure, " to the ledger")
+	if code != 0 || stdout != "deleted\n" || !found || !ended {
+		t.Fatalf("the re-run's close: exit %d, %q, %s", code, stdout, stderr)
+	}
+	if counted, err := decimal.Parse(figure); err != nil || !gateway.SameSpend(counted, second) {
+		t.Errorf("close attested USD %s, and the re-run's rows come to USD %s", figure, second)
+	}
+	verdict, data := ledger.verdict(attempt)
+	both := first.Add(decimal.MustParse(figure))
+	if counted, err := decimal.Parse(verdict.Budget.GatewayUSD); err != nil || counted.Cmp(both) != 0 || verdict.Budget.Basis != "gateway_measured" {
+		t.Errorf("the pull request's gateway figure after the re-run, want USD %s: %s", both, data)
+	}
+	if status := stack.keyStatus(id); status != "deleted" {
+		t.Errorf("after close the gateway reads the re-run's key as %q", status)
+	}
 }
 
 // holdTheInWorkflowJobsToWindowed mints and closes the run's key from jobs of
@@ -1108,7 +1210,7 @@ const (
 )
 
 func holdTheInWorkflowJobsToWindowed(t *testing.T, stack *gatewayStack, mock *mockUpstream) {
-	const attempt = 4
+	const attempt = 5
 	job := newGatewayJob(t, stack, claudeCode)
 	ledger := startLedger(t)
 	key := job.draw(attempt)

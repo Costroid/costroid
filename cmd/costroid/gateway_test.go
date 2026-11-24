@@ -775,8 +775,9 @@ func (j gatewayJob) triggered(t *testing.T, change func(followed map[string]any)
 // after it. The run, its attempt and its head come from the event and never
 // from the minting run's own variables; the budget from costroid.yml at the
 // base; the author from the pull request. A run of another event, a fork's
-// run and a key the gateway holds are refused. An event that names two pull
-// requests mints a key that names neither, with a warning.
+// run and a key the gateway holds with other limits are refused. An event
+// that names two pull requests mints a key that names neither, with a
+// warning.
 func TestMintForATriggeringRunTakesTheRunFromTheEventAndRefusesAFork(t *testing.T) {
 	job := newGatewayJob(t)
 	key := job.request(t)
@@ -819,8 +820,8 @@ func TestMintForATriggeringRunTakesTheRunFromTheEventAndRefusesAFork(t *testing.
 		t.Errorf("the ledger read %+v", w.body)
 	}
 
-	if code, _, stderr := job.mint(t, stub, "--for-triggering-run"); code != exitFailure || !strings.Contains(stderr, "holds the request's key already") {
-		t.Errorf("a key the gateway holds: exit %d, %s", code, stderr)
+	if code, _, stderr := job.mint(t, stub, "--for-triggering-run", "--max-parallel-requests", "2"); code != exitFailure || !strings.Contains(stderr, "holds the request's key already") {
+		t.Errorf("a key the gateway holds with other limits: exit %d, %s", code, stderr)
 	}
 
 	for name, tc := range map[string]struct {

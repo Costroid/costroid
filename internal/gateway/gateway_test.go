@@ -233,9 +233,9 @@ func TestMintRegistersTheKeyWithTheRunsBudgetExpiryAndMetadata(t *testing.T) {
 		Budget: decimal.MustParse("0.01"), Lifetime: 30 * time.Minute, MaxParallel: 1, MaxRequestTokens: 20000,
 		PullRequest: "7", Head: "9f2c6e1ab47d03f58c1e7726d0b4a93e5f618c2d",
 	}
-	id, err := mint.Register(context.Background())
-	if err != nil || id != KeyID(key) {
-		t.Fatalf("id %s, %v", id, err)
+	registered, err := mint.Register(context.Background())
+	if err != nil || registered != (Registered{KeyID: KeyID(key)}) {
+		t.Fatalf("registered %+v, %v", registered, err)
 	}
 	got := fake.generated
 	if got["key"] != key || got["max_budget"] != 0.01 || got["duration"] != "1800s" || got["key_alias"] != run.Alias() {
