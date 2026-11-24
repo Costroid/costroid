@@ -28,7 +28,7 @@ On GitLab CI, `costroid report --exit-on-verdict` ends with the verdict: 0 on `s
 
 `costroid export`, `costroid merged`, `costroid connect` and `costroid emit-otlp` exit 1 when Costroid Platform or the endpoint took the request and refused it, and the line names the refusal's code. They exit 125 when the service could not be reached.
 
-`costroid gateway mint` and `costroid gateway close` exit 1 when a ledger of the team's own or Costroid Platform took the key's attestation or the gateway's count and refused it, and the line names the code, with the contract's sentence for it on the platform's. Up to 1.0.0-alpha.31 a ledger's refusal exited 125. Three answers warn, and the command exits 0: a platform that does not offer the statement, 404 `NOT_FOUND`; a refusal of a run no protected branch holds, `CREDENTIAL_RUN_UNPROTECTED`, from either; and the platform's 409 `INSTALLATION_NOT_BOUND`. The platform's 503 is sent again for up to 150 s before it is named. A ledger or a platform that cannot be reached is exit 125.
+`costroid gateway mint` and `costroid gateway close` exit 1 when a ledger of the team's own or Costroid Platform took the key's attestation or the gateway's count and refused it, and the line names the code, with the contract's sentence for it on the platform's. Before the release of 2026-11-24 a ledger's refusal exited 125. Three answers warn, and the command exits 0: a platform that does not offer the statement, 404 `NOT_FOUND`; a refusal of a run no protected branch holds, `CREDENTIAL_RUN_UNPROTECTED`, from either; and the platform's 409 `INSTALLATION_NOT_BOUND`. The platform's 503 is sent again for up to 150 s before it is named. A ledger or a platform that cannot be reached is exit 125.
 
 ## The codes of each command
 
