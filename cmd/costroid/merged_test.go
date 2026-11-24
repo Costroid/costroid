@@ -643,8 +643,13 @@ func TestMergedNamesAKeySetThatStaysUnavailable(t *testing.T) {
 	env := stub.pushEnv(t, mergeHost(t), tipCommit)
 	code := merged(context.Background(), args, stub.server.Client(), func(name string) string { return env[name] }, verdictPace{interval: time.Millisecond, limit: 50 * time.Millisecond}, &stdout, &stderr)
 	want := "costroid: Costroid Platform refused merge 903114-1482: 503 INSTALLATION_PROOF_KEYS_UNAVAILABLE. GitHub's key set cannot be read. Retry inside the run token's window. Nothing was stored\n"
-	if code != exitRejected || stderr.String() != mergedVersionLine(contractV07)+want || len(stub.puts) < 2 {
-		t.Errorf("exit %d, %d sends, stderr %q, want %q", code, len(stub.puts), stderr.String(), want)
+	// merged can end at its pace's limit while the stub still serves the
+	// last send, so the count is read under the stub's lock.
+	stub.mu.Lock()
+	sends := len(stub.puts)
+	stub.mu.Unlock()
+	if code != exitRejected || stderr.String() != mergedVersionLine(contractV07)+want || sends < 2 {
+		t.Errorf("exit %d, %d sends, stderr %q, want %q", code, sends, stderr.String(), want)
 	}
 }
 

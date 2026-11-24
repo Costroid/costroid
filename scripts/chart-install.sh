@@ -184,8 +184,10 @@ await_rollout() {
 # service exits while Postgres does not answer yet, so on a first install it
 # may restart a few times, as long as the image is pulled and the data
 # directory initialised. Such a restart is allowed only when the service last
-# ended on Postgres not answering: no such host while the headless Service has
-# no ready pod, a refused connection, or a database still starting.
+# ended on Postgres not answering: a name that does not resolve while the
+# headless Service has no ready pod, which a resolver answers as no such host
+# or as a failure of its own, a refused connection, or a database still
+# starting.
 await_service() {
   local namespace=$1 pod restarts error
   await_rollout "$namespace" deployment "$service"
@@ -194,7 +196,7 @@ await_service() {
     ((restarts > 0)) || continue
     error=$(last_error "$namespace" "$pod")
     if [[ $error != *"failed to connect to"* ]] ||
-      ! grep --quiet --extended-regexp 'no such host|connection refused|database system is (starting up|not yet accepting connections)' <<<"$error"; then
+      ! grep --quiet --extended-regexp 'no such host|hostname resolving error|connection refused|database system is (starting up|not yet accepting connections)' <<<"$error"; then
       fail "$pod took $restarts restarts on a first install, the last not on Postgres starting: $error"
     fi
     echo "chart-install: $shape: $pod took $restarts restarts while Postgres came up, the last after: $error"
