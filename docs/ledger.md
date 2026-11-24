@@ -28,7 +28,11 @@ helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.33 \
   --set oidcAudience=https://costroid.example --set 'bindings={github.com:example}'
 ```
 
-The chart starts its own Postgres and makes one Secret, which it keeps across upgrades.
+The chart starts its own Postgres and makes one Secret, which it keeps across upgrades. `helm uninstall` leaves the Secret and Postgres's volume, so an install of the same release name in the same namespace opens the same ledger. To start empty, delete both: the Secret `<release>-costroid` and the claim `data-<release>-costroid-postgres-0`.
+
+A chart from an earlier release deletes the Secret on uninstall. Run `helm upgrade` with this chart before you uninstall, and the Secret is kept.
+
+On a first install the service restarts until Postgres answers, a few times while Postgres's image is pulled and its data directory created, and that is expected.
 
 To use your own Postgres, create the two roles [`docs/serve.md`](serve.md) lists, put three keys in a Secret and name it:
 
@@ -43,7 +47,7 @@ helm install costroid deploy/helm/costroid --set image.tag=1.0.0-alpha.33 --set 
   --set oidcAudience=https://costroid.example --set 'bindings={github.com:example}'
 ```
 
-The chart renders and lints in both shapes. It has not been installed on a cluster yet.
+On every pull request, CI installs the chart on a kind cluster in both shapes, fresh and as an upgrade from the last release's chart and image, and reads each run's total back exactly; `scripts/chart-install.sh` runs the same walk on your machine with Docker, kind, kubectl, helm, Go and that release's tag.
 
 ## Issue a key
 

@@ -98,6 +98,15 @@ e2e:
 install-walk:
 	./e2e/install-walk.sh
 
+.PHONY: chart-install
+
+# Installs deploy/helm/costroid on a kind cluster in both its shapes, sends one
+# recorded run's rows and reads the pull request's total back, then upgrades to
+# this tree from the release the chart names. It needs Docker, kind, kubectl,
+# helm, Go and that release's tag, and it stays out of check.
+chart-install:
+	./scripts/chart-install.sh
+
 # Proves e2e fails, at every step that states the figure, when a price moves.
 e2e-bite:
 	./e2e/price-bite.sh
