@@ -15,7 +15,7 @@ figures, so the check is neutral.
 On Linux or macOS, with `curl`:
 
 ```sh
-curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.33/costroid-install.sh
+curl -fsSLO https://github.com/Costroid/costroid/releases/download/v1.0.0-alpha.34/costroid-install.sh
 cat costroid-install.sh
 sh costroid-install.sh
 ```

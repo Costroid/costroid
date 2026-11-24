@@ -49,7 +49,7 @@ jobs:
       - name: Install Claude Code
         run: npm install --global @anthropic-ai/claude-code@2.1.316
       - name: Install costroid
-        uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
+        uses: Costroid/costroid/action@e323c83959bedbdd9e3ad48db50babd8677715f4 # v1.0.0-alpha.34
         with:
           stage: install
       - name: Check the agent's version
@@ -127,7 +127,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
+      - uses: Costroid/costroid/action@e323c83959bedbdd9e3ad48db50babd8677715f4 # v1.0.0-alpha.34
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -149,7 +149,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
+      - uses: Costroid/costroid/action@e323c83959bedbdd9e3ad48db50babd8677715f4 # v1.0.0-alpha.34
         with:
           stage: report
           # A skipped agent job then reads as skipped, not as a run with no rows.
