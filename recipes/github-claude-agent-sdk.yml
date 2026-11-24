@@ -50,7 +50,7 @@ jobs:
       - name: Install the program's packages
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix agent
       - name: Install costroid
-        uses: Costroid/costroid/action@4245162c8002ea79be1c772dc2287d797faab2a7 # v1.0.0-alpha.31
+        uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
         with:
           stage: install
       - name: Write the pull request's diff
@@ -108,7 +108,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@4245162c8002ea79be1c772dc2287d797faab2a7 # v1.0.0-alpha.31
+      - uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -130,7 +130,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@4245162c8002ea79be1c772dc2287d797faab2a7 # v1.0.0-alpha.31
+      - uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
         with:
           stage: report
           # A skipped agent job then reads as skipped, not as a run with no rows.
