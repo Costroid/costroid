@@ -93,6 +93,11 @@
           "description": "true ends the warn-only period now, so a rule that fails fails the check. Without it the period runs for 7 days from the commit that added the workflow to the base branch.",
           "type": "boolean",
           "default": false
+        },
+        "auto_demote": {
+          "description": "false keeps every rule as written. With true, costroid serve lowers a cost rule's failure to a warning for 30 days once reviewers approved more than one in five of the latest pull requests it failed, as its own ledger recorded them. No rule is demoted without a ledger. false also re-arms every rule at once.",
+          "type": "boolean",
+          "default": true
         }
       }
     },

@@ -170,10 +170,24 @@ The answer holds `budget`, as the per-PR view has it, and the verdict under `pol
 - `trust` is `token_verified` only when every row of the pull request is.
 - `evidence` names what stands behind token-verified spend: `agent_counts`, `gateway_measured` or `reconciled`. Only the last two let a budget rule or `model_allowlist` pass. On `agent_counts`, such a rule that would pass concludes `unproven` with reason `unmeasured_spend`, because the token counts and the model names are the agent's job's own.
 - `pr_budget` is held to the larger of the rows' USD list cost and the gateway's count.
-- The answer covers the whole pull request, never one run. `run_budget`, `run_cost_threshold`, `run_increase` and `run_increase_percent` conclude `unproven` with reason `no_run_rows`.
+- The answer covers the whole pull request, never one run. `run_budget`, `run_cost_threshold`, `run_increase`, `run_increase_percent` and `run_p95` conclude `unproven` with reason `no_run_rows`, whatever stands behind the spend.
 - `monthly_budget` concludes `unproven` with reason `no_ledger`, because the pack reads no month to date yet.
 
 Over a limit, the agent's own counts are enough: a rule that fails on them fails here too.
+
+### The override record
+
+The ledger keeps its own record of the verdicts the service answered and the approvals it verified, and demotes a cost rule by it, as [`docs/policy.md`](policy.md#demotion-by-the-override-rate) says. Only the service writes the record, from what it read from GitHub itself. Nothing a request body states, and no check run, reaches it.
+
+- A failing verdict is recorded when one of the six cost rules fails, and only when the service read `costroid.yml` at `config_ref` through the installation the request names and found the bytes the request states, then read the pull request through the same installation: its head, which must be a commit, and its base branch, whose head must be `config_ref`. The record names the repository, the base branch, the pull request, that head, the rule, the limit it failed under and the time. A rule's window and its demotion are kept per base branch, so a pull request into one branch never counts toward, or re-arms, the rule at another. Any other verdict is answered as before, records nothing and demotes nothing: a caller that named another commit, its own head among them, could name a looser `costroid.yml`.
+- An approval is recorded when a press of the approve button counts: GitHub answered the pull request's head and the presser's write role. The record names the repository, the pull request, the head, the login and the time. A press that does not count records nothing.
+- A verdict that read the record answers each demoted rule as `warn` with `demoted`, and concludes `neutral` at best.
+- The answer's `override_record` says whether the verdict reached the record: `recorded`; `config_unread` when the service did not read `costroid.yml` at `config_ref` itself, or read other bytes than the request states; `pull_unread` when GitHub did not answer the pull request's head, its base branch or that branch's head; `not_base` when `config_ref` is not the head of the pull request's base branch; `no_record` when the ledger keeps no override record. Only `recorded` records a failure or demotes a rule.
+- `policy.auto_demote: false` in the `costroid.yml` the service read turns demotion off and re-arms every rule. Failing verdicts are still recorded.
+
+The record is three tables: `failing_verdicts` and `pull_request_approvals`, which migration 0009 added, and `rule_demotions`, which migration 0011 adds. Migration 0011 also adds the base branch to `failing_verdicts`, which no release wrote to. `rule_demotions` holds where each rule's demotion stands at each base branch: the limit, when its window last started empty, and the verdict that started its term with the counts it read. A ledger applies 0011 on its next start. All three only grow: the service's role may read and insert, and holds no grant to update or delete a row. Postgres refuses a term whose counts do not demote.
+
+A demotion shows only in the verdict this service answers, and in whatever reads that answer. It changes nothing a reviewer sees on a pull request: the check and the comment the report job posts are not changed by it, because the report never asks the service, and the check the approve button posts repeats the report's own result object. Of the six cost rules only `pr_budget` can fail here, so only it is ever demoted, as [`docs/policy.md`](policy.md#demotion-by-the-override-rate) says.
 
 ### A repository's own pack
 

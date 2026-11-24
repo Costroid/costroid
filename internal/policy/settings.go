@@ -34,6 +34,9 @@ type Settings struct {
 	Models []string
 	// Enforce ends the warn-only period early.
 	Enforce bool
+	// DemotionOff is policy.auto_demote: false. A ledger then demotes no
+	// rule by its override rate, and every rule is re-armed.
+	DemotionOff bool
 	// Pack is the path of the customer pack policy_pack names, empty when it
 	// names none.
 	Pack string
@@ -67,6 +70,7 @@ const (
 	keyMaxP95Factor       = "max_p95_factor"
 	keyModels             = "models"
 	keyEnforce            = "enforce"
+	keyAutoDemote         = "auto_demote"
 )
 
 // amountKeys are the keys that hold an amount, each stated the same way in the
@@ -78,7 +82,7 @@ var amountKeys = []string{
 
 // Keys are the keys under policy that ParseSettings reads, sorted.
 func Keys() []string {
-	keys := append([]string{keyModels, keyEnforce, keyMaxP95Factor}, amountKeys...)
+	keys := append([]string{keyModels, keyEnforce, keyAutoDemote, keyMaxP95Factor}, amountKeys...)
 	slices.Sort(keys)
 	return keys
 }
@@ -127,10 +131,17 @@ func ParseSettings(data []byte) (Settings, error) {
 			}
 			settings.Models = models
 		case key == keyEnforce:
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
+			on, read := readBool(value)
+			if !read {
 				return Settings{}, errors.New("policy: policy.enforce must be true or false")
 			}
-			settings.Enforce = value.Value == "true"
+			settings.Enforce = on
+		case key == keyAutoDemote:
+			on, read := readBool(value)
+			if !read {
+				return Settings{}, errors.New("policy: policy.auto_demote must be true or false")
+			}
+			settings.DemotionOff = !on
 		default:
 			return Settings{}, errors.New("policy: costroid.yml names a policy key Costroid does not read")
 		}
@@ -240,10 +251,11 @@ func ParseApproval(data []byte) (ApprovalSettings, error) {
 		key, value := resolved(mapping.Content[i]).Value, resolved(mapping.Content[i+1])
 		switch key {
 		case keyAllowAuthor:
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
+			on, read := readBool(value)
+			if !read {
 				return ApprovalSettings{}, errors.New("policy: approval.allow_author must be true or false")
 			}
-			settings.AllowAuthor = value.Value == "true"
+			settings.AllowAuthor = on
 		case keyExpiresDays:
 			days, err := readDays(value)
 			if err != nil {
@@ -255,6 +267,17 @@ func ParseApproval(data []byte) (ApprovalSettings, error) {
 		}
 	}
 	return settings, nil
+}
+
+// readBool reads a switch as the boolean YAML makes of it: true, True and
+// TRUE are true, and false, False and FALSE false. A scalar of another tag,
+// such as "true" quoted or a YAML 1.1 word, is not read, as the schema
+// refuses it.
+func readBool(value *yaml.Node) (on, read bool) {
+	if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" || value.Decode(&on) != nil {
+		return false, false
+	}
+	return on, true
 }
 
 // readDays reads approval.expires_days from its source text. Only plain

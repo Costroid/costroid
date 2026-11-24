@@ -163,7 +163,32 @@ type verdictAnswer struct {
 	PullRequest string         `json:"pull_request"`
 	Budget      budgetView     `json:"budget"`
 	Policy      policy.Verdict `json:"policy"`
+	// OverrideRecord says whether the verdict reached the ledger's override
+	// record, and why not when it did not. Only a verdict that reached it
+	// records a failure or demotes a rule.
+	OverrideRecord overrideReach `json:"override_record"`
 }
+
+// overrideReach is whether a verdict reached the override record. The list is
+// closed.
+type overrideReach string
+
+const (
+	// reachRecorded: the verdict read and wrote the record.
+	reachRecorded overrideReach = "recorded"
+	// reachNoRecord: this ledger keeps no override record.
+	reachNoRecord overrideReach = "no_record"
+	// reachConfigUnread: the service did not read costroid.yml at config_ref
+	// itself, through the App's installation, or read other bytes than the
+	// request states.
+	reachConfigUnread overrideReach = "config_unread"
+	// reachPullUnread: the host did not answer the pull request's head, its
+	// base branch or that branch's head.
+	reachPullUnread overrideReach = "pull_unread"
+	// reachNotBase: config_ref is not the head of the pull request's base
+	// branch as the host states it.
+	reachNotBase overrideReach = "not_base"
+)
 
 func malformedVerdict(message string) *refusal {
 	return refuse(http.StatusBadRequest, codeMalformed, message)
@@ -239,14 +264,19 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	budget := budgetOf(lines, measured)
+	base, read := s.readBase(r.Context(), repo, stated, config)
 	request := policy.LedgerRequest{
 		Lines:                ledgerLines(lines),
 		Evidence:             evidenceOf(budget),
 		Config:               config,
-		Pack:                 s.readPack(r.Context(), repo, stated, config),
+		Pack:                 readPack(r.Context(), base, read),
 		Start:                start,
 		MeasuredPullRequests: stated.MeasuredPullRequests,
 		At:                   s.Now(),
+	}
+	reach := reachConfigUnread
+	if read {
+		request.Record, reach = s.verdictRecord(r.Context(), who.tenant, repo, pr, base)
 	}
 	if budget.Basis == budgetBasisGateway {
 		request.MeasuredUSD = measured.usd
@@ -265,7 +295,7 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, verdictAnswer{Repository: repo, PullRequest: pr, Budget: budget, Policy: verdict})
+	writeJSON(w, http.StatusOK, verdictAnswer{Repository: repo, PullRequest: pr, Budget: budget, Policy: verdict, OverrideRecord: reach})
 }
 
 // admitPack takes a slot for one customer pack's child, waiting at most
@@ -284,35 +314,51 @@ func admitPack(ctx context.Context) (func(), bool) {
 	return nil, false
 }
 
-// readPack reads the customer pack the stated costroid.yml names through the
-// GitHub App's installation the request names, and only when serve read
-// costroid.yml itself, at config_ref, through that installation, and found the
-// bytes the caller stated. The pack is then the one that file names at that
-// commit, never one a caller states. The installation must be held, not
-// suspended, and reach the repository. Any other request reads no pack, and
-// its verdict states customer_pack pack_unread.
-func (s *Server) readPack(ctx context.Context, repo string, stated verdictRequest, config policy.ConfigFile) policy.Pack {
+// baseRead is costroid.yml as serve read it itself, through a GitHub App's
+// installation, and the host it read it through.
+type baseRead struct {
+	host   ApprovalHost
+	config policy.ConfigFile
+}
+
+// readBase reads costroid.yml at config_ref through the GitHub App's
+// installation the request names, and is true only when it found the bytes
+// the caller stated. The installation must be held, not suspended, and reach
+// the repository. Only a verdict on a file serve read this way runs the pack
+// the file names and reaches the ledger's override record: a caller could
+// state a looser file than the base holds.
+func (s *Server) readBase(ctx context.Context, repo string, stated verdictRequest, config policy.ConfigFile) (baseRead, bool) {
 	name, onGitHub := strings.CutPrefix(repo, "github.com/")
-	if config.PackPath() == "" || stated.Installation <= 0 || !onGitHub || s.App == nil || s.App.Hosts == nil {
-		return policy.Pack{}
+	if stated.Installation <= 0 || !onGitHub || s.App == nil || s.App.Hosts == nil {
+		return baseRead{}, false
 	}
 	held, err := s.App.Installations.Installation(ctx, stated.Installation)
 	if err != nil || held.Suspended {
-		return policy.Pack{}
+		return baseRead{}, false
 	}
 	index := slices.IndexFunc(held.Repositories, func(repository store.Repository) bool { return strings.EqualFold(repository.FullName, name) })
 	if index < 0 {
-		return policy.Pack{}
+		return baseRead{}, false
 	}
 	host, err := s.App.Hosts.Repository(stated.Installation, held.Repositories[index].FullName)
 	if err != nil {
-		return policy.Pack{}
+		return baseRead{}, false
 	}
 	own := policy.ReadConfig(ctx, host, policy.Commits{Base: stated.ConfigRef, PullRequest: true})
 	if own.Unread != nil || own.Found != config.Found || !bytes.Equal(own.Data, config.Data) {
+		return baseRead{}, false
+	}
+	return baseRead{host: host, config: own}, true
+}
+
+// readPack reads the customer pack the costroid.yml serve read names, at the
+// commit it read that file at, never one a caller states. A verdict on a file
+// serve did not read reads no pack, and states customer_pack pack_unread.
+func readPack(ctx context.Context, base baseRead, read bool) policy.Pack {
+	if !read || base.config.PackPath() == "" {
 		return policy.Pack{}
 	}
-	return policy.ReadPack(ctx, host, own)
+	return policy.ReadPack(ctx, base.host, base.config)
 }
 
 // evidenceOf names what stands behind the budget's spend, for the pack.
@@ -347,4 +393,114 @@ func ledgerLines(lines []store.Line) []policy.LedgerLine {
 		})
 	}
 	return out
+}
+
+// overrideStore is a ledger's record of the failing verdicts serve answered,
+// the approvals it verified and where each rule's demotion stands. Only serve
+// writes it, and only from what it read from the host itself.
+type overrideStore interface {
+	AddFailure(ctx context.Context, tenant store.TenantID, verdict store.FailingVerdict) error
+	AddApproval(ctx context.Context, tenant store.TenantID, approval store.PullRequestApproval) error
+	Overrides(ctx context.Context, tenant store.TenantID, query store.OverrideQuery) (store.OverrideCount, error)
+	Demotion(ctx context.Context, tenant store.TenantID, repository, branch, rule string) (store.RuleDemotion, bool, error)
+	KeepDemotion(ctx context.Context, tenant store.TenantID, demotion store.RuleDemotion) (store.RuleDemotion, error)
+}
+
+// storeOverrides is a Postgres ledger's override and demotion records.
+type storeOverrides struct {
+	store.OverrideRecord
+	demotions store.DemotionRecord
+}
+
+func (s storeOverrides) Demotion(ctx context.Context, tenant store.TenantID, repository, branch, rule string) (store.RuleDemotion, bool, error) {
+	return s.demotions.Demotion(ctx, tenant, repository, branch, rule)
+}
+
+func (s storeOverrides) KeepDemotion(ctx context.Context, tenant store.TenantID, demotion store.RuleDemotion) (store.RuleDemotion, error) {
+	return s.demotions.Keep(ctx, tenant, demotion)
+}
+
+// overrides is the ledger's override record, nil for a ledger that keeps
+// none. With none, nothing is recorded and no rule is demoted.
+func (s *Server) overrides() overrideStore {
+	switch ledger := s.Ledger.(type) {
+	case *store.Store:
+		return storeOverrides{OverrideRecord: ledger.OverrideRecord(), demotions: ledger.DemotionRecord()}
+	case overrideStore:
+		return ledger
+	}
+	return nil
+}
+
+// verdictRecord is the override record of the pull request a verdict judges,
+// on its head commit as the host answered it, and why the verdict reaches it
+// or not. It is nil unless the ledger keeps one and config_ref is the head of
+// the pull request's base branch as the host states it: a caller that named
+// another commit could name one whose costroid.yml is looser, and leave no
+// failure in the record. A verdict without one records nothing and demotes
+// nothing.
+func (s *Server) verdictRecord(ctx context.Context, tenant store.TenantID, repo, pr string, base baseRead) (policy.OverrideLedger, overrideReach) {
+	keeper := s.overrides()
+	if keeper == nil {
+		return nil, reachNoRecord
+	}
+	number, err := strconv.Atoi(pr)
+	if err != nil {
+		return nil, reachPullUnread
+	}
+	pull, err := base.host.PullRequest(ctx, number)
+	if err != nil || !vcs.IsCommit(pull.HeadSHA) {
+		return nil, reachPullUnread
+	}
+	head, err := policy.BaseHead(ctx, base.host, pull.BaseBranch)
+	if err != nil {
+		return nil, reachPullUnread
+	}
+	if base.config.Ref != head {
+		return nil, reachNotBase
+	}
+	return judgedRecord{keeper: keeper, tenant: tenant, repo: repo, branch: pull.BaseBranch, pr: pr, head: pull.HeadSHA}, reachRecorded
+}
+
+// judgedRecord reads and writes the override record for one pull request,
+// which its own counts never include, at the base branch it merges into: the
+// record of a rule is of one base branch, whose costroid.yml sets its limit
+// and whether it can be demoted.
+type judgedRecord struct {
+	keeper                 overrideStore
+	tenant                 store.TenantID
+	repo, branch, pr, head string
+}
+
+func (r judgedRecord) AddFailure(ctx context.Context, rule string, limit decimal.Decimal, at time.Time) error {
+	return r.keeper.AddFailure(ctx, r.tenant, store.FailingVerdict{
+		Repository: r.repo, BaseBranch: r.branch, PullRequest: r.pr, HeadSHA: r.head, Rule: rule, Limit: limit, At: at,
+	})
+}
+
+func (r judgedRecord) Overrides(ctx context.Context, rule string, limit decimal.Decimal, rearmed, at time.Time) (int, int, int, error) {
+	count, err := r.keeper.Overrides(ctx, r.tenant, store.OverrideQuery{
+		Repository: r.repo, BaseBranch: r.branch, PullRequest: r.pr, Rule: rule, Limit: limit, Rearmed: rearmed, At: at,
+	})
+	return count.Failing, count.Approved, count.Approvers, err
+}
+
+func (r judgedRecord) Demotion(ctx context.Context, rule string) (policy.Demotion, bool, error) {
+	kept, found, err := r.keeper.Demotion(ctx, r.tenant, r.repo, r.branch, rule)
+	return policyDemotion(kept), found, err
+}
+
+func (r judgedRecord) KeepDemotion(ctx context.Context, rule string, demotion policy.Demotion) (policy.Demotion, error) {
+	kept, err := r.keeper.KeepDemotion(ctx, r.tenant, store.RuleDemotion{
+		Repository: r.repo, BaseBranch: r.branch, Rule: rule, Limit: demotion.Limit, Rearmed: demotion.Rearmed, Off: demotion.Off, From: demotion.From,
+		Failing: demotion.Crossed.Failing, Approved: demotion.Crossed.Approved, Approvers: demotion.Crossed.Approvers,
+	})
+	return policyDemotion(kept), err
+}
+
+func policyDemotion(kept store.RuleDemotion) policy.Demotion {
+	return policy.Demotion{
+		Limit: kept.Limit, Rearmed: kept.Rearmed, From: kept.From, Off: kept.Off,
+		Crossed: policy.Overrides{Failing: kept.Failing, Approved: kept.Approved, Approvers: kept.Approvers},
+	}
 }

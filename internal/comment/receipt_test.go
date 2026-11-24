@@ -442,7 +442,7 @@ func TestEveryVersionAReleaseWritesIsRead(t *testing.T) {
 	states := goldenStates(t)
 	examples := map[string]Input{
 		schemaV09: states["neutral-shown"], schema: states["infrastructure"], schemaV011: states["p95-over"],
-		schemaV012: states["pack-rule-warns"], schemaV013: states["receipt"],
+		schemaV012: states["pack-rule-warns"], schemaV013: states["receipt"], schemaV014: states["demoted-run-budget"],
 	}
 	for _, version := range WrittenSchemas() {
 		input, known := examples[version]

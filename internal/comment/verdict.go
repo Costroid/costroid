@@ -86,6 +86,9 @@ func (i Input) reading(shown bool) []string {
 	if i.approved() {
 		add(approvalLine(*i.Approval))
 	}
+	for _, line := range demotionLines(i.Verdict, i.request()) {
+		add(line)
+	}
 	if i.forkHeld() {
 		add(forkHeldLine(i.request()))
 	}
@@ -104,6 +107,25 @@ func (i Input) reading(shown bool) []string {
 	return paragraphs
 }
 
+// demotionLines state the record behind each rule a ledger demoted, under the
+// title: how many of the pull requests the rule failed reviewers approved, and
+// when the demotion ends. The object does not count the approvers, so the
+// line says what a demotion needs of them.
+func demotionLines(verdict *policy.Verdict, request string) []string {
+	if verdict == nil {
+		return nil
+	}
+	var lines []string
+	for _, result := range verdict.Results {
+		if result.Demoted == nil {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%s demoted to a warning: by the ledger's own record, reviewers from at least 2 accounts approved %d of the last %d %ss it failed, more than one in five. It warns until %s, then fails again. Add `auto_demote: false` under `policy` in `costroid.yml` to keep every rule as written.",
+			ruleLabel(result.Rule, request), result.Demoted.Approved, result.Demoted.Failing, request, demotedUntil(*result.Demoted)))
+	}
+	return lines
+}
+
 // named reports a result the verdict sentence states in full: its figure
 // against its limit, or the P95 limit's short history, which the sentence
 // counts. Any other rule that could not be checked is explained by its own
@@ -112,6 +134,9 @@ func named(result policy.Result) bool {
 	switch {
 	case result.Rule == policy.RuleCustomerPack:
 		return true
+	case result.Demoted != nil:
+		// A demoted rule's sentence names no amount, so its own line follows.
+		return false
 	case leadNouns[result.Rule] == "":
 		return false
 	case broken(result) || result.Outcome == policy.Pass:

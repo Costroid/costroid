@@ -212,8 +212,14 @@ func Result(input Input) (string, error) {
 	return authoritative.block()
 }
 
+// block writes the object with its receipts. A receipt makes it result/0.13,
+// unless it holds a demoted result, which only 0.14 holds.
 func (i Input) block() (string, error) {
-	return i.withReceipts(i.fields(), i.Amounts == AmountsShown).encode()
+	block := i.withReceipts(i.fields(), i.Amounts == AmountsShown)
+	if addedIn(addedValues("", block), schemaV014) {
+		block.Schema = schemaV014
+	}
+	return block.encode()
 }
 
 // fields is the result object before it is written: what the machine block
@@ -280,6 +286,8 @@ func (i Input) fields() Block {
 	block.Estimates = i.blockEstimates(shown)
 	block.EstimatesOmitted = i.Ledger.Infrastructure.FiguresOmitted
 	switch added := addedValues("", block); {
+	case addedIn(added, schemaV014):
+		block.Schema = schemaV014
 	case addedIn(added, schemaV012):
 		block.Schema = schemaV012
 	case addedIn(added, schemaV011):
@@ -341,12 +349,15 @@ func (b Block) ApprovedConclusion(approval *Approval) string {
 	return ApprovedConclusion(b.verdict(), approval, b.HeadSHA)
 }
 
-// The versions other than result/0.10. This release writes 0.13 only for an
-// object that holds a receipt, 0.12 for one that holds a customer pack, 0.11
+// The versions other than result/0.10. This release writes 0.14 only for an
+// object that holds a demoted result, 0.13 for one that holds a receipt, 0.12
+// for one that holds a customer pack, 0.11
 // for one that holds a value only 0.11 defines, 0.10 for one that states an
 // estimate, and 0.9 for any other, and a pull request whose newest check a
 // release that wrote an older one posted can still be approved, so
-// ParseResult reads them all. 0.13 holds the fields of 0.12 and receipts,
+// ParseResult reads them all. 0.14 holds the fields of 0.13 and a result's
+// demoted, with receipts only beside a receipt. 0.13 holds the fields of 0.12
+// and receipts,
 // with estimates and estimates_omitted only beside an estimate. 0.12 holds
 // the fields of 0.11, policy.pack, and a customer_pack result with its four
 // reasons and its line. 0.11 holds the fields of 0.10, with estimates and
@@ -364,13 +375,14 @@ const (
 	schemaV09  = "costroid.result/0.9"
 	schemaV011 = "costroid.result/0.11"
 	schemaV012 = "costroid.result/0.12"
+	schemaV014 = "costroid.result/0.14"
 )
 
 var (
 	// readSchemas are the versions ParseResult reads, oldest first.
-	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema, schemaV011, schemaV012, schemaV013}
+	readSchemas = []string{schemaV05, schemaV06, schemaV07, schemaV08, schemaV09, schema, schemaV011, schemaV012, schemaV013, schemaV014}
 	// writtenSchemas are the versions this release writes.
-	writtenSchemas = []string{schemaV09, schema, schemaV011, schemaV012, schemaV013}
+	writtenSchemas = []string{schemaV09, schema, schemaV011, schemaV012, schemaV013, schemaV014}
 )
 
 // WrittenSchemas are the versions of the result object this release writes,
@@ -434,7 +446,7 @@ func (b Block) encode() (string, error) {
 		object = blockV07{Block: b}
 	case schemaV08, schemaV09:
 		object = blockV09{Block: b}
-	case schemaV011, schemaV012, schemaV013:
+	case schemaV011, schemaV012, schemaV013, schemaV014:
 		if len(b.Estimates) == 0 {
 			object = blockV09{Block: b}
 		}
@@ -537,7 +549,7 @@ func ParseResult(text string) (Block, error) {
 	if block.Schema == schema && len(block.Estimates) == 0 {
 		return Block{}, fmt.Errorf("comment: the result object states no estimate, and a release writes %s only for an object that states one", schema)
 	}
-	for _, version := range []string{schemaV011, schemaV012, schemaV013} {
+	for _, version := range []string{schemaV011, schemaV012, schemaV013, schemaV014} {
 		if block.Schema == version && !addedIn(added, version) {
 			return Block{}, fmt.Errorf("comment: the result object holds nothing only %s defines, and a release writes %s only for an object that does", version, version)
 		}
@@ -655,7 +667,7 @@ func addedValues(object string, block Block) []addedValue {
 			{"limit_percent", schemaV06, result.LimitPercent != ""}, {"baseline_usd", schemaV06, result.BaselineUSD != ""},
 			{"models", schemaV06, len(result.Models) > 0}, {"p95_usd", schemaV011, result.P95USD != ""},
 			{"limit_factor", schemaV011, result.LimitFactor != ""}, {"baseline_runs", schemaV011, result.BaselineRuns != nil},
-			{"line", schemaV012, result.Line != 0},
+			{"line", schemaV012, result.Line != 0}, {"demoted", schemaV014, result.Demoted != nil},
 		} {
 			if field.set {
 				found = append(found, addedValue{"the field policy.results." + field.name, field.version})

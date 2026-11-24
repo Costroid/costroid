@@ -1,3 +1,136 @@
+accuracy-covered	0.10
+accuracy-covered	1
+accuracy-covered	1000000
+accuracy-covered	13
+accuracy-covered	2.1.316
+accuracy-covered	2026-11-01
+accuracy-covered	2026-11-06
+accuracy-covered	2026-11-19
+accuracy-covered	4.90
+accuracy-covered	5.00
+accuracy-covered	7
+accuracy-covered	Measured
+accuracy-covered	No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
+accuracy-covered	USD 0.10
+accuracy-covered	USD 4.90
+accuracy-covered	USD 5.00
+accuracy-covered	](https://app.costroid.com/?installation=github%3A58120394)
+accuracy-covered	](https://docs.costroid.com/accuracy)
+accuracy-covered	](https://docs.costroid.com/export)
+accuracy-covered	](https://github.com/example/widgets/actions/runs/19203384756)
+accuracy-covered	`0.1.0`
+accuracy-covered	`9f2c6e1`
+accuracy-covered	`anthropic:claude-sonnet-5:global:standard:all:output`
+accuracy-covered	`claude-code`
+accuracy-covered	`claude-sonnet-5`
+accuracy-covered	`output`
+accuracy-covered	| the wrapper stops the process at the cap |
+accuracy-covered-withheld	1
+accuracy-covered-withheld	13
+accuracy-covered-withheld	2.1.316
+accuracy-covered-withheld	2026-11-01
+accuracy-covered-withheld	2026-11-06
+accuracy-covered-withheld	2026-11-19
+accuracy-covered-withheld	7
+accuracy-covered-withheld	Measured
+accuracy-covered-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
+accuracy-covered-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+accuracy-covered-withheld	](https://docs.costroid.com/accuracy)
+accuracy-covered-withheld	](https://docs.costroid.com/export)
+accuracy-covered-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+accuracy-covered-withheld	`0.1.0`
+accuracy-covered-withheld	`9f2c6e1`
+accuracy-covered-withheld	`claude-code`
+accuracy-covered-withheld	`claude-sonnet-5`
+accuracy-covered-withheld	`comment.show_cost: false`
+accuracy-covered-withheld	`output`
+accuracy-covered-withheld	| the wrapper stops the process at the cap |
+accuracy-no-day	0.0000008
+accuracy-no-day	0.000136
+accuracy-no-day	0.00015605
+accuracy-no-day	0.000436875
+accuracy-no-day	0.00089
+accuracy-no-day	0.001619725
+accuracy-no-day	0.01
+accuracy-no-day	0.10
+accuracy-no-day	0.125
+accuracy-no-day	0.20
+accuracy-no-day	0.50
+accuracy-no-day	121
+accuracy-no-day	15605
+accuracy-no-day	19
+accuracy-no-day	2026-11-21
+accuracy-no-day	272
+accuracy-no-day	3495
+accuracy-no-day	4.998380275
+accuracy-no-day	4450
+accuracy-no-day	5.00
+accuracy-no-day	8
+accuracy-no-day	List-equivalent, not billed
+accuracy-no-day	Run budget: USD 5.00, from `policy.run_budget_usd` in `costroid.yml`.
+accuracy-no-day	USD 0.0000008
+accuracy-no-day	USD 0.000136
+accuracy-no-day	USD 0.00015605
+accuracy-no-day	USD 0.000436875
+accuracy-no-day	USD 0.00089
+accuracy-no-day	USD 0.001619725
+accuracy-no-day	USD 0.01
+accuracy-no-day	USD 0.10
+accuracy-no-day	USD 0.125
+accuracy-no-day	USD 0.20
+accuracy-no-day	USD 0.50
+accuracy-no-day	USD 4.998380275
+accuracy-no-day	USD 5.00
+accuracy-no-day	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
+accuracy-no-day	](https://app.costroid.com/?installation=github%3A58120394)
+accuracy-no-day	](https://docs.costroid.com/accuracy)
+accuracy-no-day	](https://docs.costroid.com/export)
+accuracy-no-day	](https://docs.costroid.com/policy)
+accuracy-no-day	](https://github.com/example/widgets/actions/runs/19203384756)
+accuracy-no-day	`0.4.3`
+accuracy-no-day	`9f2c6e1`
+accuracy-no-day	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+accuracy-no-day	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+accuracy-no-day	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+accuracy-no-day	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+accuracy-no-day	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+accuracy-no-day	`anthropic:informational:cached_input_reported`
+accuracy-no-day	`anthropic:informational:reasoning_output`
+accuracy-no-day	`cache_read`
+accuracy-no-day	`cache_write_1h`
+accuracy-no-day	`cache_write_5m`
+accuracy-no-day	`cached_input_reported`
+accuracy-no-day	`claude-code`
+accuracy-no-day	`claude-haiku-5-5`
+accuracy-no-day	`costroid.yml`
+accuracy-no-day	`input_uncached`
+accuracy-no-day	`output`
+accuracy-no-day	`policy.run_budget_usd`
+accuracy-no-day	`reasoning_output`
+accuracy-no-day	| client-side estimate, can pass the cap |
+accuracy-not-covered	0.10
+accuracy-not-covered	1
+accuracy-not-covered	1000000
+accuracy-not-covered	2026-11-01
+accuracy-not-covered	4.90
+accuracy-not-covered	5.00
+accuracy-not-covered	Measured
+accuracy-not-covered	No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
+accuracy-not-covered	USD 0.10
+accuracy-not-covered	USD 4.90
+accuracy-not-covered	USD 5.00
+accuracy-not-covered	](https://app.costroid.com/?installation=github%3A58120394)
+accuracy-not-covered	](https://docs.costroid.com/accuracy)
+accuracy-not-covered	](https://docs.costroid.com/export)
+accuracy-not-covered	](https://github.com/example/widgets/actions/runs/19203384756)
+accuracy-not-covered	`0.1.0`
+accuracy-not-covered	`9f2c6e1`
+accuracy-not-covered	`claude-code`
+accuracy-not-covered	`codex`
+accuracy-not-covered	`gpt-5.5`
+accuracy-not-covered	`openai:gpt-5.5:global:standard:output`
+accuracy-not-covered	`output`
+accuracy-not-covered	| the wrapper stops the process at the cap |
 agent-error-beside-figures	0.0000008
 agent-error-beside-figures	0.000136
 agent-error-beside-figures	0.00015605
@@ -36,6 +169,7 @@ agent-error-beside-figures	USD 4.998380275
 agent-error-beside-figures	USD 5.00
 agent-error-beside-figures	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 agent-error-beside-figures	](https://app.costroid.com/?installation=github%3A58120394)
+agent-error-beside-figures	](https://docs.costroid.com/accuracy)
 agent-error-beside-figures	](https://docs.costroid.com/export)
 agent-error-beside-figures	](https://docs.costroid.com/policy)
 agent-error-beside-figures	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -102,6 +236,7 @@ approved-failure	USD 0.50
 approved-failure	USD 4.998380275
 approved-failure	USD 5.00
 approved-failure	](https://app.costroid.com/?installation=github%3A58120394)
+approved-failure	](https://docs.costroid.com/accuracy)
 approved-failure	](https://docs.costroid.com/export)
 approved-failure	](https://github.com/example/widgets/actions/runs/19203384756)
 approved-failure	`0.4.3`
@@ -132,6 +267,7 @@ approved-failure-withheld	2026-11-21
 approved-failure-withheld	List-equivalent, not billed
 approved-failure-withheld	Over budget, approved by octocat: this run is over its run budget, priced at list (List-equivalent, not billed). The approval covers commit 9f2c6e1 and ends with a new push. Amounts are withheld here.
 approved-failure-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+approved-failure-withheld	](https://docs.costroid.com/accuracy)
 approved-failure-withheld	](https://docs.costroid.com/export)
 approved-failure-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 approved-failure-withheld	`0.4.3`
@@ -185,12 +321,14 @@ codex-stopped-overshoot	USD 0.40
 codex-stopped-overshoot	USD 20.00
 codex-stopped-overshoot	USD 4.00
 codex-stopped-overshoot	](https://costroid.com/account/)
+codex-stopped-overshoot	](https://docs.costroid.com/accuracy)
 codex-stopped-overshoot	](https://docs.costroid.com/export)
 codex-stopped-overshoot	](https://github.com/example/widgets/actions/runs/19203384756)
 codex-stopped-overshoot	`0.1.0`
 codex-stopped-overshoot	`9f2c6e1`
 codex-stopped-overshoot	`cache_read`
 codex-stopped-overshoot	`cached_input_reported`
+codex-stopped-overshoot	`claude-code`
 codex-stopped-overshoot	`codex`
 codex-stopped-overshoot	`gpt-5.6-sol`
 codex-stopped-overshoot	`input_uncached`
@@ -205,12 +343,14 @@ codex-stopped-overshoot-withheld	4
 codex-stopped-overshoot-withheld	Measured
 codex-stopped-overshoot-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 codex-stopped-overshoot-withheld	](https://costroid.com/account/)
+codex-stopped-overshoot-withheld	](https://docs.costroid.com/accuracy)
 codex-stopped-overshoot-withheld	](https://docs.costroid.com/export)
 codex-stopped-overshoot-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 codex-stopped-overshoot-withheld	`0.1.0`
 codex-stopped-overshoot-withheld	`9f2c6e1`
 codex-stopped-overshoot-withheld	`cache_read`
 codex-stopped-overshoot-withheld	`cached_input_reported`
+codex-stopped-overshoot-withheld	`claude-code`
 codex-stopped-overshoot-withheld	`codex`
 codex-stopped-overshoot-withheld	`comment.show_cost: false`
 codex-stopped-overshoot-withheld	`gpt-5.6-sol`
@@ -254,6 +394,7 @@ config-unread	USD 0.50
 config-unread	USD 4.998380275
 config-unread	USD 5.00
 config-unread	](https://app.costroid.com/?installation=github%3A58120394)
+config-unread	](https://docs.costroid.com/accuracy)
 config-unread	](https://docs.costroid.com/export)
 config-unread	](https://github.com/example/widgets/actions/runs/19203384756)
 config-unread	`0.4.3`
@@ -304,6 +445,7 @@ copilot-stated-nano-aiu	USD 0.10
 copilot-stated-nano-aiu	USD 0.125
 copilot-stated-nano-aiu	USD 0.50
 copilot-stated-nano-aiu	](https://app.costroid.com/?installation=github%3A58120394)
+copilot-stated-nano-aiu	](https://docs.costroid.com/accuracy)
 copilot-stated-nano-aiu	](https://docs.costroid.com/export)
 copilot-stated-nano-aiu	](https://github.com/example/widgets/actions/runs/19203384756)
 copilot-stated-nano-aiu	`0.3.0`
@@ -316,6 +458,7 @@ copilot-stated-nano-aiu	`anthropic:informational:cached_input_reported`
 copilot-stated-nano-aiu	`cache_read`
 copilot-stated-nano-aiu	`cache_write_5m`
 copilot-stated-nano-aiu	`cached_input_reported`
+copilot-stated-nano-aiu	`claude-code`
 copilot-stated-nano-aiu	`claude-haiku-5-5`
 copilot-stated-nano-aiu	`copilot`
 copilot-stated-nano-aiu	`input_uncached`
@@ -326,6 +469,7 @@ copilot-stated-nano-aiu-withheld	2026-11-08
 copilot-stated-nano-aiu-withheld	Measured
 copilot-stated-nano-aiu-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 copilot-stated-nano-aiu-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+copilot-stated-nano-aiu-withheld	](https://docs.costroid.com/accuracy)
 copilot-stated-nano-aiu-withheld	](https://docs.costroid.com/export)
 copilot-stated-nano-aiu-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 copilot-stated-nano-aiu-withheld	`0.3.0`
@@ -333,12 +477,313 @@ copilot-stated-nano-aiu-withheld	`9f2c6e1`
 copilot-stated-nano-aiu-withheld	`cache_read`
 copilot-stated-nano-aiu-withheld	`cache_write_5m`
 copilot-stated-nano-aiu-withheld	`cached_input_reported`
+copilot-stated-nano-aiu-withheld	`claude-code`
 copilot-stated-nano-aiu-withheld	`claude-haiku-5-5`
 copilot-stated-nano-aiu-withheld	`comment.show_cost: false`
 copilot-stated-nano-aiu-withheld	`copilot`
 copilot-stated-nano-aiu-withheld	`input_uncached`
 copilot-stated-nano-aiu-withheld	`output`
 copilot-stated-nano-aiu-withheld	| the wrapper stops the process at the cap |
+demoted-beside-a-failing-rule	0.0000008
+demoted-beside-a-failing-rule	0.000136
+demoted-beside-a-failing-rule	0.00015605
+demoted-beside-a-failing-rule	0.000436875
+demoted-beside-a-failing-rule	0.00089
+demoted-beside-a-failing-rule	0.001
+demoted-beside-a-failing-rule	0.001619725
+demoted-beside-a-failing-rule	0.01
+demoted-beside-a-failing-rule	0.10
+demoted-beside-a-failing-rule	0.125
+demoted-beside-a-failing-rule	0.20
+demoted-beside-a-failing-rule	0.50
+demoted-beside-a-failing-rule	121
+demoted-beside-a-failing-rule	15605
+demoted-beside-a-failing-rule	19
+demoted-beside-a-failing-rule	2
+demoted-beside-a-failing-rule	20
+demoted-beside-a-failing-rule	2026-11-21
+demoted-beside-a-failing-rule	2026-12-12
+demoted-beside-a-failing-rule	272
+demoted-beside-a-failing-rule	3495
+demoted-beside-a-failing-rule	4.998380275
+demoted-beside-a-failing-rule	4450
+demoted-beside-a-failing-rule	5.00
+demoted-beside-a-failing-rule	7
+demoted-beside-a-failing-rule	8
+demoted-beside-a-failing-rule	List-equivalent, not billed
+demoted-beside-a-failing-rule	Model allowlist: the run used `claude-haiku-5-5`, which is not on the list.
+demoted-beside-a-failing-rule	Model not on the list: this run cost USD 0.001619725 at list (List-equivalent, not billed) and used a model that is not on the list.
+demoted-beside-a-failing-rule	Pull request budget: USD 0.001619725 over this pull request's runs is over the USD 0.001 budget.
+demoted-beside-a-failing-rule	USD 0.0000008
+demoted-beside-a-failing-rule	USD 0.000136
+demoted-beside-a-failing-rule	USD 0.00015605
+demoted-beside-a-failing-rule	USD 0.000436875
+demoted-beside-a-failing-rule	USD 0.00089
+demoted-beside-a-failing-rule	USD 0.001
+demoted-beside-a-failing-rule	USD 0.001619725
+demoted-beside-a-failing-rule	USD 0.01
+demoted-beside-a-failing-rule	USD 0.10
+demoted-beside-a-failing-rule	USD 0.125
+demoted-beside-a-failing-rule	USD 0.20
+demoted-beside-a-failing-rule	USD 0.50
+demoted-beside-a-failing-rule	USD 4.998380275
+demoted-beside-a-failing-rule	USD 5.00
+demoted-beside-a-failing-rule	](https://app.costroid.com/?installation=github%3A58120394)
+demoted-beside-a-failing-rule	](https://docs.costroid.com/accuracy)
+demoted-beside-a-failing-rule	](https://docs.costroid.com/approval)
+demoted-beside-a-failing-rule	](https://docs.costroid.com/export)
+demoted-beside-a-failing-rule	](https://github.com/example/widgets/actions/runs/19203384756)
+demoted-beside-a-failing-rule	`0.4.3`
+demoted-beside-a-failing-rule	`9f2c6e1`
+demoted-beside-a-failing-rule	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+demoted-beside-a-failing-rule	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+demoted-beside-a-failing-rule	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+demoted-beside-a-failing-rule	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+demoted-beside-a-failing-rule	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+demoted-beside-a-failing-rule	`anthropic:informational:cached_input_reported`
+demoted-beside-a-failing-rule	`anthropic:informational:reasoning_output`
+demoted-beside-a-failing-rule	`auto_demote: false`
+demoted-beside-a-failing-rule	`cache_read`
+demoted-beside-a-failing-rule	`cache_write_1h`
+demoted-beside-a-failing-rule	`cache_write_5m`
+demoted-beside-a-failing-rule	`cached_input_reported`
+demoted-beside-a-failing-rule	`claude-code`
+demoted-beside-a-failing-rule	`claude-haiku-5-5`
+demoted-beside-a-failing-rule	`costroid.yml`
+demoted-beside-a-failing-rule	`input_uncached`
+demoted-beside-a-failing-rule	`output`
+demoted-beside-a-failing-rule	`policy`
+demoted-beside-a-failing-rule	`reasoning_output`
+demoted-beside-a-failing-rule	| client-side estimate, can pass the cap |
+demoted-beside-a-failing-rule-withheld	19
+demoted-beside-a-failing-rule-withheld	2
+demoted-beside-a-failing-rule-withheld	20
+demoted-beside-a-failing-rule-withheld	2026-11-21
+demoted-beside-a-failing-rule-withheld	2026-12-12
+demoted-beside-a-failing-rule-withheld	7
+demoted-beside-a-failing-rule-withheld	List-equivalent, not billed
+demoted-beside-a-failing-rule-withheld	Model allowlist: the run used `claude-haiku-5-5`, which is not on the list.
+demoted-beside-a-failing-rule-withheld	Model not on the list: this run used a model that is not on the list, priced at list (List-equivalent, not billed). Amounts are withheld here.
+demoted-beside-a-failing-rule-withheld	Pull request budget: this pull request's runs are over the budget.
+demoted-beside-a-failing-rule-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+demoted-beside-a-failing-rule-withheld	](https://docs.costroid.com/accuracy)
+demoted-beside-a-failing-rule-withheld	](https://docs.costroid.com/approval)
+demoted-beside-a-failing-rule-withheld	](https://docs.costroid.com/export)
+demoted-beside-a-failing-rule-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+demoted-beside-a-failing-rule-withheld	`0.4.3`
+demoted-beside-a-failing-rule-withheld	`9f2c6e1`
+demoted-beside-a-failing-rule-withheld	`auto_demote: false`
+demoted-beside-a-failing-rule-withheld	`cache_read`
+demoted-beside-a-failing-rule-withheld	`cache_write_1h`
+demoted-beside-a-failing-rule-withheld	`cache_write_5m`
+demoted-beside-a-failing-rule-withheld	`cached_input_reported`
+demoted-beside-a-failing-rule-withheld	`claude-code`
+demoted-beside-a-failing-rule-withheld	`claude-haiku-5-5`
+demoted-beside-a-failing-rule-withheld	`comment.show_cost: false`
+demoted-beside-a-failing-rule-withheld	`costroid.yml`
+demoted-beside-a-failing-rule-withheld	`input_uncached`
+demoted-beside-a-failing-rule-withheld	`output`
+demoted-beside-a-failing-rule-withheld	`policy`
+demoted-beside-a-failing-rule-withheld	`reasoning_output`
+demoted-beside-a-failing-rule-withheld	| client-side estimate, can pass the cap |
+demoted-request-budget	0.0000008
+demoted-request-budget	0.000136
+demoted-request-budget	0.00015605
+demoted-request-budget	0.000436875
+demoted-request-budget	0.00089
+demoted-request-budget	0.001
+demoted-request-budget	0.001619725
+demoted-request-budget	0.01
+demoted-request-budget	0.10
+demoted-request-budget	0.125
+demoted-request-budget	0.20
+demoted-request-budget	0.50
+demoted-request-budget	121
+demoted-request-budget	15605
+demoted-request-budget	19
+demoted-request-budget	2
+demoted-request-budget	20
+demoted-request-budget	2026-11-21
+demoted-request-budget	2026-12-12
+demoted-request-budget	272
+demoted-request-budget	3495
+demoted-request-budget	4.998380275
+demoted-request-budget	4450
+demoted-request-budget	5.00
+demoted-request-budget	7
+demoted-request-budget	8
+demoted-request-budget	List-equivalent, not billed
+demoted-request-budget	Over budget, demoted to a warning: this pull request's runs are over the pull request budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.
+demoted-request-budget	Pull request budget: USD 0.001619725 over this pull request's runs is over the USD 0.001 budget.
+demoted-request-budget	USD 0.0000008
+demoted-request-budget	USD 0.000136
+demoted-request-budget	USD 0.00015605
+demoted-request-budget	USD 0.000436875
+demoted-request-budget	USD 0.00089
+demoted-request-budget	USD 0.001
+demoted-request-budget	USD 0.001619725
+demoted-request-budget	USD 0.01
+demoted-request-budget	USD 0.10
+demoted-request-budget	USD 0.125
+demoted-request-budget	USD 0.20
+demoted-request-budget	USD 0.50
+demoted-request-budget	USD 4.998380275
+demoted-request-budget	USD 5.00
+demoted-request-budget	](https://app.costroid.com/?installation=github%3A58120394)
+demoted-request-budget	](https://docs.costroid.com/accuracy)
+demoted-request-budget	](https://docs.costroid.com/export)
+demoted-request-budget	](https://github.com/example/widgets/actions/runs/19203384756)
+demoted-request-budget	`0.4.3`
+demoted-request-budget	`9f2c6e1`
+demoted-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+demoted-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+demoted-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+demoted-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+demoted-request-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+demoted-request-budget	`anthropic:informational:cached_input_reported`
+demoted-request-budget	`anthropic:informational:reasoning_output`
+demoted-request-budget	`auto_demote: false`
+demoted-request-budget	`cache_read`
+demoted-request-budget	`cache_write_1h`
+demoted-request-budget	`cache_write_5m`
+demoted-request-budget	`cached_input_reported`
+demoted-request-budget	`claude-code`
+demoted-request-budget	`claude-haiku-5-5`
+demoted-request-budget	`costroid.yml`
+demoted-request-budget	`input_uncached`
+demoted-request-budget	`output`
+demoted-request-budget	`policy`
+demoted-request-budget	`reasoning_output`
+demoted-request-budget	| client-side estimate, can pass the cap |
+demoted-request-budget-withheld	19
+demoted-request-budget-withheld	2
+demoted-request-budget-withheld	20
+demoted-request-budget-withheld	2026-11-21
+demoted-request-budget-withheld	2026-12-12
+demoted-request-budget-withheld	7
+demoted-request-budget-withheld	List-equivalent, not billed
+demoted-request-budget-withheld	Over budget, demoted to a warning: this pull request's runs are over the pull request budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.
+demoted-request-budget-withheld	Pull request budget: this pull request's runs are over the budget.
+demoted-request-budget-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+demoted-request-budget-withheld	](https://docs.costroid.com/accuracy)
+demoted-request-budget-withheld	](https://docs.costroid.com/export)
+demoted-request-budget-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+demoted-request-budget-withheld	`0.4.3`
+demoted-request-budget-withheld	`9f2c6e1`
+demoted-request-budget-withheld	`auto_demote: false`
+demoted-request-budget-withheld	`cache_read`
+demoted-request-budget-withheld	`cache_write_1h`
+demoted-request-budget-withheld	`cache_write_5m`
+demoted-request-budget-withheld	`cached_input_reported`
+demoted-request-budget-withheld	`claude-code`
+demoted-request-budget-withheld	`claude-haiku-5-5`
+demoted-request-budget-withheld	`comment.show_cost: false`
+demoted-request-budget-withheld	`costroid.yml`
+demoted-request-budget-withheld	`input_uncached`
+demoted-request-budget-withheld	`output`
+demoted-request-budget-withheld	`policy`
+demoted-request-budget-withheld	`reasoning_output`
+demoted-request-budget-withheld	| client-side estimate, can pass the cap |
+demoted-run-budget	0.0000008
+demoted-run-budget	0.000136
+demoted-run-budget	0.00015605
+demoted-run-budget	0.000436875
+demoted-run-budget	0.00089
+demoted-run-budget	0.001
+demoted-run-budget	0.001619725
+demoted-run-budget	0.01
+demoted-run-budget	0.10
+demoted-run-budget	0.125
+demoted-run-budget	0.20
+demoted-run-budget	0.50
+demoted-run-budget	121
+demoted-run-budget	15605
+demoted-run-budget	19
+demoted-run-budget	2
+demoted-run-budget	20
+demoted-run-budget	2026-11-21
+demoted-run-budget	2026-12-12
+demoted-run-budget	272
+demoted-run-budget	3495
+demoted-run-budget	4.998380275
+demoted-run-budget	4450
+demoted-run-budget	5.00
+demoted-run-budget	7
+demoted-run-budget	8
+demoted-run-budget	List-equivalent, not billed
+demoted-run-budget	Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.
+demoted-run-budget	Run budget: USD 0.001, from `policy.run_budget_usd` in `costroid.yml`.
+demoted-run-budget	Run budget: USD 0.001619725 is over the USD 0.001 budget.
+demoted-run-budget	USD 0.0000008
+demoted-run-budget	USD 0.000136
+demoted-run-budget	USD 0.00015605
+demoted-run-budget	USD 0.000436875
+demoted-run-budget	USD 0.00089
+demoted-run-budget	USD 0.001
+demoted-run-budget	USD 0.001619725
+demoted-run-budget	USD 0.01
+demoted-run-budget	USD 0.10
+demoted-run-budget	USD 0.125
+demoted-run-budget	USD 0.20
+demoted-run-budget	USD 0.50
+demoted-run-budget	USD 4.998380275
+demoted-run-budget	USD 5.00
+demoted-run-budget	](https://app.costroid.com/?installation=github%3A58120394)
+demoted-run-budget	](https://docs.costroid.com/accuracy)
+demoted-run-budget	](https://docs.costroid.com/export)
+demoted-run-budget	](https://github.com/example/widgets/actions/runs/19203384756)
+demoted-run-budget	`0.4.3`
+demoted-run-budget	`9f2c6e1`
+demoted-run-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_read`
+demoted-run-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_1h`
+demoted-run-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:cache_write_5m`
+demoted-run-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_uncached`
+demoted-run-budget	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
+demoted-run-budget	`anthropic:informational:cached_input_reported`
+demoted-run-budget	`anthropic:informational:reasoning_output`
+demoted-run-budget	`auto_demote: false`
+demoted-run-budget	`cache_read`
+demoted-run-budget	`cache_write_1h`
+demoted-run-budget	`cache_write_5m`
+demoted-run-budget	`cached_input_reported`
+demoted-run-budget	`claude-code`
+demoted-run-budget	`claude-haiku-5-5`
+demoted-run-budget	`costroid.yml`
+demoted-run-budget	`input_uncached`
+demoted-run-budget	`output`
+demoted-run-budget	`policy.run_budget_usd`
+demoted-run-budget	`policy`
+demoted-run-budget	`reasoning_output`
+demoted-run-budget	| client-side estimate, can pass the cap |
+demoted-run-budget-withheld	19
+demoted-run-budget-withheld	2
+demoted-run-budget-withheld	20
+demoted-run-budget-withheld	2026-11-21
+demoted-run-budget-withheld	2026-12-12
+demoted-run-budget-withheld	7
+demoted-run-budget-withheld	List-equivalent, not billed
+demoted-run-budget-withheld	Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.
+demoted-run-budget-withheld	Run budget: the run is over the budget.
+demoted-run-budget-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+demoted-run-budget-withheld	](https://docs.costroid.com/accuracy)
+demoted-run-budget-withheld	](https://docs.costroid.com/export)
+demoted-run-budget-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
+demoted-run-budget-withheld	`0.4.3`
+demoted-run-budget-withheld	`9f2c6e1`
+demoted-run-budget-withheld	`auto_demote: false`
+demoted-run-budget-withheld	`cache_read`
+demoted-run-budget-withheld	`cache_write_1h`
+demoted-run-budget-withheld	`cache_write_5m`
+demoted-run-budget-withheld	`cached_input_reported`
+demoted-run-budget-withheld	`claude-code`
+demoted-run-budget-withheld	`claude-haiku-5-5`
+demoted-run-budget-withheld	`comment.show_cost: false`
+demoted-run-budget-withheld	`costroid.yml`
+demoted-run-budget-withheld	`input_uncached`
+demoted-run-budget-withheld	`output`
+demoted-run-budget-withheld	`policy`
+demoted-run-budget-withheld	`reasoning_output`
+demoted-run-budget-withheld	| client-side estimate, can pass the cap |
 empty-run-agent_error	No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran.
 empty-run-agent_error	](https://app.costroid.com/?installation=github%3A58120394)
 empty-run-agent_error	](https://docs.costroid.com/export)
@@ -401,6 +846,7 @@ fail-shown	USD 0.50
 fail-shown	USD 4.998380275
 fail-shown	USD 5.00
 fail-shown	](https://app.costroid.com/?installation=github%3A58120394)
+fail-shown	](https://docs.costroid.com/accuracy)
 fail-shown	](https://docs.costroid.com/approval)
 fail-shown	](https://docs.costroid.com/export)
 fail-shown	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -430,6 +876,7 @@ fail-withheld	2026-11-21
 fail-withheld	List-equivalent, not billed
 fail-withheld	Over budget: this run is over its run budget, priced at list (List-equivalent, not billed). Amounts are withheld here.
 fail-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+fail-withheld	](https://docs.costroid.com/accuracy)
 fail-withheld	](https://docs.costroid.com/approval)
 fail-withheld	](https://docs.costroid.com/export)
 fail-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -463,10 +910,12 @@ fallback-price	USD 180.00
 fallback-price	USD 180.10
 fallback-price	USD 5.00
 fallback-price	](https://app.costroid.com/?installation=github%3A58120394)
+fallback-price	](https://docs.costroid.com/accuracy)
 fallback-price	](https://docs.costroid.com/export)
 fallback-price	](https://github.com/example/widgets/actions/runs/19203384756)
 fallback-price	`0.1.0`
 fallback-price	`9f2c6e1`
+fallback-price	`claude-code`
 fallback-price	`codex`
 fallback-price	`gpt-5.5`
 fallback-price	`gpt-9-preview`
@@ -479,10 +928,12 @@ fallback-price-withheld	2026-11-01
 fallback-price-withheld	Measured
 fallback-price-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 fallback-price-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+fallback-price-withheld	](https://docs.costroid.com/accuracy)
 fallback-price-withheld	](https://docs.costroid.com/export)
 fallback-price-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 fallback-price-withheld	`0.1.0`
 fallback-price-withheld	`9f2c6e1`
+fallback-price-withheld	`claude-code`
 fallback-price-withheld	`codex`
 fallback-price-withheld	`comment.show_cost: false`
 fallback-price-withheld	`gpt-5.5`
@@ -521,10 +972,12 @@ figures-omitted	XAR 0.10
 figures-omitted	XAS 0.10
 figures-omitted	XAT 0.10
 figures-omitted	](https://app.costroid.com/?installation=github%3A58120394)
+figures-omitted	](https://docs.costroid.com/accuracy)
 figures-omitted	](https://docs.costroid.com/export)
 figures-omitted	](https://github.com/example/widgets/actions/runs/19203384756)
 figures-omitted	`0.1.0`
 figures-omitted	`9f2c6e1`
+figures-omitted	`claude-code`
 figures-omitted	`codex`
 figures-omitted	`gpt-5.5`
 figures-omitted	`openai:gpt-5.5:global:standard:output`
@@ -536,10 +989,12 @@ figures-omitted-withheld	3
 figures-omitted-withheld	Measured
 figures-omitted-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 figures-omitted-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+figures-omitted-withheld	](https://docs.costroid.com/accuracy)
 figures-omitted-withheld	](https://docs.costroid.com/export)
 figures-omitted-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 figures-omitted-withheld	`0.1.0`
 figures-omitted-withheld	`9f2c6e1`
+figures-omitted-withheld	`claude-code`
 figures-omitted-withheld	`codex`
 figures-omitted-withheld	`comment.show_cost: false`
 figures-omitted-withheld	`gpt-5.5`
@@ -585,6 +1040,7 @@ fork-failure-held	USD 0.50
 fork-failure-held	USD 4.998380275
 fork-failure-held	USD 5.00
 fork-failure-held	](https://app.costroid.com/?installation=github%3A58120394)
+fork-failure-held	](https://docs.costroid.com/accuracy)
 fork-failure-held	](https://docs.costroid.com/export)
 fork-failure-held	](https://github.com/example/widgets/actions/runs/19203384756)
 fork-failure-held	`0.4.3`
@@ -648,6 +1104,7 @@ fork-failure-held-warn-only	USD 0.50
 fork-failure-held-warn-only	USD 4.998380275
 fork-failure-held-warn-only	USD 5.00
 fork-failure-held-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+fork-failure-held-warn-only	](https://docs.costroid.com/accuracy)
 fork-failure-held-warn-only	](https://docs.costroid.com/export)
 fork-failure-held-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
 fork-failure-held-warn-only	`0.4.3`
@@ -676,6 +1133,7 @@ fork-failure-held-withheld	2026-11-21
 fork-failure-held-withheld	List-equivalent, not billed
 fork-failure-held-withheld	Over budget, on a fork's own rows: this run is over its run budget, priced at list (List-equivalent, not billed). A fork's rows are the fork's own claim, so the check is neutral. Amounts are withheld here.
 fork-failure-held-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+fork-failure-held-withheld	](https://docs.costroid.com/accuracy)
 fork-failure-held-withheld	](https://docs.costroid.com/export)
 fork-failure-held-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 fork-failure-held-withheld	`0.4.3`
@@ -732,6 +1190,7 @@ fork-limit-held	USD 0.50
 fork-limit-held	USD 4.998380275
 fork-limit-held	USD 5.00
 fork-limit-held	](https://app.costroid.com/?installation=github%3A58120394)
+fork-limit-held	](https://docs.costroid.com/accuracy)
 fork-limit-held	](https://docs.costroid.com/export)
 fork-limit-held	](https://github.com/example/widgets/actions/runs/19203384756)
 fork-limit-held	`0.4.3`
@@ -793,6 +1252,7 @@ fork-within-budget	USD 4.998380275
 fork-within-budget	USD 5.00
 fork-within-budget	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 fork-within-budget	](https://app.costroid.com/?installation=github%3A58120394)
+fork-within-budget	](https://docs.costroid.com/accuracy)
 fork-within-budget	](https://docs.costroid.com/export)
 fork-within-budget	](https://docs.costroid.com/policy)
 fork-within-budget	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -857,6 +1317,7 @@ gh-aw-stated-credits	USD 10.00
 gh-aw-stated-credits	USD 2.00
 gh-aw-stated-credits	USD 2.50
 gh-aw-stated-credits	](https://app.costroid.com/?installation=github%3A58120394)
+gh-aw-stated-credits	](https://docs.costroid.com/accuracy)
 gh-aw-stated-credits	](https://docs.costroid.com/export)
 gh-aw-stated-credits	](https://github.com/example/widgets/actions/runs/19203384756)
 gh-aw-stated-credits	`0.1.0`
@@ -870,6 +1331,7 @@ gh-aw-stated-credits	`anthropic:claude-sonnet-5:global:standard:all:output`
 gh-aw-stated-credits	`anthropic:informational:reasoning_output`
 gh-aw-stated-credits	`cache_read`
 gh-aw-stated-credits	`cache_write_5m`
+gh-aw-stated-credits	`claude-code`
 gh-aw-stated-credits	`claude-haiku-5-5`
 gh-aw-stated-credits	`claude-sonnet-5`
 gh-aw-stated-credits	`gh-aw`
@@ -882,12 +1344,14 @@ gh-aw-stated-credits-withheld	2026-11-01
 gh-aw-stated-credits-withheld	Measured
 gh-aw-stated-credits-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 gh-aw-stated-credits-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+gh-aw-stated-credits-withheld	](https://docs.costroid.com/accuracy)
 gh-aw-stated-credits-withheld	](https://docs.costroid.com/export)
 gh-aw-stated-credits-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 gh-aw-stated-credits-withheld	`0.1.0`
 gh-aw-stated-credits-withheld	`9f2c6e1`
 gh-aw-stated-credits-withheld	`cache_read`
 gh-aw-stated-credits-withheld	`cache_write_5m`
+gh-aw-stated-credits-withheld	`claude-code`
 gh-aw-stated-credits-withheld	`claude-haiku-5-5`
 gh-aw-stated-credits-withheld	`claude-sonnet-5`
 gh-aw-stated-credits-withheld	`comment.show_cost: false`
@@ -934,6 +1398,7 @@ gitlab-note	USD 4.998380275
 gitlab-note	USD 5.00
 gitlab-note	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 gitlab-note	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
+gitlab-note	](https://docs.costroid.com/accuracy)
 gitlab-note	](https://docs.costroid.com/export)
 gitlab-note	](https://docs.costroid.com/policy)
 gitlab-note	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -996,6 +1461,7 @@ gitlab-note-request-budget	USD 0.50
 gitlab-note-request-budget	USD 4.998380275
 gitlab-note-request-budget	USD 5.00
 gitlab-note-request-budget	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
+gitlab-note-request-budget	](https://docs.costroid.com/accuracy)
 gitlab-note-request-budget	](https://docs.costroid.com/export)
 gitlab-note-request-budget	](https://github.com/example/widgets/actions/runs/19203384756)
 gitlab-note-request-budget	`0.4.3`
@@ -1023,6 +1489,7 @@ gitlab-note-withheld	2026-11-21
 gitlab-note-withheld	List-equivalent, not billed
 gitlab-note-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 gitlab-note-withheld	](https://app.costroid.com/?installation=gitlab-namespace%3A4815162342)
+gitlab-note-withheld	](https://docs.costroid.com/accuracy)
 gitlab-note-withheld	](https://docs.costroid.com/export)
 gitlab-note-withheld	](https://docs.costroid.com/policy)
 gitlab-note-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1079,6 +1546,7 @@ increase-within	USD 4.998380275
 increase-within	USD 5.00
 increase-within	Within limit, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed), at most USD 0.01 over the USD 0.0012 median of earlier runs. Nothing outside the job checked the figures, so the check is neutral.
 increase-within	](https://app.costroid.com/?installation=github%3A58120394)
+increase-within	](https://docs.costroid.com/accuracy)
 increase-within	](https://docs.costroid.com/export)
 increase-within	](https://docs.costroid.com/policy)
 increase-within	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1145,6 +1613,7 @@ infrastructure	USD 4.998380275
 infrastructure	USD 5.00
 infrastructure	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 infrastructure	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure	](https://docs.costroid.com/accuracy)
 infrastructure	](https://docs.costroid.com/export)
 infrastructure	](https://docs.costroid.com/policy)
 infrastructure	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1212,6 +1681,7 @@ infrastructure-not-available	USD 4.998380275
 infrastructure-not-available	USD 5.00
 infrastructure-not-available	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 infrastructure-not-available	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure-not-available	](https://docs.costroid.com/accuracy)
 infrastructure-not-available	](https://docs.costroid.com/export)
 infrastructure-not-available	](https://docs.costroid.com/policy)
 infrastructure-not-available	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1242,6 +1712,7 @@ infrastructure-withheld	2026-12
 infrastructure-withheld	List-equivalent, not billed
 infrastructure-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 infrastructure-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+infrastructure-withheld	](https://docs.costroid.com/accuracy)
 infrastructure-withheld	](https://docs.costroid.com/export)
 infrastructure-withheld	](https://docs.costroid.com/policy)
 infrastructure-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1320,6 +1791,7 @@ joinable-rows	USD 4.998380275
 joinable-rows	USD 5.00
 joinable-rows	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 joinable-rows	](https://app.costroid.com/?installation=github%3A58120394)
+joinable-rows	](https://docs.costroid.com/accuracy)
 joinable-rows	](https://docs.costroid.com/export)
 joinable-rows	](https://docs.costroid.com/policy)
 joinable-rows	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1382,6 +1854,7 @@ joinable-rows-no-budget	USD 0.50
 joinable-rows-no-budget	USD 4.998380275
 joinable-rows-no-budget	USD 5.00
 joinable-rows-no-budget	](https://app.costroid.com/?installation=github%3A58120394)
+joinable-rows-no-budget	](https://docs.costroid.com/accuracy)
 joinable-rows-no-budget	](https://docs.costroid.com/export)
 joinable-rows-no-budget	](https://github.com/example/widgets/actions/runs/19203384756)
 joinable-rows-no-budget	`0.4.3`
@@ -1451,6 +1924,7 @@ lifetime	USD 4.998380275
 lifetime	USD 5.00
 lifetime	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 lifetime	](https://app.costroid.com/?installation=github%3A58120394)
+lifetime	](https://docs.costroid.com/accuracy)
 lifetime	](https://docs.costroid.com/export)
 lifetime	](https://docs.costroid.com/policy)
 lifetime	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1480,6 +1954,7 @@ lifetime-withheld	2026-11-21
 lifetime-withheld	List-equivalent, not billed
 lifetime-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 lifetime-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+lifetime-withheld	](https://docs.costroid.com/accuracy)
 lifetime-withheld	](https://docs.costroid.com/export)
 lifetime-withheld	](https://docs.costroid.com/policy)
 lifetime-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1537,6 +2012,7 @@ limit-over	USD 0.50
 limit-over	USD 4.998380275
 limit-over	USD 5.00
 limit-over	](https://app.costroid.com/?installation=github%3A58120394)
+limit-over	](https://docs.costroid.com/accuracy)
 limit-over	](https://docs.costroid.com/approval)
 limit-over	](https://docs.costroid.com/export)
 limit-over	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1601,6 +2077,7 @@ model-off-list	USD 0.50
 model-off-list	USD 4.998380275
 model-off-list	USD 5.00
 model-off-list	](https://app.costroid.com/?installation=github%3A58120394)
+model-off-list	](https://docs.costroid.com/accuracy)
 model-off-list	](https://docs.costroid.com/export)
 model-off-list	](https://github.com/example/widgets/actions/runs/19203384756)
 model-off-list	`0.4.3`
@@ -1663,6 +2140,7 @@ monthly-budget-not-decided	USD 0.50
 monthly-budget-not-decided	USD 4.998380275
 monthly-budget-not-decided	USD 5.00
 monthly-budget-not-decided	](https://app.costroid.com/?installation=github%3A58120394)
+monthly-budget-not-decided	](https://docs.costroid.com/accuracy)
 monthly-budget-not-decided	](https://docs.costroid.com/export)
 monthly-budget-not-decided	](https://github.com/example/widgets/actions/runs/19203384756)
 monthly-budget-not-decided	`0.4.3`
@@ -1723,6 +2201,7 @@ neutral-shown	USD 4.998380275
 neutral-shown	USD 5.00
 neutral-shown	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 neutral-shown	](https://app.costroid.com/?installation=github%3A58120394)
+neutral-shown	](https://docs.costroid.com/accuracy)
 neutral-shown	](https://docs.costroid.com/export)
 neutral-shown	](https://docs.costroid.com/policy)
 neutral-shown	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1752,6 +2231,7 @@ neutral-withheld	2026-11-21
 neutral-withheld	List-equivalent, not billed
 neutral-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 neutral-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+neutral-withheld	](https://docs.costroid.com/accuracy)
 neutral-withheld	](https://docs.costroid.com/export)
 neutral-withheld	](https://docs.costroid.com/policy)
 neutral-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1777,10 +2257,12 @@ no-cap-held	Measured
 no-cap-held	No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
 no-cap-held	USD 0.10
 no-cap-held	](https://costroid.com/account/)
+no-cap-held	](https://docs.costroid.com/accuracy)
 no-cap-held	](https://docs.costroid.com/export)
 no-cap-held	](https://github.com/example/widgets/actions/runs/19203384756)
 no-cap-held	`0.1.0`
 no-cap-held	`9f2c6e1`
+no-cap-held	`claude-code`
 no-cap-held	`codex`
 no-cap-held	`costroid.yml`
 no-cap-held	`gpt-5.5`
@@ -1859,6 +2341,7 @@ opencode-stated-usd	USD 0.10
 opencode-stated-usd	USD 0.125
 opencode-stated-usd	USD 0.50
 opencode-stated-usd	](https://app.costroid.com/?installation=github%3A58120394)
+opencode-stated-usd	](https://docs.costroid.com/accuracy)
 opencode-stated-usd	](https://docs.costroid.com/export)
 opencode-stated-usd	](https://github.com/example/widgets/actions/runs/19203384756)
 opencode-stated-usd	`0.3.0`
@@ -1869,6 +2352,7 @@ opencode-stated-usd	`anthropic:claude-haiku-5-5:global:standard:to-100000:input_
 opencode-stated-usd	`anthropic:claude-haiku-5-5:global:standard:to-100000:output`
 opencode-stated-usd	`cache_read`
 opencode-stated-usd	`cache_write_5m`
+opencode-stated-usd	`claude-code`
 opencode-stated-usd	`claude-haiku-5-5`
 opencode-stated-usd	`input_uncached`
 opencode-stated-usd	`opencode`
@@ -1879,12 +2363,14 @@ opencode-stated-usd-withheld	7
 opencode-stated-usd-withheld	Measured
 opencode-stated-usd-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 opencode-stated-usd-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+opencode-stated-usd-withheld	](https://docs.costroid.com/accuracy)
 opencode-stated-usd-withheld	](https://docs.costroid.com/export)
 opencode-stated-usd-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 opencode-stated-usd-withheld	`0.3.0`
 opencode-stated-usd-withheld	`9f2c6e1`
 opencode-stated-usd-withheld	`cache_read`
 opencode-stated-usd-withheld	`cache_write_5m`
+opencode-stated-usd-withheld	`claude-code`
 opencode-stated-usd-withheld	`claude-haiku-5-5`
 opencode-stated-usd-withheld	`comment.show_cost: false`
 opencode-stated-usd-withheld	`input_uncached`
@@ -1932,6 +2418,7 @@ p95-over	USD 0.50
 p95-over	USD 4.998380275
 p95-over	USD 5.00
 p95-over	](https://app.costroid.com/?installation=github%3A58120394)
+p95-over	](https://docs.costroid.com/accuracy)
 p95-over	](https://docs.costroid.com/approval)
 p95-over	](https://docs.costroid.com/export)
 p95-over	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -1962,6 +2449,7 @@ p95-over-withheld	2026-11-21
 p95-over-withheld	List-equivalent, not billed
 p95-over-withheld	Over limit: this run is over 1.5 times the P95 of this agent's latest 20 runs, priced at list (List-equivalent, not billed). Amounts are withheld here.
 p95-over-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-over-withheld	](https://docs.costroid.com/accuracy)
 p95-over-withheld	](https://docs.costroid.com/approval)
 p95-over-withheld	](https://docs.costroid.com/export)
 p95-over-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2018,6 +2506,7 @@ p95-short-history	USD 0.50
 p95-short-history	USD 4.998380275
 p95-short-history	USD 5.00
 p95-short-history	](https://app.costroid.com/?installation=github%3A58120394)
+p95-short-history	](https://docs.costroid.com/accuracy)
 p95-short-history	](https://docs.costroid.com/export)
 p95-short-history	](https://github.com/example/widgets/actions/runs/19203384756)
 p95-short-history	`0.4.3`
@@ -2047,6 +2536,7 @@ p95-short-history-withheld	7
 p95-short-history-withheld	List-equivalent, not billed
 p95-short-history-withheld	Not decided: the P95 limit needs 20 earlier runs of this agent and 7 reached the check, so the rule did not run. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
 p95-short-history-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-short-history-withheld	](https://docs.costroid.com/accuracy)
 p95-short-history-withheld	](https://docs.costroid.com/export)
 p95-short-history-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 p95-short-history-withheld	`0.4.3`
@@ -2106,6 +2596,7 @@ p95-warn-only	USD 0.50
 p95-warn-only	USD 4.998380275
 p95-warn-only	USD 5.00
 p95-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+p95-warn-only	](https://docs.costroid.com/accuracy)
 p95-warn-only	](https://docs.costroid.com/export)
 p95-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
 p95-warn-only	`0.4.3`
@@ -2139,6 +2630,7 @@ p95-warn-only-withheld	7
 p95-warn-only-withheld	List-equivalent, not billed
 p95-warn-only-withheld	Over limit, warn-only: this run is over 1.5 times the P95 of this agent's latest 20 runs, priced at list (List-equivalent, not billed). After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
 p95-warn-only-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-warn-only-withheld	](https://docs.costroid.com/accuracy)
 p95-warn-only-withheld	](https://docs.costroid.com/export)
 p95-warn-only-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 p95-warn-only-withheld	`0.4.3`
@@ -2198,6 +2690,7 @@ p95-within	USD 4.998380275
 p95-within	USD 5.00
 p95-within	Within limit, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed), within 1.5 times the USD 0.0012 P95 of this agent's latest 20 runs. Nothing outside the job checked the figures, so the check is neutral.
 p95-within	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within	](https://docs.costroid.com/accuracy)
 p95-within	](https://docs.costroid.com/export)
 p95-within	](https://docs.costroid.com/policy)
 p95-within	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2235,10 +2728,12 @@ p95-within-checked	USD 4.90
 p95-within-checked	USD 5.00
 p95-within-checked	Within limit: this run cost USD 0.10 at list (Measured), within 1.5 times the USD 0.10 P95 of this agent's latest 20 runs. A ledger checked the rows.
 p95-within-checked	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within-checked	](https://docs.costroid.com/accuracy)
 p95-within-checked	](https://docs.costroid.com/export)
 p95-within-checked	](https://github.com/example/widgets/actions/runs/19203384756)
 p95-within-checked	`0.1.0`
 p95-within-checked	`9f2c6e1`
+p95-within-checked	`claude-code`
 p95-within-checked	`codex`
 p95-within-checked	`costroid.yml`
 p95-within-checked	`gpt-5.5`
@@ -2252,10 +2747,12 @@ p95-within-checked-withheld	2026-11-01
 p95-within-checked-withheld	Measured
 p95-within-checked-withheld	Within limit: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.
 p95-within-checked-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within-checked-withheld	](https://docs.costroid.com/accuracy)
 p95-within-checked-withheld	](https://docs.costroid.com/export)
 p95-within-checked-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 p95-within-checked-withheld	`0.1.0`
 p95-within-checked-withheld	`9f2c6e1`
+p95-within-checked-withheld	`claude-code`
 p95-within-checked-withheld	`codex`
 p95-within-checked-withheld	`comment.show_cost: false`
 p95-within-checked-withheld	`costroid.yml`
@@ -2269,6 +2766,7 @@ p95-within-withheld	2026-11-21
 p95-within-withheld	List-equivalent, not billed
 p95-within-withheld	Within limit, by the job's own figures: this run is within 1.5 times the P95 of this agent's latest 20 runs, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 p95-within-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+p95-within-withheld	](https://docs.costroid.com/accuracy)
 p95-within-withheld	](https://docs.costroid.com/export)
 p95-within-withheld	](https://docs.costroid.com/policy)
 p95-within-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2323,6 +2821,7 @@ pack-answer-refused	USD 0.50
 pack-answer-refused	USD 4.998380275
 pack-answer-refused	USD 5.00
 pack-answer-refused	](https://app.costroid.com/?installation=github%3A58120394)
+pack-answer-refused	](https://docs.costroid.com/accuracy)
 pack-answer-refused	](https://docs.costroid.com/approval)
 pack-answer-refused	](https://docs.costroid.com/export)
 pack-answer-refused	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2351,6 +2850,7 @@ pack-answer-refused-withheld	2026-11-21
 pack-answer-refused-withheld	List-equivalent, not billed
 pack-answer-refused-withheld	Pack stopped (pack_result): the policy pack answered with something other than its results, so the check fails. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
 pack-answer-refused-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-answer-refused-withheld	](https://docs.costroid.com/accuracy)
 pack-answer-refused-withheld	](https://docs.costroid.com/approval)
 pack-answer-refused-withheld	](https://docs.costroid.com/export)
 pack-answer-refused-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2408,6 +2908,7 @@ pack-beside-a-failing-budget	USD 0.50
 pack-beside-a-failing-budget	USD 4.998380275
 pack-beside-a-failing-budget	USD 5.00
 pack-beside-a-failing-budget	](https://app.costroid.com/?installation=github%3A58120394)
+pack-beside-a-failing-budget	](https://docs.costroid.com/accuracy)
 pack-beside-a-failing-budget	](https://docs.costroid.com/approval)
 pack-beside-a-failing-budget	](https://docs.costroid.com/export)
 pack-beside-a-failing-budget	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2480,6 +2981,7 @@ pack-beside-the-p95-limit	USD 0.50
 pack-beside-the-p95-limit	USD 4.998380275
 pack-beside-the-p95-limit	USD 5.00
 pack-beside-the-p95-limit	](https://app.costroid.com/?installation=github%3A58120394)
+pack-beside-the-p95-limit	](https://docs.costroid.com/accuracy)
 pack-beside-the-p95-limit	](https://docs.costroid.com/approval)
 pack-beside-the-p95-limit	](https://docs.costroid.com/export)
 pack-beside-the-p95-limit	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2544,6 +3046,7 @@ pack-changed-at-head	USD 0.50
 pack-changed-at-head	USD 4.998380275
 pack-changed-at-head	USD 5.00
 pack-changed-at-head	](https://app.costroid.com/?installation=github%3A58120394)
+pack-changed-at-head	](https://docs.costroid.com/accuracy)
 pack-changed-at-head	](https://docs.costroid.com/export)
 pack-changed-at-head	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-changed-at-head	`.costroid/policy.rego`
@@ -2607,6 +3110,7 @@ pack-not-read	USD 0.50
 pack-not-read	USD 4.998380275
 pack-not-read	USD 5.00
 pack-not-read	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-read	](https://docs.costroid.com/accuracy)
 pack-not-read	](https://docs.costroid.com/export)
 pack-not-read	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-not-read	`0.4.3`
@@ -2634,6 +3138,7 @@ pack-not-read-withheld	2026-11-21
 pack-not-read-withheld	List-equivalent, not billed
 pack-not-read-withheld	Not decided: the policy pack could not be read at the base commit, so none of its rules ran. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
 pack-not-read-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-read-withheld	](https://docs.costroid.com/accuracy)
 pack-not-read-withheld	](https://docs.costroid.com/export)
 pack-not-read-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-not-read-withheld	`0.4.3`
@@ -2688,6 +3193,7 @@ pack-not-valid	USD 0.50
 pack-not-valid	USD 4.998380275
 pack-not-valid	USD 5.00
 pack-not-valid	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-valid	](https://docs.costroid.com/accuracy)
 pack-not-valid	](https://docs.costroid.com/export)
 pack-not-valid	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-not-valid	`0.4.3`
@@ -2716,6 +3222,7 @@ pack-not-valid-withheld	4
 pack-not-valid-withheld	List-equivalent, not billed
 pack-not-valid-withheld	Not decided: the policy pack is not valid at line 4, so none of its rules ran. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
 pack-not-valid-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-not-valid-withheld	](https://docs.costroid.com/accuracy)
 pack-not-valid-withheld	](https://docs.costroid.com/export)
 pack-not-valid-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-not-valid-withheld	`0.4.3`
@@ -2769,6 +3276,7 @@ pack-past-its-bound	USD 0.50
 pack-past-its-bound	USD 4.998380275
 pack-past-its-bound	USD 5.00
 pack-past-its-bound	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound	](https://docs.costroid.com/accuracy)
 pack-past-its-bound	](https://docs.costroid.com/approval)
 pack-past-its-bound	](https://docs.costroid.com/export)
 pack-past-its-bound	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2831,6 +3339,7 @@ pack-past-its-bound-warn-only	USD 0.50
 pack-past-its-bound-warn-only	USD 4.998380275
 pack-past-its-bound-warn-only	USD 5.00
 pack-past-its-bound-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound-warn-only	](https://docs.costroid.com/accuracy)
 pack-past-its-bound-warn-only	](https://docs.costroid.com/export)
 pack-past-its-bound-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-past-its-bound-warn-only	`0.4.3`
@@ -2862,6 +3371,7 @@ pack-past-its-bound-warn-only-withheld	7
 pack-past-its-bound-warn-only-withheld	List-equivalent, not billed
 pack-past-its-bound-warn-only-withheld	Pack stopped (pack_bound): the policy pack passed its evaluation bound on this run's rows. This run was priced at list (List-equivalent, not billed). After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
 pack-past-its-bound-warn-only-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound-warn-only-withheld	](https://docs.costroid.com/accuracy)
 pack-past-its-bound-warn-only-withheld	](https://docs.costroid.com/export)
 pack-past-its-bound-warn-only-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-past-its-bound-warn-only-withheld	`0.4.3`
@@ -2885,6 +3395,7 @@ pack-past-its-bound-withheld	2026-11-21
 pack-past-its-bound-withheld	List-equivalent, not billed
 pack-past-its-bound-withheld	Pack stopped (pack_bound): the policy pack passed its evaluation bound on this run's rows, so the check fails. This run was priced at list (List-equivalent, not billed). Amounts are withheld here.
 pack-past-its-bound-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-past-its-bound-withheld	](https://docs.costroid.com/accuracy)
 pack-past-its-bound-withheld	](https://docs.costroid.com/approval)
 pack-past-its-bound-withheld	](https://docs.costroid.com/export)
 pack-past-its-bound-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -2939,6 +3450,7 @@ pack-returned-nothing	USD 0.50
 pack-returned-nothing	USD 4.998380275
 pack-returned-nothing	USD 5.00
 pack-returned-nothing	](https://app.costroid.com/?installation=github%3A58120394)
+pack-returned-nothing	](https://docs.costroid.com/accuracy)
 pack-returned-nothing	](https://docs.costroid.com/export)
 pack-returned-nothing	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-returned-nothing	`.costroid/policy.rego`
@@ -2999,6 +3511,7 @@ pack-rule-fails	USD 0.50
 pack-rule-fails	USD 4.998380275
 pack-rule-fails	USD 5.00
 pack-rule-fails	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails	](https://docs.costroid.com/accuracy)
 pack-rule-fails	](https://docs.costroid.com/approval)
 pack-rule-fails	](https://docs.costroid.com/export)
 pack-rule-fails	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3065,6 +3578,7 @@ pack-rule-fails-warn-only	USD 0.50
 pack-rule-fails-warn-only	USD 4.998380275
 pack-rule-fails-warn-only	USD 5.00
 pack-rule-fails-warn-only	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails-warn-only	](https://docs.costroid.com/accuracy)
 pack-rule-fails-warn-only	](https://docs.costroid.com/export)
 pack-rule-fails-warn-only	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-rule-fails-warn-only	`.costroid/policy.rego`
@@ -3100,6 +3614,7 @@ pack-rule-fails-warn-only-withheld	7
 pack-rule-fails-warn-only-withheld	List-equivalent, not billed
 pack-rule-fails-warn-only-withheld	Pack rule failed, warn-only (no_opus_on_docs): this run was priced at list (List-equivalent, not billed). The rule is this repository's own. After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
 pack-rule-fails-warn-only-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails-warn-only-withheld	](https://docs.costroid.com/accuracy)
 pack-rule-fails-warn-only-withheld	](https://docs.costroid.com/export)
 pack-rule-fails-warn-only-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-rule-fails-warn-only-withheld	`.costroid/policy.rego`
@@ -3126,6 +3641,7 @@ pack-rule-fails-withheld	2026-11-21
 pack-rule-fails-withheld	List-equivalent, not billed
 pack-rule-fails-withheld	Pack rule failed (no_opus_on_docs): this run was priced at list (List-equivalent, not billed). The rule is this repository's own, read from the base branch. Amounts are withheld here.
 pack-rule-fails-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-fails-withheld	](https://docs.costroid.com/accuracy)
 pack-rule-fails-withheld	](https://docs.costroid.com/approval)
 pack-rule-fails-withheld	](https://docs.costroid.com/export)
 pack-rule-fails-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3183,6 +3699,7 @@ pack-rule-warns	USD 0.50
 pack-rule-warns	USD 4.998380275
 pack-rule-warns	USD 5.00
 pack-rule-warns	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-warns	](https://docs.costroid.com/accuracy)
 pack-rule-warns	](https://docs.costroid.com/export)
 pack-rule-warns	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-rule-warns	`.costroid/policy.rego`
@@ -3214,6 +3731,7 @@ pack-rule-warns-withheld	2026-11-21
 pack-rule-warns-withheld	List-equivalent, not billed
 pack-rule-warns-withheld	Pack rule warned (large_run): this run was priced at list (List-equivalent, not billed). The rule is this repository's own, and a warning never fails the check. Amounts are withheld here.
 pack-rule-warns-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pack-rule-warns-withheld	](https://docs.costroid.com/accuracy)
 pack-rule-warns-withheld	](https://docs.costroid.com/export)
 pack-rule-warns-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 pack-rule-warns-withheld	`.costroid/policy.rego`
@@ -3246,10 +3764,12 @@ pass-shown	USD 4.90
 pass-shown	USD 5.00
 pass-shown	Within budget: this run cost USD 0.10 at list (Measured) of the USD 5.00 run budget. A ledger checked the rows.
 pass-shown	](https://app.costroid.com/?installation=github%3A58120394)
+pass-shown	](https://docs.costroid.com/accuracy)
 pass-shown	](https://docs.costroid.com/export)
 pass-shown	](https://github.com/example/widgets/actions/runs/19203384756)
 pass-shown	`0.1.0`
 pass-shown	`9f2c6e1`
+pass-shown	`claude-code`
 pass-shown	`codex`
 pass-shown	`costroid.yml`
 pass-shown	`gpt-5.5`
@@ -3262,10 +3782,12 @@ pass-withheld	2026-11-01
 pass-withheld	Measured
 pass-withheld	Within budget: this run is within its run budget, priced at list (Measured). A ledger checked the rows. Amounts are withheld here.
 pass-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+pass-withheld	](https://docs.costroid.com/accuracy)
 pass-withheld	](https://docs.costroid.com/export)
 pass-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 pass-withheld	`0.1.0`
 pass-withheld	`9f2c6e1`
+pass-withheld	`claude-code`
 pass-withheld	`codex`
 pass-withheld	`comment.show_cost: false`
 pass-withheld	`costroid.yml`
@@ -3310,6 +3832,7 @@ platform-pull	USD 4.998380275
 platform-pull	USD 5.00
 platform-pull	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 platform-pull	](https://app.costroid.com/#/pulls?repo=github.com/example/widgets&pr=7)
+platform-pull	](https://docs.costroid.com/accuracy)
 platform-pull	](https://docs.costroid.com/export)
 platform-pull	](https://docs.costroid.com/policy)
 platform-pull	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3370,6 +3893,7 @@ policy-budget-no-cap	USD 0.50
 policy-budget-no-cap	USD 5.00
 policy-budget-no-cap	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 policy-budget-no-cap	](https://app.costroid.com/?installation=github%3A58120394)
+policy-budget-no-cap	](https://docs.costroid.com/accuracy)
 policy-budget-no-cap	](https://docs.costroid.com/export)
 policy-budget-no-cap	](https://docs.costroid.com/policy)
 policy-budget-no-cap	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3404,10 +3928,12 @@ preview-config-invalid	Not decided: costroid.yml is not valid, so no rule ran. T
 preview-config-invalid	USD 0.05
 preview-config-invalid	USD 0.10
 preview-config-invalid	](https://costroid.com/account/)
+preview-config-invalid	](https://docs.costroid.com/accuracy)
 preview-config-invalid	](https://docs.costroid.com/export)
 preview-config-invalid	](https://github.com/example/widgets/actions/runs/19203384756)
 preview-config-invalid	`0.1.0`
 preview-config-invalid	`9f2c6e1`
+preview-config-invalid	`claude-code`
 preview-config-invalid	`codex`
 preview-config-invalid	`costroid validate`
 preview-config-invalid	`costroid.yml`
@@ -3425,10 +3951,12 @@ preview-no-cap-held	No budget set: this run cost USD 0.10 at list (Measured). No
 preview-no-cap-held	USD 0.05
 preview-no-cap-held	USD 0.10
 preview-no-cap-held	](https://costroid.com/account/)
+preview-no-cap-held	](https://docs.costroid.com/accuracy)
 preview-no-cap-held	](https://docs.costroid.com/export)
 preview-no-cap-held	](https://github.com/example/widgets/actions/runs/19203384756)
 preview-no-cap-held	`0.1.0`
 preview-no-cap-held	`9f2c6e1`
+preview-no-cap-held	`claude-code`
 preview-no-cap-held	`codex`
 preview-no-cap-held	`costroid.yml`
 preview-no-cap-held	`gpt-5.5`
@@ -3478,6 +4006,7 @@ pull-request-budget-over	USD 0.50
 pull-request-budget-over	USD 4.998380275
 pull-request-budget-over	USD 5.00
 pull-request-budget-over	](https://app.costroid.com/?installation=github%3A58120394)
+pull-request-budget-over	](https://docs.costroid.com/accuracy)
 pull-request-budget-over	](https://docs.costroid.com/approval)
 pull-request-budget-over	](https://docs.costroid.com/export)
 pull-request-budget-over	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3544,6 +4073,7 @@ receipt	USD 4.998380275
 receipt	USD 5.00
 receipt	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 receipt	](https://app.costroid.com/?installation=github%3A58120394)
+receipt	](https://docs.costroid.com/accuracy)
 receipt	](https://docs.costroid.com/export)
 receipt	](https://docs.costroid.com/policy)
 receipt	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3608,6 +4138,7 @@ receipt-none	USD 4.998380275
 receipt-none	USD 5.00
 receipt-none	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 receipt-none	](https://app.costroid.com/?installation=github%3A58120394)
+receipt-none	](https://docs.costroid.com/accuracy)
 receipt-none	](https://docs.costroid.com/export)
 receipt-none	](https://docs.costroid.com/policy)
 receipt-none	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3670,6 +4201,7 @@ receipt-refused	USD 4.998380275
 receipt-refused	USD 5.00
 receipt-refused	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 receipt-refused	](https://app.costroid.com/?installation=github%3A58120394)
+receipt-refused	](https://docs.costroid.com/accuracy)
 receipt-refused	](https://docs.costroid.com/export)
 receipt-refused	](https://docs.costroid.com/policy)
 receipt-refused	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3703,6 +4235,7 @@ receipt-withheld	2026-11-21
 receipt-withheld	List-equivalent, not billed
 receipt-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 receipt-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+receipt-withheld	](https://docs.costroid.com/accuracy)
 receipt-withheld	](https://docs.costroid.com/export)
 receipt-withheld	](https://docs.costroid.com/policy)
 receipt-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3762,6 +4295,7 @@ reconciliation	USD 4.998380275
 reconciliation	USD 5.00
 reconciliation	Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 reconciliation	](https://app.costroid.com/?installation=github%3A58120394)
+reconciliation	](https://docs.costroid.com/accuracy)
 reconciliation	](https://docs.costroid.com/export)
 reconciliation	](https://docs.costroid.com/policy)
 reconciliation	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3796,6 +4330,7 @@ reconciliation-withheld	2026-11-21
 reconciliation-withheld	List-equivalent, not billed
 reconciliation-withheld	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 reconciliation-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+reconciliation-withheld	](https://docs.costroid.com/accuracy)
 reconciliation-withheld	](https://docs.costroid.com/export)
 reconciliation-withheld	](https://docs.costroid.com/policy)
 reconciliation-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3856,6 +4391,7 @@ recorded-run	USD 4.998380275
 recorded-run	USD 5.00
 recorded-run	Within budget, by the job's own figures: the recorded run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 recorded-run	](https://app.costroid.com/?installation=github%3A58120394)
+recorded-run	](https://docs.costroid.com/accuracy)
 recorded-run	](https://docs.costroid.com/export)
 recorded-run	](https://docs.costroid.com/policy)
 recorded-run	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3886,6 +4422,7 @@ recorded-run-withheld	42368537950
 recorded-run-withheld	List-equivalent, not billed
 recorded-run-withheld	Within budget, by the job's own figures: the recorded run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 recorded-run-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+recorded-run-withheld	](https://docs.costroid.com/accuracy)
 recorded-run-withheld	](https://docs.costroid.com/export)
 recorded-run-withheld	](https://docs.costroid.com/policy)
 recorded-run-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -3937,6 +4474,7 @@ subscription	USD 10.00
 subscription	USD 2.00
 subscription	USD 4.00
 subscription	](https://app.costroid.com/?installation=github%3A58120394)
+subscription	](https://docs.costroid.com/accuracy)
 subscription	](https://docs.costroid.com/export)
 subscription	](https://github.com/example/widgets/actions/runs/19203384756)
 subscription	`0.3.0`
@@ -3962,6 +4500,7 @@ subscription-withheld	2026-11-08
 subscription-withheld	List-equivalent, not billed
 subscription-withheld	No budget set: this run was priced at list (List-equivalent, not billed). No rule decides this check. Amounts are withheld here.
 subscription-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+subscription-withheld	](https://docs.costroid.com/accuracy)
 subscription-withheld	](https://docs.costroid.com/export)
 subscription-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 subscription-withheld	`0.3.0`
@@ -3989,10 +4528,12 @@ two-currencies	USD 0.10
 two-currencies	USD 4.90
 two-currencies	USD 5.00
 two-currencies	](https://app.costroid.com/?installation=github%3A58120394)
+two-currencies	](https://docs.costroid.com/accuracy)
 two-currencies	](https://docs.costroid.com/export)
 two-currencies	](https://github.com/example/widgets/actions/runs/19203384756)
 two-currencies	`0.1.0`
 two-currencies	`9f2c6e1`
+two-currencies	`claude-code`
 two-currencies	`codex`
 two-currencies	`gpt-5.5`
 two-currencies	`openai:gpt-5.5:global:standard:output`
@@ -4003,10 +4544,12 @@ two-currencies-withheld	2026-11-01
 two-currencies-withheld	Measured
 two-currencies-withheld	No budget set: this run was priced at list (Measured). No rule decides this check. Amounts are withheld here.
 two-currencies-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+two-currencies-withheld	](https://docs.costroid.com/accuracy)
 two-currencies-withheld	](https://docs.costroid.com/export)
 two-currencies-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 two-currencies-withheld	`0.1.0`
 two-currencies-withheld	`9f2c6e1`
+two-currencies-withheld	`claude-code`
 two-currencies-withheld	`codex`
 two-currencies-withheld	`comment.show_cost: false`
 two-currencies-withheld	`gpt-5.5`
@@ -4053,6 +4596,7 @@ two-rules-fail	USD 0.50
 two-rules-fail	USD 4.998380275
 two-rules-fail	USD 5.00
 two-rules-fail	](https://app.costroid.com/?installation=github%3A58120394)
+two-rules-fail	](https://docs.costroid.com/accuracy)
 two-rules-fail	](https://docs.costroid.com/approval)
 two-rules-fail	](https://docs.costroid.com/export)
 two-rules-fail	](https://github.com/example/widgets/actions/runs/19203384756)
@@ -4119,6 +4663,7 @@ warn-shown	USD 0.50
 warn-shown	USD 4.998380275
 warn-shown	USD 5.00
 warn-shown	](https://app.costroid.com/?installation=github%3A58120394)
+warn-shown	](https://docs.costroid.com/accuracy)
 warn-shown	](https://docs.costroid.com/export)
 warn-shown	](https://github.com/example/widgets/actions/runs/19203384756)
 warn-shown	`0.4.3`
@@ -4151,6 +4696,7 @@ warn-withheld	7
 warn-withheld	List-equivalent, not billed
 warn-withheld	Over budget, warn-only: this run is over its run budget, priced at list (List-equivalent, not billed). After 2026-11-09 09:00 UTC this fails the check. Amounts are withheld here.
 warn-withheld	](https://app.costroid.com/?installation=github%3A58120394)
+warn-withheld	](https://docs.costroid.com/accuracy)
 warn-withheld	](https://docs.costroid.com/export)
 warn-withheld	](https://github.com/example/widgets/actions/runs/19203384756)
 warn-withheld	`0.4.3`
@@ -4174,6 +4720,7 @@ withheld-unsettled	2026-11-21
 withheld-unsettled	List-equivalent, not billed
 withheld-unsettled	Within budget, by the job's own figures: this run is within its run budget, priced at list (List-equivalent, not billed). Nothing outside the job checked the figures, so the check is neutral. Amounts are withheld here.
 withheld-unsettled	](https://app.costroid.com/?installation=github%3A58120394)
+withheld-unsettled	](https://docs.costroid.com/accuracy)
 withheld-unsettled	](https://docs.costroid.com/export)
 withheld-unsettled	](https://docs.costroid.com/policy)
 withheld-unsettled	](https://github.com/example/widgets/actions/runs/19203384756)

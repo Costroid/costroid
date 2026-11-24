@@ -99,8 +99,8 @@ func readSwitch(root *yaml.Node, key string) (on bool, warnings []string, err er
 	if value == nil {
 		return true, nil, nil
 	}
-	if value.Kind == yaml.ScalarNode && value.Tag == "!!bool" {
-		return value.Value == "true", nil, nil
+	if value.Kind == yaml.ScalarNode && value.Tag == "!!bool" && value.Decode(&on) == nil {
+		return on, nil, nil
 	}
 	if value.Kind == yaml.ScalarNode && value.Decode(&on) == nil {
 		return on, []string{fmt.Sprintf("costroid: warning: costroid.yml: comment.%s is a YAML 1.1 word and reads as %t; write true or false", key, on)}, nil

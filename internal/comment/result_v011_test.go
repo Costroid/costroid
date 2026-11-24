@@ -84,7 +84,7 @@ func TestResultV011SchemaCopyMatchesItsDigest(t *testing.T) {
 	resultType := reflect.TypeFor[policy.Result]()
 	for index := range resultType.NumField() {
 		name, _, _ := strings.Cut(resultType.Field(index).Tag.Get("json"), ",")
-		if _, stated := document.Defs.Policy.Properties.Results.Items.Properties[name]; !stated && !slices.Contains(resultKeysAddedIn012, name) {
+		if _, stated := document.Defs.Policy.Properties.Results.Items.Properties[name]; !stated && !slices.Contains(resultKeysAddedIn012, name) && !slices.Contains(resultKeysAddedIn014, name) {
 			t.Errorf("a policy result's key %s is not one result/v0.11 states", name)
 		}
 	}
@@ -101,7 +101,7 @@ func TestResultV011SchemaCopyMatchesItsDigest(t *testing.T) {
 // TestAnObjectWithAPackIsWrittenAsV012 holds. The goldens hold each object
 // byte for byte.
 func TestAnObjectWithNothingNewIsNotWrittenAsV011(t *testing.T) {
-	compiled := map[string]string{schemaV09: resultSchemaPath, schema: resultV010SchemaPath, schemaV011: resultV011SchemaPath, schemaV012: resultV012SchemaPath, schemaV013: resultV013SchemaPath}
+	compiled := map[string]string{schemaV09: resultSchemaPath, schema: resultV010SchemaPath, schemaV011: resultV011SchemaPath, schemaV012: resultV012SchemaPath, schemaV013: resultV013SchemaPath, schemaV014: resultV014SchemaPath}
 	newer := []string{`"run_p95"`, `"p95_usd"`, `"limit_factor"`, `"baseline_runs"`, `"pack"`, `"customer_pack"`, `"line"`}
 	written := map[string]int{}
 	for name, input := range goldenStates(t) {
@@ -118,7 +118,7 @@ func TestAnObjectWithNothingNewIsNotWrittenAsV011(t *testing.T) {
 			}
 			written[head.Schema]++
 			holds := slices.ContainsFunc(newer, func(key string) bool { return strings.Contains(object, key) })
-			newest := head.Schema == schemaV011 || head.Schema == schemaV012 || head.Schema == schemaV013
+			newest := head.Schema == schemaV011 || head.Schema == schemaV012 || head.Schema == schemaV013 || head.Schema == schemaV014
 			if (head.Schema == schemaV011) != (holdsP95(input) && !holdsPack(input) && !holdsReceipt(input)) || (!newest && holds) {
 				t.Errorf("%s, %s: written as %s, holding a run_p95 result %t, holding a key of 0.11 or 0.12 %t", name, copied, head.Schema, holdsP95(input), holds)
 			}

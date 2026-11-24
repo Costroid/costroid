@@ -224,6 +224,10 @@ type Result struct {
 	BaselineRuns *int `json:"baseline_runs,omitempty"`
 	// Models names the models off the allowlist, sorted, at most 10.
 	Models []string `json:"models,omitempty"`
+	// Demoted is the record a ledger demoted the rule by, nil unless its
+	// failure was lowered to a warning. It holds counts and an instant, so a
+	// comment that withholds amounts keeps it.
+	Demoted *Demoted `json:"demoted,omitempty"`
 }
 
 // ConfigProblem says why the settings could not be used, nil when they were.
@@ -264,14 +268,16 @@ func (v Verdict) WithoutAmounts() Verdict {
 // rule or the model allowlist passes only on the evidence the request states.
 // The error is for a pack that could not run.
 func Evaluate(ctx context.Context, request Request) (Verdict, error) {
-	return evaluateScoped(ctx, request, false)
+	return evaluateScoped(ctx, request, false, nil)
 }
 
 // evaluateScoped runs the pack. On token-verified rows a budget rule or the
 // model allowlist passes only on measured or reconciled spend. A ledger's
 // request covers a pull request: its run rules are withheld from the pack and
-// conclude unproven, and its verdict names the evidence.
-func evaluateScoped(ctx context.Context, request Request, ledger bool) (Verdict, error) {
+// conclude unproven, and its verdict names the evidence. record is the
+// ledger's own override record, nil on every other path, and only through it
+// is a rule demoted.
+func evaluateScoped(ctx context.Context, request Request, ledger bool, record OverrideLedger) (Verdict, error) {
 	request.Trust = trusted(request.Trust)
 	evidence := measured(request.Evidence)
 	settings, problem := request.Config.settings()
@@ -313,7 +319,26 @@ func evaluateScoped(ctx context.Context, request Request, ledger bool) (Verdict,
 	}
 	verdict.Conclusion = conclusion
 	verdict.Results = annotate(results, request, settings)
+	if record != nil {
+		lowered, err := demote(ctx, record, settings, verdict.Results, request.At)
+		if err != nil {
+			return Verdict{}, err
+		}
+		if lowered {
+			verdict.Conclusion = demotedConclusion(verdict.Results)
+		}
+	}
 	return withPack(ctx, request, settings, verdict), nil
+}
+
+// demotedConclusion is a verdict's conclusion once a rule is demoted: failure
+// while another rule fails, and otherwise neutral, because a demoted rule
+// warns and a warning never concludes success.
+func demotedConclusion(results []Result) string {
+	if slices.ContainsFunc(results, func(result Result) bool { return result.Outcome == Fail }) {
+		return Failure
+	}
+	return Neutral
 }
 
 // endAtPullRequests ends a running period at the twentieth pull request with a
@@ -411,6 +436,11 @@ type LedgerRequest struct {
 	Start                Start
 	MeasuredPullRequests int
 	At                   time.Time
+	// Record is the ledger's own override record of the pull request, which
+	// serve gives only where it read costroid.yml itself. Each rule that fails
+	// is recorded in it, and a rule it demotes warns. Nil records nothing and
+	// demotes nothing.
+	Record OverrideLedger
 }
 
 // EvaluateLedger runs the default pack over a pull request's rows in a ledger.
@@ -441,7 +471,7 @@ func EvaluateLedger(ctx context.Context, request LedgerRequest) (Verdict, error)
 		MeasuredPullRequests: request.MeasuredPullRequests,
 		Evidence:             request.Evidence,
 		Pack:                 request.Pack,
-	}, true)
+	}, true, request.Record)
 }
 
 // ledgerUsage reduces a ledger's lines to what the pack reads. A line the

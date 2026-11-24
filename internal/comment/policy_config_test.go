@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	costroid "github.com/Costroid/costroid"
+	"github.com/Costroid/costroid/internal/config"
 	"github.com/Costroid/costroid/internal/policy"
 )
 
@@ -118,6 +120,75 @@ func TestPolicySentencesNameEachRule(t *testing.T) {
 		}
 		if got := resultSentence(verdict.WithoutAmounts().Results[0], 0, false, nil, RequestNoun(AccountGitHub)); got != withheld {
 			t.Errorf("withheld:\n got %s\nwant %s", got, withheld)
+		}
+	}
+}
+
+// switchReaders read each boolean key of costroid.yml as the report, the
+// policy and the approval read it.
+var switchReaders = map[string]func([]byte) (bool, error){
+	"comment.show_cost": func(data []byte) (bool, error) {
+		config, _, err := ParseConfig(data)
+		return config.ShowCost, err
+	},
+	"comment.receipts": func(data []byte) (bool, error) {
+		config, _, err := ParseConfig(data)
+		return !config.ReceiptsOff, err
+	},
+	"policy.enforce": func(data []byte) (bool, error) {
+		settings, err := policy.ParseSettings(data)
+		return settings.Enforce, err
+	},
+	"policy.auto_demote": func(data []byte) (bool, error) {
+		settings, err := policy.ParseSettings(data)
+		return !settings.DemotionOff, err
+	},
+	"approval.allow_author": func(data []byte) (bool, error) {
+		settings, err := policy.ParseApproval(data)
+		return settings.AllowAuthor, err
+	},
+}
+
+// TestEveryBooleanKeyReadsAsYAMLWritesIt walks every boolean key the schema
+// of costroid.yml states, over each spelling YAML reads as a boolean. The
+// setting read is the value written, and validate takes the file: a switch is
+// never read by its spelling, so True turns a setting on and FALSE turns it
+// off.
+func TestEveryBooleanKeyReadsAsYAMLWritesIt(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Properties map[string]struct {
+				Type json.RawMessage `json:"type"`
+			} `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(costroid.ConfigSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for section, entry := range schema.Properties {
+		for key, property := range entry.Properties {
+			if string(property.Type) == `"boolean"` {
+				keys = append(keys, section+"."+key)
+			}
+		}
+	}
+	slices.Sort(keys)
+	if want := slices.Sorted(maps.Keys(switchReaders)); !slices.Equal(keys, want) {
+		t.Fatalf("the schema's boolean keys are %v, and this test reads %v", keys, want)
+	}
+	spellings := map[string]bool{"true": true, "True": true, "TRUE": true, "false": false, "False": false, "FALSE": false}
+	for _, key := range keys {
+		section, name, _ := strings.Cut(key, ".")
+		for spelling, want := range spellings {
+			document := []byte(section + ":\n  " + name + ": " + spelling + "\n")
+			got, err := switchReaders[key](document)
+			if err != nil || got != want {
+				t.Errorf("%s: %s reads as %t, want %t: %v", key, spelling, got, want, err)
+			}
+			if problems, err := config.Validate(document); err != nil || len(problems) != 0 {
+				t.Errorf("%s: %s: validate says %v, %v", key, spelling, problems, err)
+			}
 		}
 	}
 }

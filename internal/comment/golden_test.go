@@ -476,6 +476,7 @@ func goldenStates(t *testing.T) map[string]Input {
 	maps.Copy(states, p95States(t))
 	maps.Copy(states, packStates(t))
 	maps.Copy(states, receiptStates(neutral))
+	maps.Copy(states, demotedStates(t))
 
 	// A fork's own rows fail a rule. The follow-up holds the check at neutral,
 	// and the sentence says so with the rule's own noun, shown and withheld.

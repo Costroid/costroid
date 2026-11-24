@@ -201,7 +201,7 @@ The report stage reads a rows file that the agent's own job wrote. An agent that
 
 `costroid serve` checks each row's run identity against the job's OIDC token. The pack applies the second column to rows graded that way. A token proves which run sent a row, not the token counts or the model names on it, which the agent's job wrote. So on the second column a budget or the model allowlist needs the gateway's own count for a key minted for the run, which `costroid gateway close` attests from a run of the protected default branch, or a provider's report. Either can still fail on the agent's own counts.
 
-`serve` answers the second column at `POST /v1/pulls/{pr}/verdict`, over a pull request's rows in its ledger. Its answer covers the pull request, so the run rules conclude `unproven` there. [`docs/serve.md`](serve.md#the-verdict) gives the request and the answer. `costroid report` and `costroid policy` read a rows file, and do not ask `serve`.
+`serve` answers the second column at `POST /v1/pulls/{pr}/verdict`, over a pull request's rows in its ledger. Its answer covers the pull request, so the run rules conclude `unproven` there. [`docs/serve.md`](serve.md#the-verdict) gives the request and the answer. `costroid report` and `costroid policy` read a rows file, and do not ask `serve`. Only `serve` can demote a rule, as [Demotion by the override rate](#demotion-by-the-override-rate) says.
 
 ## From the rules to the conclusion
 
@@ -222,6 +222,7 @@ One sentence says what is true of the run. It is the check's title, the first li
 Within budget, by the job's own figures: this run cost USD 0.001619725 at list (List-equivalent, not billed) of the USD 5.00 run budget. Nothing outside the job checked the figures, so the check is neutral.
 Over budget: this run cost USD 0.001619725 at list (List-equivalent, not billed), over the USD 0.001 run budget.
 Over limit: this run cost USD 0.001619725 at list (List-equivalent, not billed), over 1.5 times the USD 0.0006 P95 of this agent's latest 20 runs.
+Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.
 No budget set: this run cost USD 0.10 at list (Measured). No rule decides this check.
 No figure (agent_error): the agent ended in an error before it reported usage, so the run wrote no rows. No rule ran.
 ```
@@ -232,6 +233,7 @@ No figure (agent_error): the agent ended in an error before it reported usage, s
 | Either, then ", by the job's own figures"              | The cost is within it, and only the agent's own job wrote the rows                           | `neutral`  |
 | `Over budget`, `Over limit`, `Model not on the list`   | The cost is over it, or a row names a model off the list                                     | `failure`  |
 | Any of the three, then ", warn-only"                   | The warn-only period holds that failure back                                                 | `neutral`  |
+| `Over budget`, `Over limit`, then ", demoted to a warning" | A ledger demoted the rule by its override rate, so its failure warns until the date the sentence names | `neutral`, or `failure` when another rule fails |
 | Any of the three, then ", approved by" and a login     | A reviewer approved that failure on this commit                                              | `neutral`  |
 | Any of the three, then ", on a fork's own rows"        | A fork's own run wrote the rows, so the follow-up holds the check, in the warn-only period and after it | `neutral`  |
 | `No budget set`                                        | `costroid.yml` sets nothing a rule reads                                                     | `neutral`  |
@@ -268,6 +270,29 @@ The report finds that commit by asking GitHub for the oldest commit on the base 
 
 The period also ends at the twentieth report with a Measured figure, if its 7 days have not ended it first. The report counts them from the `costroid` check runs on the pull request's commits, this run's report included, as it reads them for `pr_budget`. A check run whose object withholds its amounts, or that cannot be read, is not counted, so the 7 days still end the period. `warn_only` then reads `ended` with no `ends`. `costroid serve` takes the count in the request instead, as `measured_pull_requests`.
 
+## Demotion by the override rate
+
+A cost rule whose failures reviewers approve more than one time in five warns where it would fail. Only `costroid serve` demotes a rule, and only from its own ledger's record of the verdicts it answered and the approvals it verified. A check run is never part of that record: any job of the repository can post one, and a record a branch can write must never relax a rule.
+
+- **The record.** `serve` records a failing verdict when a rule fails at `POST /v1/pulls/{pr}/verdict`, and only when three reads it made itself through the GitHub App's installation the request names agree: `costroid.yml` at `config_ref` holds the bytes the request states, the pull request's head is a commit, and `config_ref` is the head of the pull request's base branch as GitHub names that branch. A verdict at any other commit, the pull request's own head among them, is answered and not recorded, and no rule is demoted in it: a caller could name a commit whose `costroid.yml` is looser, and leave no failure in the record. The answer's `override_record` says which read stopped it. `serve` records an approval when a reviewer presses the check's approve button and GitHub confirms the head and the reviewer's write role, as [`docs/approval.md`](approval.md#the-approve-button) says. A review that `costroid approve` counts in a job is not recorded. A failure the warn-only period held to a warning is not recorded either: nothing failed, so there was nothing to approve.
+- **The window.** The record is kept per base branch: a rule's failures, its window and its demotion are those of pull requests into one branch, whose `costroid.yml` sets the limit and `auto_demote`. The window is the latest 20 pull requests on which the rule failed under its present limit, within 90 days and since the rule was last re-armed. A pull request counts once, however many pushes and approvals it had. An approval counts when it binds a head commit on which the rule failed. The pull request being judged never counts, neither its failures nor its approvals.
+- **The threshold.** At least 10 pull requests in the window, approvals from at least 2 accounts, and the approved pull requests times 5 more than the failing ones. 3 of 10 demotes, 2 of 10 does not, and 4 of 20 does not. Below 10 pull requests or 2 accounts the rule fails as written.
+- **What it does.** The rule's `fail` becomes `warn`. Its reason stays its own, such as `over_limit`, and `demoted` beside it states `approved`, `failing` and `until`. The check concludes `neutral`, or `failure` when another rule fails. A demoted rule never concludes `success`.
+- **How long.** 30 days from the verdict that first crossed the threshold. That time is kept once, so the demotion neither ends early nor moves as the window rolls.
+- **Re-arming.** At the end of the 30 days; at once when the rule's limit changes on the base branch, because the record is of that limit; and at once under `auto_demote: false`. After a re-arm the window starts empty, so 10 new failing pull requests come before another demotion.
+- **Which rules.** `run_budget`, `run_cost_threshold`, `run_increase`, `run_increase_percent`, `run_p95` and `pr_budget` can be demoted. Never `model_allowlist`, `customer_pack` or a rule of the repository's own pack. Demotion runs on Costroid's own results before the pack's are joined, so a pack's failure is never demoted.
+- **Which rules are demoted in practice.** A rule is demoted only where it fails at `serve`, and of the six only `pr_budget` can fail there. `serve`'s answer covers a pull request, not one run, so it concludes each of the five run rules `unproven` with reason `no_run_rows`, whatever stands behind the spend, the gateway's attested count included: none of them fails, is recorded or is demoted. `pr_budget` fails at `serve` on the agent's own counts when they show the pull request over its budget, and on the gateway's attested count when that count does, since the rule is held to the larger of the rows' USD list cost and the count. It passes only on the gateway's attested count or a provider's report.
+
+Demotion is on unless the base branch turns it off. The key is read at the base, as every setting is, so a pull request cannot turn it on for itself:
+
+```yaml
+policy:
+  pr_budget_usd: 20
+  auto_demote: false
+```
+
+A demotion shows in one place: the verdict `serve` answers at `POST /v1/pulls/{pr}/verdict`, and whatever reads that answer. Nothing a reviewer sees on a pull request changes. The check and the comment the report job posts are not changed by a demotion: the report reads a rows file, never asks `serve`, and demotes no rule. The check the approve button posts repeats the report's own result object with the approval, so it shows no demotion either. On a pull request, a rule that a ledger has demoted still fails the check the report posts.
+
 ## Settings come from the base branch
 
 The report reads `costroid.yml` at the head of the pull request's base branch when the report runs, never at the pull request's head. A pull request that raises its own budget, or removes `policy.enforce`, does not change its own verdict. The comment says so on every pull request: a change to `costroid.yml` applies after the merge. On GitHub the report posts on the `pull_request` event alone. On any other event it posts nothing, and one line says why.
@@ -300,7 +325,7 @@ The check run's machine block carries the verdict under `policy`. It records eac
 }
 ```
 
-A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a pack, under `policy.pack`, is `costroid.result/0.12`, and its `policy.results` can hold Costroid's `customer_pack` result with `line`. Any other block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. A block that holds a receipt, under `receipts`, is `costroid.result/0.13`, whatever else it holds. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
+A result can carry `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd`, which are amounts, `limit_percent`, `limit_factor`, `baseline_runs`, and `models`, the models off the list. `cost_usd` is the run's cost, except under `pr_budget`, where it is the pull request's total. `p95_usd`, `limit_factor` and `baseline_runs` are `run_p95`'s alone. The comment's copy of the block drops `limit_usd`, `cost_usd`, `baseline_usd` and `p95_usd` when it withholds amounts. The check run's block keeps them. A block whose verdict holds a pack, under `policy.pack`, is `costroid.result/0.12`, and its `policy.results` can hold Costroid's `customer_pack` result with `line`. Any other block whose verdict holds a `run_p95` result is `costroid.result/0.11`. Every other block is `costroid.result/0.10` when it states an estimate and `costroid.result/0.9` when it does not, as before. A block that holds a receipt, under `receipts`, is `costroid.result/0.13`, unless it holds a demoted result. A block whose verdict holds a result with `demoted` is `costroid.result/0.14`, whatever else it holds, and only a ledger's verdict holds one. The action's `conclusion` output carries the check's conclusion, and its `result` output the whole object.
 
 ## The engine
 

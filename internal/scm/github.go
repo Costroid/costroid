@@ -643,12 +643,16 @@ func (g *GitHub) Visibility(ctx context.Context) (Visibility, error) {
 	return Public, nil
 }
 
-// PullRequest reads the head and the author.
+// PullRequest reads the head, the author and the branch the pull request
+// merges into.
 func (g *GitHub) PullRequest(ctx context.Context, number int) (PullRequest, error) {
 	var answer struct {
 		Head struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
 		User struct {
 			Login string `json:"login"`
 		} `json:"user"`
@@ -656,7 +660,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PullRequest, erro
 	if err := g.do(ctx, http.MethodGet, g.repo(fmt.Sprintf("/pulls/%d", number)), nil, &answer); err != nil {
 		return PullRequest{}, err
 	}
-	return PullRequest{Number: number, HeadSHA: answer.Head.SHA, Author: answer.User.Login}, nil
+	return PullRequest{Number: number, HeadSHA: answer.Head.SHA, Author: answer.User.Login, BaseBranch: answer.Base.Ref}, nil
 }
 
 // CanWrite reads the collaborator's permission field.

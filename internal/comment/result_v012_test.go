@@ -28,6 +28,10 @@ const resultV012SchemaSHA256 = "96c65ca08395e7c86f33b628600c6bf168639d76f5741954
 // added.
 var resultKeysAddedIn012 = []string{"line"}
 
+// resultKeysAddedIn014 are the keys of a policy result that result/v0.14
+// added.
+var resultKeysAddedIn014 = []string{"demoted"}
+
 // jsonKeys are a struct's JSON keys, sorted.
 func jsonKeys(of reflect.Type) []string {
 	var keys []string
@@ -91,7 +95,8 @@ func TestResultV012SchemaCopyMatchesItsDigest(t *testing.T) {
 		"the pack":        {reflect.TypeFor[policy.PackRun](), document.Defs.Pack.Properties},
 		"a pack result":   {reflect.TypeFor[policy.PackResult](), document.Defs.PackResult.Properties},
 	} {
-		if fromCode, fromSchema := jsonKeys(pair.code), slices.Sorted(maps.Keys(pair.schema)); !slices.Equal(fromCode, fromSchema) {
+		fromCode := slices.DeleteFunc(jsonKeys(pair.code), func(key string) bool { return slices.Contains(resultKeysAddedIn014, key) })
+		if fromSchema := slices.Sorted(maps.Keys(pair.schema)); !slices.Equal(fromCode, fromSchema) {
 			t.Errorf("%s: the code writes %v, result/v0.12 states %v", name, fromCode, fromSchema)
 		}
 	}

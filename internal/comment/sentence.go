@@ -129,6 +129,8 @@ func (b telling) sentenceAt(said cut) string {
 		return refusedSentence
 	case packDecides:
 		return b.packClaim(pack, said).text(said, withheld)
+	case ruled && decided.Demoted != nil && policy.Demotable(decided.Rule) && !b.forkRows:
+		return b.demotedClaim(decided).text(whole, withheld)
 	case ruled && overRule(decided):
 		return b.overClaim(decided, said).text(said, withheld)
 	case ruled && broken(decided):
@@ -289,6 +291,35 @@ func (b telling) overClaim(result policy.Result, said cut) claim {
 	return over
 }
 
+// whole is a sentence said in full.
+var whole = cut{figures: 1, limit: true, closing: true}
+
+// demotedOver says which limit a demoted rule's figure passed, by rule, in
+// words that name no amount.
+var demotedOver = map[string]string{
+	policy.RuleRunBudget:          "is over its run budget",
+	policy.RuleRunCostThreshold:   "is over its run cost limit",
+	policy.RuleRunIncrease:        "is over its allowed increase",
+	policy.RuleRunIncreasePercent: "is over its allowed increase",
+	policy.RuleRunP95:             "is over its P95 limit",
+}
+
+// demotedClaim is the sentence for a rule a ledger demoted by its override
+// record: that its limit was passed, that it is demoted to a warning by the
+// record, and that the check is neutral. It names no amount, so it is said
+// whole whatever the figures: the amounts follow in the rule's own line, and
+// the record in the line under the sentence.
+func (b telling) demotedClaim(result policy.Result) claim {
+	demoted := claim{state: "Over " + leadNouns[result.Rule] + ", demoted to a warning"}
+	demoted.figure = b.subject() + " " + demotedOver[result.Rule]
+	if result.Rule == policy.RulePullRequestBudget {
+		demoted.figure = "this " + b.request + "'s runs are over the " + ruleNoun(result.Rule, b.request)
+	}
+	demoted.closing = fmt.Sprintf("Reviewers approved %d of the last %d %ss it failed, so it warns until %s and the check is neutral.",
+		result.Demoted.Approved, result.Demoted.Failing, b.request, demotedUntil(*result.Demoted))
+	return demoted
+}
+
 // packOwn opens the closing clause of a pack rule's sentence.
 const packOwn = "The rule is this repository's own"
 
@@ -348,6 +379,14 @@ func (b telling) packUnproven(result policy.Result) string {
 		return "the policy pack could not be read at the base commit, so none of its rules ran"
 	}
 	return "the policy pack could not be read, so none of its rules ran"
+}
+
+// demotedUntil is the instant a demotion ends, as a person reads it.
+func demotedUntil(demoted policy.Demoted) string {
+	if until, err := time.Parse(time.RFC3339, demoted.Until); err == nil {
+		return until.UTC().Format(instantLayout)
+	}
+	return "its term ends"
 }
 
 // warnOnlyEnd is the instant the warn-only period ends, or the period by name

@@ -44,6 +44,9 @@ type PullRequest struct {
 	Number  int
 	HeadSHA string
 	Author  string
+	// BaseBranch is the branch the pull request merges into, as the host
+	// states it.
+	BaseBranch string
 }
 
 // OpenPull is one open pull request as the host lists it.

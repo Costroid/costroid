@@ -364,7 +364,7 @@ func TestLifetimeLeavesOutWhatItCannotAddUp(t *testing.T) {
 	posted(stub, secondCommit, text)
 	for _, unread := range []string{
 		withSchema(text, "costroid.result/0.2"),
-		withSchema(text, "costroid.result/0.14"),
+		withSchema(text, "costroid.result/0.15"),
 		strings.Replace(text, `"amounts": "shown"`, `"amounts": "withheld"`, 1),
 		strings.Replace(text, `"figures_omitted": 0`, `"figures_omitted": 1`, 1),
 		strings.Replace(text, `"currency": "USD"`, `"currency": "usd"`, 1),

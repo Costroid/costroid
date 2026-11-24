@@ -20,7 +20,7 @@ import (
 // sentenceStates are the states a verdict sentence opens with. Each names
 // what is true of the run, and none is a conclusion value. A pack rule's
 // state names the rule, and a stopped pack's its reason.
-var sentenceStates = regexp.MustCompile(`^((Within budget|Over budget|Within limit|Over limit|Model not on the list|Models on the list|No budget set|Not decided|No figure \([a-z_]+\)|No agent run)(, by the job's own figures|, warn-only|, approved by [A-Za-z0-9-]+|, on a fork's own rows)?|(Pack rule failed|Pack rule warned)(, warn-only|, on a fork's own rows)? \([a-z][a-z0-9_]{0,62}\)|Pack stopped \((pack_bound|pack_result)\)): `)
+var sentenceStates = regexp.MustCompile(`^((Within budget|Over budget|Within limit|Over limit|Model not on the list|Models on the list|No budget set|Not decided|No figure \([a-z_]+\)|No agent run)(, by the job's own figures|, warn-only|, demoted to a warning|, approved by [A-Za-z0-9-]+|, on a fork's own rows)?|(Pack rule failed|Pack rule warned)(, warn-only|, on a fork's own rows)? \([a-z][a-z0-9_]{0,62}\)|Pack stopped \((pack_bound|pack_result)\)): `)
 
 // markup is every character that would make a sentence render as anything
 // but its own text in a comment, or break a table.
@@ -68,6 +68,19 @@ func TestVerdictSentenceIsOneStringOnEverySurface(t *testing.T) {
 		}
 	}
 	states := goldenStates(t)
+	// A rule a ledger demoted says so in the state, then that its limit was
+	// passed, the record, when the demotion ends and that the check is
+	// neutral, whole and with no amount, shown and withheld.
+	for name, want := range map[string]string{
+		"demoted-run-budget":              "Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.",
+		"demoted-run-budget-withheld":     "Over budget, demoted to a warning: this run is over its run budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.",
+		"demoted-request-budget":          "Over budget, demoted to a warning: this pull request's runs are over the pull request budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral.",
+		"demoted-request-budget-withheld": "Over budget, demoted to a warning: this pull request's runs are over the pull request budget. Reviewers approved 7 of the last 20 pull requests it failed, so it warns until 2026-12-12 09:00 UTC and the check is neutral. Amounts are withheld here.",
+	} {
+		if got := VerdictSentence(states[name]); got != want {
+			t.Errorf("%s: the sentence is\n%q\nwant\n%q", name, got, want)
+		}
+	}
 	object, err := Result(states["fail-shown"])
 	if err != nil {
 		t.Fatal(err)
@@ -144,15 +157,25 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 		if length := utf8.RuneCountInString(VerdictSentence(input)); length > StatusLimit {
 			t.Errorf("%s: the sentence is %d characters", name, length)
 		}
+		if whole := input.telling().sentenceAt(cuts[0]); VerdictSentence(input) != whole {
+			t.Errorf("%s: the title is a cut sentence:\n%s\nwhole, it is\n%s", name, VerdictSentence(input), whole)
+		}
 	}
 	limit := strings.Repeat("7", 300) + ".123456789012"
 	rules := []string{
 		policy.RuleRunBudget, policy.RuleRunCostThreshold, policy.RuleRunIncrease, policy.RuleRunIncreasePercent, policy.RuleRunP95,
 		policy.RulePullRequestBudget, policy.RuleMonthlyBudget, policy.RuleModelAllowlist, policy.RuleAttribution,
 	}
-	outcomes := []struct{ outcome, reason string }{
-		{policy.Fail, policy.ReasonOverLimit}, {policy.Warn, policy.ReasonOverLimit}, {policy.Pass, policy.ReasonWithinLimit},
-		{policy.Unproven, policy.ReasonUnverifiedRows}, {policy.Unproven, policy.ReasonNoLedger}, {policy.Unproven, policy.ReasonNoBaseline},
+	// A demotion states the most pull requests a window holds and the
+	// longest instant.
+	demotion := &policy.Demoted{Reason: policy.DemotedByOverrideRate, Approved: 20, Failing: 20, Until: "2026-12-31T23:59:59Z"}
+	outcomes := []struct {
+		outcome, reason string
+		demoted         *policy.Demoted
+	}{
+		{policy.Fail, policy.ReasonOverLimit, nil}, {policy.Warn, policy.ReasonOverLimit, nil}, {policy.Pass, policy.ReasonWithinLimit, nil},
+		{policy.Unproven, policy.ReasonUnverifiedRows, nil}, {policy.Unproven, policy.ReasonNoLedger, nil}, {policy.Unproven, policy.ReasonNoBaseline, nil},
+		{policy.Warn, policy.ReasonOverLimit, demotion},
 	}
 	// A figure is a sum of rows, and so are a pull request's total and a
 	// baseline's median and P95. Only a limit in costroid.yml has no longest
@@ -167,12 +190,19 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 				result := policy.Result{
 					Rule: rule, Outcome: outcome.outcome, Reason: outcome.reason, LimitUSD: limit, CostUSD: sum, BaselineUSD: sum,
 					LimitPercent: strings.Repeat("9", 40), Models: []string{"a", "b"}, P95USD: sum, LimitFactor: "9999.999999999999", BaselineRuns: &runs,
+					Demoted: outcome.demoted,
 				}
 				shown := worstCase(t, figures, result)
 				onGitLab, onFork := asGitLab(shown), shown.OnForkRows()
 				for _, input := range []Input{shown, withheld(shown), onGitLab, withheld(onGitLab), onFork, withheld(onFork)} {
 					sentence := VerdictSentence(input)
 					checked++
+					demoted := outcome.demoted != nil && policy.Demotable(rule) && !input.forkRows
+					// A demoted rule's sentence is said whole, never cut, and
+					// names no amount: the rule's own line gives them.
+					if whole := input.telling().sentenceAt(cuts[0]); demoted && sentence != whole {
+						t.Errorf("%s demoted over %d figures, amounts %d: the sentence is cut:\n%s\nwhole, it is\n%s", rule, figures, input.Amounts, sentence, whole)
+					}
 					if length := utf8.RuneCountInString(sentence); length > StatusLimit {
 						t.Errorf("%s %s over %d figures, amounts %d: %d characters: %s", rule, outcome.outcome, figures, input.Amounts, length, sentence)
 					}
@@ -184,7 +214,11 @@ func TestVerdictSentenceFitsTheStatusLimit(t *testing.T) {
 						first, basis = "USD "+sum+" at list (every basis together)", "priced at list"
 					}
 					names := strings.Contains(sentence, first)
-					if input.Amounts != AmountsShown {
+					switch {
+					case demoted:
+						names = strings.Contains(sentence, ", demoted to a warning: ") && !amountInWords.MatchString(sentence) &&
+							strings.Contains(sentence, " and the check is neutral.")
+					case input.Amounts != AmountsShown:
 						names = strings.Contains(sentence, basis) && strings.HasSuffix(sentence, " Amounts are withheld here.") && !amountInWords.MatchString(sentence)
 					}
 					if !names {

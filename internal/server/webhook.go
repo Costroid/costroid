@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 
 	"github.com/Costroid/costroid/internal/amounts"
 	"github.com/Costroid/costroid/internal/comment"
@@ -17,6 +19,9 @@ import (
 const (
 	// webhookPath is where GitHub delivers the App's events.
 	webhookPath = "/webhooks/github"
+	// githubHost is the host of every repository the App reaches, as a
+	// ledger names it.
+	githubHost = "github.com"
 	// webhookQueueSize is how many verified deliveries wait for the worker. A
 	// delivery past it answers 503 and stays unclaimed, so a redelivery is
 	// processed.
@@ -209,6 +214,9 @@ func (s *Server) pressApprove(ctx context.Context, event scm.Event, logger *slog
 	if err != nil {
 		return err
 	}
+	if err := s.recordApproval(ctx, event.Repository, approval); err != nil {
+		return err
+	}
 	shown := func() comment.Amounts {
 		return showsAmounts(ctx, host, base, logger.With("repository", event.Repository))
 	}
@@ -218,6 +226,29 @@ func (s *Server) pressApprove(ctx context.Context, event scm.Event, logger *slog
 	}
 	logger.Info("check run posted", "repository", event.Repository, "pull_request", approval.PullRequest, "check_run", id, "conclusion", conclusion)
 	return nil
+}
+
+// recordApproval keeps an approval in the ledger's override record. scm.Approve
+// returned it only after the host answered the pull request's head and the
+// approver's write role, so nothing a request states makes one. A ledger that
+// keeps no record, or no tenant for the repository's owner, keeps nothing.
+func (s *Server) recordApproval(ctx context.Context, repository string, approval scm.Approval) error {
+	keeper := s.overrides()
+	if keeper == nil {
+		return nil
+	}
+	owner, _, _ := strings.Cut(repository, "/")
+	tenant, err := s.Ledger.TenantForOwner(ctx, githubHost, owner)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return keeper.AddApproval(ctx, tenant, store.PullRequestApproval{
+		Repository: githubHost + "/" + strings.ToLower(repository), PullRequest: strconv.Itoa(approval.PullRequest),
+		HeadSHA: approval.HeadSHA, Approver: approval.Approver, At: approval.At,
+	})
 }
 
 // allowAuthor reads approval.allow_author from costroid.yml at base, the head

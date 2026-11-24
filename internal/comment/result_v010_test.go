@@ -73,7 +73,9 @@ func withoutEstimate(t *testing.T, input Input) Input {
 }
 
 // copies are the objects a report writes for one input: the check run's, the
-// comment's shown and withheld, and the run's own before any check.
+// comment's shown and withheld, and the run's own before any check. A run
+// before its check reads no ledger, so its object never holds a verdict a
+// ledger demoted a rule in, and a demoted state has no such copy.
 func copies(t *testing.T, input Input) map[string]string {
 	t.Helper()
 	objects := map[string]string{}
@@ -87,6 +89,9 @@ func copies(t *testing.T, input Input) map[string]string {
 	}
 	if objects["withheld comment copy"], err = withheld(input).block(); err != nil {
 		t.Fatal(err)
+	}
+	if holdsDemotion(input) {
+		return objects
 	}
 	before := input
 	before.BeforeCheck = true
@@ -182,8 +187,8 @@ func TestMachineBlockStatesEveryEstimateFigureOrCountsIt(t *testing.T) {
 }
 
 // TestResultWithoutAnEstimateIsWhatItWas holds every golden state that states
-// no estimate, and holds no value only result/v0.11, result/v0.12 or
-// result/v0.13 defines, to result/v0.9:
+// no estimate, and holds no value only result/v0.11, result/v0.12,
+// result/v0.13 or result/v0.14 defines, to result/v0.9:
 // its schema string, no estimates field, and the copied 0.9 schema. A note
 // whose reason is off the closed list states no line, so it states no
 // estimate either.
@@ -199,7 +204,7 @@ func TestResultWithoutAnEstimateIsWhatItWas(t *testing.T) {
 			stated++
 			continue
 		}
-		if holdsP95(input) || holdsPack(input) || holdsReceipt(input) {
+		if holdsP95(input) || holdsPack(input) || holdsReceipt(input) || holdsDemotion(input) {
 			continue
 		}
 		for file, object := range machineBlocks(t, input) {

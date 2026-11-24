@@ -147,7 +147,7 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
   "os": "linux",
   "arch": "amd64",
   "catalog": { "version": "0.4.3", "prices_read": "2026-11-21" },
-  "result_schemas": ["costroid.result/0.9", "costroid.result/0.10", "costroid.result/0.11", "costroid.result/0.12", "costroid.result/0.13"],
+  "result_schemas": ["costroid.result/0.9", "costroid.result/0.10", "costroid.result/0.11", "costroid.result/0.12", "costroid.result/0.13", "costroid.result/0.14"],
   "config": { "file": "costroid.yml", "found": false }
 }
 ```

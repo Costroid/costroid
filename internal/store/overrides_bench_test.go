@@ -29,12 +29,13 @@ var (
 
 // seedFailingVerdicts writes a year of failing verdicts straight into the
 // table, because the benchmark measures the read. Each repository's pull
-// requests are numbered in time, and each fails every rule four times over
-// four pushes. The limit moves from 4 to 5 halfway through the year.
+// requests merge into main and are numbered in time, and each fails every
+// rule four times over four pushes. The limit moves from 4 to 5 halfway
+// through the year.
 const seedFailingVerdicts = `
-INSERT INTO failing_verdicts (tenant_id, repo, pr, head_sha, rule, rule_limit, failed_at)
+INSERT INTO failing_verdicts (tenant_id, repo, pr, head_sha, rule, rule_limit, failed_at, base_branch)
 SELECT costroid_tenant(), repo, pr, md5(seed) || substr(md5(seed), 1, 8), rule,
-	CASE WHEN at < $3::timestamptz + interval '182 days' THEN '4' ELSE '5' END, at
+	CASE WHEN at < $3::timestamptz + interval '182 days' THEN '4' ELSE '5' END, at, 'main'
 FROM (
 	SELECT 'github.com/acme/repo-' || (i % $1) AS repo, (1 + i / 400)::text AS pr,
 		($2::text[])[1 + (i / $1) % 5] AS rule,
@@ -86,7 +87,7 @@ func explainOverrides(b *testing.B, db storetest.Database, tenant store.TenantID
 		}
 		rows, err := tx.Query(ctx, `EXPLAIN (ANALYZE, BUFFERS) `+store.CountOverrides, query.Repository, query.Rule,
 			query.Limit.String(), query.PullRequest, query.At.Add(-store.OverrideWindowDays*24*time.Hour), query.At,
-			store.OverrideWindowPullRequests)
+			store.OverrideWindowPullRequests, query.BaseBranch)
 		if err != nil {
 			return err
 		}
@@ -130,6 +131,7 @@ func BenchmarkOverrides(b *testing.B) {
 	query := func() store.OverrideQuery {
 		return store.OverrideQuery{
 			Repository:  fmt.Sprintf("github.com/acme/repo-%d", random.IntN(overrideBenchRepos)),
+			BaseBranch:  "main",
 			PullRequest: fmt.Sprint(1 + random.IntN(2500)),
 			Rule:        overrideBenchRules[random.IntN(len(overrideBenchRules))],
 			Limit:       decimal.MustParse("5"),

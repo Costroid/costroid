@@ -20,6 +20,9 @@ import (
 
 const overrideRule = "run_budget"
 
+// overrideBranch is the base branch every pull request here merges into.
+const overrideBranch = "main"
+
 // judgedAt is the time of the verdict every query here is asked at.
 var judgedAt = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 
@@ -29,7 +32,7 @@ func headOf(pr, push int) string {
 
 func failure(pr, push int, limit string, at time.Time) store.FailingVerdict {
 	return store.FailingVerdict{
-		Repository: repoA, PullRequest: fmt.Sprint(pr), HeadSHA: headOf(pr, push),
+		Repository: repoA, BaseBranch: overrideBranch, PullRequest: fmt.Sprint(pr), HeadSHA: headOf(pr, push),
 		Rule: overrideRule, Limit: decimal.MustParse(limit), At: at,
 	}
 }
@@ -88,7 +91,7 @@ func (l overrideLedger) count(query store.OverrideQuery) store.OverrideCount {
 // judgedAt, never re-armed.
 func judging() store.OverrideQuery {
 	return store.OverrideQuery{
-		Repository: repoA, PullRequest: "999", Rule: overrideRule, Limit: decimal.MustParse("5"), At: judgedAt,
+		Repository: repoA, BaseBranch: overrideBranch, PullRequest: "999", Rule: overrideRule, Limit: decimal.MustParse("5"), At: judgedAt,
 	}
 }
 
@@ -252,7 +255,7 @@ func TestTheOverrideRecordRefusesAMalformedRow(t *testing.T) {
 		"an upper-case path":   l.record.AddFailure(ctx, l.tenant, upperRepo),
 		"an App's approval":    l.record.AddApproval(ctx, l.tenant, app),
 		"no pull request":      l.record.AddApproval(ctx, l.tenant, store.PullRequestApproval{Repository: repoA, HeadSHA: headOf(1, 1), Approver: "octo-lead", At: at}),
-		"a limit below nought": l.record.AddFailure(ctx, l.tenant, store.FailingVerdict{Repository: repoA, PullRequest: "1", HeadSHA: headOf(1, 1), Rule: overrideRule, Limit: decimal.MustParse("0").Sub(decimal.MustParse("1")), At: at}),
+		"a limit below nought": l.record.AddFailure(ctx, l.tenant, store.FailingVerdict{Repository: repoA, BaseBranch: overrideBranch, PullRequest: "1", HeadSHA: headOf(1, 1), Rule: overrideRule, Limit: decimal.MustParse("0").Sub(decimal.MustParse("1")), At: at}),
 	} {
 		t.Run(name, func(t *testing.T) { requireSQLState(t, err, checkViolation) })
 	}
@@ -260,7 +263,7 @@ func TestTheOverrideRecordRefusesAMalformedRow(t *testing.T) {
 
 // TestTheOverrideRecordMigratesOntoALedgerOfTheReleaseBefore migrates a
 // ledger through every migration but the record's, writes a row, and then
-// migrates it the rest of the way, as an upgrade does.
+// migrates it the rest of the way, as an upgrade does, and keeps a demotion.
 func TestTheOverrideRecordMigratesOntoALedgerOfTheReleaseBefore(t *testing.T) {
 	db := storetest.Empty(t)
 	ctx := context.Background()
@@ -309,4 +312,104 @@ func TestTheOverrideRecordMigratesOntoALedgerOfTheReleaseBefore(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireCount(t, count, 1, 0, 0)
+	started := judgedAt.Add(-time.Hour)
+	requireDemotion(t, keep(t, s.DemotionRecord(), a, demotionOf(time.Time{}, started)), demotionOf(time.Time{}, started))
+}
+
+// demotionOf is run_budget's demotion in repoA under limit 5, re-armed at
+// rearmed, and started at from on 3 of 10 by 2 accounts unless from is zero.
+func demotionOf(rearmed, from time.Time) store.RuleDemotion {
+	demotion := store.RuleDemotion{Repository: repoA, BaseBranch: overrideBranch, Rule: overrideRule, Limit: decimal.MustParse("5"), Rearmed: rearmed}
+	if !from.IsZero() {
+		demotion.From, demotion.Failing, demotion.Approved, demotion.Approvers = from, 10, 3, 2
+	}
+	return demotion
+}
+
+func keep(t *testing.T, record store.DemotionRecord, tenant store.TenantID, demotion store.RuleDemotion) store.RuleDemotion {
+	t.Helper()
+	kept, err := record.Keep(context.Background(), tenant, demotion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kept
+}
+
+func requireDemotion(t *testing.T, got, want store.RuleDemotion) {
+	t.Helper()
+	if got.Limit.Cmp(want.Limit) != 0 || !got.Rearmed.Equal(want.Rearmed) || !got.From.Equal(want.From) || got.Off != want.Off ||
+		got.Failing != want.Failing || got.Approved != want.Approved || got.Approvers != want.Approvers {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+// TestTheDemotionRecordIsAppendOnlyAndKeepsATermOnce keeps a rule's demotion
+// as serve's verdicts move it, at each base branch apart. The application role can only read and insert.
+// A term is kept once: a second verdict that would start the same term keeps
+// nothing and reads the first one's start. The latest re-arm stands, with its
+// term beside it, and a rule no verdict moved reads as none. The record of a
+// term must demote: Postgres refuses one of 2 in 10, of one account, of 9, or
+// beside demotion turned off.
+func TestTheDemotionRecordIsAppendOnlyAndKeepsATermOnce(t *testing.T) {
+	kind := reflect.TypeFor[store.DemotionRecord]()
+	var methods []string
+	for i := range kind.NumMethod() {
+		methods = append(methods, kind.Method(i).Name)
+	}
+	if want := []string{"Demotion", "Keep"}; !slices.Equal(methods, want) {
+		t.Fatalf("the demotion record's methods are %v, want %v", methods, want)
+	}
+	l := newOverrideLedger(t)
+	ctx := context.Background()
+	record := open(t, l.db).DemotionRecord()
+	if _, found, err := record.Demotion(ctx, l.tenant, repoA, overrideBranch, overrideRule); found || err != nil {
+		t.Fatalf("a rule no verdict moved: found %t, %v", found, err)
+	}
+	started := judgedAt.Add(-48 * time.Hour)
+	first := keep(t, record, l.tenant, demotionOf(time.Time{}, started))
+	requireDemotion(t, first, demotionOf(time.Time{}, started))
+	requireDemotion(t, keep(t, record, l.tenant, demotionOf(time.Time{}, started.Add(time.Hour))), first)
+	rearmed := started.Add(30 * 24 * time.Hour)
+	requireDemotion(t, keep(t, record, l.tenant, demotionOf(rearmed, time.Time{})), demotionOf(rearmed, time.Time{}))
+	again := keep(t, record, l.tenant, demotionOf(rearmed, rearmed.Add(time.Hour)))
+	requireDemotion(t, again, demotionOf(rearmed, rearmed.Add(time.Hour)))
+	requireDemotion(t, keep(t, record, l.tenant, demotionOf(rearmed, time.Time{})), again)
+	if _, found, err := record.Demotion(ctx, l.another, repoA, overrideBranch, overrideRule); found || err != nil {
+		t.Fatalf("another tenant read the demotion: found %t, %v", found, err)
+	}
+	// The same term at another base branch is that branch's own.
+	release := demotionOf(time.Time{}, started.Add(2*time.Hour))
+	release.BaseBranch = "release"
+	requireDemotion(t, keep(t, record, l.tenant, release), release)
+	if kept, _, err := record.Demotion(ctx, l.tenant, repoA, overrideBranch, overrideRule); err != nil || !kept.Rearmed.Equal(again.Rearmed) || !kept.From.Equal(again.From) {
+		t.Fatalf("a term at release moved main's demotion: %+v, %v", kept, err)
+	}
+
+	// Each is a term of a re-arm no row holds, so only the checks can refuse
+	// it.
+	unkept, later := rearmed.Add(10*24*time.Hour), rearmed.Add(11*24*time.Hour)
+	for name, demotion := range map[string]store.RuleDemotion{
+		"2 of 10":           func() store.RuleDemotion { d := demotionOf(unkept, later); d.Approved = 2; return d }(),
+		"one account":       func() store.RuleDemotion { d := demotionOf(unkept, later); d.Approvers = 1; return d }(),
+		"9 failing":         func() store.RuleDemotion { d := demotionOf(unkept, later); d.Failing, d.Approved = 9, 9; return d }(),
+		"21 failing":        func() store.RuleDemotion { d := demotionOf(unkept, later); d.Failing, d.Approved = 21, 21; return d }(),
+		"beside off":        func() store.RuleDemotion { d := demotionOf(unkept, later); d.Off = true; return d }(),
+		"before its arming": demotionOf(unkept, rearmed),
+	} {
+		_, err := record.Keep(ctx, l.tenant, demotion)
+		t.Run(name, func(t *testing.T) { requireSQLState(t, err, checkViolation) })
+	}
+
+	conn := connect(t, l.db.AppURL)
+	for _, statement := range []string{
+		`UPDATE rule_demotions SET off = true`,
+		`DELETE FROM rule_demotions`,
+		`TRUNCATE rule_demotions`,
+	} {
+		err := inTenant(t, conn, l.tenant, func(tx pgx.Tx) error {
+			_, err := tx.Exec(context.Background(), statement)
+			return err
+		})
+		requireSQLState(t, err, insufficientPrivilege)
+	}
 }

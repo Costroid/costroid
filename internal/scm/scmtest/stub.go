@@ -102,8 +102,11 @@ type Stub struct {
 	// the owner/name it is in, which its answer names when set.
 	HeadBranch     string
 	HeadRepository string
-	Permission     string
-	nextID         int64
+	// BaseBranch is the branch the pull request merges into, which its
+	// answer names.
+	BaseBranch string
+	Permission string
+	nextID     int64
 }
 
 // New starts a stub and stops it with the test.
@@ -199,7 +202,7 @@ func (s *Stub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.HeadRepository != "" {
 			head["repo"] = map[string]string{"full_name": s.HeadRepository}
 		}
-		s.answer(w, map[string]any{"head": head, "user": map[string]string{"login": s.Author}})
+		s.answer(w, map[string]any{"head": head, "base": map[string]string{"ref": s.BaseBranch}, "user": map[string]string{"login": s.Author}})
 	case strings.Contains(path, "/collaborators/"):
 		s.answer(w, map[string]string{"permission": s.Permission})
 	case strings.HasPrefix(path, "/repos/"):
