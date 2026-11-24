@@ -736,7 +736,7 @@ func TestMergedDocsMatchTheCommand(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"      contents: read\n      pull-requests: read\n      id-token: write\n",
+		"    permissions:\n      pull-requests: read\n      id-token: write\n",
 		"GITHUB_TOKEN: ${{ github.token }}", platformTokenVariable + ": ${{ secrets." + platformTokenVariable + " }}",
 		"identity:read", "merges:write", "--json", "--dry-run",
 	} {

@@ -82,14 +82,18 @@ Install the App from its settings page, under Install App, on the repositories w
 
 ## Permissions and events
 
-The manifest asks for four repository permissions, the ones an installation token asks for and no more:
+The manifest asks for four repository permissions, the ones an installation token asks for:
 
 | Permission      | Access | Why                                                                                                                                               |
 | --------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `checks`        | write  | Post the `costroid` check again when the approve button is pressed, and list a commit's check runs. A press reaches only an App with write access |
-| `pull_requests` | write  | Read the pull request's head and author for an approval, and post Costroid's comment on a pull request                                            |
+| `pull_requests` | read   | Read the pull request's head and author for an approval                                                                                           |
 | `contents`      | read   | Read `costroid.yml` at the head of the base branch                                                                                                |
-| `metadata`      | read   | Read whether the person who pressed the button can write to the repository                                                                        |
+| `metadata`      | read   | Read whether the person who pressed the button can write to the repository, and whether the repository is public                                  |
+
+[`docs/permissions.md`](permissions.md#the-github-app) lists the calls that need each permission.
+
+An App registered from an earlier release keeps `pull_requests: write`, since GitHub keeps the permissions an App was registered with, until its owner sets Pull requests to Read-only in the App's settings (Developer settings, GitHub Apps, Edit, Permissions & events, Save changes), which GitHub applies at once; its tokens ask for read either way.
 
 It subscribes to one event:
 
@@ -112,6 +116,7 @@ Read on 2026-11-09:
 - GitHub, [Registering a GitHub App from a manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest): "You must complete all three steps in the GitHub App Manifest flow within one hour." "GitHub creates a webhook secret for the app automatically."
 - GitHub, [Managing private keys for GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps): the key is "in `PKCS#1 RSAPrivateKey` format."
 - GitHub, [Permissions required for GitHub Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps): `POST /repos/{owner}/{repo}/check-runs` needs Checks write; `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` and `GET /repos/{owner}/{repo}/pulls/{pull_number}` are under Pull requests; `GET /repos/{owner}/{repo}/collaborators/{username}/permission` under Metadata read; `GET /repos/{owner}/{repo}/contents/{path}` under Contents read.
+- GitHub, [Modifying a GitHub App registration](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration), read on 2026-11-24: the steps to Permissions & events and Save changes, and "If you remove permissions or webhooks from your GitHub App, the changes will take effect immediately."
 - GitHub, [Webhook events and payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads): of `installation` and `installation_repositories`, "All GitHub Apps receive this event by default. You cannot manually subscribe to this event." Of `requested_action`, "Only the GitHub App someone requests to perform an action will receive the requested_action payload."
 
 GitHub's acceptance of a `127.0.0.1` address as the manifest's `redirect_url` is unverified until the first App is registered this way.

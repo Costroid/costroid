@@ -65,7 +65,7 @@ var appHelp = cli.Page{
 		{Heading: "Where it is described", Body: []cli.Block{cli.Text("docs/github-app.md walks through it.")}},
 		{Heading: "manifest", Body: []cli.Block{cli.Text(`manifest prints the App's manifest as JSON: --name, the webhook at
 --webhook-url, the check_run event and the four permissions an installation
-token asks for, checks and pull_requests to write, contents and metadata to
+token asks for, checks to write, pull_requests, contents and metadata to
 read. The App is private to the account that creates it.`)}},
 		{Heading: "create", Body: []cli.Block{cli.Text(`create runs GitHub's manifest flow. It prints an address on this machine to
 open in a browser signed in to GitHub. That page sends the manifest to
@@ -117,7 +117,7 @@ var (
 	ownerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
 	codePattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 	// appPermissions are what AppTokens asks an installation token for.
-	appPermissions = map[string]string{"checks": "write", "pull_requests": "write", "contents": "read", "metadata": "read"}
+	appPermissions = map[string]string{"checks": "write", "pull_requests": "read", "contents": "read", "metadata": "read"}
 )
 
 // appWorld is where app create reaches: GitHub's site and API, AWS through

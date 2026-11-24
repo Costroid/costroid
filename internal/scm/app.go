@@ -79,7 +79,7 @@ func (a *AppTokens) Token(ctx context.Context) (string, error) {
 	}
 	request := struct {
 		Permissions map[string]string `json:"permissions"`
-	}{map[string]string{"checks": "write", "pull_requests": "write", "contents": "read", "metadata": "read"}}
+	}{map[string]string{"checks": "write", "pull_requests": "read", "contents": "read", "metadata": "read"}}
 	var answer struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`

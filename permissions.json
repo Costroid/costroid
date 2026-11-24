@@ -1,0 +1,2078 @@
+{
+  "calls": [
+    {
+      "id": "create-check-run",
+      "host": "github",
+      "base": "api",
+      "method": "POST",
+      "path": "/repos/{owner}/{repo}/check-runs",
+      "access": "write",
+      "permissions": {
+        "checks": "write"
+      },
+      "what": "the `costroid` check run",
+      "why": "Posts the `costroid` check on the commit the report is about.",
+      "by": [
+        "scm.GitHub.PostCheck"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid follow-up",
+        "costroid approve",
+        "costroid serve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/checks/runs#create-a-check-run",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Checks\" repository permissions (write)"
+      }
+    },
+    {
+      "id": "update-check-run",
+      "host": "github",
+      "base": "api",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}/check-runs/{check_run_id}",
+      "access": "write",
+      "permissions": {
+        "checks": "write"
+      },
+      "what": "the `costroid` check run",
+      "why": "Rewrites the output of a check run the same token posted, to name the check run's own id in it.",
+      "by": [
+        "scm.GitHub.UpdateCheck"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid follow-up",
+        "costroid approve",
+        "costroid serve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/checks/runs#update-a-check-run",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Checks\" repository permissions (write)"
+      }
+    },
+    {
+      "id": "list-check-runs",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/commits/{ref}/check-runs",
+      "access": "read",
+      "permissions": {
+        "checks": "read"
+      },
+      "what": "a commit's `costroid` check runs",
+      "why": "Reads the results earlier reports posted, for the pull request's total, a baseline and an approval.",
+      "by": [
+        "scm.GitHub.CheckRuns",
+        "scm.GitHub.HeadCheckRuns"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid approve",
+        "costroid serve",
+        "costroid result"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Checks\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-comments",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues/{issue_number}/comments",
+      "access": "read",
+      "permissions": {
+        "pull-requests": "read"
+      },
+      "what": "the pull request's comments",
+      "why": "Finds the comment Costroid posted earlier, so it is edited and never posted twice, and the author's receipt where receipts are on.",
+      "by": [
+        "scm.GitHub.UpsertComment",
+        "scm.GitHub.HasComment",
+        "scm.GitHub.AuthorComments"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/issues/comments#list-issue-comments",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have at least one of the following permission sets: \"Issues\" repository permissions (read) \"Pull requests\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "create-comment",
+      "host": "github",
+      "base": "api",
+      "method": "POST",
+      "path": "/repos/{owner}/{repo}/issues/{issue_number}/comments",
+      "access": "write",
+      "permissions": {
+        "pull-requests": "write"
+      },
+      "what": "Costroid's comment",
+      "why": "Posts Costroid's comment on the pull request when it holds none.",
+      "by": [
+        "scm.GitHub.UpsertComment"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/issues/comments#create-an-issue-comment",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have at least one of the following permission sets: \"Issues\" repository permissions (write) \"Pull requests\" repository permissions (write)"
+      }
+    },
+    {
+      "id": "update-comment",
+      "host": "github",
+      "base": "api",
+      "method": "PATCH",
+      "path": "/repos/{owner}/{repo}/issues/comments/{comment_id}",
+      "access": "write",
+      "permissions": {
+        "pull-requests": "write"
+      },
+      "what": "Costroid's comment",
+      "why": "Edits the comment the same account posted earlier, and no other.",
+      "by": [
+        "scm.GitHub.UpsertComment"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/issues/comments#update-an-issue-comment",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have at least one of the following permission sets: \"Issues\" repository permissions (write) \"Pull requests\" repository permissions (write)"
+      }
+    },
+    {
+      "id": "get-pull-request",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}",
+      "access": "read",
+      "permissions": {
+        "pull-requests": "read"
+      },
+      "what": "a pull request's head, base and author",
+      "why": "Reads the pull request's head commit, base branch and author as GitHub states them, for an approval, a receipt and a key's budget.",
+      "by": [
+        "scm.GitHub.PullRequest",
+        "scm.GitHub.PullOrigin"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid approve",
+        "costroid serve",
+        "costroid result",
+        "costroid gateway mint"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have at least one of the following permission sets: \"Pull requests\" repository permissions (read) \"Contents\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-pull-requests",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/pulls",
+      "access": "read",
+      "permissions": {
+        "pull-requests": "read"
+      },
+      "what": "the repository's pull requests",
+      "why": "Finds the open pull request a finished run's branch heads, and the pull requests merged into the base branch for a baseline.",
+      "by": [
+        "scm.GitHub.OpenPullsFrom",
+        "scm.GitHub.MergedInto"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid follow-up"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/pulls/pulls#list-pull-requests",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Pull requests\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-pull-commits",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/commits",
+      "access": "read",
+      "permissions": {
+        "pull-requests": "read"
+      },
+      "what": "a pull request's commits",
+      "why": "Lists the pull request's commits, to add up the runs reported on each.",
+      "by": [
+        "scm.GitHub.PullCommits"
+      ],
+      "commands": [
+        "costroid report"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Pull requests\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-reviews",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      "access": "read",
+      "permissions": {
+        "pull-requests": "read"
+      },
+      "what": "a pull request's reviews",
+      "why": "Reads the reviews, to find an approval that turns a failed check neutral.",
+      "by": [
+        "scm.GitHub.Reviews"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid approve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/pulls/reviews#list-reviews-for-a-pull-request",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Pull requests\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-commit-pulls",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/commits/{commit_sha}/pulls",
+      "access": "read",
+      "permissions": {
+        "pull-requests": "read"
+      },
+      "what": "the pull requests a commit merged",
+      "why": "Reads which merged pull requests each pushed commit closed.",
+      "by": [
+        "scm.GitHub.MergedPullsAt"
+      ],
+      "commands": [
+        "costroid merged"
+      ],
+      "source": {
+        "kind": "run",
+        "run": "45330801950",
+        "read": "2026-11-24",
+        "says": "The job's token listed a commit's pull requests with pull-requests: read alone. With contents: read alone, and with neither, GitHub answered 403 Resource not accessible by integration."
+      }
+    },
+    {
+      "id": "list-commits",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/commits",
+      "access": "read",
+      "permissions": {
+        "contents": "read"
+      },
+      "what": "the commits that touched a workflow file",
+      "why": "Reads when the workflow file reached the base branch, which starts the warn-only period.",
+      "by": [
+        "scm.GitHub.FirstCommit"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid follow-up"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/commits/commits#list-commits",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Contents\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "get-branch-head",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/git/ref/heads/{+branch}",
+      "access": "read",
+      "permissions": {
+        "contents": "read"
+      },
+      "what": "the base branch's head commit",
+      "why": "Reads the commit at the head of the base branch, where `costroid.yml` is read.",
+      "by": [
+        "scm.GitHub.BranchHead"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid approve",
+        "costroid serve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/git/refs#get-a-reference",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Contents\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-branches-at",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/commits/{commit_sha}/branches-where-head",
+      "access": "read",
+      "permissions": {
+        "contents": "read"
+      },
+      "what": "the branches a commit heads",
+      "why": "Refuses a fork's check on a commit that heads a branch of this repository.",
+      "by": [
+        "scm.GitHub.BranchesAt"
+      ],
+      "commands": [
+        "costroid follow-up"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/commits/commits#list-branches-for-head-commit",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Contents\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "read-file",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/contents/{+path}",
+      "access": "read",
+      "permissions": {
+        "contents": "read"
+      },
+      "what": "`costroid.yml` and the policy it names",
+      "why": "Reads `costroid.yml`, and the policy pack it names, at the base branch's commit, which the pull request cannot change.",
+      "by": [
+        "scm.GitHub.ReadFile"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid follow-up",
+        "costroid approve",
+        "costroid serve",
+        "costroid gateway mint"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/repos/contents#get-repository-content",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Contents\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "get-repository",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}",
+      "access": "read",
+      "permissions": {
+        "metadata": "read"
+      },
+      "what": "whether the repository is public",
+      "why": "Reads whether the repository is public, which decides whether the comment shows amounts.",
+      "by": [
+        "scm.GitHub.Visibility"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid follow-up",
+        "costroid approve",
+        "costroid serve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/repos/repos#get-a-repository",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Metadata\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "get-collaborator-permission",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/collaborators/{username}/permission",
+      "access": "read",
+      "permissions": {
+        "metadata": "read"
+      },
+      "what": "an approver's role",
+      "why": "Reads whether the person who approved holds a write role, the only role whose approval counts.",
+      "by": [
+        "scm.GitHub.CanWrite"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid approve",
+        "costroid serve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Metadata\" repository permissions (read)"
+      }
+    },
+    {
+      "id": "create-installation-token",
+      "host": "github",
+      "base": "api",
+      "method": "POST",
+      "path": "/app/installations/{installation_id}/access_tokens",
+      "access": "write",
+      "permissions": {},
+      "what": "an installation token",
+      "why": "Mints a token for one installation under the App's own signed token, with the permissions listed for the App and no others.",
+      "by": [
+        "scm.AppTokens.Token"
+      ],
+      "commands": [
+        "costroid serve"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app",
+        "read": "2026-11-24",
+        "says": "You must use a JWT to access this endpoint. This endpoint does not work with GitHub App user access tokens, GitHub App installation access tokens, or fine-grained personal access tokens."
+      }
+    },
+    {
+      "id": "list-run-artifacts",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
+      "access": "read",
+      "permissions": {
+        "actions": "read"
+      },
+      "what": "a run's artifacts",
+      "why": "Finds the sealed request the agent's run uploaded.",
+      "by": [
+        "gateway.Artifacts.Wait"
+      ],
+      "commands": [
+        "costroid gateway mint"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/actions/artifacts#list-workflow-run-artifacts",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Actions\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "get-run",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/actions/runs/{run_id}",
+      "access": "read",
+      "permissions": {
+        "actions": "read"
+      },
+      "what": "whether a run has ended",
+      "why": "Reads whether the agent's run has ended, so mint stops waiting for a request that will not come.",
+      "by": [
+        "gateway.Artifacts.Wait"
+      ],
+      "commands": [
+        "costroid gateway mint"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Actions\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "list-artifacts",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/actions/artifacts",
+      "access": "read",
+      "permissions": {
+        "actions": "read"
+      },
+      "what": "the repository's artifacts",
+      "why": "Lists the rows artifacts the day's runs kept.",
+      "by": [
+        "gh api"
+      ],
+      "commands": [
+        "gh api"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/actions/artifacts#list-artifacts-for-a-repository",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Actions\" repository permissions (read) This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested."
+      }
+    },
+    {
+      "id": "download-artifact",
+      "host": "github",
+      "base": "api",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip",
+      "access": "read",
+      "permissions": {
+        "actions": "read"
+      },
+      "what": "an artifact's files",
+      "why": "Downloads an artifact: the agent's sealed request, or a day's rows for an upload.",
+      "by": [
+        "gateway.Artifacts.Wait",
+        "gh api"
+      ],
+      "commands": [
+        "costroid gateway mint",
+        "gh api"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/rest/actions/artifacts#download-an-artifact",
+        "read": "2026-11-24",
+        "says": "The fine-grained token must have the following permission set: \"Actions\" repository permissions (read)"
+      }
+    },
+    {
+      "id": "request-oidc-token",
+      "host": "github",
+      "base": "ACTIONS_ID_TOKEN_REQUEST_URL",
+      "method": "GET",
+      "path": "",
+      "access": "read",
+      "permissions": {
+        "id-token": "write"
+      },
+      "what": "the job's OIDC token",
+      "why": "Asks GitHub Actions for the job's OIDC token, which names the run to a ledger or to Costroid Platform.",
+      "by": [
+        "gateway.ActionsToken",
+        "action/ingest.sh"
+      ],
+      "commands": [
+        "costroid merged",
+        "costroid connect",
+        "costroid gateway mint",
+        "costroid gateway close",
+        "costroid export --platform-url",
+        "action/ingest.sh"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions",
+        "read": "2026-11-24",
+        "says": "id-token: Fetch an OpenID Connect (OIDC) token. This requires id-token: write."
+      }
+    },
+    {
+      "id": "gitlab-get-user",
+      "host": "gitlab",
+      "base": "api",
+      "method": "GET",
+      "path": "/user",
+      "access": "read",
+      "permissions": {
+        "api": "read"
+      },
+      "what": "the token's own user",
+      "why": "Reads the token's own user, so only a note that user wrote is ever edited.",
+      "by": [
+        "scm.GitLab.UpsertComment"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "read_api: Grants read access to the API for the token’s scope."
+      }
+    },
+    {
+      "id": "gitlab-list-notes",
+      "host": "gitlab",
+      "base": "api",
+      "method": "GET",
+      "path": "/projects/{id}/merge_requests/{merge_request_iid}/notes",
+      "access": "read",
+      "permissions": {
+        "api": "read"
+      },
+      "what": "the merge request's notes",
+      "why": "Finds the note Costroid posted earlier, so it is edited and never posted twice.",
+      "by": [
+        "scm.GitLab.UpsertComment"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "read_api: Grants read access to the API for the token’s scope."
+      }
+    },
+    {
+      "id": "gitlab-create-note",
+      "host": "gitlab",
+      "base": "api",
+      "method": "POST",
+      "path": "/projects/{id}/merge_requests/{merge_request_iid}/notes",
+      "access": "write",
+      "permissions": {
+        "api": "write"
+      },
+      "what": "Costroid's note",
+      "why": "Posts Costroid's note on the merge request when it holds none.",
+      "by": [
+        "scm.GitLab.UpsertComment"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "api: Grants complete read and write access to the API for the token’s scope."
+      }
+    },
+    {
+      "id": "gitlab-update-note",
+      "host": "gitlab",
+      "base": "api",
+      "method": "PUT",
+      "path": "/projects/{id}/merge_requests/{merge_request_iid}/notes/{note_id}",
+      "access": "write",
+      "permissions": {
+        "api": "write"
+      },
+      "what": "Costroid's note",
+      "why": "Edits the note the same user posted earlier, and no other.",
+      "by": [
+        "scm.GitLab.UpsertComment"
+      ],
+      "commands": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "api: Grants complete read and write access to the API for the token’s scope."
+      }
+    },
+    {
+      "id": "gitlab-get-branch",
+      "host": "gitlab",
+      "base": "api",
+      "method": "GET",
+      "path": "/projects/{id}/repository/branches/{branch}",
+      "access": "read",
+      "permissions": {
+        "api": "read"
+      },
+      "what": "the base branch's head commit",
+      "why": "Reads the commit at the head of the base branch, where `costroid.yml` is read.",
+      "by": [
+        "scm.GitLab.BranchHead"
+      ],
+      "commands": [
+        "costroid report"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "read_api: Grants read access to the API for the token’s scope."
+      }
+    },
+    {
+      "id": "gitlab-read-file",
+      "host": "gitlab",
+      "base": "api",
+      "method": "GET",
+      "path": "/projects/{id}/repository/files/{file_path}",
+      "access": "read",
+      "permissions": {
+        "api": "read"
+      },
+      "what": "`costroid.yml` and the policy it names",
+      "why": "Reads `costroid.yml`, and the policy pack it names, at the merge request's base commit.",
+      "by": [
+        "scm.GitLab.ReadFile"
+      ],
+      "commands": [
+        "costroid report"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "read_api: Grants read access to the API for the token’s scope."
+      }
+    },
+    {
+      "id": "gitlab-get-project",
+      "host": "gitlab",
+      "base": "api",
+      "method": "GET",
+      "path": "/projects/{id}",
+      "access": "read",
+      "permissions": {
+        "api": "read"
+      },
+      "what": "whether the project is public",
+      "why": "Reads whether the project is public, which decides whether the note shows amounts.",
+      "by": [
+        "scm.GitLab.Visibility"
+      ],
+      "commands": [
+        "costroid report"
+      ],
+      "source": {
+        "kind": "page",
+        "url": "https://docs.gitlab.com/security/tokens/access_token_scopes/",
+        "read": "2026-11-24",
+        "says": "read_api: Grants read access to the API for the token’s scope."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "uses": "actions/checkout",
+      "permissions": {
+        "contents": "read"
+      },
+      "what": "the repository's code",
+      "why": "Checks out the code the agent works on.",
+      "unverified": "Another publisher's step, whose needs no page this file cites states."
+    },
+    {
+      "uses": "actions/download-artifact",
+      "input": "github-token",
+      "permissions": {
+        "actions": "read"
+      },
+      "what": "a finished run's artifacts",
+      "why": "Downloads what another run kept, which the job's token reads only with actions: read.",
+      "unverified": "Another publisher's step, whose needs no page this file cites states. The artifact calls it makes need actions: read, as the calls above say."
+    }
+  ],
+  "local_commands": [
+    {
+      "id": "gh-secret-list",
+      "command": "gh secret list",
+      "signed_in": true,
+      "access": "read",
+      "what": "the names of the repository's secrets and of an environment's",
+      "why": "Reads names alone: doctor checks the secrets a workflow needs, and init --pr whether the key's secret is set already.",
+      "by": [
+        "cmd/costroid/doctor.go",
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid doctor",
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "gh-variable-list",
+      "command": "gh variable list",
+      "signed_in": true,
+      "access": "read",
+      "what": "the names of the repository's variables",
+      "why": "Reads names alone, to check the variables the ingest job needs.",
+      "by": [
+        "cmd/costroid/doctor.go"
+      ],
+      "commands": [
+        "costroid doctor"
+      ]
+    },
+    {
+      "id": "gh-repo-view",
+      "command": "gh repo view",
+      "signed_in": true,
+      "access": "read",
+      "what": "whether the repository is private",
+      "why": "Says whether the comment will show amounts.",
+      "by": [
+        "cmd/costroid/doctor.go"
+      ],
+      "commands": [
+        "costroid doctor"
+      ]
+    },
+    {
+      "id": "gh-api-repository",
+      "command": "gh api repos/{owner}/{repo}",
+      "signed_in": true,
+      "access": "read",
+      "what": "the repository owner's account id",
+      "why": "Names the installation a CI job of this repository proves.",
+      "by": [
+        "cmd/costroid/doctor.go"
+      ],
+      "commands": [
+        "costroid doctor"
+      ]
+    },
+    {
+      "id": "gh-secret-set",
+      "command": "gh secret set",
+      "signed_in": true,
+      "access": "write",
+      "what": "a repository secret",
+      "why": "Stores the provider key the workflow reads, when the repository holds none.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "gh-variable-set",
+      "command": "gh variable set",
+      "signed_in": true,
+      "access": "write",
+      "what": "the repository variable `COSTROID_PLATFORM_URL`",
+      "why": "Points the workflow at Costroid Platform, when `--platform-url` is given.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "git-push",
+      "command": "git push",
+      "signed_in": true,
+      "access": "write",
+      "what": "a new branch",
+      "why": "Pushes the branch that holds the workflow init wrote.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "gh-pr-create",
+      "command": "gh pr create",
+      "signed_in": true,
+      "access": "write",
+      "what": "a pull request",
+      "why": "Opens the pull request that adds the workflow.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "gh-run-list",
+      "command": "gh run list",
+      "signed_in": true,
+      "access": "read",
+      "what": "the pull request's workflow runs",
+      "why": "Finds the run the new pull request started.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "gh-run-watch",
+      "command": "gh run watch",
+      "signed_in": true,
+      "access": "read",
+      "what": "one workflow run",
+      "why": "Waits for that run to end.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    },
+    {
+      "id": "git-ls-remote",
+      "command": "git ls-remote",
+      "signed_in": false,
+      "access": "read",
+      "what": "the release tags of Costroid's own public repository",
+      "why": "Reads which commit a release tag names: init pins the workflow to it, and the action finds the release its own commit is.",
+      "by": [
+        "action/install.sh",
+        "cmd/costroid/version.go"
+      ],
+      "commands": [
+        "costroid init",
+        "action/install.sh"
+      ]
+    },
+    {
+      "id": "gh-pr-view",
+      "command": "gh pr view",
+      "signed_in": true,
+      "access": "read",
+      "what": "the pull request's comments",
+      "why": "Finds the comment the run posted.",
+      "by": [
+        "cmd/costroid/init_pr.go"
+      ],
+      "commands": [
+        "costroid init --pr"
+      ]
+    }
+  ],
+  "held": [
+    {
+      "token": "GITHUB_TOKEN",
+      "permissions": {
+        "metadata": "read"
+      },
+      "why": "Every workflow token reads the repository's metadata without asking, so a recipe never asks for `metadata: read`.",
+      "source": {
+        "kind": "run",
+        "run": "45332227002",
+        "read": "2026-11-24",
+        "says": "The job's token read GET /repos/{owner}/{repo} and its visibility under four permission sets, and each answered private: contents: read alone, pull-requests: read alone, id-token: write alone, and no permission at all, with the workflow's permissions: {} and none on the job. So metadata: read is held without asking."
+      }
+    }
+  ],
+  "grants": [
+    {
+      "name": "github-approval.yml, job approve",
+      "file": "recipes/github-approval.yml",
+      "job": "approve",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid approve"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "read",
+          "calls": [
+            "get-pull-request",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-agent-sdk.yml, job agent",
+      "file": "recipes/github-claude-agent-sdk.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-claude-agent-sdk.yml, job ingest",
+      "file": "recipes/github-claude-agent-sdk.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-agent-sdk.yml, job report",
+      "file": "recipes/github-claude-agent-sdk.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-action-infrastructure.yml, job agent",
+      "file": "recipes/github-claude-code-action-infrastructure.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-action-infrastructure.yml, job ingest",
+      "file": "recipes/github-claude-code-action-infrastructure.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-action-infrastructure.yml, job report",
+      "file": "recipes/github-claude-code-action-infrastructure.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-action.yml, job agent",
+      "file": "recipes/github-claude-code-action.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-action.yml, job ingest",
+      "file": "recipes/github-claude-code-action.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-action.yml, job report",
+      "file": "recipes/github-claude-code-action.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-litellm.yml, job agent",
+      "file": "recipes/github-claude-code-litellm.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-litellm.yml, job ingest",
+      "file": "recipes/github-claude-code-litellm.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code-litellm.yml, job report",
+      "file": "recipes/github-claude-code-litellm.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code.yml, job agent",
+      "file": "recipes/github-claude-code.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-claude-code.yml, job ingest",
+      "file": "recipes/github-claude-code.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-claude-code.yml, job report",
+      "file": "recipes/github-claude-code.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-codex-action.yml, job agent",
+      "file": "recipes/github-codex-action.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-codex-action.yml, job ingest",
+      "file": "recipes/github-codex-action.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-codex-action.yml, job report",
+      "file": "recipes/github-codex-action.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-codex-sdk.yml, job agent",
+      "file": "recipes/github-codex-sdk.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-codex-sdk.yml, job ingest",
+      "file": "recipes/github-codex-sdk.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-codex-sdk.yml, job report",
+      "file": "recipes/github-codex-sdk.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-codex.yml, job agent",
+      "file": "recipes/github-codex.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-codex.yml, job ingest",
+      "file": "recipes/github-codex.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-codex.yml, job report",
+      "file": "recipes/github-codex.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-connect.yml, job connect",
+      "file": "recipes/github-connect.yml",
+      "job": "connect",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid connect"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-datadog-upload.yml, job upload",
+      "file": "recipes/github-datadog-upload.yml",
+      "job": "upload",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "gh api"
+      ],
+      "permissions": {
+        "actions": {
+          "level": "read",
+          "calls": [
+            "list-artifacts",
+            "download-artifact"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-follow-up.yml, job report",
+      "file": "recipes/github-follow-up.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/download-artifact",
+        "costroid follow-up"
+      ],
+      "permissions": {
+        "actions": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/download-artifact"
+          ]
+        },
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "list-branches-at",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "read",
+          "calls": [
+            "list-pull-requests"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-gateway.yml, job mint",
+      "file": "recipes/github-gateway.yml",
+      "job": "mint",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid gateway mint"
+      ],
+      "permissions": {
+        "actions": {
+          "level": "read",
+          "calls": [
+            "list-run-artifacts",
+            "get-run",
+            "download-artifact"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "read",
+          "calls": [
+            "get-pull-request"
+          ],
+          "steps": []
+        },
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-gateway.yml, job close",
+      "file": "recipes/github-gateway.yml",
+      "job": "close",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid gateway close"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-gh-aw-follow-up.yml, job read",
+      "file": "recipes/github-gh-aw-follow-up.yml",
+      "job": "read",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/download-artifact",
+        "costroid follow-up"
+      ],
+      "permissions": {
+        "actions": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/download-artifact"
+          ]
+        },
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "list-branches-at",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "read",
+          "calls": [
+            "list-pull-requests"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-gh-aw-follow-up.yml, job ingest",
+      "file": "recipes/github-gh-aw-follow-up.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-merged.yml, job merged",
+      "file": "recipes/github-merged.yml",
+      "job": "merged",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid merged"
+      ],
+      "permissions": {
+        "pull-requests": {
+          "level": "read",
+          "calls": [
+            "list-commit-pulls"
+          ],
+          "steps": []
+        },
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-opencode.yml, job agent",
+      "file": "recipes/github-opencode.yml",
+      "job": "agent",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "actions/checkout"
+      ],
+      "permissions": {
+        "contents": {
+          "level": "read",
+          "calls": [],
+          "steps": [
+            "actions/checkout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "github-opencode.yml, job ingest",
+      "file": "recipes/github-opencode.yml",
+      "job": "ingest",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "action/ingest.sh",
+        "costroid export --platform-url"
+      ],
+      "permissions": {
+        "id-token": {
+          "level": "write",
+          "calls": [
+            "request-oidc-token"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-opencode.yml, job report",
+      "file": "recipes/github-opencode.yml",
+      "job": "report",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "costroid report",
+        "costroid review --post"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "list-commits",
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "write",
+          "calls": [
+            "list-comments",
+            "create-comment",
+            "update-comment",
+            "get-pull-request",
+            "list-pull-requests",
+            "list-pull-commits",
+            "list-reviews"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "github-vantage-upload.yml, job upload",
+      "file": "recipes/github-vantage-upload.yml",
+      "job": "upload",
+      "token": "GITHUB_TOKEN",
+      "runs": [
+        "gh api"
+      ],
+      "permissions": {
+        "actions": {
+          "level": "read",
+          "calls": [
+            "list-artifacts",
+            "download-artifact"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "gitlab-ci.yml, job costroid:report",
+      "file": "recipes/gitlab-ci.yml",
+      "job": "costroid:report",
+      "token": "COSTROID_GITLAB_TOKEN",
+      "role": "Reporter",
+      "runs": [
+        "costroid report"
+      ],
+      "permissions": {
+        "api": {
+          "level": "write",
+          "calls": [
+            "gitlab-get-user",
+            "gitlab-list-notes",
+            "gitlab-create-note",
+            "gitlab-update-note",
+            "gitlab-get-branch",
+            "gitlab-read-file",
+            "gitlab-get-project"
+          ],
+          "steps": []
+        }
+      }
+    },
+    {
+      "name": "the GitHub App",
+      "token": "the App's installation token",
+      "runs": [
+        "costroid serve"
+      ],
+      "permissions": {
+        "checks": {
+          "level": "write",
+          "calls": [
+            "create-check-run",
+            "update-check-run",
+            "list-check-runs"
+          ],
+          "steps": []
+        },
+        "contents": {
+          "level": "read",
+          "calls": [
+            "get-branch-head",
+            "read-file"
+          ],
+          "steps": []
+        },
+        "metadata": {
+          "level": "read",
+          "calls": [
+            "get-repository",
+            "get-collaborator-permission"
+          ],
+          "steps": []
+        },
+        "pull-requests": {
+          "level": "read",
+          "calls": [
+            "get-pull-request"
+          ],
+          "steps": []
+        }
+      }
+    }
+  ]
+}

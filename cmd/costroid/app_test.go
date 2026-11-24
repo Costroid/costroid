@@ -105,7 +105,7 @@ func TestManifestNamesMinimumPermissions(t *testing.T) {
 	if err := decoder.Decode(&manifest); err != nil {
 		t.Fatalf("%v:\n%s", err, stdout)
 	}
-	want := map[string]string{"checks": "write", "pull_requests": "write", "contents": "read", "metadata": "read"}
+	want := map[string]string{"checks": "write", "pull_requests": "read", "contents": "read", "metadata": "read"}
 	if !maps.Equal(manifest.Permissions, want) {
 		t.Errorf("permissions = %v, want %v", manifest.Permissions, want)
 	}

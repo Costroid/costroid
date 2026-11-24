@@ -38,9 +38,16 @@ var (
 	mergedCommand       = regexp.MustCompile(`\bcostroid\s+merged\b`)
 )
 
-// mergedPermissions are what costroid merged needs: the pushed commits and
-// the pull requests each one closed, and the run token that names the push.
-var mergedPermissions = map[string]string{"contents": "read", "pull-requests": "read", "id-token": "write"}
+// mergedPermissions are what costroid merged needs: the pull requests each
+// pushed commit closed, which it reads with the job's token, and the run token
+// that names the push. The pushed commits come from the push event's file, so
+// the job reads none of the repository's contents.
+var mergedPermissions = map[string]string{"pull-requests": "read", "id-token": "write"}
+
+// mergedEarlier is what the merged recipe of an earlier release asked for
+// beside mergedPermissions. The rule accepts it at this level, and reports it
+// at any higher one.
+var mergedEarlier = map[string]string{"contents": "read"}
 
 const (
 	// mergedEvent is the one event costroid merged sends on. It runs the
@@ -126,8 +133,14 @@ func (l *linter) connectJob(job entry, granted map[string]string) {
 // workflow file, to no code and no agent, and to an integration token that
 // reaches the step from a secret through its env.
 func (l *linter) mergedJob(root *yaml.Node, job entry, step *yaml.Node, granted map[string]string) {
-	if !maps.Equal(granted, mergedPermissions) {
-		l.add(job.key, RuleMergedJob, "the job runs costroid merged and must hold contents: read, pull-requests: read and id-token: write and nothing else")
+	held := maps.Clone(granted)
+	for name, level := range mergedEarlier {
+		if held[name] == level {
+			delete(held, name)
+		}
+	}
+	if !maps.Equal(held, mergedPermissions) {
+		l.add(job.key, RuleMergedJob, "the job runs costroid merged and must hold pull-requests: read and id-token: write and nothing else; contents: read, which an earlier release's recipe asked for, is accepted")
 	}
 	l.mergedEvents(root)
 	if !heldTo(scalarField(job.value, "if"), defaultBranchTest) {

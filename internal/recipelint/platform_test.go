@@ -222,10 +222,26 @@ func TestAMergedJobMayAskForAnIDToken(t *testing.T) {
 	}
 }
 
+// TestAMergedJobFromAnEarlierReleaseIsAccepted lints the merged job as an
+// earlier release shipped it, with contents: read beside what it needs, and
+// finds nothing: the rule reports contents only above read.
+func TestAMergedJobFromAnEarlierReleaseIsAccepted(t *testing.T) {
+	source := read(t, mergedFixture)
+	earlier := strings.Replace(source, "      pull-requests: read\n", "      contents: read\n      pull-requests: read\n", 1)
+	if earlier == source {
+		t.Fatal("the fixture holds no pull-requests: read to add contents: read beside")
+	}
+	report := LintBytes(mergedFixture, []byte(earlier))
+	if len(report.Findings)+len(report.Notes) != 0 {
+		t.Fatalf("findings %v, notes %v", report.Findings, report.Notes)
+	}
+}
+
 // TestAMergedJobHoldsOnlyWhatItNeeds takes the merged job past its least in
-// each way it can go, one edit at a time: another permission or none for the
-// run token, an agent, code on the runner, a pull request's event, a run
-// beside the default branch, and the integration token outside the step's env.
+// each way it can go, one edit at a time: pull requests or contents written,
+// another permission or none for the run token, an agent, code on the runner,
+// a pull request's event, a run beside the default branch, and the
+// integration token outside the step's env.
 func TestAMergedJobHoldsOnlyWhatItNeeds(t *testing.T) {
 	source := read(t, mergedFixture)
 	const (
@@ -237,7 +253,8 @@ func TestAMergedJobHoldsOnlyWhatItNeeds(t *testing.T) {
 	permissions := source[strings.Index(source, "    permissions:\n      # Reads"):strings.Index(source, "    steps:\n")]
 	for _, change := range []edit{
 		{"pull requests written", "      pull-requests: read\n", "      pull-requests: write\n", RuleMergedJob},
-		{"another permission", "      contents: read\n", "      contents: read\n      checks: write\n", RuleMergedJob},
+		{"another permission", "      pull-requests: read\n", "      pull-requests: read\n      checks: write\n", RuleMergedJob},
+		{"contents written", "      pull-requests: read\n", "      contents: write\n      pull-requests: read\n", RuleMergedJob},
 		{"no id-token", "      id-token: write\n", "", RuleMergedJob},
 		{"write-all", permissions, "    permissions: write-all\n", RuleMergedJob},
 		{"an agent", step, "      - run: claude -p hello\n" + step, RuleMergedJob},

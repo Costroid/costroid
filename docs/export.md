@@ -185,7 +185,6 @@ jobs:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
       pull-requests: read
       id-token: write
     steps:

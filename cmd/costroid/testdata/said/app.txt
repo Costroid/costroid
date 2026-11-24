@@ -7,7 +7,7 @@ checks as. docs/github-app.md walks through it.
 
 manifest prints the App's manifest as JSON: --name, the webhook at
 --webhook-url, the check_run event and the four permissions an installation
-token asks for, checks and pull_requests to write, contents and metadata to
+token asks for, checks to write, pull_requests, contents and metadata to
 read. The App is private to the account that creates it.
 
 create runs GitHub's manifest flow. It prints an address on this machine to

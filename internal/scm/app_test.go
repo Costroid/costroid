@@ -130,7 +130,7 @@ func TestInstallationTokensAreMintedWithMinimumPermissionsAndHeldUntilNearExpiry
 	if mints.Load() != 1 {
 		t.Errorf("%d mints", mints.Load())
 	}
-	want := map[string]string{"checks": "write", "pull_requests": "write", "contents": "read", "metadata": "read"}
+	want := map[string]string{"checks": "write", "pull_requests": "read", "contents": "read", "metadata": "read"}
 	if len(granted) != len(want) {
 		t.Errorf("permissions = %v", granted)
 	}

@@ -62,12 +62,7 @@ This adapter has run against a stub built from GitLab's documentation, and end t
 
 ### Give the report a token
 
-The job token cannot post. It reads a merge request's notes and cannot create one, and it has no access to commit statuses ([job token access](https://docs.gitlab.com/ci/jobs/ci_job_token/), read November 1, 2026). Create a project access token:
-
-| Setting | Value    | Why                                                                                                                                    |
-| ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Role    | Reporter | Enough to [comment on a merge request and read the code](https://docs.gitlab.com/user/permissions/) (read November 1, 2026)            |
-| Scope   | `api`    | The only [project token scope](https://docs.gitlab.com/security/tokens/access_token_scopes/) that can write through the API (read November 1, 2026) |
+The job token cannot post. It reads a merge request's notes and cannot create one, and it has no access to commit statuses ([job token access](https://docs.gitlab.com/ci/jobs/ci_job_token/), read November 1, 2026). Create a project access token with the Reporter role and the `api` scope. [`docs/permissions.md`](permissions.md#gitlab-ciyml) lists what the job reads and changes with it, and why each is enough.
 
 Store it as the CI/CD variable `COSTROID_GITLAB_TOKEN`, masked, with the environment scope `costroid-report`. Only the job in that environment receives it, so the agent's job never sees it.
 
@@ -230,7 +225,7 @@ Set the variables `COSTROID_INGEST_URL` and `COSTROID_INGEST_AUDIENCE`. The `ing
 | Permissions declared per job                                                | The workflow grants nothing, and each job names what it needs                       |
 | The agent's job holds `contents: read` and nothing else                     | GitHub grants permissions per job, so the agent runs in a job of its own            |
 | `id-token: write` on the `ingest` job, the connect job, the job that runs `costroid merged`, and the jobs that mint and close a gateway key in its environment | An agent that could mint the token could forge its run's identity, and only a job the environment admitted may attest a key |
-| A job that runs `costroid merged` holds `contents: read`, `pull-requests: read` and `id-token: write`, runs on `push` alone with the default-branch test joined by `&&` in its `if`, holds no code and no agent, and reads the integration token from one secret in the step's `env` | A pull request's event runs the pull request's own workflow file, so only the default branch's own file decides what a fact says |
+| A job that runs `costroid merged` holds `pull-requests: read` and `id-token: write`, and at most the `contents: read` an earlier release's recipe asked for, runs on `push` alone with the default-branch test joined by `&&` in its `if`, holds no code and no agent, and reads the integration token from one secret in the step's `env` | A pull request's event runs the pull request's own workflow file, so only the default branch's own file decides what a fact says |
 | Every action pinned to a full SHA, with its release beside it               | A moved tag cannot change what runs                                                 |
 | Content flags off                                                           | Prompts, responses, tool input and API bodies stay out of telemetry                 |
 | An agent outside `costroid run` sets the six join attributes               | The agent's own telemetry names the pull request, as under `costroid run`           |

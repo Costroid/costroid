@@ -19,6 +19,7 @@ One page per task, in the order a team meets them.
 - [`receipt.md`](receipt.md): show your own Claude Code sessions on the pull request, apart from the run's cost.
 - [`configuration.md`](configuration.md): the keys of `costroid.yml`.
 - [`security.md`](security.md): what a fork's pull request and a branch can reach.
+- [`permissions.md`](permissions.md): what each recipe and the GitHub App can read and change on GitHub or GitLab.
 
 ## Require it
 

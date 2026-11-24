@@ -20,8 +20,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      # Reads which merged pull requests each pushed commit closed.
-      contents: read
+      # Reads which merged pull requests each pushed commit closed. The
+      # pushed commits come from the push event's file, so the job reads no
+      # contents.
       pull-requests: read
       # The run token: the job's OIDC token, minted for the tenant's rows
       # audience, which names the run and the pushed commit.
