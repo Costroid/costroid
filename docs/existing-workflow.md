@@ -43,7 +43,7 @@ jobs:
         id: claude
       - name: Read what the run cost
         if: always() && steps.claude.outputs.execution_file != ''
-        uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
+        uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
         with:
           stage: read
           execution-file: ${{ steps.claude.outputs.execution_file }}
@@ -61,7 +61,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
+      - uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
         with:
           stage: report
           budget-usd: "5"
@@ -119,7 +119,7 @@ A step that sets no `codex-home` gets one, as [`recipes/github-codex-action.yml`
 +        id: codex
 +      - name: Read what the run cost
 +        if: always() && steps.codex.outcome != 'skipped'
-+        uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
++        uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
 +        with:
 +          stage: read
 +          codex-home: ${{ runner.temp }}/codex-home

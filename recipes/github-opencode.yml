@@ -49,7 +49,7 @@ jobs:
       - name: Install OpenCode
         run: npm install --global opencode-ai@1.19.4
       - name: Install costroid
-        uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
+        uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
         with:
           stage: install
       - name: Check the agent's version
@@ -119,7 +119,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
+      - uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
         with:
           stage: ingest
           ingest-url: ${{ vars.COSTROID_INGEST_URL }}
@@ -141,7 +141,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: Costroid/costroid/action@6d31c60fa8b0ba47f3ceb7de7ccebf39a00fd45b # v1.0.0-alpha.32
+      - uses: Costroid/costroid/action@f8c748124c0857e2f6a603421c04b3680e9d6965 # v1.0.0-alpha.33
         with:
           stage: report
           # A skipped agent job then reads as skipped, not as a run with no rows.
