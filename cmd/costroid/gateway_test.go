@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +61,7 @@ func newAttestWorld(t *testing.T) *attestWorld {
 		}
 		w.path, w.bearer = r.URL.Path, r.Header.Get("Authorization")
 		w.raw, _ = io.ReadAll(r.Body)
+		w.body = gateway.Attestation{}
 		_ = json.Unmarshal(w.raw, &w.body)
 		rw.WriteHeader(http.StatusNoContent)
 	}))
@@ -82,7 +84,7 @@ func TestMintAttestsTheKeyToTheLedgerUnderTheJobsToken(t *testing.T) {
 	if w.audience != ingestAudience || w.bearer != "Bearer "+issuedToken {
 		t.Fatalf("audience %q, bearer %q", w.audience, w.bearer)
 	}
-	if w.path != "/ledger/v1/credentials" || w.body != gateway.AttestationFor(attestedKeyID, run, headCommit) {
+	if w.path != "/ledger/v1/credentials" || !reflect.DeepEqual(w.body, gateway.AttestationFor(attestedKeyID, run, headCommit)) {
 		t.Fatalf("the ledger read %+v at %s", w.body, w.path)
 	}
 	if strings.Contains(stderr.String(), issuedToken) {
@@ -748,7 +750,7 @@ func (j gatewayJob) triggered(t *testing.T, change func(followed map[string]any)
 	followed := map[string]any{
 		"id": json.Number(gatewayRunID), "run_attempt": 1, "event": "pull_request", "head_sha": headCommit,
 		"head_repository": map[string]any{"full_name": "acme/widgets"},
-		"pull_requests":   []any{map[string]any{"number": 7, "base": map[string]any{"sha": baseCommit}}},
+		"pull_requests":   []any{eventPull(7)},
 	}
 	if change != nil {
 		change(followed)
@@ -811,7 +813,9 @@ func TestMintForATriggeringRunTakesTheRunFromTheEventAndRefusesAFork(t *testing.
 		t.Error("the key names the minting run")
 	}
 	triggering := gateway.Binding{Repository: "github.com/acme/widgets", Run: gatewayRunID, Attempt: "1"}
-	if w.body != gateway.AttestationFor(gateway.KeyID(key), triggering, headCommit) {
+	want := gateway.AttestationFor(gateway.KeyID(key), triggering, headCommit)
+	want.PullRequests = []string{"7"}
+	if !reflect.DeepEqual(w.body, want) {
 		t.Errorf("the ledger read %+v", w.body)
 	}
 
@@ -847,7 +851,7 @@ func TestMintForATriggeringRunTakesTheRunFromTheEventAndRefusesAFork(t *testing.
 
 	t.Run("two pull requests", func(t *testing.T) {
 		job.triggered(t, func(f map[string]any) {
-			f["pull_requests"] = []any{map[string]any{"number": 7, "base": map[string]any{"sha": baseCommit}}, map[string]any{"number": 9, "base": map[string]any{"sha": baseCommit}}}
+			f["pull_requests"] = []any{eventPull(7), eventPull(9)}
 		})
 		both := gatewaytest.New(t, gatewayAdmin)
 		code, _, stderr := job.mint(t, both, "--for-triggering-run", "--author-daily-cap-usd", "5", "--repository-daily-cap-usd", "20")

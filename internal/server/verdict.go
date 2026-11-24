@@ -267,7 +267,6 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 	base, read := s.readBase(r.Context(), repo, stated, config)
 	request := policy.LedgerRequest{
 		Lines:                ledgerLines(lines),
-		Evidence:             evidenceOf(budget),
 		Config:               config,
 		Pack:                 readPack(r.Context(), base, read),
 		Start:                start,
@@ -278,9 +277,7 @@ func (s *Server) handleVerdict(w http.ResponseWriter, r *http.Request) {
 	if read {
 		request.Record, reach = s.verdictRecord(r.Context(), who.tenant, repo, pr, base)
 	}
-	if budget.Basis == budgetBasisGateway {
-		request.MeasuredUSD = measured.usd
-	}
+	request.Evidence, request.MeasuredUSD = evidenceOf(budget), measured.usd
 	if request.Pack.Read() {
 		release, admitted := admitPack(r.Context())
 		if !admitted {

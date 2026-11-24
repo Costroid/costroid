@@ -94,6 +94,8 @@ A budget rule reads `budget` in the per-PR answer. `budget.spend` adds up the el
 | `gateway_measured` | The gateway's attested count covers every eligible row, each in USD. `budget.gateway_usd` holds it     |
 | `reconciled`       | A provider's report wrote every eligible row                                                           |
 
+`budget.gateway_usd` holds the gateway's count: always on `gateway_measured`, and on any other basis when the counts that stand add up to more than nothing, because `pr_budget` is held to them either way.
+
 A CI token proves which run sent a row. It does not prove the row's token counts, which the agent's job wrote. So a token-verified row is a budget's evidence only when the gateway's own count, or a provider's report, stands behind its spend. No path stores a provider's report in this release.
 
 `totals` in the same answer adds up every row of the pull request, one figure per currency and cost basis. It is a reading, so an unverified row counts, and a budget rule never reads it.
@@ -109,20 +111,20 @@ A ledger grades a row `exact` only when a run of a protected default branch atte
 `costroid gateway mint` registers one key per run on a LiteLLM gateway, and the rows name the key's id in `SubAccountId`. The pull request's own run draws the key and seals it. A run of the gateway recipe, which `workflow_run` starts from the default branch's workflow file, mints the key and attests it: it posts to `POST /v1/credentials` under its own OIDC token. [`docs/gateway.md`](gateway.md) describes the two workflows.
 
 ```json
-{"key_id": "<64 hexadecimal characters>", "repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1", "head_sha": "<the run's head commit>"}
+{"key_id": "<64 hexadecimal characters>", "repository": "github.com/acme/widgets", "run_id": "16873409921", "run_attempt": "1", "head_sha": "<the run's head commit>", "pull_requests": ["1423"]}
 ```
 
-`run_id` and `run_attempt` name the run the key was minted for, the pull request's own, and `head_sha` is that run's head commit as GitHub's `workflow_run` event names it. The service stores an attestation only when all of these hold:
+`run_id` and `run_attempt` name the run the key was minted for, the pull request's own, and `head_sha` is that run's head commit as GitHub's `workflow_run` event names it. `pull_requests` holds the numbers of the pull requests that event lists for the run, as strings, and is left out or empty when it lists none. The service stores an attestation only when all of these hold:
 
 - the bearer is a CI token, not an ingest key;
 - the token's `event_name` is `workflow_run`, its `ref` names a branch, `refs/heads/...`, its `ref_protected` claim is the JSON string `"true"`, compared as the claim's text, so a boolean, another case or any other value is not it, and it names a run attempt;
 - the token's `environment` claim equals `COSTROID_GATEWAY_ENVIRONMENT`, `costroid-gateway` by default. This check is the service's own, beside the rule a second ledger applies: the gateway recipe's jobs reach that environment anyway, because it holds the admin key and the sealing key;
-- the body is an attestation with a 64-character key id, a run, an attempt and a head commit;
+- the body is an attestation with a 64-character key id, a run, an attempt and a head commit, and each pull request it names is a number;
 - the token's repository is the attestation's, and the token's run is another than the one the attestation names.
 
 A refusal answers `403` with `ATTESTATION_FORBIDDEN` when there is no CI token or the job ran outside the environment, `403` with `CREDENTIAL_RUN_UNPROTECTED` for the second, `400` with `BODY_MALFORMED` for the fourth, and `403` with `JOIN_KEY_MISMATCH` for the fifth. A job of the pull request's own run is refused whatever environment it reached, because that run executes the pull request's own workflow file.
 
-One attesting run and attempt attests one key, and a key is attested once. A unique index holds each rule. The same attestation again, every field the same, answers `204` and changes nothing, so a retry is safe. Any other from the same attesting run and attempt answers `409` with `CREDENTIAL_ATTESTING_RUN_USED`. Any other for a key already attested answers `409` with `CREDENTIAL_ATTESTED_ELSEWHERE`, and the first attestation stands. Where both apply, the attesting run's refusal comes first. Once a run has attested, its token, which lives 300 seconds (recorded GitHub Actions run 45109004242), can only repeat that attestation.
+One attesting run and attempt attests one key, and a key is attested once. A unique index holds each rule. The same attestation again, every field the same, answers `204` and changes nothing, so a retry is safe. Any other from the same attesting run and attempt answers `409` with `CREDENTIAL_ATTESTING_RUN_USED`. Any other for a key already attested answers `409` with `CREDENTIAL_ATTESTED_ELSEWHERE`, and the first attestation stands. Where both apply, the attesting run's refusal comes first. The pull requests are a set: the same numbers in another order, or with one named twice, are the same attestation, and any other set is another attestation, refused as another head is. `credential_pulls` keeps them, written with the attestation and never after it. Once a run has attested, its token, which lives 300 seconds (recorded GitHub Actions run 45109004242), can only repeat that attestation.
 
 A row reads `exact` only when its `SubAccountId` is an attested key, the row's own CI token names a pull request and the attestation's repository, run and attempt, and the head the row states is the head the attestation names. A key attested for another run, another attempt or another repository reads `windowed`, and so does a key never attested. A row that states another head, or none, reads `windowed` on the attested key.
 
@@ -153,7 +155,15 @@ A key holds one figure, and one attesting run and attempt writes one, each held 
 
 LiteLLM writes spend in binary floating point, so its figure can carry more than 12 fractional digits: `0.018000000000000002` for three requests of `0.006`. Close rounds such a figure up to 12 digits, `0.018000000001`, so the figure the service keeps is never below the gateway's. Close waits up to 30 seconds for the figure to stop moving before it reads it, because LiteLLM writes spend to its store in batches. A figure still moving when the wait ends is not sent.
 
-A row's spend reads `gateway_measured` when it is budget-eligible, its `credential_basis` is `minted`, its `SubAccountId` is a key attested for the row's own repository, run and attempt, and a protected run attested that key's spend. The pull request's figure adds up the attested spend of those keys, each key once. A count that a job in the gateway's environment attested before this rule lets no rule pass.
+A pull request's figure adds up the attested spend of two kinds of key, each key once. The first is a key that a budget-eligible row of the pull request names, with `credential_basis` `minted`, attested for the row's own repository, run and attempt. The second is a key attested for a run of the pull request's repository whose attestation names the pull request, whether a row of it arrived or not. So a run whose rows never reached the pull request still counts on it: the pull request's own workflow left them out, an ingest job failed, or the ledger was down. The run that names the pull request is the attesting run, which the pull request cannot edit. A key attested for two pull requests, as when two share a head, counts on each.
+
+The budget reads `gateway_measured` when the figure stands behind every eligible row: each is in USD and on a key of the first kind that holds a count, and every key of the second kind holds a count. A key attested for the pull request that holds no count yet, because its run has not completed or its close failed, keeps the budget at `agent_counts`. `pr_budget` then never passes: within the limit it reads `unproven` with reason `unmeasured_spend`, as beside a row the gateway did not count. A missing count can only add, so over is over: when the counts that stand, or the rows' own list cost, are over the limit, `pr_budget` fails with `over_limit` at the larger, whatever is still uncounted, and the failure is recorded once, as any other. Once close attests the count, the budget reads it.
+
+With no eligible row, the count still holds `pr_budget`. When the keys attested for the pull request hold a count over the limit, `pr_budget` fails with `over_limit` at that count, though every row was left out, and the failure is recorded in the override record as any other. Within the limit it stays `unproven`, with reason `no_rows`, or `unverified_rows` beside rows the ledger did not verify, because a pass needs rows the ledger verified. `budget.basis` is then `none`.
+
+An attestation that names no pull request counts on a pull request only through the rows that name its key, as before: one that an earlier release stored, and one for a run that GitHub's event lists no pull request for. A count that a job in the gateway's environment attested before this rule lets no rule pass.
+
+Until attestations named their pull requests, the figure held only the keys that the rows name, so a run whose rows were missing took its count with it. A budget in the verdict could then pass on part of what the gateway counted: with two runs counted at USD 0.5 and USD 10, the second run's rows missing, and `pr_budget_usd` at 5, the verdict read `success` and `pr_budget` `pass` at USD 0.5. To close it, upgrade `costroid serve`, then the action the gateway recipe pins, or the binary its mint job installs, so that mint sends the pull requests. The recipe needs no other change: mint reads them from the event file it reads already. A newer mint that meets an earlier `serve` sends the attestation without them and warns.
 
 The gateway counts what passed through it, at its own prices. Spend on a credential that bypassed it is not in the count. In the LiteLLM recipe, the agent's job holds no provider key, only the run's key.
 
@@ -171,7 +181,7 @@ The answer holds `budget`, as the per-PR view has it, and the verdict under `pol
 
 - `trust` is `token_verified` only when every row of the pull request is.
 - `evidence` names what stands behind token-verified spend: `agent_counts`, `gateway_measured` or `reconciled`. Only the last two let a budget rule or `model_allowlist` pass. On `agent_counts`, such a rule that would pass concludes `unproven` with reason `unmeasured_spend`, because the token counts and the model names are the agent's job's own.
-- `pr_budget` is held to the larger of the rows' USD list cost and the gateway's count.
+- `pr_budget` is held to the larger of the rows' USD list cost and the gateway's count, on any basis. Only `gateway_measured` and `reconciled` let it pass.
 - The answer covers the whole pull request, never one run. `run_budget`, `run_cost_threshold`, `run_increase`, `run_increase_percent` and `run_p95` conclude `unproven` with reason `no_run_rows`, whatever stands behind the spend.
 - `monthly_budget` concludes `unproven` with reason `no_ledger`, because the pack reads no month to date yet.
 

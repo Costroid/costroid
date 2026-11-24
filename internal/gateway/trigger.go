@@ -35,8 +35,10 @@ type TriggeringRun struct {
 	// commit. Both are empty when the event names none or more than one.
 	PullRequest string
 	Base        string
-	// PullRequests counts the pull requests the event names.
-	PullRequests int
+	// PullRequests is every pull request the event names, in its order: one
+	// for a run of a pull request's branch, two or more for a head that two
+	// pull requests share, and none for a run GitHub names none for.
+	PullRequests []string
 }
 
 // ReadTriggeringRun reads the run a workflow_run event follows from the event
@@ -87,12 +89,16 @@ func ReadTriggeringRun(getenv func(string) string) (TriggeringRun, error) {
 		return TriggeringRun{}, errors.New("gateway: the event names no triggering run, attempt and head commit")
 	}
 	run := TriggeringRun{
-		Binding:      Binding{Repository: own.Repository, Run: followed.ID.String(), Attempt: followed.Attempt.String()},
-		Head:         followed.HeadSHA,
-		PullRequests: len(followed.PullRequests),
+		Binding: Binding{Repository: own.Repository, Run: followed.ID.String(), Attempt: followed.Attempt.String()},
+		Head:    followed.HeadSHA,
 	}
-	if len(followed.PullRequests) == 1 && digits.MatchString(followed.PullRequests[0].Number.String()) {
-		run.PullRequest = followed.PullRequests[0].Number.String()
+	for _, pull := range followed.PullRequests {
+		if number := pull.Number.String(); digits.MatchString(number) {
+			run.PullRequests = append(run.PullRequests, number)
+		}
+	}
+	if len(followed.PullRequests) == 1 && len(run.PullRequests) == 1 {
+		run.PullRequest = run.PullRequests[0]
 		if vcs.IsCommit(followed.PullRequests[0].Base.SHA) {
 			run.Base = followed.PullRequests[0].Base.SHA
 		}

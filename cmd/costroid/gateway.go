@@ -118,7 +118,9 @@ key when the run ends without one. With GITHUB_TOKEN it reads the pull
 request's author, and policy.run_budget_usd from costroid.yml at the pull
 request's base, which then sets the key's budget in place of --budget-usd. An
 event that names more than one pull request names none: mint warns, and the
-key carries the repository's cap alone. close runs once that run has
+key carries the repository's cap alone. The attestation to the ledger names
+every pull request the event lists, and a ledger that does not read them
+takes it without them, with a warning. close runs once that run has
 completed, and attests the gateway's count only once it has settled. On a
 default branch that GitHub's token states is not protected, the ledger
 refuses both attestations: mint and close warn and go on, and the rows read
@@ -447,7 +449,9 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 	fmt.Fprintln(stdout, id)
 	client := asking(&http.Client{Timeout: 30 * time.Second}, stderr)
-	warned, ledger := attestKey(ctx, client, gateway.AttestationFor(id, target.run, target.head), flags.triggering, stderr)
+	attestation := gateway.AttestationFor(id, target.run, target.head)
+	attestation.PullRequests = target.pullRequests
+	warned, ledger := attestKey(ctx, client, attestation, flags.triggering, stderr)
 	stating, err := platformFor(flags.triggering, client, keyWrite, stderr)
 	if stating != nil {
 		stating.warned = warned
@@ -457,11 +461,13 @@ func gatewayMint(ctx context.Context, args []string, stdout, stderr io.Writer) e
 }
 
 // mintTarget is the run a key is minted for, its sealed request, and what the
-// key's budget and metadata read from it.
+// key's budget and metadata read from it. pullRequests is every pull request
+// a workflow_run event lists for the run, which the attestation names.
 type mintTarget struct {
 	run                       gateway.Binding
 	request                   gateway.Request
 	head, pullRequest, author string
+	pullRequests              []string
 	budget                    decimal.Decimal
 }
 
@@ -494,13 +500,13 @@ func readTriggeringTarget(ctx context.Context, flags mintFlags, stderr io.Writer
 	if err != nil {
 		return mintTarget{}, err
 	}
-	target := mintTarget{run: run.Binding, head: run.Head, pullRequest: run.PullRequest, budget: flags.budget}
+	target := mintTarget{run: run.Binding, head: run.Head, pullRequest: run.PullRequest, pullRequests: run.PullRequests, budget: flags.budget}
 	target.request, err = readMintRequest(ctx, flags.request, run.Binding, stderr)
 	if err != nil {
 		return target, err
 	}
 	if run.PullRequest == "" {
-		fmt.Fprintf(stderr, "costroid: warning: the event names %d pull requests, so the key names none, no author's budget applies, and the key's budget is --budget-usd\n", run.PullRequests)
+		fmt.Fprintf(stderr, "costroid: warning: the event names %d pull requests, so the key names none, no author's budget applies, and the key's budget is --budget-usd\n", len(run.PullRequests))
 		return target, nil
 	}
 	host, err := triggeringHost()
@@ -604,7 +610,7 @@ func attestKey(ctx context.Context, client *http.Client, attestation gateway.Att
 	if err != nil {
 		return false, err
 	}
-	err = gateway.Attest(ctx, client, target, token, attestation)
+	err = sendAttestation(ctx, client, target, token, attestation, stderr)
 	if gateway.Unprotected(err) {
 		warnUnprotected(stderr, triggering, unprotectedBranchKey, unprotectedKey)
 		return true, nil
@@ -614,6 +620,29 @@ func attestKey(ctx context.Context, client *http.Client, attestation gateway.Att
 	}
 	cli.Say(stderr, "attested to the ledger\n")
 	return false, nil
+}
+
+// olderLedger warns of a ledger that took the attestation only without the
+// pull requests it names.
+const olderLedger = "costroid: warning: the ledger took the attestation only without the pull requests it names, so it is a costroid serve from before it kept them, and a budget in its verdict can pass while a run's rows are missing: upgrade costroid serve, as docs/serve.md says\n"
+
+// sendAttestation sends the attestation. A ledger from before attestations
+// named pull requests refuses the field as it refuses any body it cannot
+// read, 400 BODY_MALFORMED, and says nothing more. So an attestation that
+// names pull requests and is refused so is sent again without them, and the
+// ledger's taking that body shows the field alone was refused: the step then
+// warns. A refusal of the second body is the answer.
+func sendAttestation(ctx context.Context, client *http.Client, target, token string, attestation gateway.Attestation, stderr io.Writer) error {
+	err := gateway.Attest(ctx, client, target, token, attestation)
+	if len(attestation.PullRequests) == 0 || !gateway.Malformed(err) {
+		return err
+	}
+	attestation.PullRequests = nil
+	if err := gateway.Attest(ctx, client, target, token, attestation); err != nil {
+		return err
+	}
+	fmt.Fprint(stderr, olderLedger)
+	return nil
 }
 
 // ledgerRefusal is a statement the ledger took and refused. The step names

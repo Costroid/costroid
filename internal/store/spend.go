@@ -39,10 +39,14 @@ ON CONFLICT DO NOTHING`
 SELECT key_sha256, spend FROM credential_spend
 WHERE attesting_repo = $1 AND attesting_run_id = $2 AND attesting_run_attempt = $3`
 
-	// pullRequestSpend counts a pull request's budget-eligible rows whose
-	// SubAccountId is a key attested as minted for the row's own repository,
-	// run and attempt, and whose spend a protected run attested. It adds up
-	// the spend of those keys, each key once.
+	// pullRequestSpend reads a pull request's gateway figure. counted holds
+	// the keys its budget-eligible rows name, each attested as minted for the
+	// row's own repository, run and attempt, with a spend a protected run
+	// attested: one entry per row. named holds every key an attesting run
+	// named the pull request for, whether a row of it arrived or not. The
+	// figure adds up the spend of the keys of both, each key once. The rows it
+	// stands behind are counted's, and none while a key in named holds no
+	// spend: a figure that leaves out a run's count stands behind no row.
 	pullRequestSpend = `
 WITH counted AS (
 	SELECT m.key_sha256
@@ -51,9 +55,17 @@ WITH counted AS (
 		AND m.repo = f.repo AND m.workflow_run_id = f.workflow_run_id AND m.run_attempt = f.run_attempt
 	JOIN credential_spend g ON g.key_sha256 = m.key_sha256
 	WHERE f.repo = $1 AND f.pr = $2 AND f.budget_eligible AND f.credential_basis = 'minted'
+), named AS (
+	SELECT m.key_sha256
+	FROM credential_pulls p
+	JOIN credential_attestations m ON m.key_sha256 = p.key_sha256
+	WHERE m.repo = $1 AND p.pr = $2
+), uncounted AS (
+	SELECT FROM named n WHERE NOT EXISTS (SELECT FROM credential_spend g WHERE g.key_sha256 = n.key_sha256)
 )
-SELECT (SELECT count(*) FROM counted),
-	(SELECT coalesce(sum(spend::numeric), 0) FROM credential_spend WHERE key_sha256 IN (SELECT key_sha256 FROM counted))::text`
+SELECT (SELECT count(*) FROM counted WHERE NOT EXISTS (SELECT FROM uncounted)),
+	(SELECT coalesce(sum(spend::numeric), 0) FROM credential_spend
+		WHERE key_sha256 IN (SELECT key_sha256 FROM counted UNION SELECT key_sha256 FROM named))::text`
 )
 
 // AttestSpend keeps what the gateway counted on a minted key. The key must be
@@ -94,10 +106,13 @@ func (s *Store) AttestSpend(ctx context.Context, tenant TenantID, attested Attes
 	})
 }
 
-// GatewaySpend reads the pull request's measured spend. rows counts its
-// budget-eligible rows whose credential is a key minted for the row's own run,
-// with credential_basis minted, and whose spend a protected run attested. usd
-// adds up the attested spend of those keys, each key once.
+// GatewaySpend reads the pull request's measured spend. usd adds up the spend
+// a protected run attested for every key the pull request's budget-eligible
+// rows name, minted for the row's own run, with credential_basis minted, and
+// for every key an attesting run named the pull request for, whether a row of
+// it arrived or not: each key once. rows counts the eligible rows on the first
+// kind of key, and is 0 while a key of the second kind holds no spend, so a
+// figure that leaves out a run's count stands behind no row.
 func (s *Store) GatewaySpend(ctx context.Context, tenant TenantID, repo, pr string) (rows int64, usd decimal.Decimal, err error) {
 	err = s.inTenant(ctx, tenant, func(tx pgx.Tx) error {
 		var total string

@@ -398,12 +398,15 @@ const (
 
 // triggered is the environment of a job of the run that workflow_run started,
 // numbered run, after the given attempt of the agent's run: the event names
-// that attempt, its head and its one pull request.
+// that attempt, its head and its one pull request, whose entry holds what a
+// recorded GitHub Actions run 45377273123 read on the requested event:
+// number, head.sha, head.ref, base.ref and base.sha.
 func (j *gatewayJob) triggered(run string, attempt int) []string {
 	j.t.Helper()
 	event := filepath.Join(j.directory, "workflow-run-"+run+"-"+strconv.Itoa(attempt)+".json")
-	j.write(event, fmt.Sprintf(`{"workflow_run":{"id":%s,"run_attempt":%d,"event":"pull_request","head_sha":%q,"head_repository":{"full_name":"acme/widgets"},"pull_requests":[{"number":%s,"base":{"sha":%q}}]}}`,
-		runID, attempt, head, pull, base), 0o644)
+	j.write(event, fmt.Sprintf(`{"workflow_run":{"id":%s,"run_attempt":%d,"event":"pull_request","head_sha":%q,"head_repository":{"full_name":"acme/widgets"},`+
+		`"pull_requests":[{"number":%s,"head":{"sha":%q,"ref":"fix-the-test"},"base":{"ref":"main","sha":%q}}]}}`,
+		runID, attempt, head, pull, head, base), 0o644)
 	return append(slices.Clone(j.ci), "GITHUB_RUN_ID="+run, "GITHUB_RUN_ATTEMPT=1", "GITHUB_EVENT_NAME=workflow_run", "GITHUB_EVENT_PATH="+event,
 		"GITHUB_TOKEN="+gitHubToken, "GITHUB_API_URL="+j.github)
 }

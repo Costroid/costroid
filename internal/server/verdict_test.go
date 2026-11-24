@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -87,22 +88,35 @@ func (m *spendLedger) PullRequest(_ context.Context, tenant store.TenantID, repo
 	return lines, nil
 }
 
+// GatewaySpend holds the store's rule: the figure adds up, each key once, the
+// spend of the keys the pull request's eligible rows name and of every key an
+// attesting run named the pull request for, and stands behind no row while a
+// key so named holds no spend.
 func (m *spendLedger) GatewaySpend(_ context.Context, tenant store.TenantID, repo, pr string) (int64, decimal.Decimal, error) {
 	var rows int64
-	var usd decimal.Decimal
-	counted := map[string]bool{}
+	keys := map[string]bool{}
 	for _, record := range m.records(tenant, repo, pr) {
 		row := record.Row
 		if !eligible(row) || record.CredentialBasis != store.CredentialMinted || row.SubAccountID == nil {
 			continue
 		}
-		attested, found := m.spend[tenant][*row.SubAccountID]
-		if !found {
+		if _, found := m.spend[tenant][*row.SubAccountID]; found {
+			rows++
+			keys[*row.SubAccountID] = true
+		}
+	}
+	for key, minted := range m.minted[tenant] {
+		if minted.Repository != repo || !slices.Contains(minted.PullRequests.Numbers(), pr) {
 			continue
 		}
-		rows++
-		if !counted[*row.SubAccountID] {
-			counted[*row.SubAccountID] = true
+		if _, found := m.spend[tenant][key]; !found {
+			rows = 0
+		}
+		keys[key] = true
+	}
+	var usd decimal.Decimal
+	for key := range keys {
+		if attested, found := m.spend[tenant][key]; found {
 			usd = usd.Add(decimal.MustParse(attested.Spend))
 		}
 	}
@@ -674,15 +688,15 @@ func TestAGradeStoredBeforeTheNewRuleLetsNothingPass(t *testing.T) {
 		t.Fatalf("the row stored before the rule: %+v", view.Lines)
 	}
 	body := verdictBody(t, prBudget, nil)
-	held := func(when string) {
+	held := func(when, counted string) {
 		t.Helper()
 		answer := w.verdict(t, w.token(), body)
-		if answer.Budget.Evidence || answer.Budget.Basis != budgetBasisAgent || answer.Budget.GatewayUSD != "" || answer.Policy.Conclusion != policy.Neutral ||
+		if answer.Budget.Evidence || answer.Budget.Basis != budgetBasisAgent || answer.Budget.GatewayUSD != counted || answer.Policy.Conclusion != policy.Neutral ||
 			ruleOf(t, answer.Policy, policy.RulePullRequestBudget).Outcome != policy.Unproven {
 			t.Fatalf("%s: %+v %+v", when, answer.Budget, answer.Policy)
 		}
 	}
-	held("on the count an environment's job attested")
+	held("on the count an environment's job attested", "")
 
 	// A later attempt of the run, whose key a protected run attested and
 	// counted. The earlier row has no count a protected run attested, so the
@@ -691,5 +705,5 @@ func TestAGradeStoredBeforeTheNewRuleLetsNothingPass(t *testing.T) {
 	laterToken := w.issuer.Token(func() map[string]any { claims := w.claims(); claims["run_attempt"] = "2"; return claims }())
 	w.rows(laterToken, lines(t, stating(later))).want(t, http.StatusOK)
 	w.attestSpend(w.protectedToken(closeRun, nil), later, map[string]string{"repository": acmeRepo, "run_id": acmeRun, "run_attempt": "2", "currency": "USD", "spend": "0.001"}).want(t, http.StatusNoContent)
-	held("with a protected count for a later attempt beside it")
+	held("with a protected count for a later attempt beside it", "0.001")
 }

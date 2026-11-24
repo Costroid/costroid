@@ -426,9 +426,11 @@ type LedgerLine struct {
 type LedgerRequest struct {
 	Lines    []LedgerLine
 	Evidence Evidence
-	// MeasuredUSD is the gateway's own count for the pull request's keys. It
-	// is read only with GatewayMeasured, and pr_budget is then held to the
-	// larger of it and the rows' USD list cost.
+	// MeasuredUSD is the gateway's own count for the pull request's keys, the
+	// counts that stand. pr_budget is held to the larger of it and the rows'
+	// USD list cost whatever the evidence: a count still missing can only add,
+	// so a sum over the limit fails, and only GatewayMeasured lets a sum
+	// within it pass.
 	MeasuredUSD decimal.Decimal
 	Config      ConfigFile
 	// Pack is the customer pack Config names, read by serve itself.
@@ -446,8 +448,11 @@ type LedgerRequest struct {
 // EvaluateLedger runs the default pack over a pull request's rows in a ledger.
 // The rows are token-verified only when every line is. Their spend is agent
 // counts unless the request says it was measured or reconciled, and only then
-// can a budget rule or the model allowlist pass. The answer covers the whole
-// pull request, so the rules that read one run's rows conclude unproven.
+// can a budget rule or the model allowlist pass. pr_budget is held to the
+// larger of the rows' USD list cost and the gateway's count on any evidence,
+// so a count over the limit fails though the rows are agent counts or none.
+// The answer covers the whole pull request, so the rules that read one run's
+// rows conclude unproven.
 func EvaluateLedger(ctx context.Context, request LedgerRequest) (Verdict, error) {
 	usage := ledgerUsage(request.Lines)
 	trust := Unverified
@@ -458,7 +463,7 @@ func EvaluateLedger(ctx context.Context, request LedgerRequest) (Verdict, error)
 	lifetime := &Lifetime{Trust: trust, OtherCurrency: slices.ContainsFunc(usage.Currencies, func(entry CurrencyUsage) bool {
 		return entry.Currency != "USD"
 	})}
-	if request.Evidence == GatewayMeasured && request.MeasuredUSD.Cmp(rowsUSD) > 0 {
+	if request.MeasuredUSD.Cmp(rowsUSD) > 0 {
 		lifetime.USD = request.MeasuredUSD.Sub(rowsUSD)
 	}
 	return evaluateScoped(ctx, Request{

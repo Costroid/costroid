@@ -46,10 +46,13 @@ type SpendLedger interface {
 	// store.ErrAttestingRunUsed or store.ErrSpendHeld. A figure is never
 	// replaced, so the larger of two is never kept.
 	AttestSpend(ctx context.Context, tenant store.TenantID, attested store.AttestedSpend) error
-	// GatewaySpend reads the pull request's measured spend. Rows counts its
-	// budget-eligible rows whose credential is a key minted for the row's own
-	// run, with credential_basis minted, and whose spend a protected run
-	// attested. USD adds up the attested spend of those keys, each key once.
+	// GatewaySpend reads the pull request's measured spend. USD adds up, each
+	// key once, the spend a protected run attested for every key the pull
+	// request's budget-eligible rows name, minted for the row's own run, with
+	// credential_basis minted, and for every key an attesting run named the
+	// pull request for, whether a row of it arrived or not. Rows counts the
+	// eligible rows on the first kind of key, and is 0 while a key of the
+	// second kind holds no spend.
 	GatewaySpend(ctx context.Context, tenant store.TenantID, repo, pr string) (rows int64, usd decimal.Decimal, err error)
 }
 

@@ -17,13 +17,25 @@ import (
 
 // attestation is what costroid gateway mint sends once it has registered a
 // run's key: the key's id, the value rows carry in SubAccountId, the run the
-// key was minted for, and that run's head commit as GitHub's event names it.
+// key was minted for, that run's head commit as GitHub's event names it, and
+// the pull requests the event lists for the run, none when it lists none.
 type attestation struct {
-	KeyID      string `json:"key_id"`
-	Repository string `json:"repository"`
-	RunID      string `json:"run_id"`
-	RunAttempt string `json:"run_attempt"`
-	HeadSHA    string `json:"head_sha"`
+	KeyID        string   `json:"key_id"`
+	Repository   string   `json:"repository"`
+	RunID        string   `json:"run_id"`
+	RunAttempt   string   `json:"run_attempt"`
+	HeadSHA      string   `json:"head_sha"`
+	PullRequests []string `json:"pull_requests"`
+}
+
+// numbered reports whether each pull request is a number.
+func (a attestation) numbered() bool {
+	for _, number := range a.PullRequests {
+		if !prTag.MatchString(number) {
+			return false
+		}
+	}
+	return true
 }
 
 // The refusals of an attestation and of a spend, as the integration contract
@@ -143,15 +155,16 @@ func (s *Server) readAttestation(w http.ResponseWriter, r *http.Request, who cal
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&stated); err != nil || !gatewayKeyID.MatchString(stated.KeyID) || !runTag.MatchString(stated.RunID) ||
-		!runAttempt.MatchString(stated.RunAttempt) || !vcs.IsCommit(stated.HeadSHA) {
+		!runAttempt.MatchString(stated.RunAttempt) || !vcs.IsCommit(stated.HeadSHA) || !stated.numbered() {
 		return store.MintedCredential{}, refuse(http.StatusBadRequest, codeMalformed,
-			"The body is not an attestation with a 64-character key_id, a run_id, a run_attempt and a head_sha.")
+			"The body is not an attestation with a 64-character key_id, a run_id, a run_attempt, a head_sha and pull_requests as numbers.")
 	}
 	if err := namedRun(stated, id); err != nil {
 		return store.MintedCredential{}, err
 	}
 	return store.MintedCredential{
 		KeySHA256: stated.KeyID, Repository: id.Repository, RunID: stated.RunID, RunAttempt: stated.RunAttempt, HeadSHA: stated.HeadSHA,
+		PullRequests:   store.PullRequestsOf(stated.PullRequests),
 		AttestingRunID: id.RunID, AttestingRunAttempt: id.RunAttempt, AttestingRef: id.Ref,
 	}, nil
 }

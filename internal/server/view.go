@@ -72,10 +72,11 @@ const (
 // budgetView is the only part of the answer a budget rule may read. Spend is
 // the eligible rows' list cost, which the agent's job counted. Evidence is
 // true only when something other than the agent stands behind that spend:
-// the gateway's own count for keys minted for the rows' runs, or a
+// the gateway's own count for the keys of the pull request's runs, or a
 // provider's report. GatewayUSD is the gateway's count, present on gateway
-// evidence. A pull request with no eligible row has no spend for a rule to
-// pass.
+// evidence, and on any other basis when the counts that stand add up to more
+// than nothing: pr_budget is held to it either way. A pull request with no
+// eligible row has no spend for a rule to pass.
 type budgetView struct {
 	Evidence   bool            `json:"evidence"`
 	Basis      string          `json:"basis"`
@@ -153,7 +154,8 @@ func (s *Server) measuredSpend(ctx context.Context, tenant store.TenantID, repo,
 // lines carry zero, so they never move the figure. The basis is reconciled
 // when a provider's report wrote every eligible line, and gateway_measured
 // when the gateway's attested count covers every eligible row and each is in
-// USD, the currency of the count. Anything less is agent counts.
+// USD, the currency of the count. Anything less is agent counts. The
+// gateway's count is stated beside any basis it is more than nothing on.
 func budgetOf(lines []store.Line, measured measuredSpend) budgetView {
 	budget := budgetView{Basis: budgetBasisNone, Spend: []currencySpend{}}
 	totals := map[string]decimal.Decimal{}
@@ -182,9 +184,12 @@ func budgetOf(lines []store.Line, measured measuredSpend) budgetView {
 	case reconciled:
 		budget.Basis, budget.Evidence = budgetBasisReconciled, true
 	case measured.kept && inUSD && measured.rows == eligible && measured.usd.Sign() >= 0:
-		budget.Basis, budget.Evidence, budget.GatewayUSD = budgetBasisGateway, true, measured.usd.String()
+		budget.Basis, budget.Evidence = budgetBasisGateway, true
 	default:
 		budget.Basis = budgetBasisAgent
+	}
+	if measured.kept && (budget.Basis == budgetBasisGateway || measured.usd.Sign() > 0) {
+		budget.GatewayUSD = measured.usd.String()
 	}
 	return budget
 }

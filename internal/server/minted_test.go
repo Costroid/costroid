@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -77,13 +79,15 @@ func (w *world) attest(token string, attestation gateway.Attestation) error {
 }
 
 // mintFor draws a key and attests it for the run and attempt named, with the
-// fixtures' head, from a protected run of its own, and returns its id.
-func (w *world) mintFor(t *testing.T, run, attempt string) string {
+// fixtures' head and the pull requests named, from a protected run of its
+// own, and returns its id.
+func (w *world) mintFor(t *testing.T, run, attempt string, pulls ...string) string {
 	t.Helper()
 	id := gateway.KeyID(gateway.NewKey())
 	token := w.protectedToken(strconv.FormatInt(attestingRuns.Add(1), 10), nil)
-	binding := gateway.Binding{Repository: acmeRepo, Run: run, Attempt: attempt}
-	if err := w.attest(token, gateway.AttestationFor(id, binding, acmeHead)); err != nil {
+	attestation := gateway.AttestationFor(id, gateway.Binding{Repository: acmeRepo, Run: run, Attempt: attempt}, acmeHead)
+	attestation.PullRequests = pulls
+	if err := w.attest(token, attestation); err != nil {
 		t.Fatalf("attest: %v", err)
 	}
 	return id
@@ -424,10 +428,16 @@ func TestAnAttestationIsOneObjectWithAKeyID(t *testing.T) {
 	w, _ := memoryWorld(t)
 	token := w.mintToken()
 	run := `"repository":"github.com/acme/widgets","run_id":"` + acmeRun + `","run_attempt":"1","head_sha":"` + acmeHead + `"`
+	key := `{"key_id":"` + gateway.KeyID("k") + `",` + run
 	for name, body := range map[string]string{
-		"not JSON":         "key",
-		"an unknown field": `{"key_id":"` + gateway.KeyID("k") + `",` + run + `,"budget":"5"}`,
-		"a short key id":   `{"key_id":"abc",` + run + `}`,
+		"not JSON":                            "key",
+		"an unknown field":                    key + `,"budget":"5"}`,
+		"a short key id":                      `{"key_id":"abc",` + run + `}`,
+		"pull requests that are not a list":   key + `,"pull_requests":"1423"}`,
+		"a pull request as a JSON number":     key + `,"pull_requests":[1423]}`,
+		"a pull request that is not a number": key + `,"pull_requests":["#1423"]}`,
+		"pull request 0":                      key + `,"pull_requests":["0"]}`,
+		"an empty pull request":               key + `,"pull_requests":["1423",""]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := w.send(http.MethodPost, "/v1/credentials", token, "application/json", []byte(body)).want(t, http.StatusBadRequest)
@@ -439,15 +449,17 @@ func TestAnAttestationIsOneObjectWithAKeyID(t *testing.T) {
 }
 
 func TestTheAttestationMintSendsIsTheOneTheServiceReads(t *testing.T) {
-	sent, err := json.Marshal(gateway.Attestation{KeyID: "k", Repository: "r", RunID: "1", RunAttempt: "2", HeadSHA: "h"})
+	sent, err := json.Marshal(gateway.Attestation{KeyID: "k", Repository: "r", RunID: "1", RunAttempt: "2", HeadSHA: "h", PullRequests: []string{"7", "9"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var read attestation
-	if err := json.Unmarshal(sent, &read); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(sent))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&read); err != nil {
 		t.Fatal(err)
 	}
-	if read != (attestation{KeyID: "k", Repository: "r", RunID: "1", RunAttempt: "2", HeadSHA: "h"}) {
+	if want := (attestation{KeyID: "k", Repository: "r", RunID: "1", RunAttempt: "2", HeadSHA: "h", PullRequests: []string{"7", "9"}}); !reflect.DeepEqual(read, want) {
 		t.Fatalf("read %+v from %s", read, sent)
 	}
 }

@@ -20,14 +20,16 @@ const (
 )
 
 // Attestation tells the ledger that a key was minted for one run. KeyID is
-// the value the run's rows carry in SubAccountId, and HeadSHA the run's head
-// commit as GitHub's event names it. It holds no secret.
+// the value the run's rows carry in SubAccountId, HeadSHA the run's head
+// commit as GitHub's event names it, and PullRequests the pull requests the
+// event lists for the run, left out when it lists none. It holds no secret.
 type Attestation struct {
-	KeyID      string `json:"key_id"`
-	Repository string `json:"repository"`
-	RunID      string `json:"run_id"`
-	RunAttempt string `json:"run_attempt"`
-	HeadSHA    string `json:"head_sha"`
+	KeyID        string   `json:"key_id"`
+	Repository   string   `json:"repository"`
+	RunID        string   `json:"run_id"`
+	RunAttempt   string   `json:"run_attempt"`
+	HeadSHA      string   `json:"head_sha"`
+	PullRequests []string `json:"pull_requests,omitempty"`
 }
 
 // AttestationFor names the run a binding is for and its head commit.
@@ -131,6 +133,17 @@ func send(client *http.Client, request *http.Request, what string, answer any) e
 // CodeRunUnprotected is a ledger's refusal of a token that is not a run of a
 // protected branch that workflow_run started.
 const CodeRunUnprotected = "CREDENTIAL_RUN_UNPROTECTED"
+
+// CodeMalformed is a ledger's refusal of a body it cannot read: not JSON, a
+// field it does not know, or a value of the wrong form.
+const CodeMalformed = "BODY_MALFORMED"
+
+// Malformed reports whether err is a ledger's refusal of the body it was sent
+// as one it cannot read.
+func Malformed(err error) bool {
+	var refused *Refusal
+	return errors.As(err, &refused) && refused.Status == http.StatusBadRequest && refused.Code == CodeMalformed
+}
 
 // Refusal is a status other than 2xx in answer to what was asked, with the
 // ledger's typed code, or "no code".

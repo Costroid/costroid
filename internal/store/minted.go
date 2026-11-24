@@ -1,9 +1,12 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -19,18 +22,37 @@ var (
 
 // MintedCredential is a gateway key that a run of a protected branch attested
 // as minted for another run: the run its rows come from. HeadSHA is the head
-// commit GitHub's event named for that run, and the Attesting fields name the
-// run whose token sent the attestation.
+// commit GitHub's event named for that run, and PullRequests the pull requests
+// the event lists for it. The Attesting fields name the run whose token sent
+// the attestation.
 type MintedCredential struct {
-	KeySHA256  string
-	Repository string
-	RunID      string
-	RunAttempt string
-	HeadSHA    string
+	KeySHA256    string
+	Repository   string
+	RunID        string
+	RunAttempt   string
+	HeadSHA      string
+	PullRequests PullRequests
 
 	AttestingRunID      string
 	AttestingRunAttempt string
 	AttestingRef        string
+}
+
+// PullRequests is a set of pull request numbers in one form, so that two
+// statements of the same set compare equal: ascending, each once, separated by
+// a space. Empty names none.
+type PullRequests string
+
+// PullRequestsOf is the set of the numbers given, in any order.
+func PullRequestsOf(numbers []string) PullRequests {
+	sorted := slices.Clone(numbers)
+	slices.SortFunc(sorted, func(a, b string) int { return cmp.Or(cmp.Compare(len(a), len(b)), cmp.Compare(a, b)) })
+	return PullRequests(strings.Join(slices.Compact(sorted), " "))
+}
+
+// Numbers lists the set, none when it is empty.
+func (p PullRequests) Numbers() []string {
+	return strings.Fields(string(p))
 }
 
 // SameRun reports whether two attestations name one run.
@@ -44,14 +66,20 @@ INSERT INTO credential_attestations (tenant_id, key_sha256, repo, workflow_run_i
 	attesting_run_id, attesting_run_attempt, attesting_ref)
 VALUES (costroid_tenant(), $1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT DO NOTHING`
-	mintedColumns = `key_sha256, repo, workflow_run_id, run_attempt, head_sha, attesting_run_id, attesting_run_attempt, attesting_ref`
-	selectMinted  = `SELECT ` + mintedColumns + ` FROM credential_attestations WHERE key_sha256 = ANY($1::text[])`
-	selectSpoken  = `SELECT ` + mintedColumns + ` FROM credential_attestations
+	insertPulls = `
+INSERT INTO credential_pulls (tenant_id, key_sha256, pr)
+SELECT costroid_tenant(), $1, unnest($2::text[])`
+	mintedColumns = `key_sha256, repo, workflow_run_id, run_attempt, head_sha,
+	ARRAY(SELECT p.pr FROM credential_pulls p WHERE p.key_sha256 = credential_attestations.key_sha256),
+	attesting_run_id, attesting_run_attempt, attesting_ref`
+	selectMinted = `SELECT ` + mintedColumns + ` FROM credential_attestations WHERE key_sha256 = ANY($1::text[])`
+	selectSpoken = `SELECT ` + mintedColumns + ` FROM credential_attestations
 WHERE repo = $1 AND attesting_run_id = $2 AND attesting_run_attempt = $3`
 )
 
-// Attest stores an attestation. The same attestation again, every field the
-// same, changes nothing. Any other from the same attesting run and attempt
+// Attest stores an attestation, and the pull requests it names with it in the
+// same transaction. The same attestation again, every field and the same pull
+// requests, changes nothing. Any other from the same attesting run and attempt
 // answers ErrAttestingRunUsed, and any other for a stored key
 // ErrAttestedElsewhere. Where both hold, the attesting run's comes first,
 // because it is about who is speaking. A unique index holds each rule, so two
@@ -64,7 +92,7 @@ func (s *Store) Attest(ctx context.Context, tenant TenantID, minted MintedCreden
 			return fmt.Errorf("store: attest a credential: %w", err)
 		}
 		if tag.RowsAffected() == 1 {
-			return nil
+			return keepPulls(ctx, tx, minted)
 		}
 		spoken, err := scanMinted(tx.Query(ctx, selectSpoken, minted.Repository, minted.AttestingRunID, minted.AttestingRunAttempt))
 		if err != nil {
@@ -84,6 +112,18 @@ func (s *Store) Attest(ctx context.Context, tenant TenantID, minted MintedCreden
 		}
 		return nil
 	})
+}
+
+// keepPulls writes the pull requests a new attestation names.
+func keepPulls(ctx context.Context, tx pgx.Tx, minted MintedCredential) error {
+	numbers := minted.PullRequests.Numbers()
+	if len(numbers) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, insertPulls, minted.KeySHA256, numbers); err != nil {
+		return fmt.Errorf("store: keep an attestation's pull requests: %w", err)
+	}
+	return nil
 }
 
 // MintedCredentials reads the attestations of the keys named, by key.
@@ -118,10 +158,12 @@ func scanMinted(rows pgx.Rows, err error) ([]MintedCredential, error) {
 	var found []MintedCredential
 	for rows.Next() {
 		var m MintedCredential
-		if err := rows.Scan(&m.KeySHA256, &m.Repository, &m.RunID, &m.RunAttempt, &m.HeadSHA,
+		var pulls []string
+		if err := rows.Scan(&m.KeySHA256, &m.Repository, &m.RunID, &m.RunAttempt, &m.HeadSHA, &pulls,
 			&m.AttestingRunID, &m.AttestingRunAttempt, &m.AttestingRef); err != nil {
 			return nil, fmt.Errorf("store: read minted credentials: %w", err)
 		}
+		m.PullRequests = PullRequestsOf(pulls)
 		found = append(found, m)
 	}
 	if err := rows.Err(); err != nil {
