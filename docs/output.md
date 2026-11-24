@@ -80,7 +80,7 @@ Each check has the `status` it ended in, `ok`, `warn` or `fail`, and the `line` 
 {
   "schema": "costroid.doctor/0.1",
   "checks": [
-    { "status": "ok", "line": "ok: costroid 1.0.0-alpha.34" },
+    { "status": "ok", "line": "ok: costroid 1.0.0-alpha.35" },
     { "status": "ok", "line": "ok: costroid.yml: valid" },
     {
       "status": "warn",
@@ -158,8 +158,8 @@ Each finding has its `rule`, its `severity`, which is `high`, `medium` or `note`
 ```json
 {
   "schema": "costroid.version/0.1",
-  "release": "1.0.0-alpha.34",
-  "commit": "e323c83959bedbdd9e3ad48db50babd8677715f4",
+  "release": "1.0.0-alpha.35",
+  "commit": "b1591eb8f1621559a6b46ab87699c9247a8969d7",
   "os": "linux",
   "arch": "amd64",
   "catalog": { "version": "0.4.3", "prices_read": "2026-11-21" },

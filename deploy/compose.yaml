@@ -38,7 +38,7 @@ services:
     networks: [ledger]
 
   costroid:
-    image: ${COSTROID_IMAGE:-ghcr.io/costroid/costroid:1.0.0-alpha.34}
+    image: ${COSTROID_IMAGE:-ghcr.io/costroid/costroid:1.0.0-alpha.35}
     build:
       context: ..
       args:
